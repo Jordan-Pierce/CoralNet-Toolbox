@@ -179,8 +179,8 @@ class PolygonAnnotation(Annotation):
 
         # Draw the dotted line outline on top
         pen = QPen(self.label.color)
-        pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
-        pen.setWidth(2)  # Line width
+        pen.setStyle(Qt.SolidLine)  # Solid line
+        pen.setWidth(1)  # Line width
         result_painter.setPen(pen)
         result_painter.setClipping(False)  # Disable clipping for the outline
         result_painter.drawPolygon(polygon)

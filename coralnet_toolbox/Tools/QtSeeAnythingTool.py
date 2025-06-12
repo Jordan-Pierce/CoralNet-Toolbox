@@ -504,10 +504,22 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-
+            
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             annotation.create_graphics_item(self.annotation_window.scene)
+            
+            # Animate the annotation
+            annotation.animate(force=True)
+            
             self.annotations.append(annotation)
+            
+    def update_transparency(self, value):
+        """
+        Update the transparency of all unconfirmed annotations in this tool.
+        """
+        for annotation in self.annotations:
+            annotation.update_transparency(value)
+        self.annotation_window.scene.update()
 
     def create_polygon_annotation(self, points, confidence):
         """
@@ -531,9 +543,13 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-
+            
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             annotation.create_graphics_item(self.annotation_window.scene)
+            
+            # Animate the annotation
+            annotation.animate(force=True)
+            
             self.annotations.append(annotation)
 
     def confirm_annotations(self):
@@ -545,18 +561,22 @@ class SeeAnythingTool(Tool):
         progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(self.annotations))
-
-        # Confirm the annotations
+            
         for annotation in self.annotations:
+            # Deanimate the annotation
+            annotation.deanimate()
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
-
+            
             # Add the annotation using the add_annotation_from_tool method
             self.annotation_window.add_annotation_from_tool(annotation)
 
             # Update progress bar
             progress_bar.update_progress()
+            
+        # Update the scene to reflect deanimation
+        self.annotation_window.scene.update()
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
@@ -645,7 +665,10 @@ class SeeAnythingTool(Tool):
         Clear all *unconfirmed* annotations created by this tool from the scene.
         """
         for annotation in self.annotations:
+            # Stop animation first
+            annotation.deanimate()  # Deanimate the annotation before removing
             annotation.delete()  # Let the annotation handle all graphics cleanup
+            annotation = None
 
         self.annotations = []
         self.annotation_window.scene.update()
@@ -727,3 +750,4 @@ class SeeAnythingTool(Tool):
 
         # Force update to ensure graphics are removed visually
         self.annotation_window.scene.update()
+

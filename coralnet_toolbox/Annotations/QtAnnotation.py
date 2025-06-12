@@ -4,8 +4,8 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
-from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
+from PyQt5.QtGui import QColor, QPolygonF, QPen, QBrush
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
@@ -62,6 +62,12 @@ class Annotation(QObject):
         # New: group for all graphics items
         self.graphics_item_group = None
         
+        # Animation properties
+        self._animated_line = 0
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_animated_line)
+        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -133,14 +139,21 @@ class Annotation(QObject):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
         self.update_graphics_item()
+        # Start animation
+        self.animate()
 
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
+        # Stop animation
+        self.deanimate()
         self.update_graphics_item()
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
+        # Stop animation
+        self.deanimate()
+        
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
@@ -180,15 +193,8 @@ class Annotation(QObject):
         color.setAlpha(self.transparency)
         self.graphics_item.setBrush(QBrush(color))
         
-        # Set pen style based on selection state
-        if self.is_selected:
-            # Use inverse color and dotted line for selected items
-            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-        else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(self.label.color)
-            self.graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.graphics_item.setPen(self._create_pen(color))
         
         self.graphics_item.setData(0, self.id)
         self.graphics_item_group.addToGroup(self.graphics_item)
@@ -205,6 +211,81 @@ class Annotation(QObject):
 
         # Add the group to the scene
         scene.addItem(self.graphics_item_group)
+        
+    @pyqtProperty(float)
+    def animated_line(self):
+        """Get the current animated line offset for animation."""
+        return self._animated_line
+    
+    @animated_line.setter
+    def animated_line(self, value):
+        """Set the animated line offset and update pen styles."""
+        self._animated_line = value
+        self._update_pen_styles()
+    
+    def _update_animated_line(self):
+        """Update the animated line offset for animation."""
+        self._animated_line = (self._animated_line + 1) % 20  # Reset every 20 pixels
+        self._update_pen_styles()
+    
+    def animate(self, force=False):
+        """Start the animation for selected annotations.
+        
+        Args:
+            force (bool): If True, force animation even if annotation is not selected
+        """
+        if force or self.is_selected:
+            if not self.animation_timer.isActive():
+                self.animation_timer.start()
+    
+    def deanimate(self):
+        """Stop the animation for deselected annotations."""
+        self.animation_timer.stop()
+        self.update_graphics_item()
+    
+    def _create_pen(self, base_color: QColor) -> QPen:
+        """Create a pen with appropriate style based on selection state."""
+        # Set pen style based on selection state OR if animation is active (for forced animation)
+        if self.is_selected or self.animation_timer.isActive():
+            # Use same color if verified, black if not verified
+            if self.verified:
+                pen_color = QColor(base_color)  # Create a copy
+                pen_color.setAlpha(255)  # Pen should always be fully opaque
+            else:
+                pen_color = QColor(0, 0, 0, 255)  # Black, fully opaque
+            
+            # [1, 2] - Very small dots with small gaps
+            # [2, 4] - Small dots with larger gaps
+            # [1, 3] - Tiny dots with medium gaps
+            pen = QPen(pen_color, 4)  # Width for dotted line
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
+            pen.setDashOffset(self._animated_line)
+            return pen
+        else:
+            # Use label color with solid line for unselected items, always opaque
+            pen_color = QColor(base_color)
+            pen_color.setAlpha(255)  # Pen should always be fully opaque
+            return QPen(pen_color, 3, Qt.SolidLine)  # Consistent width
+    
+    def _update_pen_styles(self):
+        """Update pen styles with current animated line offset."""
+        # Only update if selected OR if animation is running (for forced animation)
+        if not self.is_selected and not self.animation_timer.isActive():
+            return
+            
+        color = QColor(self.label.color)
+        pen = self._create_pen(color)
+        
+        # Update all graphics items with the pen
+        if self.graphics_item:
+            self.graphics_item.setPen(pen)
+        if self.center_graphics_item:
+            self.center_graphics_item.setPen(pen)
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setPen(pen)
+        if self.polygon_graphics_item:
+            self.polygon_graphics_item.setPen(pen)
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
@@ -224,15 +305,8 @@ class Annotation(QObject):
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
     
-        # Always set a colored pen with increased width
-        pen_color = QColor(self.label.color)
-        if self.is_selected:
-            # Use inverse color and dotted line for selected items
-            inverse_color = QColor(255 - pen_color.red(), 255 - pen_color.green(), 255 - pen_color.blue())
-            self.center_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-        else:
-            # Use label color with solid line for unselected items
-            self.center_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.center_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
@@ -259,12 +333,8 @@ class Annotation(QObject):
             bottom_right.y() - top_left.y()
         )
     
-        # By default, no pen unless selected
-        if self.is_selected:
-            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.bounding_box_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-        else:
-            self.bounding_box_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.bounding_box_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
@@ -289,12 +359,8 @@ class Annotation(QObject):
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
     
-        # By default, no pen unless selected
-        if self.is_selected:
-            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.polygon_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-        else:
-            self.polygon_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.polygon_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.polygon_graphics_item)
@@ -353,13 +419,8 @@ class Annotation(QObject):
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(color)
     
-            # By default, no pen unless selected
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                self.center_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-            else:
-                # Use label color with solid line for unselected items
-                self.center_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
+            # Use the consolidated pen creation method
+            self.center_graphics_item.setPen(self._create_pen(color))
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""
@@ -371,12 +432,8 @@ class Annotation(QObject):
                                                     bottom_right.x() - top_left.x(),
                                                     bottom_right.y() - top_left.y())
     
-            # By default, no pen unless selected
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                self.bounding_box_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-            else:
-                self.bounding_box_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
+            # Use the consolidated pen creation method
+            self.bounding_box_graphics_item.setPen(self._create_pen(color))
     
     def update_polygon_graphics_item(self, points):
         """Update the shape and appearance of the polygon graphics item."""
@@ -388,13 +445,9 @@ class Annotation(QObject):
             self.polygon_graphics_item.setPolygon(polygon)
             self.polygon_graphics_item.setBrush(color)
     
-            # By default, no pen unless selected
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                self.polygon_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
-            else:
-                self.polygon_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
-
+            # Use the consolidated pen creation method
+            self.polygon_graphics_item.setPen(self._create_pen(color))
+    
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""
         if self.transparency != transparency:

@@ -94,13 +94,13 @@ class VideoDisplayWidget(QWidget):
                     
         # Draw current rectangle being drawn
         if self.parent_widget.drawing and self.parent_widget.current_rect:
-            pen = QPen(Qt.green, 2, Qt.DashLine)
+            pen = QPen(Qt.white, 2, Qt.DashLine)
             painter.setPen(pen)
             painter.drawRect(self.parent_widget.current_rect)
             
         # Draw in-progress polygon
         if self.parent_widget.drawing_polygon and self.parent_widget.current_polygon_points:
-            pen = QPen(Qt.green, 2, Qt.DashLine)
+            pen = QPen(Qt.white, 2, Qt.DashLine)
             painter.setPen(pen)
             pts = self.parent_widget.current_polygon_points
             for i in range(1, len(pts)):

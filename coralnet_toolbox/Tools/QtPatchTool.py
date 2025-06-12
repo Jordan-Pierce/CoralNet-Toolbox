@@ -92,7 +92,7 @@ class PatchTool(Tool):
                                      self.annotation_window.selected_label.color,
                                      self.annotation_window.current_image_path,
                                      self.annotation_window.selected_label.id,
-                                     transparency=self.annotation_window.main_window.get_transparency_value())
+                                     self.annotation_window.main_window.label_window.active_label.transparency)
         return annotation
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
@@ -108,7 +108,8 @@ class PatchTool(Tool):
         self.cursor_annotation = self.create_annotation(scene_pos)
         if self.cursor_annotation:
             # Make the cursor annotation semi-transparent to distinguish it from actual annotations
-            self.cursor_annotation.transparency = self.annotation_window.main_window.get_transparency_value()
+            transparency = self.annotation_window.main_window.label_window.active_label.transparency
+            self.cursor_annotation.transparency = transparency
             self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):

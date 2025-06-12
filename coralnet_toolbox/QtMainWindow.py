@@ -1351,8 +1351,13 @@ class MainWindow(QMainWindow):
         else:
             # Set transparency for the active label in LabelWindow, AnnotationWindow
             self.label_window.set_active_label_transparency(value)
+            
         # Update the slider value
         self.update_transparency_slider(value)
+        
+        # Update the transparency in the currently selected tool (if any)
+        if self.annotation_window.selected_tool == "see_anything":
+            self.annotation_window.tools["see_anything"].update_transparency(value)
 
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""

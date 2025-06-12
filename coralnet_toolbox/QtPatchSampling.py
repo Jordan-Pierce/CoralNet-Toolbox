@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import random
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
                              QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox, 
@@ -33,25 +33,42 @@ class PatchGraphic(QGraphicsRectItem):
         # Use size for both width and height; color is applied separately
         super().__init__(x, y, size, size, parent)
 
-        # Default styling
-        self.default_pen = QPen(Qt.white, 2, Qt.DashLine)
-        self.hover_pen = QPen(Qt.yellow, 3, Qt.DashLine)
-        self.default_brush = QBrush(QColor(color.red(), color.blue(), color.green(), 50))
+        # Store the base color for brush
+        self.base_color = color
+        
+        # Animation properties
+        self._animated_line_offset = 0
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_animated_line)
+        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+
+        # Default styling with animated pen
+        self.default_brush = QBrush(QColor(color.red(), color.green(), color.blue(), 50))
 
         # Initial appearance
-        self.setPen(self.default_pen)
+        self.setPen(self._create_animated_pen())
         self.setBrush(self.default_brush)
-        self.setAcceptHoverEvents(True)
+        
+        # Start animation immediately
+        self.animation_timer.start()
 
-    def hoverEnterEvent(self, event):
-        """Highlight patch on hover"""
-        self.setPen(self.hover_pen)
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        """Restore default appearance on hover exit"""
-        self.setPen(self.default_pen)
-        super().hoverLeaveEvent(event)
+    def _create_animated_pen(self):
+        """Create an animated dotted pen with black color (unverified style)."""
+        pen = QPen(QColor(0, 0, 0, 255), 3)  # Black, fully opaque, increased width
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
+        pen.setDashOffset(self._animated_line_offset)
+        return pen
+    
+    def _update_animated_line(self):
+        """Update the animated line offset for animation."""
+        self._animated_line_offset = (self._animated_line_offset + 1) % 20  # Reset every 20 pixels
+        self.setPen(self._create_animated_pen())
+        
+    def __del__(self):
+        """Clean up the timer when the graphic is deleted."""
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()
 
 
 class PatchSamplingDialog(QDialog):
@@ -59,6 +76,7 @@ class PatchSamplingDialog(QDialog):
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.main_window = main_window
         self.annotation_window = main_window.annotation_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
@@ -598,7 +616,7 @@ class PatchSamplingDialog(QDialog):
                                                      used_label.color,
                                                      image_path,
                                                      used_label.id,
-                                                     transparency=self.annotation_window.transparency)
+                                                     transparency=self.main_window.get_transparency_value())
 
                     # Add annotation to the annotation window
                     self.annotation_window.add_annotation_to_dict(new_annotation)
