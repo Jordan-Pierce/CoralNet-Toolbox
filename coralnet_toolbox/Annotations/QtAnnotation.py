@@ -67,58 +67,6 @@ class Annotation(QObject):
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self._update_animated_line)
         self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
-        
-    @pyqtProperty(float)
-    def animated_line(self):
-        return self._animated_line
-    
-    @animated_line.setter
-    def animated_line(self, value):
-        self._animated_line = value
-        self._update_pen_styles()
-    
-    def _update_animated_line(self):
-        """Update the animated line offset for animation."""
-        self._animated_line = (self._animated_line + 1) % 20  # Reset every 20 pixels
-        self._update_pen_styles()
-    
-    def animate(self):
-        """Start the animation for selected annotations."""
-        if not self.animation_timer.isActive():
-            self.animation_timer.start()
-    
-    def deanimate(self):
-        """Stop the animation for deselected annotations."""
-        self.animation_timer.stop()
-    
-    def _update_pen_styles(self):
-        """Update pen styles with current animated line offset."""
-        if not self.is_selected:
-            return
-            
-        color = QColor(self.label.color)
-        
-        # Use same color if verified, black if not verified
-        if self.verified:
-            pen_color = color
-        else:
-            pen_color = QColor(0, 0, 0)  # Black
-        
-        # Create animated dashed pen
-        pen = QPen(pen_color, 4)
-        pen.setStyle(Qt.CustomDashLine)
-        pen.setDashPattern([5, 5])  # 5 pixels on, 5 pixels off
-        pen.setDashOffset(self._animated_line)
-        
-        # Update all graphics items with the animated pen
-        if self.graphics_item:
-            self.graphics_item.setPen(pen)
-        if self.center_graphics_item:
-            self.center_graphics_item.setPen(pen)
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setPen(pen)
-        if self.polygon_graphics_item:
-            self.polygon_graphics_item.setPen(pen)
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
@@ -245,23 +193,8 @@ class Annotation(QObject):
         color.setAlpha(self.transparency)
         self.graphics_item.setBrush(QBrush(color))
         
-        # Set pen style based on selection state
-        if self.is_selected:
-            # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = color
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
-            
-            pen = QPen(pen_color, 4)
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([5, 5])  # 5 pixels on, 5 pixels off
-            pen.setDashOffset(self._animated_line)
-            self.graphics_item.setPen(pen)
-        else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(self.label.color)
-            self.graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.graphics_item.setPen(self._create_pen(color))
         
         self.graphics_item.setData(0, self.id)
         self.graphics_item_group.addToGroup(self.graphics_item)
@@ -278,6 +211,69 @@ class Annotation(QObject):
 
         # Add the group to the scene
         scene.addItem(self.graphics_item_group)
+        
+    @pyqtProperty(float)
+    def animated_line(self):
+        """Get the current animated line offset for animation."""
+        return self._animated_line
+    
+    @animated_line.setter
+    def animated_line(self, value):
+        """Set the animated line offset and update pen styles."""
+        self._animated_line = value
+        self._update_pen_styles()
+    
+    def _update_animated_line(self):
+        """Update the animated line offset for animation."""
+        self._animated_line = (self._animated_line + 1) % 20  # Reset every 20 pixels
+        self._update_pen_styles()
+    
+    def animate(self):
+        """Start the animation for selected annotations."""
+        if not self.animation_timer.isActive():
+            self.animation_timer.start()
+    
+    def deanimate(self):
+        """Stop the animation for deselected annotations."""
+        self.animation_timer.stop()
+    
+    def _create_pen(self, color: QColor) -> QPen:
+        """Create a pen with appropriate style based on selection state."""
+        # Set pen style based on selection state
+        if self.is_selected:
+            # Use same color if verified, black if not verified
+            if self.verified:
+                pen_color = color
+            else:
+                pen_color = QColor(0, 0, 0)  # Black
+            
+            pen = QPen(pen_color, 2)  # Reduced width for dotted line
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
+            pen.setDashOffset(self._animated_line)
+            return pen
+        else:
+            # Use label color with solid line for unselected items
+            pen_color = QColor(color)
+            return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+    
+    def _update_pen_styles(self):
+        """Update pen styles with current animated line offset."""
+        if not self.is_selected:
+            return
+            
+        color = QColor(self.label.color)
+        pen = self._create_pen(color)
+        
+        # Update all graphics items with the pen
+        if self.graphics_item:
+            self.graphics_item.setPen(pen)
+        if self.center_graphics_item:
+            self.center_graphics_item.setPen(pen)
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setPen(pen)
+        if self.polygon_graphics_item:
+            self.polygon_graphics_item.setPen(pen)
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
@@ -297,23 +293,8 @@ class Annotation(QObject):
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
     
-        # Set pen style based on selection state
-        if self.is_selected:
-            # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = color
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
-            
-            pen = QPen(pen_color, 4)
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([5, 5])
-            pen.setDashOffset(self._animated_line)
-            self.center_graphics_item.setPen(pen)
-        else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(self.label.color)
-            self.center_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.center_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
@@ -340,23 +321,8 @@ class Annotation(QObject):
             bottom_right.y() - top_left.y()
         )
     
-        # Set pen style based on selection state
-        if self.is_selected:
-            # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = color
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
-            
-            pen = QPen(pen_color, 4)
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([5, 5])
-            pen.setDashOffset(self._animated_line)
-            self.bounding_box_graphics_item.setPen(pen)
-        else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(self.label.color)
-            self.bounding_box_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.bounding_box_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
@@ -381,23 +347,8 @@ class Annotation(QObject):
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
     
-        # Set pen style based on selection state
-        if self.is_selected:
-            # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = color
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
-            
-            pen = QPen(pen_color, 4)
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([5, 5])
-            pen.setDashOffset(self._animated_line)
-            self.polygon_graphics_item.setPen(pen)
-        else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(self.label.color)
-            self.polygon_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+        # Use the consolidated pen creation method
+        self.polygon_graphics_item.setPen(self._create_pen(color))
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.polygon_graphics_item)
@@ -456,23 +407,8 @@ class Annotation(QObject):
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(color)
     
-            # Set pen style based on selection state
-            if self.is_selected:
-                # Use same color if verified, black if not verified
-                if self.verified:
-                    pen_color = color
-                else:
-                    pen_color = QColor(0, 0, 0)  # Black
-                
-                pen = QPen(pen_color, 4)
-                pen.setStyle(Qt.CustomDashLine)
-                pen.setDashPattern([5, 5])
-                pen.setDashOffset(self._animated_line)
-                self.center_graphics_item.setPen(pen)
-            else:
-                # Use label color with solid line for unselected items
-                pen_color = QColor(self.label.color)
-                self.center_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+            # Use the consolidated pen creation method
+            self.center_graphics_item.setPen(self._create_pen(color))
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""
@@ -484,23 +420,8 @@ class Annotation(QObject):
                                                     bottom_right.x() - top_left.x(),
                                                     bottom_right.y() - top_left.y())
     
-            # Set pen style based on selection state
-            if self.is_selected:
-                # Use same color if verified, black if not verified
-                if self.verified:
-                    pen_color = color
-                else:
-                    pen_color = QColor(0, 0, 0)  # Black
-                
-                pen = QPen(pen_color, 4)
-                pen.setStyle(Qt.CustomDashLine)
-                pen.setDashPattern([5, 5])
-                pen.setDashOffset(self._animated_line)
-                self.bounding_box_graphics_item.setPen(pen)
-            else:
-                # Use label color with solid line for unselected items
-                pen_color = QColor(self.label.color)
-                self.bounding_box_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
+            # Use the consolidated pen creation method
+            self.bounding_box_graphics_item.setPen(self._create_pen(color))
     
     def update_polygon_graphics_item(self, points):
         """Update the shape and appearance of the polygon graphics item."""
@@ -512,24 +433,9 @@ class Annotation(QObject):
             self.polygon_graphics_item.setPolygon(polygon)
             self.polygon_graphics_item.setBrush(color)
     
-            # Set pen style based on selection state
-            if self.is_selected:
-                # Use same color if verified, black if not verified
-                if self.verified:
-                    pen_color = color
-                else:
-                    pen_color = QColor(0, 0, 0)  # Black
-                
-                pen = QPen(pen_color, 4)
-                pen.setStyle(Qt.CustomDashLine)
-                pen.setDashPattern([5, 5])
-                pen.setDashOffset(self._animated_line)
-                self.polygon_graphics_item.setPen(pen)
-            else:
-                # Use label color with solid line for unselected items
-                pen_color = QColor(self.label.color)
-                self.polygon_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
-
+            # Use the consolidated pen creation method
+            self.polygon_graphics_item.setPen(self._create_pen(color))
+    
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""
         if self.transparency != transparency:
