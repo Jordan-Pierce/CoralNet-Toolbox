@@ -257,7 +257,7 @@ class Annotation(QObject):
             # [1, 2] - Very small dots with small gaps
             # [2, 4] - Small dots with larger gaps
             # [1, 3] - Tiny dots with medium gaps
-            pen = QPen(pen_color, 2)  # Width for dotted line
+            pen = QPen(pen_color, 4)  # Width for dotted line
             pen.setStyle(Qt.CustomDashLine)
             pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
             pen.setDashOffset(self._animated_line)
@@ -266,7 +266,7 @@ class Annotation(QObject):
             # Use label color with solid line for unselected items, always opaque
             pen_color = QColor(base_color)
             pen_color.setAlpha(255)  # Pen should always be fully opaque
-            return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+            return QPen(pen_color, 3, Qt.SolidLine)  # Consistent width
     
     def _update_pen_styles(self):
         """Update pen styles with current animated line offset."""

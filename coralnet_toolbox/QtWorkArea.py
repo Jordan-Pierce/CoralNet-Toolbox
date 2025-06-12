@@ -51,7 +51,7 @@ class WorkArea(QObject):
         self._animated_line = 0
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # 50ms for smooth animation
+        self.animation_timer.setInterval(200)  # 200ms for smooth animation
 
     def _create_pen(self):
         """Create a pen with animated dash offset if animating."""

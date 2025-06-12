@@ -139,7 +139,7 @@ class WorkAreaTool(Tool):
             return
 
         # Ctrl+Space to create a work area from current view
-        if (modifiers & Qt.ControlModifier) and key == Qt.Key_Space and self.annotation_window.active_image:
+        if key == Qt.Key_Space and self.annotation_window.active_image:
             self.create_work_area_from_current_view()
             return
 

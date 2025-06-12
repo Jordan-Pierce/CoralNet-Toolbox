@@ -173,7 +173,7 @@ The main window consists of several components:
 - **Work Area Tool**: For creating restricted areas for model prediction
   - **Left-Click**: Start drawing a work area; click again to finish drawing.
   - **Backspace**: Cancel drawing the current work area.
-  - **Ctrl + Space**: Create a work area from the current view.
+  - **Space**: Create a work area from the current view.
   - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released / pressed again).
   - **Ctrl + Shift**: Show removal buttons on existing work areas (click the "X" to remove).
   - **Ctrl + Shift + Backspace**: Remove all work areas in the current image.
