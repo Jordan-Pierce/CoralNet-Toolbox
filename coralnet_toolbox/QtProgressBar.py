@@ -69,7 +69,6 @@ class ProgressBar(QDialog):
         self.canceled = False
         self.progress_bar.setValue(0)
         QApplication.processEvents()
-        
 
     def start_progress(self, max_value):
         """

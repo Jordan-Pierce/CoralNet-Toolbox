@@ -241,6 +241,7 @@ class Annotation(QObject):
     def deanimate(self):
         """Stop the animation for deselected annotations."""
         self.animation_timer.stop()
+        self.update_graphics_item()
     
     def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""

@@ -287,7 +287,7 @@ class SAMTool(Tool):
                 self.annotation_window.selected_label.color,
                 self.annotation_window.current_image_path,
                 self.annotation_window.selected_label.id,
-                max(self.main_window.label_window.active_label.transparency, 32)
+                self.main_window.label_window.active_label.transparency
             )
 
             # Create the graphics item for the temporary annotation
@@ -478,7 +478,7 @@ class SAMTool(Tool):
                         self.annotation_window.selected_label.color,
                         self.annotation_window.current_image_path,
                         self.annotation_window.selected_label.id,
-                        self.annotation_window.main_window.get_transparency_value()
+                        self.main_window.label_window.active_label.transparency
                     )
 
                     # Copy confidence data
@@ -619,7 +619,7 @@ class SAMTool(Tool):
             self.annotation_window.selected_label.color,
             self.annotation_window.current_image_path,
             self.annotation_window.selected_label.id,
-            self.annotation_window.main_window.get_transparency_value()
+            self.main_window.label_window.active_label.transparency
         )
 
         # Update confidence
