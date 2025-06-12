@@ -25,9 +25,7 @@ jobs:
               with:
                   python-version: ${{ matrix.python-version }}
 
-            - name: Install uv
-              run: pip install uv
-            - name: Install package with uv
-              run: uv pip install .
+            - name: Install package with pip
+              run: pip install .
             - name: Test import
               run: python -c "import coralnet_toolbox; print('coralnet_toolbox import successful')"
