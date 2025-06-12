@@ -513,13 +513,12 @@ class SeeAnythingTool(Tool):
             
             self.annotations.append(annotation)
             
-    def update_annotations_transparency(self, value):
+    def update_transparency(self, value):
         """
         Update the transparency of all unconfirmed annotations in this tool.
         """
         for annotation in self.annotations:
-            if hasattr(annotation, 'update_transparency'):
-                annotation.update_transparency(value)
+            annotation.update_transparency(value)
         self.annotation_window.scene.update()
 
     def create_polygon_annotation(self, points, confidence):
@@ -562,16 +561,10 @@ class SeeAnythingTool(Tool):
         progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(self.annotations))
-
-        # Confirm the annotations
+            
         for annotation in self.annotations:
             # Deanimate the annotation
             annotation.deanimate()
-            
-        # Update the scene to reflect deanimation
-        self.annotation_window.scene.update()
-            
-        for annotation in self.annotations:
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
@@ -581,6 +574,9 @@ class SeeAnythingTool(Tool):
 
             # Update progress bar
             progress_bar.update_progress()
+            
+        # Update the scene to reflect deanimation
+        self.annotation_window.scene.update()
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
