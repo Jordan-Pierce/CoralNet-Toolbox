@@ -4,7 +4,7 @@ import re
 import uuid
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
@@ -36,6 +36,12 @@ class Label(QWidget):
         self.pen_width = pen_width  # Add pen width property
         self.transparency = 128
         self.is_selected = False
+
+        # Animation properties
+        self._animated_line_offset = 0
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_animated_line)
+        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
 
         # Set the fixed width and height
         self.fixed_width = 100  # -20 for buffer
@@ -81,6 +87,7 @@ class Label(QWidget):
         """Select the label."""
         if not self.is_selected:
             self.is_selected = True
+            self.start_animation()
             self.update_selection()
             self.selected.emit(self)
 
@@ -88,6 +95,7 @@ class Label(QWidget):
         """Deselect the label."""
         if self.is_selected:
             self.is_selected = False
+            self.stop_animation()
             self.update_selection()
 
     def update_color(self):
@@ -136,7 +144,12 @@ class Label(QWidget):
 
         # Set the border color based on selection status
         if self.is_selected:
-            painter.setPen(QPen(Qt.black, 4, Qt.DashLine))
+            # Create animated pen with black color (consistent with other animated lines)
+            pen = QPen(QColor(0, 0, 0, 255), 3)  # Black, fully opaque, increased width
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
+            pen.setDashOffset(self._animated_line_offset)
+            painter.setPen(pen)
         else:
             # Use the label's color for the pen with the specified pen width
             painter.setPen(QPen(self.color, self.pen_width, Qt.SolidLine))
@@ -152,6 +165,25 @@ class Label(QWidget):
         painter.drawText(12, 0, self.width() - self.height(), self.height(), Qt.AlignVCenter, truncated_text)
 
         super().paintEvent(event)
+        
+    def _update_animated_line(self):
+        """Update the animated line offset for selection animation."""
+        if self.is_selected:
+            # Update the animated line offset
+            self._animated_line_offset = (self._animated_line_offset + 1) % 20  # Reset every 20 pixels
+            # Repaint the label to update the animation
+            self.update()
+
+    def start_animation(self):
+        """Start the selection animation."""
+        if not self.animation_timer.isActive():
+            self.animation_timer.start()
+
+    def stop_animation(self):
+        """Stop the selection animation."""
+        self.animation_timer.stop()
+        self._animated_line_offset = 0
+        self.update()
 
     def to_dict(self):
         """Convert the label's properties to a dictionary."""
@@ -180,6 +212,11 @@ class Label(QWidget):
                 f"long_label_code={self.long_label_code}, "
                 f"color={self.color.name()}, "
                 f"pen_width={self.pen_width})")
+        
+    def __del__(self):
+        """Clean up the timer when the label is deleted."""
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()
 
 
 class LabelWindow(QWidget):
