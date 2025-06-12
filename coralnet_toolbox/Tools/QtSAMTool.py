@@ -152,12 +152,14 @@ class SAMTool(Tool):
         """
         Clear the temporary annotation and its graphics.
         """
-        # We don't need to remove temp_graphics separately, as it's now handled by the annotation
         if self.temp_annotation:
+            # Stop animation first
+            self.temp_annotation.deanimate()
+            # Then delete the annotation
             self.temp_annotation.delete()
             self.temp_annotation = None
-            self.temp_graphics = None
-
+            
+        # Force scene update to ensure graphics are removed
         self.annotation_window.scene.update()
 
     def clear_prompt_graphics(self):
@@ -200,7 +202,7 @@ class SAMTool(Tool):
         Args:
             scene_pos (QPointF): Current scene position for hover point
         """
-        # Clear any existing temporary annotation
+        # Clear any existing temporary annotation first
         self.clear_temp_annotation()
 
         if not self.working_area:
@@ -212,92 +214,91 @@ class SAMTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Prepare points and bounding box for SAM
-        positive = [[point.x(), point.y()] for point in self.positive_points]
-        negative = [[point.x(), point.y()] for point in self.negative_points]
-        bbox = np.array([])
+        try:
+            # Prepare points and bounding box for SAM
+            positive = [[point.x(), point.y()] for point in self.positive_points]
+            negative = [[point.x(), point.y()] for point in self.negative_points]
+            bbox = np.array([])
 
-        # Add hover point as a positive point if available and we're not drawing a rectangle
-        if scene_pos and not self.drawing_rectangle:
-            # Adjust hover point relative to working area
+            # Add hover point as a positive point if available and we're not drawing a rectangle
+            if scene_pos and not self.drawing_rectangle:
+                # Adjust hover point relative to working area
+                working_area_top_left = self.working_area.rect.topLeft()
+                adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
+                                       scene_pos.y() - working_area_top_left.y())
+                # Add to positive points for prediction
+                positive.append([adjusted_pos.x(), adjusted_pos.y()])
+
+            # If we have a rectangle, use it
+            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
+                bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
+
+            # Convert to numpy arrays for SAM
+            labels = np.array([1] * len(positive) + [0] * len(negative))
+            points = np.array(positive + negative)
+
+            # If no prompts, return without creating annotation
+            if len(points) == 0 and bbox.size == 0:
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Predict the mask from prompts
+            results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
+
+            if not results or not results.boxes.conf.numel():
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Skip low confidence predictions for temporary annotations
+            if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Get the points of the top1 mask
+            top1_index = np.argmax(results.boxes.conf)
+            predictions = results[top1_index].masks.xy[0]
+
+            # Safety check: make sure we have predicted points
+            if len(predictions) == 0:
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Clean the polygon using Ramer-Douglas-Peucker algorithm
+            predictions = simplify_polygon(predictions, 0.1)
+
+            # Safety check: need at least 3 points for a valid polygon
+            if len(predictions) < 3:
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Move the points back to the original image space
             working_area_top_left = self.working_area.rect.topLeft()
-            adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
-                                   scene_pos.y() - working_area_top_left.y())
-            # Add to positive points for prediction
-            positive.append([adjusted_pos.x(), adjusted_pos.y()])
+            points = [(point[0] + working_area_top_left.x(),
+                       point[1] + working_area_top_left.y()) for point in predictions]
 
-        # If we have a rectangle, use it
-        if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
-            bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
+            # Convert to QPointF for graphics
+            self.points = [QPointF(*point) for point in points]
 
-        # Convert to numpy arrays for SAM
-        labels = np.array([1] * len(positive) + [0] * len(negative))
-        points = np.array(positive + negative)
+            # Create the temporary annotation
+            self.temp_annotation = PolygonAnnotation(
+                self.points,
+                self.annotation_window.selected_label.short_label_code,
+                self.annotation_window.selected_label.long_label_code,
+                self.annotation_window.selected_label.color,
+                self.annotation_window.current_image_path,
+                self.annotation_window.selected_label.id,
+                max(self.main_window.label_window.active_label.transparency, 32)
+            )
 
-        # If no prompts, return without creating annotation
-        if len(points) == 0 and bbox.size == 0:
+            # Create the graphics item for the temporary annotation
+            self.temp_annotation.create_graphics_item(self.annotation_window.scene)
+            
+            # Make the annotation animated immediately
+            self.temp_annotation.animate(force=True)
+            
+        finally:
+            # Always restore cursor
             QApplication.restoreOverrideCursor()
-            return
-
-        # Predict the mask from prompts
-        results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
-
-        if not results or not results.boxes.conf.numel():
-            QApplication.restoreOverrideCursor()
-            return
-
-        # Skip low confidence predictions for temporary annotations
-        if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
-            QApplication.restoreOverrideCursor()
-            return
-
-        # Get the points of the top1 mask
-        top1_index = np.argmax(results.boxes.conf)
-        predictions = results[top1_index].masks.xy[0]
-
-        # Safety check: make sure we have predicted points
-        if len(predictions) == 0:
-            QApplication.restoreOverrideCursor()
-            return
-
-        # Clean the polygon using Ramer-Douglas-Peucker algorithm
-        predictions = simplify_polygon(predictions, 0.1)
-
-        # Safety check: need at least 3 points for a valid polygon
-        if len(predictions) < 3:
-            QApplication.restoreOverrideCursor()
-            return
-
-        # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect.topLeft()
-        points = [(point[0] + working_area_top_left.x(),
-                   point[1] + working_area_top_left.y()) for point in predictions]
-
-        # Convert to QPointF for graphics
-        self.points = [QPointF(*point) for point in points]
-
-        # Get confidence for the annotation
-        confidence = results.boxes.conf[top1_index].item()
-
-        # Create the temporary annotation
-        self.temp_annotation = PolygonAnnotation(
-            self.points,
-            self.annotation_window.selected_label.short_label_code,
-            self.annotation_window.selected_label.long_label_code,
-            self.annotation_window.selected_label.color,
-            self.annotation_window.current_image_path,
-            self.annotation_window.selected_label.id,
-            max(self.main_window.label_window.active_label.transparency, 32)
-        )
-
-        # Update confidence score
-        self.temp_annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-
-        # Create the graphics item for the temporary annotation
-        self.temp_annotation.create_graphics_item(self.annotation_window.scene)
-
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
 
     def display_rectangle(self):
         """
@@ -599,6 +600,7 @@ class SAMTool(Tool):
         working_area_top_left = self.working_area.rect.topLeft()
         points = [(point[0] + working_area_top_left.x(),
                    point[1] + working_area_top_left.y()) for point in predictions]
+        # Convert to QPointF for graphics
         self.points = [QPointF(*point) for point in points]
 
         # Require at least 3 points for valid polygon

@@ -228,10 +228,15 @@ class Annotation(QObject):
         self._animated_line = (self._animated_line + 1) % 20  # Reset every 20 pixels
         self._update_pen_styles()
     
-    def animate(self):
-        """Start the animation for selected annotations."""
-        if not self.animation_timer.isActive():
-            self.animation_timer.start()
+    def animate(self, force=False):
+        """Start the animation for selected annotations.
+        
+        Args:
+            force (bool): If True, force animation even if annotation is not selected
+        """
+        if force or self.is_selected:
+            if not self.animation_timer.isActive():
+                self.animation_timer.start()
     
     def deanimate(self):
         """Stop the animation for deselected annotations."""
@@ -239,8 +244,8 @@ class Annotation(QObject):
     
     def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""
-        # Set pen style based on selection state
-        if self.is_selected:
+        # Set pen style based on selection state OR if animation is active (for forced animation)
+        if self.is_selected or self.animation_timer.isActive():
             # Use same color if verified, black if not verified
             if self.verified:
                 pen_color = QColor(base_color)  # Create a copy
@@ -264,7 +269,8 @@ class Annotation(QObject):
     
     def _update_pen_styles(self):
         """Update pen styles with current animated line offset."""
-        if not self.is_selected:
+        # Only update if selected OR if animation is running (for forced animation)
+        if not self.is_selected and not self.animation_timer.isActive():
             return
             
         color = QColor(self.label.color)
