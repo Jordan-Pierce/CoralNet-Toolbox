@@ -38,7 +38,7 @@ jobs:
               run: |
                   pip install
                   pip install --user -r requirements.txt
-                  pip install .
+                  pip install -e .
             - name: PKG-TEST
               run: |
                   python -m unittest discover tests/
