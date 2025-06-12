@@ -36,9 +36,9 @@ jobs:
                   gdalinfo --version
             - name: Install dependencies
               run: |
-                  pip install uv
-                  uv pip install --user -r requirements.txt
-                  uv pip install .
+                  pip install
+                  pip install --user -r requirements.txt
+                  pip install .
             - name: PKG-TEST
               run: |
                   python -m unittest discover tests/
