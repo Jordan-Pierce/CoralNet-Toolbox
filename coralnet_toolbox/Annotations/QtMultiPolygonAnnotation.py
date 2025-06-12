@@ -153,8 +153,8 @@ class MultiPolygonAnnotation(Annotation):
 
         # Draw dashed outline for each polygon
         pen = QPen(self.label.color)
-        pen.setStyle(Qt.DashLine)
-        pen.setWidth(2)
+        pen.setStyle(Qt.SolidLine)  # Solid line
+        pen.setWidth(1)  # Line width
         result_painter.setPen(pen)
         result_painter.setClipping(False)
         for poly in self.polygons:
