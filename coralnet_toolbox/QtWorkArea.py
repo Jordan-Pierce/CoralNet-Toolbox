@@ -3,7 +3,7 @@ import warnings
 import json
 import random
 
-from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt
+from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, QTimer
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem
 
@@ -47,6 +47,42 @@ class WorkArea(QObject):
         random_color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
         self.work_area_pen = QPen(random_color, 2, Qt.DashLine)  # Default style
         
+        # Animation state for animated line
+        self._animated_line = 0
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_animated_line)
+        self.animation_timer.setInterval(50)  # 50ms for smooth animation
+
+    def _create_pen(self):
+        """Create a pen with animated dash offset if animating."""
+        pen = QPen(self.work_area_pen)
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([2, 3])
+        pen.setDashOffset(self._animated_line)
+        return pen
+
+    def _update_animated_line(self):
+        """Update the animated line offset for animation."""
+        self._animated_line = (self._animated_line + 1) % 20
+        self._update_pen_style()
+
+    def animate(self):
+        """Start the animated line effect for the work area rectangle."""
+        if not self.animation_timer.isActive():
+            self.animation_timer.start()
+
+    def deanimate(self):
+        """Stop the animated line effect for the work area rectangle."""
+        self.animation_timer.stop()
+        self._animated_line = 0
+        self._update_pen_style()
+
+    def _update_pen_style(self):
+        """Update the pen style of the graphics item with the current dash offset."""
+        if self.graphics_item:
+            self.graphics_item.setPen(self._create_pen())
+            self.graphics_item.update()
+
     @classmethod
     def from_rect(cls, rect, image_path=None):
         """
@@ -112,7 +148,7 @@ class WorkArea(QObject):
         if not self.graphics_item:
             self.graphics_item = QGraphicsRectItem(self.rect)
             self.work_area_pen.setWidth(pen_width)
-            self.graphics_item.setPen(self.work_area_pen)
+            self.graphics_item.setPen(self._create_pen())
             
             # Store reference to the work area in the graphics item
             self.graphics_item.setData(0, "work_area")
@@ -120,6 +156,8 @@ class WorkArea(QObject):
             
             # Add to scene
             scene.addItem(self.graphics_item)
+            # Always start animation when shown
+            self.animate()
         
         # Remove any existing shadow before creating a new one
         if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():

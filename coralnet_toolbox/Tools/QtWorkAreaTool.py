@@ -31,7 +31,7 @@ class WorkAreaTool(Tool):
         self.work_areas = []  # List to store WorkArea objects for the current image
         
         # Style settings for drawing the work area rectangle
-        self.work_area_pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)
+        self.work_area_pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
         
         # Track if Ctrl key is pressed
         self.ctrl_pressed = False
