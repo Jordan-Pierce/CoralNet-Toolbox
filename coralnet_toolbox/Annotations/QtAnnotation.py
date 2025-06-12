@@ -248,7 +248,10 @@ class Annotation(QObject):
             else:
                 pen_color = QColor(0, 0, 0, 255)  # Black, fully opaque
             
-            pen = QPen(pen_color, 2)  # Reduced width for dotted line
+            # [1, 2] - Very small dots with small gaps
+            # [2, 4] - Small dots with larger gaps
+            # [1, 3] - Tiny dots with medium gaps
+            pen = QPen(pen_color, 2)  # Width for dotted line
             pen.setStyle(Qt.CustomDashLine)
             pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
             pen.setDashOffset(self._animated_line)
