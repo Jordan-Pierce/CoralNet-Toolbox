@@ -206,17 +206,8 @@ class MultiPolygonAnnotation(Annotation):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             
-            # Set pen style based on selection state
-            if self.is_selected:
-                # Use inverse color and dotted line for selected items
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 6, Qt.DotLine)
-            else:
-                # Use label color with solid line for unselected items
-                pen_color = QColor(self.label.color)
-                pen = QPen(pen_color, 4, Qt.SolidLine)
-                
-            item.setPen(pen)
+            # Use the consolidated pen creation method
+            item.setPen(self._create_pen(color))
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
             self.graphics_item_group.addToGroup(item)
@@ -251,17 +242,8 @@ class MultiPolygonAnnotation(Annotation):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             
-            # Set pen style based on selection state
-            if self.is_selected:
-                # Use inverse color and dotted line for selected items
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 6, Qt.DotLine)
-            else:
-                # Use label color with solid line for unselected items
-                pen_color = QColor(self.label.color)
-                pen = QPen(pen_color, 4, Qt.SolidLine)
-
-            item.setPen(pen)
+            # Use the consolidated pen creation method
+            item.setPen(self._create_pen(color))
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
             self.graphics_item_group.addToGroup(item)
@@ -278,6 +260,28 @@ class MultiPolygonAnnotation(Annotation):
         # Add the updated group back to the scene if available
         if scene:
             scene.addItem(self.graphics_item_group)
+    
+    def _update_pen_styles(self):
+        """Update pen styles with current animated line offset for all polygon items."""
+        if not self.is_selected:
+            return
+            
+        color = QColor(self.label.color)
+        pen = self._create_pen(color)
+        
+        # Update all polygon items in the group
+        if self.graphics_item_group:
+            for item in self.graphics_item_group.childItems():
+                if isinstance(item, QGraphicsPolygonItem):
+                    item.setPen(pen)
+        
+        # Update helper graphics items
+        if self.center_graphics_item:
+            self.center_graphics_item.setPen(pen)
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setPen(pen)
+        if self.polygon_graphics_item:
+            self.polygon_graphics_item.setPen(pen)
             
     def update_polygon(self, delta):
         """Show a warning that MultiPolygonAnnotations should be cut before updating."""
