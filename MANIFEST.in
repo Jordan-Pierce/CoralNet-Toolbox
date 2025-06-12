@@ -4,4 +4,9 @@ include requirements.txt
 
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
-
+recursive-exclude docs *
+recursive-exclude figures *
+recursive-exclude tests *
+recursive-exclude scripts *
+recursive-exclude notebooks *
+recursive-exclude viscore *

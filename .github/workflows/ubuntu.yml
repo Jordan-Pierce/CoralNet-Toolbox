@@ -38,6 +38,8 @@ jobs:
               run: |
                   pip install --user -r requirements.txt
                   pip install .
+                  pip install uv
+                  uv pip install .
             - name: PKG-TEST
               run: |
                   python -m unittest discover tests/

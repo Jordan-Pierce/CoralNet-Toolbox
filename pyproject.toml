@@ -32,7 +32,6 @@ all = [
 [tool]
 [tool.setuptools.packages.find]
 include = ["coralnet_toolbox*"]
-exclude = ["docs*", "figures*", "tests*", "scripts*", "notebooks*", "viscore*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
