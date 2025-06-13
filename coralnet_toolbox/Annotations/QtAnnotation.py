@@ -212,6 +212,11 @@ class Annotation(QObject):
         # Add the group to the scene
         scene.addItem(self.graphics_item_group)
         
+    def set_visibility(self, visible):
+        """Set the visibility of this annotation's graphics item."""
+        if self.graphics_item_group:
+            self.graphics_item_group.setVisible(visible)
+        
     @pyqtProperty(float)
     def animated_line(self):
         """Get the current animated line offset for animation."""

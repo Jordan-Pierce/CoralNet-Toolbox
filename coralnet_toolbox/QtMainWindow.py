@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
         self.apple_icon = get_icon("apple.png")
+        self.hide_icon = get_icon("hide.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
         self.all_icon = get_icon("all.png")
@@ -775,6 +776,18 @@ class MainWindow(QMainWindow):
         transparent_icon.setPixmap(self.transparent_icon.pixmap(QSize(16, 16)))
         transparent_icon.setToolTip("Transparent")
 
+        # Hide icon (before transparent icon)
+        self.hide_action = QAction(self.hide_icon, "", self)
+        self.hide_action.setCheckable(True)
+        self.hide_action.setChecked(False)
+        self.hide_action.triggered.connect(self.toggle_annotations_visibility)
+        
+        # Create button to hold the hide action
+        self.hide_button = QToolButton()
+        self.hide_action.setToolTip("Hide Annotations")
+        self.hide_button.setToolTip("Hide Annotations")
+        self.hide_button.setDefaultAction(self.hide_action)
+
         # Right icon (opaque)
         opaque_icon = QLabel()
         opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
@@ -795,6 +808,7 @@ class MainWindow(QMainWindow):
         self.all_labels_button.setDefaultAction(self.all_labels_action)
 
         # Add widgets to the transparency layout
+        transparency_layout.addWidget(self.hide_button)
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
@@ -1334,6 +1348,23 @@ class MainWindow(QMainWindow):
         height = bottom - top
 
         self.view_dimensions_label.setText(f"View: {height} x {width}")
+        
+    def toggle_annotations_visibility(self, hide):
+        """Toggle the visibility of annotations based on the hide button state."""
+        if self.all_labels_button.isChecked():
+            # Hide/show all annotations
+            self.label_window.set_all_labels_visibility(not hide)
+        else:
+            # Hide/show annotations of the active label only
+            self.label_window.set_active_label_visibility(not hide)
+        
+        # Update button tooltip
+        if hide:
+            self.hide_action.setToolTip("Show Annotations")
+            self.hide_button.setToolTip("Show Annotations")
+        else:
+            self.hide_action.setToolTip("Hide Annotations")
+            self.hide_button.setToolTip("Hide Annotations")
 
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
