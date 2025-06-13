@@ -286,6 +286,24 @@ class AnnotationWindow(QGraphicsView):
         if len(self.selected_annotations) <= 1:
             # Emit that the annotation size has changed
             self.annotationSizeChanged.emit(self.annotation_size)
+            
+    def set_annotation_visibility(self, annotation):
+        """Set the visibility of an annotation and update its graphics item."""
+        print("LabelWindow Active Label:", self.main_window.label_window.active_label)
+        # Set visibility based on hide button state
+        if self.main_window.hide_action.isChecked():
+            # # Hide button is pressed - check if we should hide this annotation
+            # if self.main_window.all_labels_button.isChecked():
+            #     # All labels mode - hide all annotations
+            #     annotation.set_visibility(False)
+            # else:
+            #     # Active label mode - hide only if this annotation matches the active label
+            #     # if self.main_window.label_window.active_label and \
+            #     #     annotation.label.id == self.main_window.label_window.active_label.id:
+            annotation.set_visibility(False)
+        else:
+            # Hide button is not pressed - show the annotation
+            annotation.set_visibility(True)
 
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""
@@ -533,6 +551,8 @@ class AnnotationWindow(QGraphicsView):
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
         
+        # Set the current visibility of the annotation
+        self.set_annotation_visibility(annotation)
         # Always update the viewport
         self.viewport().update()
 
@@ -579,6 +599,8 @@ class AnnotationWindow(QGraphicsView):
             
             # Update annotation's internal state
             annotation.deselect()
+            # Set the current visibility of the annotation
+            self.set_annotation_visibility(annotation)
             
             # Clear confidence window if no annotations remain selected
             if not self.selected_annotations:
@@ -609,6 +631,8 @@ class AnnotationWindow(QGraphicsView):
             
             # Update annotation's internal state
             annotation.deselect()
+            # Set the visibility of the annotation
+            self.set_annotation_visibility(annotation)
         
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -627,10 +651,14 @@ class AnnotationWindow(QGraphicsView):
 
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)
+        # Set the visibility based on the hide button state
+        self.set_annotation_visibility(annotation)
+        
         # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
         annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+        
         # Update the view
         self.viewport().update()
 
@@ -771,6 +799,9 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
+            
+        # Set the visibility based on the hide button state
+        self.set_annotation_visibility(annotation)
 
     def delete_annotation(self, annotation_id):
         """Delete an annotation by its ID."""

@@ -394,9 +394,6 @@ class ResultsProcessor:
         :param conf: Confidence score
         :param predictions: Dictionary containing class predictions
         """
-        # Add the annotation to the annotation window
-        self.annotation_window.add_annotation_to_dict(annotation)
-
         # Connect signals
         annotation.selected.connect(self.annotation_window.select_annotation)
         annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
@@ -423,3 +420,5 @@ class ResultsProcessor:
         self.image_window.update_image_annotations(image_path)
         # Unselect all annotations
         self.annotation_window.unselect_annotations()
+        # Add the annotation to the annotation window
+        self.annotation_window.add_annotation_to_dict(annotation)

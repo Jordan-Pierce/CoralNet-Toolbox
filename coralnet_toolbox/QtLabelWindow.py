@@ -577,29 +577,29 @@ class LabelWindow(QWidget):
         self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
 
-    def set_active_label_visibility(self, visible):
-        """Set the visibility for the active label and its associated annotations."""
-        if not self.active_label:
-            return
+    # def set_active_label_visibility(self, visible):
+    #     """Set the visibility for the active label and its associated annotations."""
+    #     if not self.active_label:
+    #         return
     
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+    #     # Make cursor busy
+    #     QApplication.setOverrideCursor(Qt.WaitCursor)
     
-        # Block signals for batch update
-        self.annotation_window.blockSignals(True)
-        try:
-            # Update the visibility of all annotations with the active label
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == self.active_label.id:
-                    annotation.set_visibility(visible)
-        finally:
-            self.annotation_window.blockSignals(False)
+    #     # Block signals for batch update
+    #     self.annotation_window.blockSignals(True)
+    #     try:
+    #         # Update the visibility of all annotations with the active label
+    #         for annotation in self.annotation_window.annotations_dict.values():
+    #             if annotation.label.id == self.active_label.id:
+    #                 annotation.set_visibility(visible)
+    #     finally:
+    #         self.annotation_window.blockSignals(False)
     
-        self.annotation_window.scene.update()
-        self.annotation_window.viewport().update()
+    #     self.annotation_window.scene.update()
+    #     self.annotation_window.viewport().update()
     
-        # Make cursor normal again
-        QApplication.restoreOverrideCursor()
+    #     # Make cursor normal again
+    #     QApplication.restoreOverrideCursor()
     
     def set_all_labels_visibility(self, visible):
         """Set the visibility for all labels and annotations."""

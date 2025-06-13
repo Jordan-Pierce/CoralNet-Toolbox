@@ -66,7 +66,7 @@ class Annotation(QObject):
         self._animated_line = 0
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+        self.animation_timer.setInterval(75)  # Update every 50ms for smooth animation
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
@@ -262,16 +262,16 @@ class Annotation(QObject):
             # [1, 2] - Very small dots with small gaps
             # [2, 4] - Small dots with larger gaps
             # [1, 3] - Tiny dots with medium gaps
-            pen = QPen(pen_color, 4)  # Width for dotted line
+            pen = QPen(pen_color, 3)  # Width for dotted line
             pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
+            pen.setDashPattern([1, 2])  # Dotted pattern: 2 pixels on, 3 pixels off
             pen.setDashOffset(self._animated_line)
             return pen
         else:
             # Use label color with solid line for unselected items, always opaque
             pen_color = QColor(base_color)
             pen_color.setAlpha(255)  # Pen should always be fully opaque
-            return QPen(pen_color, 3, Qt.SolidLine)  # Consistent width
+            return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
     
     def _update_pen_styles(self):
         """Update pen styles with current animated line offset."""
@@ -307,7 +307,7 @@ class Annotation(QObject):
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
     
-        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
+        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 4, center_xy.y() - 4, 8, 8)
         self.center_graphics_item.setBrush(color)
     
         # Use the consolidated pen creation method
@@ -456,8 +456,11 @@ class Annotation(QObject):
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""
         if self.transparency != transparency:
+            # Update the transparency value
             self.transparency = transparency
-            self.update_graphics_item()
+            # If the annotation is visable, update the graphics item
+            if self.graphics_item_group is not None and self.graphics_item_group.isVisible():
+                self.update_graphics_item()
 
     def update_label(self, new_label: 'Label', set_review=False):
         """Update the annotation's label while preserving confidence values."""

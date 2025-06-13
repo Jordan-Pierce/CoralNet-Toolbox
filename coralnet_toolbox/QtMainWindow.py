@@ -1351,12 +1351,12 @@ class MainWindow(QMainWindow):
         
     def toggle_annotations_visibility(self, hide):
         """Toggle the visibility of annotations based on the hide button state."""
-        if self.all_labels_button.isChecked():
-            # Hide/show all annotations
-            self.label_window.set_all_labels_visibility(not hide)
-        else:
-            # Hide/show annotations of the active label only
-            self.label_window.set_active_label_visibility(not hide)
+        # if self.all_labels_button.isChecked():
+        #     # Hide/show all annotations
+        self.label_window.set_all_labels_visibility(not hide)
+        # else:
+        #     # Hide/show annotations of the active label only
+              # self.label_window.set_active_label_visibility(not hide)
         
         # Update button tooltip
         if hide:
