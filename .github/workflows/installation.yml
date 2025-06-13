@@ -34,3 +34,9 @@ jobs:
               run: uv pip install -e .
               env:
                   UV_SYSTEM_PYTHON: 1
+            
+            - name: Test import coralnet_toolbox
+              run: |
+                  python -c "import coralnet_toolbox; print('Successfully imported coralnet_toolbox')"
+              env:
+                  UV_SYSTEM_PYTHON: 1
