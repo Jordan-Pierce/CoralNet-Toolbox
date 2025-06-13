@@ -37,6 +37,9 @@ jobs:
           - name: Install dependencies
             run: |
                 python -m pip install --upgrade pip
-                pip install --no-cache-dir Cython
-                pip install -r requirements.txt
-                pip install -e .
+                pip install uv
+                uv pip install --no-cache-dir Cython
+                uv pip install -r requirements.txt
+                uv pip install -e .
+            env:
+                UV_SYSTEM_PYTHON: 1
