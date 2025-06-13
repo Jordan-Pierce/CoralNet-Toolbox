@@ -223,6 +223,8 @@ if you so choose. To upgrade, run the following command from your terminal:
 uv pip install -U coralnet-toolbox==[enter_newest_version_here]
 ```
 
+Again, fall back to using just `pip` and not `uv` if this fails.
+
 ## 🌊 Success Stories
 
 Using the `toolbox`? Share your successes and we can feature your work to help others learn!

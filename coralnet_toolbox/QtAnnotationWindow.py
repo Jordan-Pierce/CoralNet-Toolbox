@@ -289,21 +289,26 @@ class AnnotationWindow(QGraphicsView):
             
     def set_annotation_visibility(self, annotation):
         """Set the visibility of an annotation and update its graphics item."""
-        print("LabelWindow Active Label:", self.main_window.label_window.active_label)
         # Set visibility based on hide button state
         if self.main_window.hide_action.isChecked():
-            # # Hide button is pressed - check if we should hide this annotation
-            # if self.main_window.all_labels_button.isChecked():
-            #     # All labels mode - hide all annotations
-            #     annotation.set_visibility(False)
-            # else:
-            #     # Active label mode - hide only if this annotation matches the active label
-            #     # if self.main_window.label_window.active_label and \
-            #     #     annotation.label.id == self.main_window.label_window.active_label.id:
+            # Hide button is pressed - hide the annotation
             annotation.set_visibility(False)
         else:
             # Hide button is not pressed - show the annotation
             annotation.set_visibility(True)
+            
+    def set_label_visibility(self, visible):
+        """Set the visibility for all labels."""
+        # Block signals for batch update
+        self.blockSignals(True)
+        try:
+            for annotation in self.annotations_dict.values():
+                self.set_annotation_visibility(annotation)
+        finally:
+            self.blockSignals(False)
+    
+        self.scene.update()
+        self.viewport().update()
 
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""

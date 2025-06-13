@@ -16,19 +16,18 @@ jobs:
               with:
                   python-version: "3.10"
 
-            - name: Install GDAL
+            - name: Install uv
               run: |
                   python -m pip install --upgrade pip
-                  pip install --find-links=https://girder.github.io/large_image_wheels --no-cache GDAL pyproj
-            - name: Test GDAL installation
-              run: |
-                  python -c "from osgeo import gdal"
-                  gdalinfo --version
+                  pip install uv
+
             - name: Install dependencies
               run: |
-                  pip install --no-cache-dir Cython
-                  pip install -r requirements.txt -r requirements_dev.txt
-                  pip install .
+                  uv pip install --no-cache-dir Cython
+                  uv pip install -r requirements.txt -r requirements_dev.txt
+                  uv pip install .
+              env:
+                  UV_SYSTEM_PYTHON: 1
             - name: Discover typos with codespell
               run: codespell --skip="*.csv,*.geojson,*.json,*.js,*.html,*cff,*.pdf,./.git" --ignore-words-list="aci,acount,hist"
             - name: PKG-TEST
