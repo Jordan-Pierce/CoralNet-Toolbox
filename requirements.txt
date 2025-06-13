@@ -11,6 +11,7 @@ ujson
 timm==0.9.2
 autodistill
 transformers>=4.5.0
+filterpy>=1.4.5
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.19
 roboflow
