@@ -458,7 +458,7 @@ class Annotation(QObject):
         if self.transparency != transparency:
             # Update the transparency value
             self.transparency = transparency
-            # If the annotation is visable, update the graphics item
+            # If the annotation is visible, update the graphics item
             if self.graphics_item_group is not None and self.graphics_item_group.isVisible():
                 self.update_graphics_item()
 
