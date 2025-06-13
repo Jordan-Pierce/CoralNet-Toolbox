@@ -23,14 +23,9 @@ class DepthEstimator:
             model_size (str): Model size ('small', 'base', 'large')
             device (str): Device to run inference on ('cuda', 'cpu', 'mps')
         """
-        # Determine device
+        # Use provided device or default to CPU
         if device is None:
-            if torch.cuda.is_available():
-                device = 'cuda'
-            elif hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                device = 'mps'
-            else:
-                device = 'cpu'
+            device = 'cpu'
         
         self.device = device
         
@@ -185,4 +180,4 @@ class DepthEstimator:
         elif method == 'min':
             return float(np.min(region))
         else:
-            return float(np.median(region)) 
+            return float(np.median(region))

@@ -4,6 +4,7 @@ import time
 import cv2
 import numpy as np
 import torch
+import argparse
 
 # Set MPS fallback for operations not supported on Apple Silicon
 if hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
@@ -16,70 +17,286 @@ from bbox3d_utils import BBox3DEstimator, BirdEyeView
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def detect_device(preferred_device=None):
+    """
+    Detect and return the best available device for PyTorch operations.
+    
+    Args:
+        preferred_device (str): User's preferred device ('cuda', 'mps', 'cpu', or None for auto)
+        
+    Returns:
+        str: The device to use ('cuda', 'mps', or 'cpu')
+    """
+    print("Detecting available devices...")
+    
+    # Check what's available
+    cuda_available = torch.cuda.is_available()
+    mps_available = hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+    
+    # Print device availability information
+    if cuda_available:
+        print(f"✓ CUDA available: {torch.cuda.get_device_name(0)} ({torch.cuda.device_count()} device(s))")
+    else:
+        print("✗ CUDA not available")
+        
+    if mps_available:
+        print("✓ Apple Silicon MPS available")
+    else:
+        print("✗ Apple Silicon MPS not available")
+        
+    print("✓ CPU always available")
+    
+    # Determine the device to use
+    if preferred_device is None:
+        # Auto-detect best device
+        if cuda_available:
+            device = 'cuda'
+            print(f"🚀 Auto-selected device: {device} (CUDA GPU acceleration)")
+        elif mps_available:
+            device = 'mps'
+            print(f"🚀 Auto-selected device: {device} (Apple Silicon acceleration)")
+        else:
+            device = 'cpu'
+            print(f"🚀 Auto-selected device: {device} (CPU processing)")
+    else:
+        # Use user's preferred device if available
+        if preferred_device == 'cuda':
+            if cuda_available:
+                device = 'cuda'
+                print(f"🚀 Using user-specified device: {device}")
+            else:
+                print("⚠️  CUDA requested but not available, falling back to CPU")
+                device = 'cpu'
+        elif preferred_device == 'mps':
+            if mps_available:
+                device = 'mps'
+                print(f"🚀 Using user-specified device: {device}")
+            else:
+                print("⚠️  MPS requested but not available, falling back to CPU")
+                device = 'cpu'
+        elif preferred_device == 'cpu':
+            device = 'cpu'
+            print(f"🚀 Using user-specified device: {device}")
+        else:
+            print(f"⚠️  Unknown device '{preferred_device}' requested, falling back to auto-detection")
+            return detect_device(None)  # Recursive call for auto-detection
+    
+    return device
+
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="3D Object Detection with YOLO and Depth Estimation",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="""
+Examples:
+
+  # Basic usage with webcam and default settings
+  python run.py
+
+  # Use a video file with custom YOLO model
+  python run.py --input video.mp4 --yolo-path custom_model.pt --output result.mp4
+
+  # Use larger models with GPU
+  python run.py --yolo-size large --depth-size base --device cuda
+
+  # Headless processing (no display windows)
+  python run.py --input video.mp4 --output result.mp4 --no-display
+
+  # Filter for specific classes (person=0, car=2)
+  python run.py --classes 0 2 --conf-threshold 0.5
+""",
+    )
+    
+    # Input/Output arguments
+    parser.add_argument(
+        '--input', '-i',
+        type=str,
+        default='0',
+        help='Input video source (video file path, webcam index like "0", or "1")'
+    )
+    
+    parser.add_argument(
+        '--output', '-o',
+        type=str,
+        default='output.mp4',
+        help='Output video file path'
+    )
+    
+    # YOLO model arguments
+    yolo_group = parser.add_mutually_exclusive_group()
+    yolo_group.add_argument(
+        '--yolo-path',
+        type=str,
+        help='Path to custom YOLO model file (.pt)'
+    )
+    
+    yolo_group.add_argument(
+        '--yolo-size',
+        type=str,
+        choices=['nano', 'small', 'medium', 'large', 'extra'],
+        default='nano',
+        help='YOLO model size (ignored if --yolo-path is specified)'
+    )
+    
+    # Depth model arguments
+    parser.add_argument(
+        '--depth-size',
+        type=str,
+        choices=['small', 'base', 'large'],
+        default='small',
+        help='Depth estimation model size'
+    )
+    
+    # Detection settings
+    parser.add_argument(
+        '--conf-threshold',
+        type=float,
+        default=0.25,
+        help='Confidence threshold for object detection'
+    )
+    
+    parser.add_argument(
+        '--iou-threshold',
+        type=float,
+        default=0.45,
+        help='IoU threshold for NMS'
+    )
+    
+    parser.add_argument(
+        '--classes',
+        type=int,
+        nargs='*',
+        help='Filter by specific class IDs (e.g., --classes 0 1 2 for persons, bicycles, cars)'
+    )
+    
+    # Device settings
+    parser.add_argument(
+        '--device',
+        type=str,
+        choices=['cpu', 'cuda', 'mps', 'auto'],
+        default='auto',
+        help='Device to run inference on'
+    )
+    
+    # Feature toggles
+    parser.add_argument(
+        '--no-tracking',
+        action='store_true',
+        help='Disable object tracking'
+    )
+    
+    parser.add_argument(
+        '--no-bev',
+        action='store_true',
+        help='Disable Bird\'s Eye View visualization'
+    )
+    
+    parser.add_argument(
+        '--no-display',
+        action='store_true',
+        help='Disable real-time display windows (useful for headless processing)'
+    )
+    
+    return parser.parse_args()
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------------------------------------------
 
 
 def main():
     """Main function."""
-    # Configuration variables (modify these as needed)
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Configuration from arguments
     # ===============================================
     
     # Input/Output
-    source = sys.argv[1] if len(sys.argv) > 1 else 0  # Use command line argument if provided, otherwise webcam
-    output_path = "output.mp4"  # Path to output video file
+    source = args.input
+    # Convert webcam string numbers to integers
+    try:
+        if source.isdigit():
+            source = int(source)
+    except (ValueError, AttributeError):
+        pass  # Keep as string for video files
+    
+    output_path = args.output
     
     # Model settings
-    yolo_model_size = "nano"  # YOLOv11 model size: "nano", "small", "medium", "large", "extra"
-    depth_model_size = "small"  # Depth Anything v2 model size: "small", "base", "large"
+    yolo_model_size = args.yolo_size
+    yolo_model_path = args.yolo_path
+    depth_model_size = args.depth_size
     
-    # Device settings
-    device = 'cpu'  # Force CPU for stability
+    # Device settings - centralized device detection
+    requested_device = args.device if args.device != 'auto' else None
+    device = detect_device(requested_device)
     
     # Detection settings
-    conf_threshold = 0.25  # Confidence threshold for object detection
-    iou_threshold = 0.45  # IoU threshold for NMS
-    classes = None  # Filter by class, e.g., [0, 1, 2] for specific classes, None for all classes
+    conf_threshold = args.conf_threshold
+    iou_threshold = args.iou_threshold
+    classes = args.classes
     
     # Feature toggles
-    enable_tracking = True  # Enable object tracking
-    enable_bev = True  # Enable Bird's Eye View visualization
-    enable_pseudo_3d = True  # Enable pseudo-3D visualization
+    enable_tracking = not args.no_tracking
+    enable_bev = not args.no_bev
+    enable_display = not args.no_display
     
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
     # ===============================================
     
-    print(f"Using device: {device}")
+    print(f"\nConfiguration:")
+    print(f"Input source: {source}")
+    print(f"Output path: {output_path}")
+    print(f"YOLO model: {'Custom path: ' + yolo_model_path if yolo_model_path else 'Size: ' + yolo_model_size}")
+    print(f"Depth model size: {depth_model_size}")
+    print(f"Device: {device}")
+    print(f"Tracking: {'enabled' if enable_tracking else 'disabled'}")
+    print(f"Bird's Eye View: {'enabled' if enable_bev else 'disabled'}")
+    print(f"Display: {'enabled' if enable_display else 'disabled'}")
     
-    # Initialize models
-    print("Initializing models...")
+    # Initialize models with the detected device
+    print("\nInitializing models...")
     try:
+        print("Loading YOLO object detector...")
         detector = ObjectDetector(
             model_size=yolo_model_size,
             conf_thres=conf_threshold,
             iou_thres=iou_threshold,
             classes=classes,
-            device=device
+            device=device,
+            path=yolo_model_path
         )
+        print("✓ YOLO object detector loaded successfully")
     except Exception as e:
-        print(f"Error initializing object detector: {e}")
+        print(f"✗ Error initializing object detector: {e}")
         print("Falling back to CPU for object detection")
         detector = ObjectDetector(
             model_size=yolo_model_size,
             conf_thres=conf_threshold,
             iou_thres=iou_threshold,
             classes=classes,
-            device='cpu'
+            device='cpu',
+            path=yolo_model_path
         )
     
     try:
+        print("Loading depth estimation model...")
         depth_estimator = DepthEstimator(
             model_size=depth_model_size,
             device=device
         )
+        print("✓ Depth estimation model loaded successfully")
     except Exception as e:
-        print(f"Error initializing depth estimator: {e}")
+        print(f"✗ Error initializing depth estimator: {e}")
         print("Falling back to CPU for depth estimation")
         depth_estimator = DepthEstimator(
             model_size=depth_model_size,
@@ -130,10 +347,11 @@ def main():
     # Main loop
     while True:
         # Check for key press at the beginning of each loop
-        key = cv2.waitKey(1)
-        if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
-            print("Exiting program...")
-            break
+        if enable_display:
+            key = cv2.waitKey(1)
+            if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
+                print("Exiting program...")
+                break
             
         try:
             # Read frame
@@ -298,24 +516,26 @@ def main():
             # Write frame to output video
             out.write(result_frame)
             
-            # Display frames
-            cv2.imshow("3D Object Detection", result_frame)
-            cv2.imshow("Depth Map", depth_colored)
-            cv2.imshow("Object Detection", detection_frame)
-            
-            # Check for key press again at the end of the loop
-            key = cv2.waitKey(1)
-            if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
-                print("Exiting program...")
-                break
+            # Display frames only if display is enabled
+            if enable_display:
+                cv2.imshow("3D Object Detection", result_frame)
+                cv2.imshow("Depth Map", depth_colored)
+                cv2.imshow("Object Detection", detection_frame)
+                
+                # Check for key press again at the end of the loop
+                key = cv2.waitKey(1)
+                if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
+                    print("Exiting program...")
+                    break
         
         except Exception as e:
             print(f"Error processing frame: {e}")
             # Also check for key press during exception handling
-            key = cv2.waitKey(1)
-            if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
-                print("Exiting program...")
-                break
+            if enable_display:
+                key = cv2.waitKey(1)
+                if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
+                    print("Exiting program...")
+                    break
             continue
     
     # Clean up

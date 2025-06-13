@@ -13,7 +13,7 @@ class ObjectDetector:
     """
     Object detection using YOLOv11 from Ultralytics
     """
-    def __init__(self, model_size='small', conf_thres=0.25, iou_thres=0.45, classes=None, device=None):
+    def __init__(self, model_size='small', conf_thres=0.25, iou_thres=0.45, classes=None, device=None, path=None):
         """
         Initialize the object detector
         
@@ -23,15 +23,11 @@ class ObjectDetector:
             iou_thres (float): IoU threshold for NMS
             classes (list): List of classes to detect (None for all classes)
             device (str): Device to run inference on ('cuda', 'cpu', 'mps')
+            path (str): Custom path to model file (if None, uses default model based on model_size)
         """
-        # Determine device
+        # Use provided device or default to CPU
         if device is None:
-            if torch.cuda.is_available():
-                device = 'cuda'
-            elif hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                device = 'mps'
-            else:
-                device = 'cpu'
+            device = 'cpu'
         
         self.device = device
         
@@ -51,12 +47,16 @@ class ObjectDetector:
             'extra': 'yolo11x'
         }
         
-        model_name = model_map.get(model_size.lower(), model_map['small'])
+        # Use custom path if provided, otherwise use default model name
+        if path is not None:
+            model_name = path
+        else:
+            model_name = model_map.get(model_size.lower(), model_map['small'])
         
         # Load model
         try:
             self.model = YOLO(model_name)
-            print(f"Loaded YOLOv11 {model_size} model on {self.device}")
+            print(f"Loaded YOLO model from {'custom path' if path else model_size} on {self.device}")
         except Exception as e:
             print(f"Error loading model: {e}")
             print("Trying to load with default settings...")
@@ -245,4 +245,4 @@ class ObjectDetector:
         Returns:
             list: List of class names
         """
-        return self.model.names 
+        return self.model.names
