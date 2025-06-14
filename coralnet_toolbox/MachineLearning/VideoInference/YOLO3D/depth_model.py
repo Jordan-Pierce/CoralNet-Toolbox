@@ -45,7 +45,8 @@ class DepthEstimator:
         model_map = {
             'small': 'depth-anything/Depth-Anything-V2-Small-hf',
             'base': 'depth-anything/Depth-Anything-V2-Base-hf',
-            'large': 'depth-anything/Depth-Anything-V2-Large-hf'
+            'large': 'depth-anything/Depth-Anything-V2-Large-hf',
+            'apple': 'apple/DepthPro-hf'
         }
         
         model_name = model_map.get(model_size.lower(), model_map['small'])
@@ -53,7 +54,7 @@ class DepthEstimator:
         # Create pipeline
         try:
             self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device)
-            print(f"Loaded Depth Anything v2 {model_size} model on {self.pipe_device}")
+            print(f"Loaded {model_name} on {self.pipe_device}")
         except Exception as e:
             # Fallback to CPU if there are issues
             print(f"Error loading model on {self.pipe_device}: {e}")

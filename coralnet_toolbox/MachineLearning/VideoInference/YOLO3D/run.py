@@ -92,7 +92,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="3D Object Detection with YOLO and Depth Estimation",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,        
         epilog="""
 Examples:
 
@@ -102,11 +102,14 @@ Examples:
   # Use a video file with custom YOLO model
   python run.py --input video.mp4 --yolo-path custom_model.pt --output result.mp4
 
+  # Process at half resolution for faster processing
+  python run.py --input video.mp4 --scale 0.5 --output result_small.mp4
+
   # Use larger models with GPU
   python run.py --yolo-size large --depth-size base --device cuda
 
-  # Headless processing (no display windows)
-  python run.py --input video.mp4 --output result.mp4 --no-display
+  # Headless processing (no display windows) with quarter resolution
+  python run.py --input video.mp4 --output result.mp4 --no-display --scale 0.25
 
   # Filter for specific classes (person=0, car=2)
   python run.py --classes 0 2 --conf-threshold 0.5
@@ -120,12 +123,18 @@ Examples:
         default='0',
         help='Input video source (video file path, webcam index like "0", or "1")'
     )
-    
     parser.add_argument(
         '--output', '-o',
         type=str,
         default='output.mp4',
         help='Output video file path'
+    )
+    
+    parser.add_argument(
+        '--scale',
+        type=float,
+        default=1.0,
+        help='Scale factor for frame dimensions (e.g., 0.5 for half size, 2.0 for double size)'
     )
     
     # YOLO model arguments
@@ -148,7 +157,7 @@ Examples:
     parser.add_argument(
         '--depth-size',
         type=str,
-        choices=['small', 'base', 'large'],
+        choices=['small', 'base', 'large', 'apple'],
         default='small',
         help='Depth estimation model size'
     )
@@ -230,6 +239,9 @@ def main():
     
     output_path = args.output
     
+    # Frame scaling
+    scale_factor = args.scale
+    
     # Model settings
     yolo_model_size = args.yolo_size
     yolo_model_path = args.yolo_path
@@ -252,10 +264,10 @@ def main():
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
     # ===============================================
-    
     print(f"\nConfiguration:")
     print(f"Input source: {source}")
     print(f"Output path: {output_path}")
+    print(f"Scale factor: {scale_factor}x")
     print(f"YOLO model: {'Custom path: ' + yolo_model_path if yolo_model_path else 'Size: ' + yolo_model_size}")
     print(f"Depth model size: {depth_model_size}")
     print(f"Device: {device}")
@@ -327,11 +339,18 @@ def main():
         return
     
     # Get video properties
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     if fps == 0:  # Sometimes happens with webcams
         fps = 30
+    
+    # Apply scaling to frame dimensions
+    width = int(original_width * scale_factor)
+    height = int(original_height * scale_factor)
+    
+    print(f"Original resolution: {original_width}x{original_height}")
+    print(f"Scaled resolution: {width}x{height} (scale factor: {scale_factor}x)")
     
     # Initialize video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -353,11 +372,14 @@ def main():
                 print("Exiting program...")
                 break
             
-        try:
-            # Read frame
+        try:            # Read frame
             ret, frame = cap.read()
             if not ret:
                 break
+            
+            # Apply scaling if needed
+            if scale_factor != 1.0:
+                frame = cv2.resize(frame, (width, height))
             
             # Make copies for different visualizations
             original_frame = frame.copy()
