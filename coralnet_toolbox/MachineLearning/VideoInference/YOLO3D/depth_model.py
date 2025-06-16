@@ -17,15 +17,15 @@ class DepthEstimator:
     """
     Depth estimation using Depth Anything v2 or Apple DepthPro models.
     """
-    def __init__(self, model_size='small', device=None, resize_width=640, resize_height=480):
+    def __init__(self, model_size='small', device=None, resize_width=256, resize_height=256):
         """
         Initialize the depth estimator
         
         Args:
             model_size (str): Model size ('small', 'base', 'large', 'apple')
             device (str): Device to run inference on ('cuda', 'cpu', 'mps')
-            resize_width (int): Width to resize input images to (default: 640)
-            resize_height (int): Height to resize input images to (default: 480)
+            resize_width (int): Width to resize input images to (default: 256)
+            resize_height (int): Height to resize input images to (default: 256)
         """
         # Use provided device or default to CPU
         if device is None:
