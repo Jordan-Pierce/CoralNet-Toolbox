@@ -79,6 +79,7 @@ class DepthEstimator:
                 task="depth-estimation", 
                 model=model, 
                 image_processor=processor, 
+                num_workers=8,
                 device=self.pipe_device,
             )
             print(f"Successfully created pipeline on {self.pipe_device}")
@@ -105,6 +106,7 @@ class DepthEstimator:
                 task="depth-estimation", 
                 model=model, 
                 image_processor=processor, 
+                num_workers=8,
                 device=self.pipe_device
             )
             print(f"Loaded {model_name} on CPU (fallback)")

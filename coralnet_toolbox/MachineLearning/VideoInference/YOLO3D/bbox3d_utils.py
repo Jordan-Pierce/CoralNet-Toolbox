@@ -330,7 +330,6 @@ class BBox3DEstimator:
         h, w, length = box_3d['dimensions']
         x, y, z = box_3d['location']
         rot_y = box_3d['orientation']
-        # class_name = box_3d['class_name'].lower()  # No longer used
         
         # Get 2D box for reference
         x1, y1, x2, y2 = box_3d['bbox_2d']
