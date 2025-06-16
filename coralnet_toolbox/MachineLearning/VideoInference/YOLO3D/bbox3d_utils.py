@@ -1,9 +1,14 @@
 import numpy as np
-import cv2
 from scipy.spatial.transform import Rotation as R
+import cv2
 from filterpy.kalman import KalmanFilter
 from collections import defaultdict
-import math
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Constants and Defaults
+# ----------------------------------------------------------------------------------------------------------------------
+
 
 # Default camera intrinsic matrix (can be overridden)
 DEFAULT_K = np.array([
@@ -45,6 +50,12 @@ DEFAULT_DIMS = {
     'cup': np.array([0.10, 0.08, 0.08]),
     'vase': np.array([0.30, 0.15, 0.15])
 }
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
 
 class BBox3DEstimator:
     """
@@ -413,15 +424,15 @@ class BBox3DEstimator:
         # For plants and stationary objects, make the box more centered
         if 'plant' in class_name or 'potted plant' in class_name:
             # For plants, center the box on the plant
-            x_corners = np.array([l/2, l/2, -l/2, -l/2, l/2, l/2, -l/2, -l/2])
-            y_corners = np.array([h/2, h/2, h/2, h/2, -h/2, -h/2, -h/2, -h/2])  # Center vertically
-            z_corners = np.array([w/2, -w/2, -w/2, w/2, w/2, -w/2, -w/2, w/2])
+            x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
+            y_corners = np.array([h / 2, h / 2, h / 2, h / 2, -h / 2, -h / 2, -h / 2, -h / 2])  # Center vertically
+            z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
         else:
             # For other objects, use standard box configuration
-            x_corners = np.array([l/2, l/2, -l/2, -l/2, l/2, l/2, -l/2, -l/2])
+            x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
             y_corners = np.array([0, 0, 0, 0, -h, -h, -h, -h])  # Bottom at y=0
-            z_corners = np.array([w/2, -w/2, -w/2, w/2, w/2, -w/2, -w/2, w/2])
-        
+            z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
+
         # Rotate and translate corners
         corners_3d = np.vstack([x_corners, y_corners, z_corners])
         corners_3d = R_mat @ corners_3d
@@ -537,11 +548,11 @@ class BBox3DEstimator:
         text_y = y1 - 10
         if obj_id is not None:
             cv2.putText(image, f"ID:{obj_id}", (x1, text_y), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             text_y -= 15
         
         cv2.putText(image, class_name, (x1, text_y), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         text_y -= 15
         
         # Get depth information if available
@@ -550,7 +561,7 @@ class BBox3DEstimator:
             depth_method = box_3d.get('depth_method', 'unknown')
             depth_text = f"D:{depth_value:.2f} ({depth_method})"
             cv2.putText(image, depth_text, (x1, text_y), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             text_y -= 15
         
         # Get score if available
@@ -558,7 +569,7 @@ class BBox3DEstimator:
             score = box_3d['score']
             score_text = f"S:{score:.2f}"
             cv2.putText(image, score_text, (x1, text_y), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         # Draw a vertical line from the bottom of the box to the ground
         # This helps with depth perception
@@ -589,6 +600,7 @@ class BBox3DEstimator:
         for obj_id in list(self.box_history.keys()):
             if obj_id not in active_ids_set:
                 del self.box_history[obj_id]
+
 
 class BirdEyeView:
     """
@@ -638,24 +650,24 @@ class BirdEyeView:
         
         # X-axis (upward)
         cv2.line(self.bev_image, 
-                (self.origin_x, self.origin_y), 
-                (self.origin_x, self.origin_y - axis_length), 
-                (0, 200, 0), 2)  # Green for X-axis
+                 (self.origin_x, self.origin_y), 
+                 (self.origin_x, self.origin_y - axis_length), 
+                 (0, 200, 0), 2)  # Green for X-axis
         
         # Y-axis (rightward)
         cv2.line(self.bev_image, 
-                (self.origin_x, self.origin_y), 
-                (self.origin_x + axis_length, self.origin_y), 
-                (0, 0, 200), 2)  # Red for Y-axis
+                 (self.origin_x, self.origin_y), 
+                 (self.origin_x + axis_length, self.origin_y), 
+                 (0, 0, 200), 2)  # Red for Y-axis
         
         # Add axis labels
         cv2.putText(self.bev_image, "X", 
-                   (self.origin_x - 15, self.origin_y - axis_length + 15), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+                    (self.origin_x - 15, self.origin_y - axis_length + 15), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
         
         cv2.putText(self.bev_image, "Y", 
-                   (self.origin_x + axis_length - 15, self.origin_y + 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 200), 1)
+                    (self.origin_x + axis_length - 15, self.origin_y + 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 200), 1)
         
         # Draw distance markers specifically for 1-5 meter range
         # Use fixed steps of 1 meter with intermediate markers at 0.5 meters
@@ -668,15 +680,15 @@ class BirdEyeView:
             # Draw tick mark - thicker for whole meters
             thickness = 2 if dist == int(dist) else 1
             cv2.line(self.bev_image, 
-                    (self.origin_x - 5, y), 
-                    (self.origin_x + 5, y), 
-                    (120, 120, 120), thickness)
+                     (self.origin_x - 5, y), 
+                     (self.origin_x + 5, y), 
+                     (120, 120, 120), thickness)
             
             # Only show text for whole meters
             if dist == int(dist):
                 cv2.putText(self.bev_image, f"{int(dist)}m", 
-                           (self.origin_x + 10, y + 4), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
+                            (self.origin_x + 10, y + 4), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
     
     def draw_box(self, box_3d, color=None):
         """
@@ -758,9 +770,9 @@ class BirdEyeView:
                 
                 # Draw vehicle body
                 cv2.rectangle(self.bev_image,
-                             (bev_x - rect_width//2, bev_y - rect_length//2),
-                             (bev_x + rect_width//2, bev_y + rect_length//2),
-                             color, -1)
+                              (bev_x - rect_width // 2, bev_y - rect_length // 2),
+                              (bev_x + rect_width // 2, bev_y + rect_length // 2),
+                              color, -1)
                 
             elif 'plant' in class_name or 'potted plant' in class_name:
                 # Draw plant as a circle
@@ -771,21 +783,22 @@ class BirdEyeView:
                 # Default: draw a square for other objects
                 size = int(8 * size_factor)
                 cv2.rectangle(self.bev_image,
-                             (bev_x - size, bev_y - size),
-                             (bev_x + size, bev_y + size),
-                             color, -1)
+                              (bev_x - size, bev_y - size),
+                              (bev_x + size, bev_y + size),
+                              color, -1)
             
             # Draw object ID if available
             if obj_id is not None:
                 cv2.putText(self.bev_image, f"{obj_id}", 
-                           (bev_x - 5, bev_y - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                            (bev_x - 5, bev_y - 5), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
             # Draw distance line from origin to object
             cv2.line(self.bev_image, 
-                    (self.origin_x, self.origin_y),
-                    (bev_x, bev_y),
-                    (70, 70, 70), 1)
+                     (self.origin_x, self.origin_y),
+                     (bev_x, bev_y),
+                     (70, 70, 70), 1)
+            
         except Exception as e:
             print(f"Error drawing box in BEV: {e}")
     
