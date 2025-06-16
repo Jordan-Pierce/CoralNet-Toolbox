@@ -487,8 +487,7 @@ class BBox3DEstimator:
         # Get depth information if available
         if 'depth_value' in box_3d:
             depth_value = box_3d['depth_value']
-            depth_method = box_3d.get('depth_method', 'unknown')
-            depth_text = f"D:{depth_value:.2f} ({depth_method})"
+            depth_text = f"D:{depth_value:.2f}"
             cv2.putText(image, depth_text, (x1, text_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             text_y -= 15

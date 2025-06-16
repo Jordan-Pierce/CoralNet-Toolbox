@@ -133,7 +133,7 @@ Examples:
         '--size',
         type=int,
         default=None,
-        help='Target size for the longest edge in pixels (e.g., 640 for max 640px). If not specified, original resolution is used.'
+        help='Target size for the longest edge in pixels. If not specified, original resolution is used.'
     )
     
     # YOLO model arguments

@@ -1,9 +1,11 @@
 import os
-import torch
-import numpy as np
+
 import cv2
-from transformers import pipeline
+import numpy as np
 from PIL import Image
+
+import torch
+from transformers import pipeline, AutoImageProcessor, AutoModelForDepthEstimation
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -13,21 +15,25 @@ from PIL import Image
 
 class DepthEstimator:
     """
-    Depth estimation using Depth Anything v2
+    Depth estimation using Depth Anything v2 or Apple DepthPro models.
     """
-    def __init__(self, model_size='small', device=None):
+    def __init__(self, model_size='small', device=None, resize_width=640, resize_height=480):
         """
         Initialize the depth estimator
         
         Args:
             model_size (str): Model size ('small', 'base', 'large', 'apple')
             device (str): Device to run inference on ('cuda', 'cpu', 'mps')
+            resize_width (int): Width to resize input images to (default: 640)
+            resize_height (int): Height to resize input images to (default: 480)
         """
         # Use provided device or default to CPU
         if device is None:
             device = 'cpu'
         
         self.device = device
+        self.resize_width = resize_width
+        self.resize_height = resize_height
         
         # Set MPS fallback for operations not supported on Apple Silicon
         if self.device == 'mps':
@@ -50,19 +56,58 @@ class DepthEstimator:
         }
         
         model_name = model_map.get(model_size.lower(), model_map['small'])
-        
-        # Create pipeline
-        try:
-            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device, use_fast=True)
-            print(f"Loaded {model_name} on {self.pipe_device}")
+                
+        # Create pipeline with custom processor and model
+        try:            
+            # Load the processor with custom resizing.
+            # AutoImageProcessor will select the correct "fast" processor.
+            processor = AutoImageProcessor.from_pretrained(
+                model_name, 
+                do_resize=True, 
+                size={'width': self.resize_width, 'height': self.resize_height}
+            )
+            print(f"Loaded image processor with resizing to {self.resize_width}x{self.resize_height}.")
+
+            # Load the model with specified precision
+            model = AutoModelForDepthEstimation.from_pretrained(
+                model_name, 
+            )
+            print(f"Loaded {model_name} model.")
             
+            # Create the pipeline with our custom components
+            self.pipe = pipeline(
+                task="depth-estimation", 
+                model=model, 
+                image_processor=processor, 
+                device=self.pipe_device,
+            )
+            print(f"Successfully created pipeline on {self.pipe_device}")
+
         except Exception as e:
             # Fallback to CPU if there are issues
             print(f"Error loading model on {self.pipe_device}: {e}")
             print("Falling back to CPU for depth estimation")
             self.pipe_device = 'cpu'
-            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device, use_fast=True)
-            print(f"Loaded Depth Anything v2 {model_size} model on CPU (fallback)")
+            
+            print(f"Loading model on CPU (fallback).")
+            
+            # Reload components for CPU
+            processor = AutoImageProcessor.from_pretrained(
+                model_name, 
+                do_resize=True, 
+                size={'width': self.resize_width, 'height': self.resize_height}
+            )
+            model = AutoModelForDepthEstimation.from_pretrained(
+                model_name
+            )
+
+            self.pipe = pipeline(
+                task="depth-estimation", 
+                model=model, 
+                image_processor=processor, 
+                device=self.pipe_device
+            )
+            print(f"Loaded {model_name} on CPU (fallback)")
     
     def estimate_depth(self, image):
         """
@@ -96,8 +141,14 @@ class DepthEstimator:
             if self.device == 'mps':
                 print(f"MPS error during depth estimation: {e}")
                 print("Temporarily falling back to CPU for this frame")
-                # Create a CPU pipeline for this frame
-                cpu_pipe = pipeline(task="depth-estimation", model=self.pipe.model.config._name_or_path, device='cpu')
+                # Create a CPU pipeline for this frame, reusing the loaded model and processor
+                # to ensure consistent preprocessing.
+                cpu_pipe = pipeline(
+                    task="depth-estimation",
+                    model=self.pipe.model,
+                    image_processor=self.pipe.image_processor,
+                    device='cpu'
+                )
                 depth_result = cpu_pipe(pil_image)
                 depth_map = depth_result["depth"]
                 
