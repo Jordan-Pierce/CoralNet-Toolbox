@@ -53,14 +53,15 @@ class DepthEstimator:
         
         # Create pipeline
         try:
-            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device)
+            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device, use_fast=True)
             print(f"Loaded {model_name} on {self.pipe_device}")
+            
         except Exception as e:
             # Fallback to CPU if there are issues
             print(f"Error loading model on {self.pipe_device}: {e}")
             print("Falling back to CPU for depth estimation")
             self.pipe_device = 'cpu'
-            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device)
+            self.pipe = pipeline(task="depth-estimation", model=model_name, device=self.pipe_device, use_fast=True)
             print(f"Loaded Depth Anything v2 {model_size} model on CPU (fallback)")
     
     def estimate_depth(self, image):
@@ -89,6 +90,7 @@ class DepthEstimator:
                 depth_map = np.array(depth_map)
             elif isinstance(depth_map, torch.Tensor):
                 depth_map = depth_map.cpu().numpy()
+                
         except RuntimeError as e:
             # Handle potential MPS errors during inference
             if self.device == 'mps':

@@ -101,15 +101,14 @@ Examples:
 
   # Use a video file with custom YOLO model
   python run.py --input video.mp4 --yolo-path custom_model.pt --output result.mp4
-
-  # Process at half resolution for faster processing
-  python run.py --input video.mp4 --scale 0.5 --output result_small.mp4
+  # Process at smaller resolution for faster processing (longest edge = 640px)
+  python run.py --input video.mp4 --size 640 --output result_small.mp4
 
   # Use larger models with GPU
   python run.py --yolo-size large --depth-size base --device cuda
 
-  # Headless processing (no display windows) with quarter resolution
-  python run.py --input video.mp4 --output result.mp4 --no-display --scale 0.25
+  # Headless processing (no display windows) with low resolution (longest edge = 480px)
+  python run.py --input video.mp4 --output result.mp4 --no-display --size 480
 
   # Filter for specific classes (person=0, car=2)
   python run.py --classes 0 2 --conf-threshold 0.5
@@ -131,10 +130,10 @@ Examples:
     )
     
     parser.add_argument(
-        '--scale',
-        type=float,
-        default=1.0,
-        help='Scale factor for frame dimensions (e.g., 0.5 for half size, 2.0 for double size)'
+        '--size',
+        type=int,
+        default=None,
+        help='Target size for the longest edge in pixels (e.g., 640 for max 640px). If not specified, original resolution is used.'
     )
     
     # YOLO model arguments
@@ -239,8 +238,8 @@ def main():
     
     output_path = args.output
     
-    # Frame scaling
-    scale_factor = args.scale
+    # Frame sizing - calculate scale factor from target size
+    target_size = args.size
     
     # Model settings
     yolo_model_size = args.yolo_size
@@ -267,7 +266,10 @@ def main():
     print(f"\nConfiguration:")
     print(f"Input source: {source}")
     print(f"Output path: {output_path}")
-    print(f"Scale factor: {scale_factor}x")
+    if target_size is not None:
+        print(f"Target size: {target_size}px (longest edge)")
+    else:
+        print(f"Using original resolution (no scaling)")
     print(f"YOLO model: {'Custom path: ' + yolo_model_path if yolo_model_path else 'Size: ' + yolo_model_size}")
     print(f"Depth model size: {depth_model_size}")
     print(f"Device: {device}")
@@ -288,6 +290,7 @@ def main():
             path=yolo_model_path
         )
         print("✓ YOLO object detector loaded successfully")
+        
     except Exception as e:
         print(f"✗ Error initializing object detector: {e}")
         print("Falling back to CPU for object detection")
@@ -345,12 +348,25 @@ def main():
     if fps == 0:  # Sometimes happens with webcams
         fps = 30
     
-    # Apply scaling to frame dimensions
-    width = int(original_width * scale_factor)
-    height = int(original_height * scale_factor)
-    
+    # Calculate scale factor and target dimensions
+    if target_size is not None:
+        # Calculate scale factor based on longest edge
+        longest_edge = max(original_width, original_height)
+        scale_factor = target_size / longest_edge
+        
+        # Calculate new dimensions preserving aspect ratio
+        width = int(original_width * scale_factor)
+        height = int(original_height * scale_factor)
+    else:
+        # Use original dimensions
+        scale_factor = 1.0
+        width = original_width
+        height = original_height    
     print(f"Original resolution: {original_width}x{original_height}")
-    print(f"Scaled resolution: {width}x{height} (scale factor: {scale_factor}x)")
+    if target_size is not None:
+        print(f"Target resolution: {width}x{height} (longest edge: {max(width, height)}px)")
+    else:
+        print(f"Using original resolution: {width}x{height}")
     
     # Initialize video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -377,8 +393,8 @@ def main():
             if not ret:
                 break
             
-            # Apply scaling if needed
-            if scale_factor != 1.0:
+            # Apply resizing if needed
+            if target_size is not None:
                 frame = cv2.resize(frame, (width, height))
             
             # Make copies for different visualizations
@@ -457,19 +473,8 @@ def main():
             # Step 4: Visualization
             # Draw boxes on the result frame
             for box_3d in boxes_3d:
-                try:
-                    # Determine color based on class
-                    class_name = box_3d['class_name'].lower()
-                    if 'car' in class_name or 'vehicle' in class_name:
-                        color = (0, 0, 255)  # Red
-                    elif 'person' in class_name:
-                        color = (0, 255, 0)  # Green
-                    elif 'bicycle' in class_name or 'motorcycle' in class_name:
-                        color = (255, 0, 0)  # Blue
-                    elif 'potted plant' in class_name or 'plant' in class_name:
-                        color = (0, 255, 255)  # Yellow
-                    else:
-                        color = (255, 255, 255)  # White
+                try:                    # Use a default color for all objects
+                    color = (0, 255, 0)  # Green as default
                     
                     # Draw box with depth information
                     result_frame = bbox3d_estimator.draw_box_3d(result_frame, box_3d, color=color)

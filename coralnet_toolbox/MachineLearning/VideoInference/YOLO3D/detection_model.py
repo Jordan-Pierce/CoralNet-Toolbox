@@ -99,6 +99,7 @@ class ObjectDetector:
             else:
                 # Run inference without tracking
                 results = self.model.predict(image, verbose=False, device=self.device)
+                
         except RuntimeError as e:
             # Handle potential MPS errors
             if self.device == 'mps' and "not currently implemented for the MPS device" in str(e):
