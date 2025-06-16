@@ -33,18 +33,16 @@ class BBox3DEstimator:
     """
     3D bounding box estimation from 2D detections and depth
     """
-    def __init__(self, camera_matrix=None, projection_matrix=None, class_dims=None):
+    def __init__(self, camera_matrix=None, projection_matrix=None):
         """
         Initialize the 3D bounding box estimator
         
         Args:
             camera_matrix (numpy.ndarray): Camera intrinsic matrix (3x3)
             projection_matrix (numpy.ndarray): Camera projection matrix (3x4)
-            class_dims (dict): Dictionary mapping class names to dimensions (height, width, length)
         """
         self.K = camera_matrix if camera_matrix is not None else DEFAULT_K
         self.P = projection_matrix if projection_matrix is not None else DEFAULT_P
-        self.dims = class_dims
         
         # Initialize Kalman filters for tracking 3D boxes
         self.kf_trackers = {}
@@ -53,39 +51,30 @@ class BBox3DEstimator:
         self.box_history = defaultdict(list)
         self.max_history = 5
     
-    def estimate_3d_box(self, bbox_2d, depth_value, class_name, object_id=None):
+    def estimate_3d_box(self, bbox_2d, depth_value, class_name=None, object_id=None):
         """
         Estimate 3D bounding box from 2D bounding box and depth
         
         Args:
             bbox_2d (list): 2D bounding box [x1, y1, x2, y2]
             depth_value (float): Depth value at the center of the bounding box
-            class_name (str): Class name of the object
+            class_name (str): Class name of the object (optional, not used for dimensions)
             object_id (int): Object ID for tracking (None for no tracking)
             
         Returns:
             dict: 3D bounding box parameters
         """
-        # Get 2D box center and dimensions
+        # Get 2D box center
         x1, y1, x2, y2 = bbox_2d
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
-        width_2d = x2 - x1
-        height_2d = y2 - y1
         
-        # Get dimensions for the class
-        if class_name.lower() in self.dims:
-            dimensions = self.dims[class_name.lower()].copy()  # Make a copy to avoid modifying the original
-        else:
-            # Use default car dimensions if class not found
-            dimensions = self.dims['car'].copy()
-        
-        # Adjust dimensions based on 2D box aspect ratio and size
-        aspect_ratio_2d = width_2d / height_2d if height_2d > 0 else 1.0
+        # Use default dimensions (height, width, length)
+        default_dim = 1.0
+        dimensions = [default_dim, default_dim, default_dim]
         
         # Convert depth to distance - use a larger range for better visualization
-        # Map depth_value (0-1) to a range of 1-10 meters
-        distance = 1.0 + depth_value * 9.0  # Increased from 4.0 to 9.0 for a larger range
+        distance = 1.0 + depth_value * 9.0
         
         # Calculate 3D location
         location = self._backproject_point(center_x, center_y, distance)
@@ -338,10 +327,10 @@ class BBox3DEstimator:
             numpy.ndarray: 2D points of the 3D box corners (8x2)
         """
         # Extract parameters
-        h, w, l = box_3d['dimensions']
+        h, w, length = box_3d['dimensions']
         x, y, z = box_3d['location']
         rot_y = box_3d['orientation']
-        class_name = box_3d['class_name'].lower()
+        # class_name = box_3d['class_name'].lower()  # No longer used
         
         # Get 2D box for reference
         x1, y1, x2, y2 = box_3d['bbox_2d']
@@ -358,7 +347,10 @@ class BBox3DEstimator:
         ])
 
         # For other objects, use standard box configuration
-        x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
+        x_corners = np.array([
+            length / 2, length / 2, -length / 2, -length / 2,
+            length / 2, length / 2, -length / 2, -length / 2
+        ])
         y_corners = np.array([0, 0, 0, 0, -h, -h, -h, -h])  # Bottom at y=0
         z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
 
@@ -375,7 +367,6 @@ class BBox3DEstimator:
         corners_2d = corners_2d_homo[:2, :] / corners_2d_homo[2, :]
         
         # Constrain the 3D box to be within a reasonable distance of the 2D box
-        # This helps prevent wildly incorrect projections
         mean_x = np.mean(corners_2d[0, :])
         mean_y = np.mean(corners_2d[1, :])
         
@@ -414,14 +405,17 @@ class BBox3DEstimator:
         
         # Calculate the offset for the 3D effect (deeper objects have smaller offset)
         # Inverse relationship with depth - closer objects have larger offset
+        depth_alpha = 0.7  # Adjust this to control depth effect
         offset_factor = 1.0 - depth_value
-        offset_x = int(width * 0.3 * offset_factor)
-        offset_y = int(height * 0.3 * offset_factor)
-        
-        # Ensure minimum offset for visibility
-        offset_x = max(15, min(offset_x, 50))
-        offset_y = max(15, min(offset_y, 50))
-        
+        offset_x = int(width * depth_alpha * offset_factor)
+        offset_y = int(height * depth_alpha * offset_factor)
+
+        # Make min/max offset proportional to box size
+        min_offset = int(min(width, height) * 0.08)
+        max_offset = int(min(width, height) * 0.25)
+        offset_x = np.clip(offset_x, min_offset, max_offset)
+        offset_y = np.clip(offset_y, min_offset, max_offset)
+                
         # Create points for the 3D box
         # Front face (the 2D bounding box)
         front_tl = (x1, y1)
@@ -461,6 +455,7 @@ class BBox3DEstimator:
         # Fill the right face with a semi-transparent color
         pts_right = np.array([front_tr, front_br, back_br, back_tr], np.int32)
         pts_right = pts_right.reshape((-1, 1, 2))
+        
         # Darken the right face color for better 3D effect
         right_color = (int(color[0] * 0.7), int(color[1] * 0.7), int(color[2] * 0.7))
         cv2.fillPoly(overlay, [pts_right], right_color)
@@ -475,29 +470,31 @@ class BBox3DEstimator:
         
         # Draw text information
         text_y = y1 - 10
+        font_scale = 0.35  # Reduced font size
+        font_thickness = 1
         if obj_id is not None:
             cv2.putText(image, f"ID:{obj_id}", (x1, text_y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            text_y -= 15
-        
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+            text_y -= 12
+
         cv2.putText(image, class_name, (x1, text_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        text_y -= 15
-        
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+        text_y -= 12
+
         # Get depth information if available
         if 'depth_value' in box_3d:
             depth_value = box_3d['depth_value']
             depth_text = f"D:{depth_value:.2f}"
             cv2.putText(image, depth_text, (x1, text_y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            text_y -= 15
-        
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+            text_y -= 12
+
         # Get score if available
         if 'score' in box_3d:
             score = box_3d['score']
             score_text = f"S:{score:.2f}"
             cv2.putText(image, score_text, (x1, text_y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
         
         # Draw a vertical line from the bottom of the box to the ground
         # This helps with depth perception
@@ -709,7 +706,7 @@ class BirdEyeView:
         """Returns the current BEV image."""
         return self.bev_image
         
-    def get_resized_image(self, frame_width, frame_height, size_factor=0.25, aspect_ratio=4/3):
+    def get_resized_image(self, frame_width, frame_height, size_factor=0.25, aspect_ratio=4 / 3):
         """
         Returns a properly resized BEV image suitable for overlay on a frame.
         

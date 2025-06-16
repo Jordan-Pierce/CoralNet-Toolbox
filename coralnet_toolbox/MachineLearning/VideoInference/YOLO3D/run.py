@@ -210,7 +210,12 @@ Examples:
         action='store_true',
         help='Disable real-time display windows (useful for headless processing)'
     )
-    
+    # Add --yes-display argument
+    parser.add_argument(
+        '--yes-display',
+        action='store_true',
+        help='Show all visualization windows (result, depth, detection). By default, only the result frame is shown.'
+    )
     return parser.parse_args()
 
 
@@ -259,7 +264,7 @@ def main():
     enable_tracking = not args.no_tracking
     enable_bev = not args.no_bev
     enable_display = not args.no_display
-    
+    show_all_frames = args.yes_display
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
     # ===============================================
@@ -310,6 +315,7 @@ def main():
             device=device
         )
         print("✓ Depth estimation model loaded successfully")
+        
     except Exception as e:
         print(f"✗ Error initializing depth estimator: {e}")
         print("Falling back to CPU for depth estimation")
@@ -389,7 +395,6 @@ def main():
             if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
                 print("Exiting program...")
                 break
-            
         try:            # Read frame
             ret, frame = cap.read()
             if not ret:
@@ -408,6 +413,7 @@ def main():
             # Step 1: Object Detection
             try:
                 detection_frame, detections = detector.detect(detection_frame, track=enable_tracking)
+                
             except Exception as e:
                 print(f"Error during object detection: {e}")
                 detections = []
@@ -418,6 +424,7 @@ def main():
             try:
                 depth_map = depth_estimator.estimate_depth(original_frame)
                 depth_colored = depth_estimator.colorize_depth(depth_map)
+                
             except Exception as e:
                 print(f"Error during depth estimation: {e}")
                 # Create a dummy depth map
@@ -577,9 +584,10 @@ def main():
             # Display frames only if display is enabled
             if enable_display:
                 cv2.imshow("3D Object Detection", result_frame)
-                cv2.imshow("Depth Map", depth_colored)
-                cv2.imshow("Object Detection", detection_frame)
-                
+                if show_all_frames:
+                    cv2.imshow("Depth Map", depth_colored)
+                    cv2.imshow("Object Detection", detection_frame)
+                    
                 # Check for key press again at the end of the loop
                 key = cv2.waitKey(1)
                 if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
