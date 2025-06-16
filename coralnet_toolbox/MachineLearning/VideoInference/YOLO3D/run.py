@@ -318,19 +318,11 @@ def main():
             device='cpu'
         )
     
-    # Initialize 3D bounding box estimator with default parameters
-    # Simplified approach - focus on 2D detection with depth information
-    bbox3d_estimator = BBox3DEstimator()
-    
-    # Initialize Bird's Eye View if enabled
-    if enable_bev:
-        # Use a scale that works well for the 1-5 meter range
-        bev = BirdEyeView(scale=60, size=(300, 300))  # Increased scale to spread objects out
-    
     # Open video source
     try:
         if isinstance(source, str) and source.isdigit():
             source = int(source)  # Convert string number to integer for webcam
+            
     except ValueError:
         pass  # Keep as string (for video file)
     
@@ -368,6 +360,15 @@ def main():
         print(f"Target resolution: {width}x{height} (longest edge: {max(width, height)}px)")
     else:
         print(f"Using original resolution: {width}x{height}")
+        
+    # Initialize 3D bounding box estimator with default parameters
+    # Simplified approach - focus on 2D detection with depth information
+    bbox3d_estimator = BBox3DEstimator()
+    
+    # Initialize Bird's Eye View if enabled
+    if enable_bev:
+        # Use a scale that works well for the 1-5 meter range
+        bev = BirdEyeView(image_shape=(width, height), scale=100)  # Increased scale to spread objects out
     
     # Initialize video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -520,6 +521,7 @@ def main():
                         cv2.putText(result_frame, "Bird's Eye View", 
                                     (10, height - bev_height + 20), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        
                 except Exception as e:
                     print(f"Error drawing BEV: {e}")
             
@@ -541,6 +543,7 @@ def main():
                 depth_width = depth_height * width // height
                 depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
                 result_frame[0:depth_height, 0:depth_width] = depth_resized
+                
             except Exception as e:
                 print(f"Error adding depth map to result: {e}")
             

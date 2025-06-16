@@ -53,10 +53,17 @@ class ObjectDetector:
         else:
             model_name = model_map.get(model_size.lower(), model_map['small'])
         
-        # Load model
         try:
+            # Load model
             self.model = YOLO(model_name)
+            
+            try:
+                self.imgsz = self.model.__dict__['overrides']['imgsz']
+            except Exception:
+                self.imgsz = 640
+                
             print(f"Loaded YOLO model from {'custom path' if path else model_size} on {self.device}")
+            
         except Exception as e:
             print(f"Error loading model: {e}")
             print("Trying to load with default settings...")
@@ -67,6 +74,7 @@ class ObjectDetector:
         self.model.overrides['iou'] = iou_thres
         self.model.overrides['agnostic_nms'] = False
         self.model.overrides['max_det'] = 1000
+        self.model.overrides['imgsz'] = self.imgsz
         
         if classes is not None:
             self.model.overrides['classes'] = classes
@@ -95,11 +103,11 @@ class ObjectDetector:
         try:
             if track:
                 # Run inference with tracking
-                results = self.model.track(image, verbose=False, device=self.device, persist=True)
+                results = self.model.track(image, imgsz=self.imgsz, verbose=False, device=self.device, persist=True)
             else:
                 # Run inference without tracking
-                results = self.model.predict(image, verbose=False, device=self.device)
-                
+                results = self.model.predict(image, imgsz=self.imgsz, verbose=False, device=self.device)
+
         except RuntimeError as e:
             # Handle potential MPS errors
             if self.device == 'mps' and "not currently implemented for the MPS device" in str(e):

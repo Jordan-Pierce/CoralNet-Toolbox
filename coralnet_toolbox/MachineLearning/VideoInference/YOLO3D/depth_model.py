@@ -20,7 +20,7 @@ class DepthEstimator:
         Initialize the depth estimator
         
         Args:
-            model_size (str): Model size ('small', 'base', 'large')
+            model_size (str): Model size ('small', 'base', 'large', 'apple')
             device (str): Device to run inference on ('cuda', 'cpu', 'mps')
         """
         # Use provided device or default to CPU

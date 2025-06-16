@@ -533,174 +533,177 @@ class BBox3DEstimator:
 
 class BirdEyeView:
     """
-    Bird's Eye View visualization
+    Refactored Bird's Eye View (BEV) visualization for 3D bounding boxes.
+    This class renders a top-down view based on heuristic estimates of depth
+    and position from 2D data.
+
+    World Coordinate System Assumption:
+    - X axis: Forward (rendered as 'up' in the BEV image)
+    - Y axis: Right (rendered as 'right' in the BEV image)
+
+    Image Coordinate System:
+    - Origin (0,0) is at the top-left. Ego vehicle is at the bottom-center.
     """
-    def __init__(self, size=(400, 400), scale=30, camera_height=1.2):
+    # --- Constants for Styling ---
+    COLOR_BACKGROUND = (20, 20, 20)
+    COLOR_GRID = (80, 80, 80)
+    COLOR_AXIS_X = (0, 200, 0)  # Green for Forward (X)
+    COLOR_AXIS_Y = (0, 0, 200)  # Red for Right (Y)
+    COLOR_MARKERS = (180, 180, 180)
+    COLOR_TEXT = (220, 220, 220)
+    COLOR_BOX_DEFAULT = (255, 255, 255)
+    COLOR_BOX_LINE = (70, 70, 70)
+
+    FONT_STYLE = cv2.FONT_HERSHEY_SIMPLEX
+    FONT_SCALE_AXIS = 0.5
+    FONT_SCALE_MARKER = 0.4
+    FONT_SCALE_ID = 0.4
+
+    THICKNESS_GRID = 1
+    THICKNESS_AXIS = 2
+    THICKNESS_MARKER = 1
+    
+    def __init__(self, image_shape=(800, 600), scale=30, camera_height=1.2, max_distance=5.0):
         """
-        Initialize the Bird's Eye View visualizer
-        
         Args:
-            size (tuple): Size of the BEV image (width, height)
-            scale (float): Scale factor (pixels per meter)
-            camera_height (float): Height of the camera above ground (meters)
+            image_shape (tuple): (width, height) of the BEV image.
+            scale (float): Pixels per meter.
+            camera_height (float): Camera height above ground (meters). Not used in this implementation.
+            max_distance (float): Max distance (meters) to map `depth_value` to.
         """
-        self.width, self.height = size
-        self.scale = scale
+        self.width, self.height = image_shape
+        self.scale = float(scale)
         self.camera_height = camera_height
-        
-        # Create empty BEV image
-        self.bev_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
-        # Set origin at the bottom center of the image
+        self.max_distance = max_distance
+
+        # Origin point (ego vehicle location) in the image
         self.origin_x = self.width // 2
-        self.origin_y = self.height - 50
-    
+        self.origin_y = self.height
+
+        self.bev_image = None
+        self.reset()
+
     def reset(self):
-        """
-        Reset the BEV image
-        """
-        # Create a dark background
-        self.bev_image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        self.bev_image[:, :] = (20, 20, 20)  # Dark gray background
+        """Resets the BEV image to a blank canvas with grid, axes, and markers."""
+        self.bev_image = np.full((self.height, self.width, 3), self.COLOR_BACKGROUND, dtype=np.uint8)
+        self._draw_grid()
+        self._draw_axes()
+        self._draw_distance_markers()
+
+    def _draw_grid(self, step_m=0.5):
+        """Draws the grid on the BEV canvas."""
+        # Horizontal lines (distance from camera)
+        for dist in np.arange(step_m, self.max_distance * 2, step_m):
+            y = int(self.origin_y - dist * self.scale)
+            if y < 0: break
+            cv2.line(self.bev_image, (0, y), (self.width, y), self.COLOR_GRID, self.THICKNESS_GRID)
+
+        # Vertical lines (sideways distance from center)
+        max_side_dist_m = self.origin_x / self.scale
+        for dist in np.arange(step_m, max_side_dist_m, step_m):
+            # Lines to the right of center
+            x_right = int(self.origin_x + dist * self.scale)
+            cv2.line(self.bev_image, (x_right, 0), (x_right, self.height), self.COLOR_GRID, self.THICKNESS_GRID)
+            # Lines to the left of center
+            x_left = int(self.origin_x - dist * self.scale)
+            cv2.line(self.bev_image, (x_left, 0), (x_left, self.height), self.COLOR_GRID, self.THICKNESS_GRID)
+
+    def _draw_axes(self):
+        """Draws the X (forward) and Y (right) axes."""
+        axis_length_px = min(80, self.height // 5)
         
-        # Draw grid lines
-        grid_spacing = max(int(self.scale), 20)  # At least 20 pixels between grid lines
+        # Forward (X, up)
+        cv2.line(self.bev_image, (self.origin_x, self.origin_y),
+                 (self.origin_x, self.origin_y - axis_length_px), self.COLOR_AXIS_X, self.THICKNESS_AXIS)
+        cv2.putText(self.bev_image, "X", (self.origin_x - 15, self.origin_y - axis_length_px + 15),
+                    self.FONT_STYLE, self.FONT_SCALE_AXIS, self.COLOR_AXIS_X, 1)
         
-        # Draw horizontal grid lines
-        for y in range(self.origin_y, 0, -grid_spacing):
-            cv2.line(self.bev_image, (0, y), (self.width, y), (50, 50, 50), 1)
-        
-        # Draw vertical grid lines
-        for x in range(0, self.width, grid_spacing):
-            cv2.line(self.bev_image, (x, 0), (x, self.height), (50, 50, 50), 1)
-        
-        # Draw coordinate system
-        axis_length = min(80, self.height // 5)
-        
-        # X-axis (upward)
-        cv2.line(self.bev_image, 
-                 (self.origin_x, self.origin_y), 
-                 (self.origin_x, self.origin_y - axis_length), 
-                 (0, 200, 0), 2)  # Green for X-axis
-        
-        # Y-axis (rightward)
-        cv2.line(self.bev_image, 
-                 (self.origin_x, self.origin_y), 
-                 (self.origin_x + axis_length, self.origin_y), 
-                 (0, 0, 200), 2)  # Red for Y-axis
-        
-        # Add axis labels
-        cv2.putText(self.bev_image, "X", 
-                    (self.origin_x - 15, self.origin_y - axis_length + 15), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
-        
-        cv2.putText(self.bev_image, "Y", 
-                    (self.origin_x + axis_length - 15, self.origin_y + 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 200), 1)
-        
-        # Draw distance markers specifically for 1-5 meter range
-        # Use fixed steps of 1 meter with intermediate markers at 0.5 meters
-        for dist in [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]:
-            y = self.origin_y - int(dist * self.scale)
+        # Right (Y, right)
+        cv2.line(self.bev_image, (self.origin_x, self.origin_y),
+                 (self.origin_x + axis_length_px, self.origin_y), self.COLOR_AXIS_Y, self.THICKNESS_AXIS)
+        cv2.putText(self.bev_image, "Y", (self.origin_x + axis_length_px - 15, self.origin_y - 10),
+                    self.FONT_STYLE, self.FONT_SCALE_AXIS, self.COLOR_AXIS_Y, 1)
+
+    def _draw_distance_markers(self, step_m=0.5, label_interval_m=1.0):
+        """Draws distance markers along the forward axis."""
+        for dist in np.arange(step_m, self.max_distance, step_m):
+            y = int(self.origin_y - dist * self.scale)
+            if y < 0: 
+                break
             
-            if y < 20:  # Skip if too close to top
-                continue
-            
-            # Draw tick mark - thicker for whole meters
-            thickness = 2 if dist == int(dist) else 1
-            cv2.line(self.bev_image, 
-                     (self.origin_x - 5, y), 
-                     (self.origin_x + 5, y), 
-                     (120, 120, 120), thickness)
-            
-            # Only show text for whole meters
-            if dist == int(dist):
-                cv2.putText(self.bev_image, f"{int(dist)}m", 
-                            (self.origin_x + 10, y + 4), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
-    
-    def draw_box(self, box_3d, color=None):
+            cv2.line(self.bev_image, (self.origin_x - 5, y), (self.origin_x + 5, y), 
+                     self.COLOR_MARKERS, self.THICKNESS_MARKER)
+
+            # Add text label at specified intervals
+            if dist % label_interval_m < 1e-3:
+                cv2.putText(self.bev_image, f"{int(dist)}m", (self.origin_x + 10, y + 4),
+                            self.FONT_STYLE, self.FONT_SCALE_MARKER, self.COLOR_TEXT, 1)
+
+    def draw_box(self, box_3d: dict, color: tuple = None):
         """
-        Draw a more realistic representation of an object on the BEV image
-        
+        Draws an object on the BEV image using heuristic estimates.
+        NOTE: This method does NOT perform a true 3D to 2D projection.
+              It places objects based on a normalized 'depth_value' and
+              the 2D bounding box's screen position.
+
         Args:
-            box_3d (dict): 3D bounding box parameters
-            color (tuple): Color in BGR format (None for automatic color based on class)
+            box_3d (dict): Dictionary with object parameters. Expected keys:
+                - 'depth_value' (float): Normalized depth [0, 1].
+                - 'bbox_2d' (list): 2D bounding box [x1, y1, x2, y2].
+                - 'object_id' (any, optional): ID to display.
+            color (tuple, optional): BGR color. If None, uses a default.
         """
         try:
-            # Extract parameters
-            class_name = box_3d['class_name'].lower()
+            box_color = color if color is not None else self.COLOR_BOX_DEFAULT
             
-            # Scale depth to fit within 1-5 meters range
-            depth_value = box_3d.get('depth_value', 0.5)
-            # Map depth value (0-1) to a range of 1-5 meters
-            depth = 1.0 + depth_value * 4.0
-            
-            # Get 2D box dimensions for size estimation
-            if 'bbox_2d' in box_3d:
-                x1, y1, x2, y2 = box_3d['bbox_2d']
-                width_2d = x2 - x1
-                height_2d = y2 - y1
-                size_factor = width_2d / 100
-                size_factor = max(0.5, min(size_factor, 2.0))
-            else:
-                size_factor = 1.0
-            
-            # Determine color based on class
-            if color is None:
-                color = (255, 255, 255)  # White
-            else:
-                color = (255, 255, 255)  # White
-            
-            # Get object ID if available
-            obj_id = box_3d.get('object_id', None)
-            
-            # Calculate position in BEV with flipped axes
-            # X-axis points upward, Y-axis points rightward
-            
-            # Calculate Y position (upward) based on depth
-            bev_y = self.origin_y - int(depth * self.scale)
-            
-            # Calculate X position (rightward) based on horizontal position in image
-            if 'bbox_2d' in box_3d:
+            # --- Heuristic Depth Calculation ---
+            # Linearly map the normalized depth_value to a distance in meters.
+            depth_value = 1.0 - float(box_3d.get('depth_value', 0.5))
+            depth_m = 1.0 + depth_value * (self.max_distance - 1.0)
+            bev_y = int(self.origin_y - depth_m * self.scale)
+
+            # --- Heuristic Sideways Position Calculation ---
+            # Use the 2D box's horizontal center to estimate side position.
+            bbox_2d = box_3d.get('bbox_2d')
+            if bbox_2d:
+                x1, _, x2, _ = bbox_2d
                 center_x_2d = (x1 + x2) / 2
-                image_width = self.bev_image.shape[1]
-                rel_x = (center_x_2d / image_width) - 0.5
-                bev_x = self.origin_x + int(rel_x * self.width * 0.6)
+                # Map screen position (-0.5 to 0.5) to a scaled BEV position.
+                rel_x = (center_x_2d / self.width) - 0.5
+                bev_x = int(self.origin_x + rel_x * self.width * 0.8)
             else:
-                bev_x = self.origin_x
+                bev_x = self.origin_x  # Default to center if no 2D box
+
+            # --- Heuristic Size Calculation ---
+            # Scale the drawn box size based on the 2D box width.
+            size_factor = 1.0
+            if bbox_2d:
+                width_2d = bbox_2d[2] - bbox_2d[0]
+                size_factor = max(0.5, min(width_2d / 100.0, 2.0))
+            size_px = int(8 * size_factor)
+
+            # Clamp coordinates to be visible within the image
+            bev_x = np.clip(bev_x, size_px, self.width - size_px)
+            bev_y = np.clip(bev_y, size_px, self.origin_y - size_px)
+
+            # Draw the object as a square
+            cv2.rectangle(self.bev_image, (bev_x - size_px, bev_y - size_px), 
+                          (bev_x + size_px, bev_y + size_px), box_color, -1)
             
-            # Ensure the object stays within the visible area
-            bev_x = max(20, min(bev_x, self.width - 20))
-            bev_y = max(20, min(bev_y, self.origin_y - 10))
-            
-            # Default: draw a square for other objects
-            size = int(8 * size_factor)
-            cv2.rectangle(self.bev_image,
-                          (bev_x - size, bev_y - size),
-                          (bev_x + size, bev_y + size),
-                          color, -1)
-            
-            # Draw object ID if available
-            if obj_id is not None:
-                cv2.putText(self.bev_image, f"{obj_id}", 
-                            (bev_x - 5, bev_y - 5), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-            
-            # Draw distance line from origin to object
-            cv2.line(self.bev_image, 
-                     (self.origin_x, self.origin_y),
-                     (bev_x, bev_y),
-                     (70, 70, 70), 1)
-            
+            # Draw line from origin to object
+            cv2.line(self.bev_image, (self.origin_x, self.origin_y), (bev_x, bev_y),
+                     self.COLOR_BOX_LINE, 1)
+
+            # Draw object ID if present
+            if 'object_id' in box_3d:
+                cv2.putText(self.bev_image, str(box_3d['object_id']), (bev_x - 5, bev_y - 5),
+                            self.FONT_STYLE, self.FONT_SCALE_ID, (0, 0, 0), 1)
+
+        except (KeyError, TypeError) as e:
+            print(f"Error drawing box: Invalid or missing data in 'box_3d' dict -> {e}")
         except Exception as e:
-            print(f"Error drawing box in BEV: {e}")
-    
-    def get_image(self):
-        """
-        Get the BEV image
-        
-        Returns:
-            numpy.ndarray: BEV image
-        """
-        return self.bev_image 
+            print(f"An unexpected error occurred in draw_box: {e}")
+
+    def get_image(self) -> np.ndarray:
+        """Returns the current BEV image."""
+        return self.bev_image
