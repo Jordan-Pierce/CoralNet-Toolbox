@@ -659,9 +659,10 @@ class BirdEyeView:
             # --- Heuristic Depth Calculation ---
             # Linearly map the normalized depth_value to a distance in meters.
             depth_value = 1.0 - float(box_3d.get('depth_value', 0.5))
-            depth_m = 1.0 + depth_value * (self.max_distance - 1.0)
-            bev_y = int(self.origin_y - depth_m * self.scale)
-
+            # Map depth_value [0,1] to [0, max_distance] meters, then to [origin_y, 0]
+            depth_m = depth_value * self.max_distance
+            bev_y = int(self.origin_y - (depth_m / self.max_distance) * self.height)
+            
             # --- Heuristic Sideways Position Calculation ---
             # Use the 2D box's horizontal center to estimate side position.
             bbox_2d = box_3d.get('bbox_2d')
