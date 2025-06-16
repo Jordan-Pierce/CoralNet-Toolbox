@@ -494,33 +494,29 @@ def main():
                     bev.reset()
                     for box_3d in boxes_3d:
                         bev.draw_box(box_3d)
-                    bev_image = bev.get_image()
                     
-                    # Resize BEV image to fit in the corner of the result frame
-                    bev_height = height // 4  # Reduced from height/3 to height/4 for better fit
-                    bev_width = bev_height
+                    # Get resized BEV image directly from the BEV object
+                    bev_resized = bev.get_resized_image(width, height)
                     
-                    # Ensure dimensions are valid
-                    if bev_height > 0 and bev_width > 0:
-                        # Resize BEV image
-                        bev_resized = cv2.resize(bev_image, (bev_width, bev_height))
-                        
-                        # Create a region of interest in the result frame
-                        roi = result_frame[height - bev_height:height, 0:bev_width]
-                        
-                        # Simple overlay - just copy the BEV image to the ROI
-                        result_frame[height - bev_height:height, 0:bev_width] = bev_resized
-                        
-                        # Add a border around the BEV visualization
-                        cv2.rectangle(result_frame, 
-                                      (0, height - bev_height), 
-                                      (bev_width, height), 
-                                      (255, 255, 255), 1)
-                        
-                        # Add a title to the BEV visualization
-                        cv2.putText(result_frame, "Bird's Eye View", 
-                                    (10, height - bev_height + 20), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    # Get dimensions for positioning
+                    bev_height, bev_width = bev_resized.shape[:2]
+                    
+                    # Create a region of interest in the result frame
+                    roi = result_frame[height - bev_height:height, 0:bev_width]
+                    
+                    # Simple overlay - just copy the BEV image to the ROI
+                    result_frame[height - bev_height:height, 0:bev_width] = bev_resized
+                    
+                    # Add a border around the BEV visualization
+                    cv2.rectangle(result_frame, 
+                                  (0, height - bev_height), 
+                                  (bev_width, height), 
+                                  (255, 255, 255), 1)
+                    
+                    # Add a title to the BEV visualization
+                    cv2.putText(result_frame, "Bird's Eye View", 
+                                (10, height - bev_height + 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                         
                 except Exception as e:
                     print(f"Error drawing BEV: {e}")
@@ -532,17 +528,45 @@ def main():
                 elapsed_time = end_time - start_time
                 fps_value = frame_count / elapsed_time
                 fps_display = f"FPS: {fps_value:.1f}"
-            
-            # Add FPS and device info to the result frame
-            cv2.putText(result_frame, f"{fps_display} | Device: {device}", (10, 30), 
+
+            # Add FPS and device info to the result frame (top-right corner)
+            text = f"{fps_display} | Device: {device}"
+
+            # Calculate text size for right alignment
+            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            x_offset = width - text_width - 10  # 10px from right edge
+            y_offset = 30  # Fixed offset from top edge
+
+            # Place text on the result frame (top-right corner)
+            cv2.putText(result_frame, text, (x_offset, y_offset),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             # Add depth map to the corner of the result frame
             try:
-                depth_height = height // 4
-                depth_width = depth_height * width // height
+                # Calculate depth map dimensions based on frame size
+                depth_size_factor = 0.25  # Percentage of frame height
+                depth_height = int(height * depth_size_factor)
+                
+                # Maintain original aspect ratio
+                depth_aspect_ratio = width / height
+                depth_width = int(depth_height * depth_aspect_ratio)
+                
+                # Make sure depth visualization doesn't exceed 1/3 of the frame width
+                if depth_width > width // 3:
+                    depth_width = width // 3
+                    depth_height = int(depth_width / depth_aspect_ratio)
+                
+                # Resize depth map
                 depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
+                
+                # Overlay on the top-left corner
                 result_frame[0:depth_height, 0:depth_width] = depth_resized
+                
+                # Add a border around the depth visualization
+                cv2.rectangle(result_frame, 
+                              (0, 0), 
+                              (depth_width, depth_height), 
+                              (255, 255, 255), 1)
                 
             except Exception as e:
                 print(f"Error adding depth map to result: {e}")

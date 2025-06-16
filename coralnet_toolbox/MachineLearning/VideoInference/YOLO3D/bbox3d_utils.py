@@ -555,9 +555,9 @@ class BirdEyeView:
     COLOR_BOX_LINE = (70, 70, 70)
 
     FONT_STYLE = cv2.FONT_HERSHEY_SIMPLEX
-    FONT_SCALE_AXIS = 0.5
-    FONT_SCALE_MARKER = 0.4
-    FONT_SCALE_ID = 0.4
+    FONT_SCALE_AXIS = 0.3
+    FONT_SCALE_MARKER = 0.2
+    FONT_SCALE_ID = 0.2
 
     THICKNESS_GRID = 1
     THICKNESS_AXIS = 2
@@ -595,7 +595,8 @@ class BirdEyeView:
         # Horizontal lines (distance from camera)
         for dist in np.arange(step_m, self.max_distance * 2, step_m):
             y = int(self.origin_y - dist * self.scale)
-            if y < 0: break
+            if y < 0: 
+                break
             cv2.line(self.bev_image, (0, y), (self.width, y), self.COLOR_GRID, self.THICKNESS_GRID)
 
         # Vertical lines (sideways distance from center)
@@ -707,3 +708,35 @@ class BirdEyeView:
     def get_image(self) -> np.ndarray:
         """Returns the current BEV image."""
         return self.bev_image
+        
+    def get_resized_image(self, frame_width, frame_height, size_factor=0.25, aspect_ratio=4/3):
+        """
+        Returns a properly resized BEV image suitable for overlay on a frame.
+        
+        Args:
+            frame_width (int): Width of the target frame
+            frame_height (int): Height of the target frame
+            size_factor (float): Size as a fraction of frame height (default: 0.25 = 25%)
+            aspect_ratio (float): Width:height ratio for BEV (default: 4/3)
+            
+        Returns:
+            np.ndarray: Resized BEV image
+        """
+        # Calculate BEV dimensions based on frame size
+        bev_height = int(frame_height * size_factor)
+        
+        # Use specified aspect ratio for BEV
+        bev_width = int(bev_height * aspect_ratio)
+        
+        # Make sure BEV width doesn't exceed 1/3 of the frame width
+        if bev_width > frame_width // 3:
+            bev_width = frame_width // 3
+            bev_height = int(bev_width / aspect_ratio)
+        
+        # Ensure dimensions are valid
+        if bev_height <= 0 or bev_width <= 0:
+            # Return a small valid image if dimensions are invalid
+            return np.zeros((10, 10, 3), dtype=np.uint8)
+            
+        # Resize and return the BEV image
+        return cv2.resize(self.bev_image, (bev_width, bev_height))
