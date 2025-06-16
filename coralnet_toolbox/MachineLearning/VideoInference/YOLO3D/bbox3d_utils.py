@@ -1,12 +1,11 @@
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 import cv2
 from filterpy.kalman import KalmanFilter
 from collections import defaultdict
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Constants and Defaults
+# Constants
 # ----------------------------------------------------------------------------------------------------------------------
 
 
@@ -23,33 +22,6 @@ DEFAULT_P = np.array([
     [0.0, 718.856, 185.2157, -0.1130887],
     [0.0, 0.0, 1.0, 0.003779761]
 ])
-
-# Average dimensions for common objects (height, width, length) in meters
-DEFAULT_DIMS = {
-    'car': np.array([1.52, 1.64, 3.85]),
-    'truck': np.array([3.07, 2.63, 11.17]),
-    'bus': np.array([3.07, 2.63, 11.17]),
-    'motorcycle': np.array([1.50, 0.90, 2.20]),
-    'bicycle': np.array([1.40, 0.70, 1.80]),
-    'person': np.array([1.75, 0.60, 0.60]),  # Adjusted width/length for person
-    'dog': np.array([0.80, 0.50, 1.10]),
-    'cat': np.array([0.40, 0.30, 0.70]),
-    # Add indoor objects
-    'potted plant': np.array([0.80, 0.40, 0.40]),  # Reduced size for indoor plants
-    'plant': np.array([0.80, 0.40, 0.40]),  # Alias for potted plant
-    'chair': np.array([0.80, 0.60, 0.60]),
-    'sofa': np.array([0.80, 0.85, 2.00]),
-    'table': np.array([0.75, 1.20, 1.20]),
-    'bed': np.array([0.60, 1.50, 2.00]),
-    'tv': np.array([0.80, 0.15, 1.20]),
-    'laptop': np.array([0.02, 0.25, 0.35]),
-    'keyboard': np.array([0.03, 0.15, 0.45]),
-    'mouse': np.array([0.03, 0.06, 0.10]),
-    'book': np.array([0.03, 0.20, 0.15]),
-    'bottle': np.array([0.25, 0.10, 0.10]),
-    'cup': np.array([0.10, 0.08, 0.08]),
-    'vase': np.array([0.30, 0.15, 0.15])
-}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -72,7 +44,7 @@ class BBox3DEstimator:
         """
         self.K = camera_matrix if camera_matrix is not None else DEFAULT_K
         self.P = projection_matrix if projection_matrix is not None else DEFAULT_P
-        self.dims = class_dims if class_dims is not None else DEFAULT_DIMS
+        self.dims = class_dims
         
         # Initialize Kalman filters for tracking 3D boxes
         self.kf_trackers = {}
@@ -111,35 +83,12 @@ class BBox3DEstimator:
         # Adjust dimensions based on 2D box aspect ratio and size
         aspect_ratio_2d = width_2d / height_2d if height_2d > 0 else 1.0
         
-        # For plants, adjust dimensions based on 2D box
-        if 'plant' in class_name.lower() or 'potted plant' in class_name.lower():
-            # Scale height based on 2D box height
-            dimensions[0] = height_2d / 120  # Convert pixels to meters with a scaling factor
-            # Make width and length proportional to height
-            dimensions[1] = dimensions[0] * 0.6  # width
-            dimensions[2] = dimensions[0] * 0.6  # length
-        
-        # For people, adjust dimensions based on 2D box
-        elif 'person' in class_name.lower():
-            # Scale height based on 2D box height
-            dimensions[0] = height_2d / 100  # Convert pixels to meters with a scaling factor
-            # Make width and length proportional to height
-            dimensions[1] = dimensions[0] * 0.3  # width
-            dimensions[2] = dimensions[0] * 0.3  # length
-        
         # Convert depth to distance - use a larger range for better visualization
         # Map depth_value (0-1) to a range of 1-10 meters
         distance = 1.0 + depth_value * 9.0  # Increased from 4.0 to 9.0 for a larger range
         
         # Calculate 3D location
         location = self._backproject_point(center_x, center_y, distance)
-        
-        # For plants, adjust y-coordinate to place them on a surface
-        if 'plant' in class_name.lower() or 'potted plant' in class_name.lower():
-            # Assume plants are on a surface (e.g., table, floor)
-            # Adjust y-coordinate based on the bottom of the 2D bounding box
-            bottom_y = y2  # Bottom of the 2D box
-            location[1] = self._backproject_point(center_x, bottom_y, distance)[1]
         
         # Estimate orientation
         orientation = self._estimate_orientation(bbox_2d, location, class_name)
@@ -211,38 +160,26 @@ class BBox3DEstimator:
         # Calculate ray from camera to object center
         theta_ray = np.arctan2(location[0], location[2])
         
-        # For plants and stationary objects, orientation doesn't matter much
-        # Just use a fixed orientation aligned with the camera view
-        if 'plant' in class_name.lower() or 'potted plant' in class_name.lower():
-            # Plants typically don't have a specific orientation
-            # Just use the ray angle
-            return theta_ray
+        # For other objects, use the 2D box aspect ratio to estimate orientation
+        x1, y1, x2, y2 = bbox_2d
+        width = x2 - x1
+        height = y2 - y1
+        aspect_ratio = width / height if height > 0 else 1.0
         
-        # For people, they might be facing the camera
-        if 'person' in class_name.lower():
-            # Assume person is facing the camera
-            alpha = 0.0
-        else:
-            # For other objects, use the 2D box aspect ratio to estimate orientation
-            x1, y1, x2, y2 = bbox_2d
-            width = x2 - x1
-            height = y2 - y1
-            aspect_ratio = width / height if height > 0 else 1.0
-            
-            # If the object is wide, it might be facing sideways
-            if aspect_ratio > 1.5:
-                # Object is wide, might be facing sideways
-                # Use the position relative to the image center to guess orientation
-                image_center_x = self.K[0, 2]  # Principal point x
-                if (x1 + x2) / 2 < image_center_x:
-                    # Object is on the left side of the image
-                    alpha = np.pi / 2  # Facing right
-                else:
-                    # Object is on the right side of the image
-                    alpha = -np.pi / 2  # Facing left
+        # If the object is wide, it might be facing sideways
+        if aspect_ratio > 1.5:
+            # Object is wide, might be facing sideways
+            # Use the position relative to the image center to guess orientation
+            image_center_x = self.K[0, 2]  # Principal point x
+            if (x1 + x2) / 2 < image_center_x:
+                # Object is on the left side of the image
+                alpha = np.pi / 2  # Facing right
             else:
-                # Object has normal proportions, assume it's facing the camera
-                alpha = 0.0
+                # Object is on the right side of the image
+                alpha = -np.pi / 2  # Facing left
+        else:
+            # Object has normal proportions, assume it's facing the camera
+            alpha = 0.0
         
         # Global orientation
         rot_y = alpha + theta_ray
@@ -419,19 +356,11 @@ class BBox3DEstimator:
             [0, 1, 0],
             [-np.sin(rot_y), 0, np.cos(rot_y)]
         ])
-        
-        # 3D bounding box corners
-        # For plants and stationary objects, make the box more centered
-        if 'plant' in class_name or 'potted plant' in class_name:
-            # For plants, center the box on the plant
-            x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
-            y_corners = np.array([h / 2, h / 2, h / 2, h / 2, -h / 2, -h / 2, -h / 2, -h / 2])  # Center vertically
-            z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
-        else:
-            # For other objects, use standard box configuration
-            x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
-            y_corners = np.array([0, 0, 0, 0, -h, -h, -h, -h])  # Bottom at y=0
-            z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
+
+        # For other objects, use standard box configuration
+        x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
+        y_corners = np.array([0, 0, 0, 0, -h, -h, -h, -h])  # Bottom at y=0
+        z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
 
         # Rotate and translate corners
         corners_3d = np.vstack([x_corners, y_corners, z_corners])
@@ -719,18 +648,9 @@ class BirdEyeView:
             
             # Determine color based on class
             if color is None:
-                if 'car' in class_name or 'vehicle' in class_name:
-                    color = (0, 0, 255)  # Red
-                elif 'truck' in class_name or 'bus' in class_name:
-                    color = (0, 165, 255)  # Orange
-                elif 'person' in class_name:
-                    color = (0, 255, 0)  # Green
-                elif 'bicycle' in class_name or 'motorcycle' in class_name:
-                    color = (255, 0, 0)  # Blue
-                elif 'potted plant' in class_name or 'plant' in class_name:
-                    color = (0, 255, 255)  # Yellow
-                else:
-                    color = (255, 255, 255)  # White
+                color = (255, 255, 255)  # White
+            else:
+                color = (255, 255, 255)  # White
             
             # Get object ID if available
             obj_id = box_3d.get('object_id', None)
@@ -754,38 +674,12 @@ class BirdEyeView:
             bev_x = max(20, min(bev_x, self.width - 20))
             bev_y = max(20, min(bev_y, self.origin_y - 10))
             
-            # Draw object based on type
-            if 'person' in class_name:
-                # Draw person as a circle
-                radius = int(4 * size_factor)
-                cv2.circle(self.bev_image, (bev_x, bev_y), radius, color, -1)
-                
-            elif 'car' in class_name or 'vehicle' in class_name or 'truck' in class_name or 'bus' in class_name:
-                # Draw vehicle as a rectangle
-                rect_width = int(12 * size_factor)
-                rect_length = int(18 * size_factor)
-                
-                if 'truck' in class_name or 'bus' in class_name:
-                    rect_length = int(24 * size_factor)  # Longer for trucks/buses
-                
-                # Draw vehicle body
-                cv2.rectangle(self.bev_image,
-                              (bev_x - rect_width // 2, bev_y - rect_length // 2),
-                              (bev_x + rect_width // 2, bev_y + rect_length // 2),
-                              color, -1)
-                
-            elif 'plant' in class_name or 'potted plant' in class_name:
-                # Draw plant as a circle
-                radius = int(8 * size_factor)
-                cv2.circle(self.bev_image, (bev_x, bev_y), radius, color, -1)
-                
-            else:
-                # Default: draw a square for other objects
-                size = int(8 * size_factor)
-                cv2.rectangle(self.bev_image,
-                              (bev_x - size, bev_y - size),
-                              (bev_x + size, bev_y + size),
-                              color, -1)
+            # Default: draw a square for other objects
+            size = int(8 * size_factor)
+            cv2.rectangle(self.bev_image,
+                          (bev_x - size, bev_y - size),
+                          (bev_x + size, bev_y + size),
+                          color, -1)
             
             # Draw object ID if available
             if obj_id is not None:

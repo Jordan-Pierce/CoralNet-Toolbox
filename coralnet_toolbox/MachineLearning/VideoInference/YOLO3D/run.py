@@ -362,6 +362,7 @@ def main():
         scale_factor = 1.0
         width = original_width
         height = original_height    
+        
     print(f"Original resolution: {original_width}x{original_height}")
     if target_size is not None:
         print(f"Target resolution: {width}x{height} (longest edge: {max(width, height)}px)")
@@ -463,6 +464,7 @@ def main():
                     # Keep track of active IDs for tracker cleanup
                     if obj_id is not None:
                         active_ids.append(obj_id)
+                        
                 except Exception as e:
                     print(f"Error processing detection: {e}")
                     continue
@@ -473,11 +475,13 @@ def main():
             # Step 4: Visualization
             # Draw boxes on the result frame
             for box_3d in boxes_3d:
-                try:                    # Use a default color for all objects
-                    color = (0, 255, 0)  # Green as default
+                try:                    
+                    # Use a default color for all objects
+                    color = (255, 255, 255)  # Green as default
                     
                     # Draw box with depth information
                     result_frame = bbox3d_estimator.draw_box_3d(result_frame, box_3d, color=color)
+                    
                 except Exception as e:
                     print(f"Error drawing box: {e}")
                     continue
