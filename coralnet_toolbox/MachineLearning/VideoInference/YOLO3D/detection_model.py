@@ -75,6 +75,7 @@ class ObjectDetector:
         self.model.overrides['agnostic_nms'] = False
         self.model.overrides['max_det'] = 1000
         self.model.overrides['imgsz'] = self.imgsz
+        self.model.overrides['half'] = True
         
         if classes is not None:
             self.model.overrides['classes'] = classes
