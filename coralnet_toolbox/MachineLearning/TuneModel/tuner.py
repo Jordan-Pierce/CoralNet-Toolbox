@@ -69,7 +69,6 @@ DEFAULT_SPACE = {
     "copy_paste": (0.0, 1.0),  # segment copy-paste (probability)
     "erasing": (0.0, 0.9),  # erasing probability
     "dropout": (0.0, 0.9),  # dropout probability
-    "multi_scale": (0.0, 1.0),  # multi-scale training (probability)
 }
 
 
@@ -556,12 +555,6 @@ class Tuner:
         """Train YOLO model with mutated hyperparameters."""
         metrics = {}
         
-        # Convert boolean parameters from float to bool
-        boolean_params = ['multi_scale']  # Add other boolean params here if needed
-        for param in boolean_params:
-            if param in mutated_hyp:
-                mutated_hyp[param] = bool(round(mutated_hyp[param]))
-        
         train_args = {**vars(self.args), **mutated_hyp}
         save_dir = get_save_dir(get_cfg(train_args))
         weights_dir = save_dir / "weights"
@@ -594,12 +587,6 @@ class Tuner:
             base_model_path: Path to the base trained model that each iteration should start from
         """
         metrics = {}
-        
-        # Convert boolean parameters from float to bool
-        boolean_params = ['multi_scale']  # Add other boolean params here if needed
-        for param in boolean_params:
-            if param in mutated_hyp:
-                mutated_hyp[param] = bool(round(mutated_hyp[param]))
         
         # Prepare training arguments
         train_args = {**vars(self.args), **mutated_hyp}
@@ -718,7 +705,7 @@ class Tuner:
     def _generate_reports(self, current_iter: int, total_iterations: int, start_time: float, 
                           best_metrics: Dict, best_save_dir, iteration_times: List[float] = None, 
                           base_model_prep_time: float = 0):
-        """Generate plots and save best hyperparameters with timing information."""
+"""Generate plots and save best hyperparameters with timing information."""
         # Generate evolution plot
         plot_tune_results(self.tune_csv)
         
@@ -767,10 +754,7 @@ class Tuner:
         for i, k in enumerate(self.space.keys()):
             value = float(x[best_idx, i + 1])
             # Convert boolean parameters back to bool for YAML output
-            if k in ['multi_scale']:  # Add other boolean params here if needed
-                data[k] = bool(round(value))
-            else:
-                data[k] = value
+            data[k] = value
         
         # Save and print best hyperparameters
         yaml_header = remove_colorstr(header.replace(self.prefix, "# ")) + "\n"
