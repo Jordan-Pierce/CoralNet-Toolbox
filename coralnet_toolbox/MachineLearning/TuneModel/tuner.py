@@ -185,7 +185,7 @@ class Tuner:
             return self._mutate_simulated_annealing(base_hyp, mutation)
         else:
             LOGGER.warning(f"{self.prefix}Unknown mutation method '{self.mutation_method}', using adaptive Gaussian.")
-            return self._mutate_adaptive_gaussian(base_hyp, parent, n, mutation)
+            return self._mutate_adaptive_gaussian(base_hyp, mutation)
 
     def _get_base_hyperparameters(self, parent: str, n: int, mutation: float) -> Dict[str, float]:
         """Get base hyperparameters from existing results or initialize new ones."""
@@ -611,7 +611,6 @@ class Tuner:
             # Ensure resume=False so we don't resume from previous training
             train_kwargs['resume'] = False
             
-            print(f"\n\n\nTraining with hyperparameters: {train_kwargs}\n\n\n")
             results = current_model.train(**train_kwargs)
             
             # Extract metrics from training results
@@ -705,7 +704,7 @@ class Tuner:
     def _generate_reports(self, current_iter: int, total_iterations: int, start_time: float, 
                           best_metrics: Dict, best_save_dir, iteration_times: List[float] = None, 
                           base_model_prep_time: float = 0):
-"""Generate plots and save best hyperparameters with timing information."""
+        """Generate plots and save best hyperparameters with timing information."""
         # Generate evolution plot
         plot_tune_results(self.tune_csv)
         
