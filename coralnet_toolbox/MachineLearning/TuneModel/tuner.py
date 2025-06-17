@@ -151,7 +151,7 @@ class Tuner:
             f"{self.prefix}💡 Learn about tuning at https://docs.ultralytics.com/guides/hyperparameter-tuning"
         )
 
-    def _mutate(self, parent: str = "single", n: int = 5, mutation: float = 0.9) -> Dict[str, float]:
+    def _mutate(self, parent: str = "single", n: int = 5, mutation: float = 0.8) -> Dict[str, float]:
         """
         Mutate hyperparameters using the specified mutation method.
 
