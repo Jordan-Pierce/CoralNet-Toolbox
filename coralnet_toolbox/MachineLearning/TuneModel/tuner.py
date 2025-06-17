@@ -45,7 +45,7 @@ DEFAULT_SPACE = {
     # 'optimizer': tune.choice(['SGD', 'Adam', 'AdamW', 'NAdam', 'RAdam', 'RMSProp']),
     "lr0": (1e-5, 1e-1),  # initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
     "lrf": (0.0001, 0.1),  # final OneCycleLR learning rate (lr0 * lrf)
-    "momentum": (0.7, 0.98, 0.3),  # SGD momentum/Adam beta1
+    "momentum": (0.7, 0.98),  # SGD momentum/Adam beta1
     "weight_decay": (0.0, 0.001),  # optimizer weight decay 5e-4
     "warmup_epochs": (0.0, 5.0),  # warmup epochs (fractions ok)
     "warmup_momentum": (0.0, 0.95),  # warmup initial momentum
@@ -238,7 +238,7 @@ class Tuner:
                 LOGGER.info(f"{self.prefix}  {k}: {hyp[k]} (range: {v[0]} - {v[1]})")
 
     def _mutate_adaptive_gaussian(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Adaptive Gaussian mutation with decreasing variance over generations."""
+        """Adaptive Gaussian mutation with decreasing variance over generations, with asymmetric boundary handling."""
         initial_sigma = 0.3
         final_sigma = 0.05
         progress = self.generation / self.max_generations
@@ -248,159 +248,165 @@ class Tuner:
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                param_range = v[1] - v[0]
+                lower_bound, upper_bound = v[0], v[1]
+                param_range = upper_bound - lower_bound
                 noise = np.random.normal(0, sigma * param_range)
+                # Asymmetric mutation at both bounds
+                if current_val == lower_bound:
+                    noise = abs(noise)
+                elif current_val == upper_bound:
+                    noise = -abs(noise)
                 mutated[k] = current_val + noise
         
         return self._constrain_continuous_params(mutated)
 
     def _mutate_cauchy(self, base_hyp: Dict, mutation: float, scale: float = 0.1) -> Dict[str, float]:
-        """Cauchy mutation with heavy tails for escaping local optima."""
+        """Cauchy mutation with heavy tails for escaping local optima, with asymmetric boundary handling."""
         mutated = base_hyp.copy()
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                param_range = v[1] - v[0]
+                lower_bound, upper_bound = v[0], v[1]
+                param_range = upper_bound - lower_bound
                 noise = np.random.standard_cauchy() * scale * param_range
+                if current_val == lower_bound:
+                    noise = abs(noise)
+                elif current_val == upper_bound:
+                    noise = -abs(noise)
                 mutated[k] = current_val + noise
         
         return self._constrain_continuous_params(mutated)
 
     def _mutate_polynomial(self, base_hyp: Dict, mutation: float, eta: float = 20.0) -> Dict[str, float]:
-        """Polynomial mutation from genetic algorithms."""
+        """Polynomial mutation from genetic algorithms, with asymmetric boundary handling."""
         mutated = base_hyp.copy()
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
                 min_val, max_val = v[0], v[1]
-                
-                # Normalize to [0, 1]
                 normalized = (current_val - min_val) / (max_val - min_val)
-                
                 u = random.random()
                 if u <= 0.5:
                     delta = (2 * u) ** (1 / (eta + 1)) - 1
                 else:
                     delta = 1 - (2 * (1 - u)) ** (1 / (eta + 1))
-                
-                # Apply mutation and denormalize
                 new_normalized = normalized + delta
+                # Asymmetric mutation at both bounds
+                if current_val == min_val:
+                    new_normalized = normalized + abs(delta)
+                elif current_val == max_val:
+                    new_normalized = normalized - abs(delta)
                 mutated[k] = min_val + new_normalized * (max_val - min_val)
         
         return self._constrain_continuous_params(mutated)
 
     def _mutate_levy_flight(self, base_hyp: Dict, mutation: float, alpha: float = 1.5, 
                             scale: float = 0.1) -> Dict[str, float]:
-        """Lévy flight mutation for combined local and global search."""
+        """Lévy flight mutation for combined local and global search, with asymmetric boundary handling."""
         mutated = base_hyp.copy()
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                param_range = v[1] - v[0]
-                
-                # Generate Lévy flight step
+                lower_bound, upper_bound = v[0], v[1]
+                param_range = upper_bound - lower_bound
                 levy_step = self._levy_flight(alpha) * scale * param_range
+                if current_val == lower_bound:
+                    levy_step = abs(levy_step)
+                elif current_val == upper_bound:
+                    levy_step = -abs(levy_step)
                 mutated[k] = current_val + levy_step
         
         return self._constrain_continuous_params(mutated)
 
     def _mutate_differential(self, base_hyp: Dict, mutation: float, F: float = 0.5) -> Dict[str, float]:
-        """Differential Evolution mutation using population history."""
+        """Differential Evolution mutation using population history, with asymmetric boundary handling."""
         if len(self.population_history) < 3:
             return self._mutate_adaptive_gaussian(base_hyp, mutation)  # fallback
-        
-        # Select three random individuals
         candidates = [p for p in self.population_history if p != base_hyp]
         if len(candidates) < 3:
             return base_hyp
-        
         r1, r2, r3 = random.sample(candidates, 3)
-        
         mutated = base_hyp.copy()
         for k, v in self.space.items():
             if random.random() < mutation:
-                # DE mutation formula
+                lower_bound, upper_bound = v[0], v[1]
                 new_val = r1[k] + F * (r2[k] - r3[k])
+                # Asymmetric mutation at both bounds
+                if base_hyp[k] == lower_bound:
+                    new_val = base_hyp[k] + abs(new_val - base_hyp[k])
+                elif base_hyp[k] == upper_bound:
+                    new_val = base_hyp[k] - abs(new_val - base_hyp[k])
                 mutated[k] = new_val
-        
         return self._constrain_continuous_params(mutated)
 
     def _mutate_parameter_specific(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Parameter-specific mutation strategies."""
+        """Parameter-specific mutation strategies, with asymmetric boundary handling."""
         mutated = base_hyp.copy()
-        
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                
-                # Parameter-specific mutation strategies
+                lower_bound, upper_bound = v[0], v[1]
                 if 'lr' in k.lower() or 'learning' in k.lower():
-                    # Learning rates: log-normal mutation
                     log_val = np.log(max(current_val, 1e-8))
                     log_val += np.random.normal(0, 0.1)
                     new_val = np.exp(log_val)
-                
                 elif 'weight_decay' in k.lower() or 'decay' in k.lower():
-                    # Weight decay: log-uniform mutation
-                    log_min, log_max = np.log(max(v[0], 1e-8)), np.log(v[1])
+                    log_min, log_max = np.log(max(lower_bound, 1e-8)), np.log(upper_bound)
                     new_val = np.exp(np.random.uniform(log_min, log_max))
-                
                 elif 'dropout' in k.lower() or 'prob' in k.lower():
-                    # Probabilities: beta distribution mutation
-                    alpha, beta = 2, 2  # favor middle values
-                    new_val = np.random.beta(alpha, beta) * (v[1] - v[0]) + v[0]
-                
+                    alpha, beta = 2, 2
+                    new_val = np.random.beta(alpha, beta) * (upper_bound - lower_bound) + lower_bound
                 elif 'batch_size' in k.lower() or 'size' in k.lower():
-                    # Sizes: geometric progression
-                    sizes = [2**i for i in range(int(np.log2(max(v[0], 1))), int(np.log2(v[1])) + 1)]
+                    sizes = [2**i for i in range(int(np.log2(max(lower_bound, 1))), int(np.log2(upper_bound)) + 1)]
                     new_val = random.choice(sizes) if sizes else current_val
-                
                 else:
-                    # Default: Gaussian mutation
-                    param_range = v[1] - v[0]
+                    param_range = upper_bound - lower_bound
                     noise = np.random.normal(0, 0.1 * param_range)
+                    if current_val == lower_bound:
+                        noise = abs(noise)
+                    elif current_val == upper_bound:
+                        noise = -abs(noise)
                     new_val = current_val + noise
-                
                 mutated[k] = new_val
-        
         return self._constrain_continuous_params(mutated)
 
     def _mutate_multi_scale(self, base_hyp: Dict, mutation: float, 
                             scales: List[float] = [0.01, 0.1, 0.3]) -> Dict[str, float]:
-        """Multi-scale mutation with different step sizes."""
+        """Multi-scale mutation with different step sizes, with asymmetric boundary handling."""
         mutated = base_hyp.copy()
-        
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                param_range = v[1] - v[0]
-                
-                # Randomly choose a scale
+                lower_bound, upper_bound = v[0], v[1]
+                param_range = upper_bound - lower_bound
                 scale = random.choice(scales)
                 noise = np.random.normal(0, scale * param_range)
+                if current_val == lower_bound:
+                    noise = abs(noise)
+                elif current_val == upper_bound:
+                    noise = -abs(noise)
                 mutated[k] = current_val + noise
-        
         return self._constrain_continuous_params(mutated)
 
     def _mutate_simulated_annealing(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Temperature-based mutation with cooling schedule."""
-        # Calculate temperature (starts high, decreases over generations)
+        """Temperature-based mutation with cooling schedule, with asymmetric boundary handling."""
         initial_temp = 1.0
         final_temp = 0.01
         progress = self.generation / self.max_generations
         temperature = initial_temp * (1 - progress) + final_temp * progress
-        
         mutated = base_hyp.copy()
         for k, v in self.space.items():
             if random.random() < mutation:
                 current_val = base_hyp[k]
-                param_range = v[1] - v[0]
-                
-                # Step size proportional to temperature
+                lower_bound, upper_bound = v[0], v[1]
+                param_range = upper_bound - lower_bound
                 step_size = temperature * param_range * 0.1
                 noise = np.random.normal(0, step_size)
+                if current_val == lower_bound:
+                    noise = abs(noise)
+                elif current_val == upper_bound:
+                    noise = -abs(noise)
                 mutated[k] = current_val + noise
-        
         return self._constrain_continuous_params(mutated)
 
     def _levy_flight(self, alpha: float) -> float:
