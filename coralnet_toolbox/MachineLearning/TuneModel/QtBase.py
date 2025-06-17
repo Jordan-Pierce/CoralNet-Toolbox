@@ -289,7 +289,6 @@ class Base(QDialog):
         # Mutation methods
         self.mutation_combo = QComboBox()
         self.mutation_combo.addItems([
-            "gaussian",
             "adaptive", 
             "cauchy",
             "polynomial",

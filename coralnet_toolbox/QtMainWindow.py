@@ -634,10 +634,16 @@ class MainWindow(QMainWindow):
         self.check_for_updates_action = QAction("Check for Updates", self)
         self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
         self.help_menu.addAction(self.check_for_updates_action)
+        # Usage
+        self.usage_action = QAction("Usage", self)
+        self.usage_action.triggered.connect(self.open_usage_dialog)
+        self.help_menu.addAction(self.usage_action)
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
         self.help_menu.addAction(self.create_issue_action)
+        # Separator
+        self.help_menu.addSeparator()
         # Create Break Time submenu
         break_time_menu = self.help_menu.addMenu("Take a Break")
         # Snake Game
@@ -2103,6 +2109,22 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.auto_distill_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_usage_dialog(self):
+        """Display QMessageBox with link to create new issue on GitHub."""
+        try:
+            self.untoggle_all_tools()
+            # URL to create a new issue
+            here = '<a href="https://jordan-pierce.github.io/CoralNet-Toolbox/usage">here</a>'
+            msg = QMessageBox()
+            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowTitle("Usage Information")
+            msg.setText(f'For information on how to use the toolbox, see {here}.')
+            msg.setTextFormat(Qt.RichText)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

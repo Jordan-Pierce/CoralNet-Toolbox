@@ -34,7 +34,6 @@ from ultralytics import YOLO
 
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.utils import DEFAULT_CFG, LOGGER, YAML, callbacks, colorstr, remove_colorstr
-from ultralytics.utils.plotting import plt_color_scatter
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -58,7 +57,7 @@ DEFAULT_SPACE = {
     "hsv_v": (0.0, 0.9),  # image HSV-Value augmentation (fraction)
     "degrees": (0.0, 180),  # image rotation (+/- deg)
     "translate": (0.0, 1.0),  # image translation (+/- fraction)
-    "scale": (0.5, 2.0),  # image scale (+/- gain)
+    "scale": (0.1, 1.0),  # image scale (+/- gain)
     "shear": (-180, 180),  # image shear (+/- deg)
     "perspective": (0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001
     "flipud": (0.0, 1.0),  # image flip up-down (probability)
@@ -153,9 +152,7 @@ class Tuner:
             f"{self.prefix}💡 Learn about tuning at https://docs.ultralytics.com/guides/hyperparameter-tuning"
         )
 
-    def _mutate(
-        self, parent: str = "single", n: int = 5, mutation: float = 0.8, sigma: float = 0.2
-    ) -> Dict[str, float]:
+    def _mutate(self, parent: str = "single", n: int = 5, mutation: float = 0.9) -> Dict[str, float]:
         """
         Mutate hyperparameters using the specified mutation method.
 
@@ -163,18 +160,15 @@ class Tuner:
             parent (str): Parent selection method: 'single' or 'weighted'.
             n (int): Number of parents to consider.
             mutation (float): Probability of a parameter mutation in any given iteration.
-            sigma (float): Standard deviation for Gaussian random number generator.
 
         Returns:
             (Dict[str, float]): A dictionary containing mutated hyperparameters.
         """
         # Get base hyperparameters
-        base_hyp = self._get_base_hyperparameters(parent, n, mutation, sigma)
+        base_hyp = self._get_base_hyperparameters(parent, n, mutation)
         
         # Apply mutation method
-        if self.mutation_method == "gaussian":
-            return self._mutate_gaussian(base_hyp, parent, n, mutation, sigma)
-        elif self.mutation_method == "adaptive":
+        if self.mutation_method == "adaptive":
             return self._mutate_adaptive_gaussian(base_hyp, mutation)
         elif self.mutation_method == "cauchy":
             return self._mutate_cauchy(base_hyp, mutation)
@@ -191,17 +185,17 @@ class Tuner:
         elif self.mutation_method == "simulated_annealing":
             return self._mutate_simulated_annealing(base_hyp, mutation)
         else:
-            LOGGER.warning(f"{self.prefix}Unknown mutation method '{self.mutation_method}', using gaussian")
-            return self._mutate_gaussian(base_hyp, parent, n, mutation, sigma)
+            LOGGER.warning(f"{self.prefix}Unknown mutation method '{self.mutation_method}', using adaptive Gaussian.")
+            return self._mutate_adaptive_gaussian(base_hyp, parent, n, mutation)
 
-    def _get_base_hyperparameters(self, parent: str, n: int, mutation: float, sigma: float) -> Dict[str, float]:
+    def _get_base_hyperparameters(self, parent: str, n: int, mutation: float) -> Dict[str, float]:
         """Get base hyperparameters from existing results or initialize new ones."""
         if self.tune_csv.exists():
-            return self._get_from_existing_results(parent, n, mutation, sigma)
+            return self._get_from_existing_results(parent, n, mutation)
         else:
             return self._initialize_continuous_params()
 
-    def _get_from_existing_results(self, parent: str, n: int, mutation: float, sigma: float) -> Dict[str, float]:
+    def _get_from_existing_results(self, parent: str, n: int, mutation: float) -> Dict[str, float]:
         """Get base hyperparameters from existing CSV results."""
         # Load and select parent(s)
         x = np.loadtxt(self.tune_csv, ndmin=2, delimiter=",", skiprows=1)
@@ -234,41 +228,14 @@ class Tuner:
         for k, v in self.space.items():
             hyp[k] = max(hyp[k], v[0])  # lower limit
             hyp[k] = min(hyp[k], v[1])  # upper limit
-            hyp[k] = round(hyp[k], 5)   # significant digits
         return hyp
-
-    # Original Gaussian mutation method
-    def _mutate_gaussian(self, base_hyp: Dict, parent: str, n: int, mutation: float, sigma: float) -> Dict[str, float]:
-        """Original Gaussian mutation method."""
-        if not self.tune_csv.exists():
-            return base_hyp
-        
-        # Initialize random generator
-        r = np.random
-        r.seed(int(time.time()))
-        
-        # Load existing results for mutation
-        x = np.loadtxt(self.tune_csv, ndmin=2, delimiter=",", skiprows=1)
-        fitness = x[:, 0]
-        n = min(n, len(x))
-        x = x[np.argsort(-fitness)][:n]
-        w = x[:, 0] - x[:, 0].min() + 1e-6
-        
-        if parent == "single" or len(x) == 1:
-            x = x[random.choices(range(n), weights=w)[0]]
-        elif parent == "weighted":
-            x = (x * w.reshape(n, 1)).sum(0) / w.sum()
-
-        # Apply mutations
-        g = np.array([v[2] if len(v) == 3 else 1.0 for v in self.space.values()])
-        ng = len(self.space)
-        v = np.ones(ng)
-        
-        while all(v == 1):
-            v = (g * (r.random(ng) < mutation) * r.randn(ng) * r.random() * sigma + 1).clip(0.3, 3.0)
-        
-        hyp = {k: float(x[i + 1] * v[i]) for i, k in enumerate(self.space.keys())}
-        return self._constrain_continuous_params(hyp)
+    
+    def _log_mutation(self, hyp: Dict[str, float]):
+        """Log the mutated hyperparameters to the console."""
+        LOGGER.info(f"{self.prefix}Mutating hyperparameters...")
+        for k, v in self.space.items():
+            if k in hyp:
+                LOGGER.info(f"{self.prefix}  {k}: {hyp[k]} (range: {v[0]} - {v[1]})")
 
     def _mutate_adaptive_gaussian(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
         """Adaptive Gaussian mutation with decreasing variance over generations."""
@@ -469,7 +436,7 @@ class Tuner:
         base_train_args['epochs'] = 1
         base_train_args['resume'] = False
         
-        LOGGER.info(f"{self.prefix}Training base model with settings: {base_train_args}")
+        # Train the original model with base settings        
         original_model.train(**base_train_args)
         
         # Save the trained base model
@@ -528,7 +495,7 @@ class Tuner:
             
             # Step 1: Generate new hyperparameters
             mutated_hyp = self._mutate()
-            LOGGER.info(f"{self.prefix}Hyperparameters: {mutated_hyp}")
+            self._log_mutation(mutated_hyp)
 
             # Step 2: Train model with mutated hyperparameters
             training_start_time = time.time()
@@ -651,6 +618,7 @@ class Tuner:
             # Ensure resume=False so we don't resume from previous training
             train_kwargs['resume'] = False
             
+            print(f"\n\n\nTraining with hyperparameters: {train_kwargs}\n\n\n")
             results = current_model.train(**train_kwargs)
             
             # Extract metrics from training results
@@ -801,13 +769,45 @@ class Tuner:
         # Save and print best hyperparameters
         yaml_header = remove_colorstr(header.replace(self.prefix, "# ")) + "\n"
         YAML.save(self.tune_dir / "best_hyperparameters.yaml", data=data, header=yaml_header)
-        YAML.print(self.tune_dir / "best_hyperparameters.yaml")
         
         
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
+      
         
+def plt_color_scatter(v, f, bins: int = 20, cmap: str = "viridis", alpha: float = 0.8, edgecolors: str = "none"):
+    """
+    Plot a scatter plot with points colored based on a 2D histogram.
+
+    Args:
+        v (array-like): Values for the x-axis.
+        f (array-like): Values for the y-axis.
+        bins (int, optional): Number of bins for the histogram.
+        cmap (str, optional): Colormap for the scatter plot.
+        alpha (float, optional): Alpha for the scatter plot.
+        edgecolors (str, optional): Edge colors for the scatter plot.
+
+    Examples:
+        >>> v = np.random.rand(100)
+        >>> f = np.random.rand(100)
+        >>> plt_color_scatter(v, f)
+    """
+    import matplotlib.pyplot as plt  # scope for faster 'import ultralytics'
+
+    # Calculate 2D histogram and corresponding colors
+    hist, xedges, yedges = np.histogram2d(v, f, bins=bins)
+    colors = [
+        hist[
+            min(np.digitize(v[i], xedges, right=True) - 1, hist.shape[0] - 1),
+            min(np.digitize(f[i], yedges, right=True) - 1, hist.shape[1] - 1),
+        ]
+        for i in range(len(v))
+    ]
+
+    # Scatter plot
+    plt.scatter(v, f, c=colors, cmap=cmap, alpha=alpha, edgecolors=edgecolors)
+    
         
 def plot_tune_results(csv_file: str = "tune_results.csv"):
     """
