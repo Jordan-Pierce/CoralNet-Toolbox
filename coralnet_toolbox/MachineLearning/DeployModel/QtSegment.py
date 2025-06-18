@@ -120,6 +120,20 @@ class Segment(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def update_sam_task_state(self):
+        """
+        Centralized method to check if SAM is loaded and update task and dropdown accordingly.
+        """
+        sam_active = (
+            self.sam_dialog is not None and 
+            self.sam_dialog.loaded_model is not None and
+            self.use_sam_dropdown.currentText() == "True"
+        )
+        if sam_active:
+            self.task = 'segment'
+        else:
+            self.use_sam_dropdown.setCurrentText("False")
 
     def load_model(self):
         """
@@ -128,10 +142,13 @@ class Segment(Base):
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return
-
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+            
         try:
-            # Make cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            # Ensure task is correct after loading model
+            self.update_sam_task_state()  
 
             # Load the model (8.3.141) YOLO handles RTDETR too
             self.loaded_model = YOLO(self.model_path)
@@ -264,12 +281,13 @@ class Segment(Base):
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
-        # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() != "True":
-            return results_list
+        # Check if SAM model is deployed and loaded
+        self.update_sam_task_state()
 
-        # Update the task to segment
-        self.task = 'segment'
+        if self.sam_dialog.loaded_model is None:
+            # If SAM is not loaded, ensure we do not use it accidentally
+            self.use_sam_dropdown.setCurrentText("False")
+            return results_list
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -336,10 +354,7 @@ class Segment(Base):
                 progress_bar.update_progress()
 
         # Process the Results
-        if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(updated_results)
-        else:
-            results_processor.process_detection_results(updated_results)
+        results_processor.process_segmentation_results(updated_results)
 
         # Close the progress bar
         progress_bar.finish_progress()

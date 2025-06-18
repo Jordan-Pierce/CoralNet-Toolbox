@@ -348,6 +348,21 @@ class DeployModelDialog(QDialog):
 
         return True
 
+    def update_sam_task_state(self):
+        """
+        Centralized method to check if SAM is loaded and update task and dropdown accordingly.
+        """
+        sam_active = (
+            self.sam_dialog is not None and 
+            self.sam_dialog.loaded_model is not None and
+            self.use_sam_dropdown.currentText() == "True"
+        )
+        if sam_active:
+            self.task = 'segment'
+        else:
+            self.task = 'detect'
+            self.use_sam_dropdown.setCurrentText("False")
+
     def load_model(self):
         """
         Load the selected model with the current configuration.
@@ -366,7 +381,10 @@ class DeployModelDialog(QDialog):
         # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
+        
         try:
+            # Update the state of the SAM and task
+            self.update_sam_task_state()
             # Set the ontology
             self.ontology = CaptionOntology(ontology_mapping)
             # Set the class mapping
@@ -533,8 +551,15 @@ class DeployModelDialog(QDialog):
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
-        # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() != "True":
+        # Check if SAM model is deployed and loaded
+        self.update_sam_task_state()
+        if self.task != 'segment':
+            return results_list
+
+        if self.sam_dialog.loaded_model is None:
+            # If SAM is not loaded, ensure we do not use it accidentally
+            self.task = 'detect'
+            self.use_sam_dropdown.setCurrentText("False")
             return results_list
 
         # Make cursor busy
