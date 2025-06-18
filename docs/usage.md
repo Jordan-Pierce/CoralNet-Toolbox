@@ -195,7 +195,7 @@ The main window consists of several components:
 
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
-- **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
+- **Pan**: Right-click and hold the mouse button to pan the image.
 
 ## Label Window
 - **Move Label**: Right-click and drag to move labels.
