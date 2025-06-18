@@ -807,6 +807,9 @@ class AnnotationWindow(QGraphicsView):
             
         # Set the visibility based on the hide button state
         self.set_annotation_visibility(annotation)
+        
+        # Update the ImageWindow Table
+        self.main_window.image_window.update_annotation_count(annotation.id)
 
     def delete_annotation(self, annotation_id):
         """Delete an annotation by its ID."""
