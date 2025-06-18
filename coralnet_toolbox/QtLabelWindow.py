@@ -200,26 +200,22 @@ class Label(QWidget):
             'short_label_code': self.short_label_code,
             'long_label_code': self.long_label_code,
             'color': self.color.getRgb(),
-            'pen_width': self.pen_width  # Include pen width in serialization
         }
 
     @classmethod
     def from_dict(cls, data):
         """Create a Label instance from a dictionary."""
-        pen_width = data.get('pen_width', 2)  # Default to 2 if not present
         return cls(data['short_label_code'],
                    data['long_label_code'],
                    QColor(*data['color']),
-                   data['id'],
-                   pen_width)
+                   data['id'])
 
     def __repr__(self):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
                 f"short_label_code={self.short_label_code}, "
                 f"long_label_code={self.long_label_code}, "
-                f"color={self.color.name()}, "
-                f"pen_width={self.pen_width})")
+                f"color={self.color.name()})")
         
     def __del__(self):
         """Clean up the timer when the label is deleted."""
