@@ -186,7 +186,7 @@ The main window consists of several components:
 - **Image Size**: Displays the image size.
 - **Cursor Position**: Displays the cursor position.
 - **View Extent**: Displays the view extent.
-- **Annotation Visability**: Show / Hide all existing annotations.
+- **Annotation Visibility**: Show / Hide all existing annotations.
 - **Annotation Transparency**: Adjust the annotation transparency.
   - **Select All Labels**: Select all labels, adjusting transparency for all labels.
   - **Unselect All Labels**: Unselect all labels, adjusting transparency for only selected labels.
