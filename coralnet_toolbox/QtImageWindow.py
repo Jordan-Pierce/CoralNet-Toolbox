@@ -627,16 +627,16 @@ class ImageWindow(QWidget):
         # Validate path
         if image_path not in self.raster_manager.image_paths:
             return
-            
+        
         # Check if already selected
         if image_path == self.selected_image_path and not update:
             return
-            
+        
         with self.busy_cursor():
             try:
                 # Unhighlight all rows
                 self.unhighlight_all_rows()
-                                
+                
                 # Get the raster
                 raster = self.raster_manager.get_raster(image_path)
                 
@@ -655,8 +655,15 @@ class ImageWindow(QWidget):
                 # Load the full resolution image
                 q_image = raster.get_qimage()
                 if q_image is None or q_image.isNull():
-                    raise ValueError("Failed to load the full resolution image")
-                    
+                    # Remove the problematic image and refresh UI
+                    self.raster_manager.remove_raster(image_path)
+                    self.selected_image_path = None
+                    self.annotation_window.clear_scene()
+                    self.filter_images()
+                    self.show_error("Image Loading Error", 
+                                    f"Image {os.path.basename(image_path)} could not be loaded and was removed.")
+                    return
+                
                 # Set the image in the annotation window
                 self.annotation_window.set_image(image_path)
                 
@@ -670,7 +677,7 @@ class ImageWindow(QWidget):
                 
             except Exception as e:
                 self.show_error("Image Loading Error",
-                              f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
+                                f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
                 
     def select_row_for_path(self, path):
         """
