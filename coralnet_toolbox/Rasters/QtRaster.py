@@ -142,7 +142,7 @@ class Raster(QObject):
     def get_qimage(self) -> Optional[QImage]:
         """
         Get or create the full-resolution QImage representation.
-        
+
         Returns:
             QImage or None: The image as QImage, or None if loading fails
         """
@@ -150,11 +150,27 @@ class Raster(QObject):
             try:
                 self._q_image = QImage(self.image_path)
                 if self._q_image.isNull():
-                    return None
+                    # Try using rasterio_to_qimage as a fallback
+                    if self._rasterio_src is not None:
+                        self._q_image = rasterio_to_qimage(self._rasterio_src)
+                        if self._q_image is None or self._q_image.isNull():
+                            return None
+                    else:
+                        return None
             except Exception as e:
                 print(f"Error loading QImage {self.image_path}: {str(e)}")
-                return None
-                
+                # Try using rasterio_to_qimage as a fallback
+                try:
+                    if self._rasterio_src is not None:
+                        self._q_image = rasterio_to_qimage(self._rasterio_src)
+                        if self._q_image is None or self._q_image.isNull():
+                            return None
+                    else:
+                        return None
+                except Exception as e2:
+                    print(f"Error loading QImage with rasterio for {self.image_path}: {str(e2)}")
+                    return None
+
         return self._q_image
     
     def get_thumbnail(self, longest_edge: int = 256) -> Optional[QImage]:
