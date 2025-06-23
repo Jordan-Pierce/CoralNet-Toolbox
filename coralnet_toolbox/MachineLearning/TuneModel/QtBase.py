@@ -56,14 +56,14 @@ class TuneModelWorker(QThread):
         """
         try:
             # Prepare tuner arguments following the same pattern as model.tune()
-            self.mutation = self.params.pop('mutation', None)
             self.iterations = self.params.pop('iterations', None)  # Remove iterations, will pass separately
+            self.patience = self.params.pop('patience', None)
             
             # Add mode parameter as done in model.tune()
             self.params['mode'] = 'train'
             
             # Create the custom tuner with the prepared arguments
-            self.tuner = Tuner(self.mutation, args=self.params)
+            self.tuner = Tuner(args=self.params)
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -82,7 +82,7 @@ class TuneModelWorker(QThread):
             self.pre_run()
 
             # The model is already set up in the tuner through the args
-            results = self.tuner(iterations=self.iterations)
+            results = self.tuner(iterations=self.iterations, patience=self.patience)
 
             # Store results for potential future use
             self.tuning_results = results
@@ -286,27 +286,18 @@ class Base(QDialog):
         group_layout.addWidget(scroll_area)
 
         # Tuning-specific parameters
-        # Mutation methods
-        self.mutation_combo = QComboBox()
-        self.mutation_combo.addItems([
-            "adaptive", 
-            "cauchy",
-            "polynomial",
-            "levy",
-            "differential",
-            "parameter_specific",
-            "multi_scale",
-            "simulated_annealing"
-        ])
-        self.mutation_combo.setCurrentText("gaussian")  # Set default to original method
-        form_layout.addRow("Mutation Method:", self.mutation_combo)
-        
         # Iterations
         self.iterations_spinbox = QSpinBox()
         self.iterations_spinbox.setMinimum(1)
         self.iterations_spinbox.setMaximum(10000)
         self.iterations_spinbox.setValue(100)
         form_layout.addRow("Iterations:", self.iterations_spinbox)
+        
+        # Iterations patience
+        self.patience_spinbox = QSpinBox()
+        self.patience_spinbox.setValue(50)
+        self.patience_spinbox.setMinimum(3)
+        form_layout.addRow("Patience:", self.patience_spinbox)
 
         # Base training parameters
         # Epochs (for each iteration)
@@ -350,9 +341,9 @@ class Base(QDialog):
 
         # Workers
         self.workers_spinbox = QSpinBox()
-        self.workers_spinbox.setMinimum(1)
+        self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(8)
+        self.workers_spinbox.setValue(0)
         form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Add horizontal separator line
@@ -568,8 +559,8 @@ class Base(QDialog):
         params = {
             'task': self.task,
             'data': self.dataset_edit.text(),
-            'mutation': self.mutation_combo.currentText(),
             'iterations': self.iterations_spinbox.value(),
+            'patience': self.patience_spinbox.value(),
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
