@@ -91,7 +91,6 @@ class Tuner:
         args (dict): Configuration arguments for the tuning process.
         callbacks (list): Callback functions to be executed during tuning.
         prefix (str): Prefix string for logging messages.
-        mutation_method (str): The mutation strategy to use.
         generation (int): Current generation counter for adaptive methods.
         population_history (List): History of successful hyperparameter sets.
 
@@ -104,15 +103,13 @@ class Tuner:
         >>> from ultralytics import YOLO
         >>> model = YOLO("yolo11n.pt")
         >>> model.tune(
-        ...     data="coco8.yaml", epochs=10, iterations=300, optimizer="AdamW", plots=False, save=False, val=False,
-        ...     mutation_method="adaptive"
-        ... )
+        ...     data="coco8.yaml", epochs=10, iterations=300, optimizer="AdamW", plots=False, save=False, val=False)
 
         Tune with custom search space and mutation method.
-        >>> model.tune(space={key1: val1, key2: val2}, mutation_method="cauchy")  # custom search space dictionary
+        >>> model.tune(space={key1: val1, key2: val2})  # custom search space dictionary
     """
 
-    def __init__(self, mutation="gaussian", args=DEFAULT_CFG, _callbacks: Optional[List] = None):
+    def __init__(self, args=DEFAULT_CFG, _callbacks: Optional[List] = None):
         """
         Initialize the Tuner with configurations.
 
@@ -121,7 +118,6 @@ class Tuner:
             _callbacks (List, optional): Callback functions to be executed during tuning.
         """
         self.space = args.pop("space", None) or DEFAULT_SPACE  # key: (min, max)
-        self.mutation_method = mutation
         
         # Load and merge configuration arguments
         self.args = get_cfg(overrides=args)
@@ -147,86 +143,66 @@ class Tuner:
         callbacks.add_integration_callbacks(self)
         LOGGER.info(
             f"{self.prefix}Initialized Tuner instance with 'tune_dir={self.tune_dir}'\n"
-            f"{self.prefix}Using mutation method: {self.mutation_method}\n"
             f"{self.prefix}💡 Learn about tuning at https://docs.ultralytics.com/guides/hyperparameter-tuning"
         )
 
-    def _mutate(self, parent: str = "single", n: int = 5, mutation: float = 0.8) -> Dict[str, float]:
+    def _mutate(
+        self, parent: str = "single", n: int = 5, mutation: float = 0.8, sigma: float = 0.2
+    ) -> Dict[str, float]:
         """
-        Mutate hyperparameters using the specified mutation method.
+        Mutate hyperparameters based on bounds and scaling factors specified in `self.space`.
 
         Args:
             parent (str): Parent selection method: 'single' or 'weighted'.
             n (int): Number of parents to consider.
             mutation (float): Probability of a parameter mutation in any given iteration.
+            sigma (float): Standard deviation for Gaussian random number generator.
 
         Returns:
             (Dict[str, float]): A dictionary containing mutated hyperparameters.
         """
-        # Get base hyperparameters
-        base_hyp = self._get_base_hyperparameters(parent, n, mutation)
-        
-        # Apply mutation method
-        if self.mutation_method == "adaptive":
-            return self._mutate_adaptive_gaussian(base_hyp, mutation)
-        elif self.mutation_method == "cauchy":
-            return self._mutate_cauchy(base_hyp, mutation)
-        elif self.mutation_method == "polynomial":
-            return self._mutate_polynomial(base_hyp, mutation)
-        elif self.mutation_method == "levy":
-            return self._mutate_levy_flight(base_hyp, mutation)
-        elif self.mutation_method == "differential":
-            return self._mutate_differential(base_hyp, mutation)
-        elif self.mutation_method == "parameter_specific":
-            return self._mutate_parameter_specific(base_hyp, mutation)
-        elif self.mutation_method == "multi_scale":
-            return self._mutate_multi_scale(base_hyp, mutation)
-        elif self.mutation_method == "simulated_annealing":
-            return self._mutate_simulated_annealing(base_hyp, mutation)
+        if self.tune_csv.exists():  # if CSV file exists: select best hyps and mutate
+            # Select parent(s)
+            x = np.loadtxt(self.tune_csv, ndmin=2, delimiter=",", skiprows=1)
+            fitness = x[:, 0]  # first column
+            n = min(n, len(x))  # number of previous results to consider
+            x = x[np.argsort(-fitness)][:n]  # top n mutations
+            w = x[:, 0] - x[:, 0].min() + 1e-6  # weights (sum > 0)
+            if parent == "single" or len(x) == 1:
+                # x = x[random.randint(0, n - 1)]  # random selection
+                x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+            elif parent == "weighted":
+                x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
+
+            # Mutate
+            r = np.random  # method
+            r.seed(int(time.time()))
+            g = np.array([v[2] if len(v) == 3 else 1.0 for v in self.space.values()])  # gains 0-1
+            ng = len(self.space)
+            v = np.ones(ng)
+            while all(v == 1):  # mutate until a change occurs (prevent duplicates)
+                v = (g * (r.random(ng) < mutation) * r.randn(ng) * r.random() * sigma + 1).clip(0.3, 3.0)
+            hyp = {k: float(x[i + 1] * v[i]) for i, k in enumerate(self.space.keys())}
         else:
-            LOGGER.warning(f"{self.prefix}Unknown mutation method '{self.mutation_method}', using adaptive Gaussian.")
-            return self._mutate_adaptive_gaussian(base_hyp, mutation)
+            # Get the parameters from space - initialize with current args values
+            hyp = {k: getattr(self.args, k, 0.0) for k in self.space.keys()}
 
-    def _get_base_hyperparameters(self, parent: str, n: int, mutation: float) -> Dict[str, float]:
-        """Get base hyperparameters from existing results or initialize new ones."""
-        if self.tune_csv.exists():
-            return self._get_from_existing_results(parent, n, mutation)
-        else:
-            return self._initialize_continuous_params()
-
-    def _get_from_existing_results(self, parent: str, n: int, mutation: float) -> Dict[str, float]:
-        """Get base hyperparameters from existing CSV results."""
-        # Load and select parent(s)
-        x = np.loadtxt(self.tune_csv, ndmin=2, delimiter=",", skiprows=1)
-        fitness = x[:, 0]  # first column
-        n = min(n, len(x))  # number of previous results to consider
-        x = x[np.argsort(-fitness)][:n]  # top n mutations
-        w = x[:, 0] - x[:, 0].min() + 1e-6  # weights (sum > 0)
-        
-        # Update population history for differential evolution
-        if len(self.population_history) < 20:  # Keep last 20 for memory efficiency
-            param_dict = {k: float(x[0, i + 1]) for i, k in enumerate(self.space.keys())}
-            self.population_history.append(param_dict)
-        
-        # Select parent based on method
-        if parent == "single" or len(x) == 1:
-            x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
-        elif parent == "weighted":
-            x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
-
-        # Return base hyperparameters
-        return {k: float(x[i + 1]) for i, k in enumerate(self.space.keys())}
-
-    def _initialize_continuous_params(self) -> Dict[str, float]:
-        """Initialize continuous parameters from args for first iteration."""
-        hyp = {k: getattr(self.args, k) for k in self.space.keys()}
-        return self._constrain_continuous_params(hyp)
-
-    def _constrain_continuous_params(self, hyp: Dict[str, float]) -> Dict[str, float]:
-        """Apply bounds constraints to continuous parameters."""
+        # Apply special sampling for parameters that default to 0 but need proper initialization
         for k, v in self.space.items():
-            hyp[k] = max(hyp[k], v[0])  # lower limit
-            hyp[k] = min(hyp[k], v[1])  # upper limit
+            if k in DEFAULT_SPACE and hyp[k] == 0:
+                v = DEFAULT_SPACE[k]
+                hyp[k] = float(np.random.uniform(v[0], v[1]))
+
+        # Constrain ALL parameters to their limits
+        for k, v in self.space.items():
+            # Get the bounds for this parameter
+            min_val, max_val = v[0], v[1]
+            # Apply bounds constraints
+            hyp[k] = max(hyp[k], min_val)  # lower limit
+            hyp[k] = min(hyp[k], max_val)  # upper limit
+            # Round for readability
+            hyp[k] = float(np.round(hyp[k], 5))
+
         return hyp
     
     def _log_mutation(self, hyp: Dict[str, float]):
@@ -235,186 +211,6 @@ class Tuner:
         for k, v in self.space.items():
             if k in hyp:
                 LOGGER.info(f"{self.prefix}  {k}: {hyp[k]} (range: {v[0]} - {v[1]})")
-
-    def _mutate_adaptive_gaussian(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Adaptive Gaussian mutation with decreasing variance over generations, with asymmetric boundary handling."""
-        initial_sigma = 0.3
-        final_sigma = 0.05
-        progress = self.generation / self.max_generations
-        sigma = initial_sigma * (1 - progress) + final_sigma * progress
-        
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                param_range = upper_bound - lower_bound
-                noise = np.random.normal(0, sigma * param_range)
-                # Asymmetric mutation at both bounds
-                if current_val == lower_bound:
-                    noise = abs(noise)
-                elif current_val == upper_bound:
-                    noise = -abs(noise)
-                mutated[k] = current_val + noise
-        
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_cauchy(self, base_hyp: Dict, mutation: float, scale: float = 0.1) -> Dict[str, float]:
-        """Cauchy mutation with heavy tails for escaping local optima, with asymmetric boundary handling."""
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                param_range = upper_bound - lower_bound
-                noise = np.random.standard_cauchy() * scale * param_range
-                if current_val == lower_bound:
-                    noise = abs(noise)
-                elif current_val == upper_bound:
-                    noise = -abs(noise)
-                mutated[k] = current_val + noise
-        
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_polynomial(self, base_hyp: Dict, mutation: float, eta: float = 20.0) -> Dict[str, float]:
-        """Polynomial mutation from genetic algorithms, with asymmetric boundary handling."""
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                min_val, max_val = v[0], v[1]
-                normalized = (current_val - min_val) / (max_val - min_val)
-                u = random.random()
-                if u <= 0.5:
-                    delta = (2 * u) ** (1 / (eta + 1)) - 1
-                else:
-                    delta = 1 - (2 * (1 - u)) ** (1 / (eta + 1))
-                new_normalized = normalized + delta
-                # Asymmetric mutation at both bounds
-                if current_val == min_val:
-                    new_normalized = normalized + abs(delta)
-                elif current_val == max_val:
-                    new_normalized = normalized - abs(delta)
-                mutated[k] = min_val + new_normalized * (max_val - min_val)
-        
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_levy_flight(self, base_hyp: Dict, mutation: float, alpha: float = 1.5, 
-                            scale: float = 0.1) -> Dict[str, float]:
-        """Lévy flight mutation for combined local and global search, with asymmetric boundary handling."""
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                param_range = upper_bound - lower_bound
-                levy_step = self._levy_flight(alpha) * scale * param_range
-                if current_val == lower_bound:
-                    levy_step = abs(levy_step)
-                elif current_val == upper_bound:
-                    levy_step = -abs(levy_step)
-                mutated[k] = current_val + levy_step
-        
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_differential(self, base_hyp: Dict, mutation: float, F: float = 0.5) -> Dict[str, float]:
-        """Differential Evolution mutation using population history, with asymmetric boundary handling."""
-        if len(self.population_history) < 3:
-            return self._mutate_adaptive_gaussian(base_hyp, mutation)  # fallback
-        candidates = [p for p in self.population_history if p != base_hyp]
-        if len(candidates) < 3:
-            return base_hyp
-        r1, r2, r3 = random.sample(candidates, 3)
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                lower_bound, upper_bound = v[0], v[1]
-                new_val = r1[k] + F * (r2[k] - r3[k])
-                # Asymmetric mutation at both bounds
-                if base_hyp[k] == lower_bound:
-                    new_val = base_hyp[k] + abs(new_val - base_hyp[k])
-                elif base_hyp[k] == upper_bound:
-                    new_val = base_hyp[k] - abs(new_val - base_hyp[k])
-                mutated[k] = new_val
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_parameter_specific(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Parameter-specific mutation strategies, with asymmetric boundary handling."""
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                if 'lr' in k.lower() or 'learning' in k.lower():
-                    log_val = np.log(max(current_val, 1e-8))
-                    log_val += np.random.normal(0, 0.1)
-                    new_val = np.exp(log_val)
-                elif 'weight_decay' in k.lower() or 'decay' in k.lower():
-                    log_min, log_max = np.log(max(lower_bound, 1e-8)), np.log(upper_bound)
-                    new_val = np.exp(np.random.uniform(log_min, log_max))
-                elif 'dropout' in k.lower() or 'prob' in k.lower():
-                    alpha, beta = 2, 2
-                    new_val = np.random.beta(alpha, beta) * (upper_bound - lower_bound) + lower_bound
-                elif 'batch_size' in k.lower() or 'size' in k.lower():
-                    sizes = [2**i for i in range(int(np.log2(max(lower_bound, 1))), int(np.log2(upper_bound)) + 1)]
-                    new_val = random.choice(sizes) if sizes else current_val
-                else:
-                    param_range = upper_bound - lower_bound
-                    noise = np.random.normal(0, 0.1 * param_range)
-                    if current_val == lower_bound:
-                        noise = abs(noise)
-                    elif current_val == upper_bound:
-                        noise = -abs(noise)
-                    new_val = current_val + noise
-                mutated[k] = new_val
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_multi_scale(self, base_hyp: Dict, mutation: float, 
-                            scales: List[float] = [0.01, 0.1, 0.3]) -> Dict[str, float]:
-        """Multi-scale mutation with different step sizes, with asymmetric boundary handling."""
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                param_range = upper_bound - lower_bound
-                scale = random.choice(scales)
-                noise = np.random.normal(0, scale * param_range)
-                if current_val == lower_bound:
-                    noise = abs(noise)
-                elif current_val == upper_bound:
-                    noise = -abs(noise)
-                mutated[k] = current_val + noise
-        return self._constrain_continuous_params(mutated)
-
-    def _mutate_simulated_annealing(self, base_hyp: Dict, mutation: float) -> Dict[str, float]:
-        """Temperature-based mutation with cooling schedule, with asymmetric boundary handling."""
-        initial_temp = 1.0
-        final_temp = 0.01
-        progress = self.generation / self.max_generations
-        temperature = initial_temp * (1 - progress) + final_temp * progress
-        mutated = base_hyp.copy()
-        for k, v in self.space.items():
-            if random.random() < mutation:
-                current_val = base_hyp[k]
-                lower_bound, upper_bound = v[0], v[1]
-                param_range = upper_bound - lower_bound
-                step_size = temperature * param_range * 0.1
-                noise = np.random.normal(0, step_size)
-                if current_val == lower_bound:
-                    noise = abs(noise)
-                elif current_val == upper_bound:
-                    noise = -abs(noise)
-                mutated[k] = current_val + noise
-        return self._constrain_continuous_params(mutated)
-
-    def _levy_flight(self, alpha: float) -> float:
-        """Generate a Lévy flight step."""
-        sigma_u = (np.math.gamma(1 + alpha) * np.sin(np.pi * alpha / 2) / 
-                   (np.math.gamma((1 + alpha) / 2) * alpha * (2 ** ((alpha - 1) / 2)))) ** (1 / alpha)
-        u = np.random.normal(0, sigma_u)
-        v = np.random.normal(0, 1)
-        return u / (abs(v) ** (1 / alpha))
     
     def prepare_base_model(self, base_model_save_path: str = "base_trained_model.pt") -> str:
         """
@@ -423,10 +219,7 @@ class Tuner:
         
         Args:
             base_model_save_path: Path where the base trained model will be saved
-            
-        Returns:
-            str: Path to the saved base model
-        """        
+        """
         # Load the original model
         original_model_path = self.args.model
         original_model = YOLO(original_model_path)
@@ -437,6 +230,7 @@ class Tuner:
         base_train_args = {**vars(self.args)}
         # Remove model from train args to avoid conflicts
         base_train_args = {k: v for k, v in base_train_args.items() if k != 'model'}
+                
         # Use minimal training for the base model (can be customized)
         base_train_args['epochs'] = 1
         base_train_args['resume'] = False
@@ -451,7 +245,7 @@ class Tuner:
         LOGGER.info(f"{self.prefix}Base model saved to {base_model_path}")
         return str(base_model_path)
 
-    def __call__(self, base_model_path: str = None, iterations: int = 10, cleanup: bool = True, 
+    def __call__(self, base_model_path: str = None, iterations: int = 10, patience: int = 3, cleanup: bool = True, 
                  auto_prepare_base: bool = True):
         """
         Execute the hyperparameter evolution process when the Tuner instance is called.
@@ -473,6 +267,8 @@ class Tuner:
         
         # Set max generations for adaptive methods
         self.max_generations = iterations
+        self.patience = patience if patience > 0 else 3
+        self.top_score = -1
         
         # Prepare base model if needed
         base_model_prep_start = time.time()
@@ -481,9 +277,11 @@ class Tuner:
             base_model_prep_time = time.time() - base_model_prep_start
             LOGGER.info(f"{self.prefix}Automatically prepared base model at {base_model_path} "
                         f"(took {base_model_prep_time:.2f}s)")
+            
         elif base_model_path is not None:
             base_model_prep_time = 0
             LOGGER.info(f"{self.prefix}Using provided base model at {base_model_path}")
+            
         else:
             base_model_prep_time = 0
             LOGGER.info(f"{self.prefix}No base model - using subprocess method for training")
@@ -496,7 +294,7 @@ class Tuner:
         for i in range(start, iterations):
             iteration_start_time = time.time()
             self.generation = i
-            LOGGER.info(f"{self.prefix}Starting iteration {i + 1}/{iterations} (method: {self.mutation_method})")
+            LOGGER.info(f"\n{self.prefix}Starting iteration {i + 1}/{iterations}")
             
             # Step 1: Generate new hyperparameters
             mutated_hyp = self._mutate()
@@ -504,12 +302,15 @@ class Tuner:
 
             # Step 2: Train model with mutated hyperparameters
             training_start_time = time.time()
+            
             if base_model_path is not None:
                 # Use direct training with base model
                 metrics, save_dir = self._train_with_hyperparameters_modified(mutated_hyp, i + 1, base_model_path)
             else:
                 # Fallback to subprocess method if no base model provided
                 metrics, save_dir = self._train_with_hyperparameters(mutated_hyp, i + 1)
+                
+            # Calculate training time
             training_time = time.time() - training_start_time
             
             # Step 3: Log results to CSV
@@ -530,17 +331,28 @@ class Tuner:
                         f"(training: {training_time:.2f}s, fitness: {fitness:.4f})")
 
             # Step 5: Generate reports and plots
-            self._generate_reports(i + 1, 
-                                   iterations, 
-                                   t0, 
-                                   best_metrics, 
-                                   best_save_dir, 
-                                   iteration_times, 
-                                   base_model_prep_time)
+            best_fitness = self._generate_reports(i + 1, 
+                                                  iterations, 
+                                                  t0, 
+                                                  best_metrics, 
+                                                  best_save_dir, 
+                                                  iteration_times, 
+                                                  base_model_prep_time)
             
             # Clear cache to free memory
             gc.collect()
             torch.cuda.empty_cache()
+            
+            # Early stopping check
+            if best_fitness > self.top_score:
+                self.top_score = best_fitness
+                self.early_stop_counter = 0
+            else:
+                self.early_stop_counter += 1
+                
+            if self.early_stop_counter >= self.patience:
+                LOGGER.info(f"{self.prefix}Early stopping triggered: No improvements after {self.patience} iterations.")
+                break
 
     def _get_starting_iteration(self) -> int:
         """Get the starting iteration number for resume functionality."""
@@ -758,6 +570,9 @@ class Tuner:
         # Save and print best hyperparameters
         yaml_header = remove_colorstr(header.replace(self.prefix, "# ")) + "\n"
         YAML.save(self.tune_dir / "best_hyperparameters.yaml", data=data, header=yaml_header)
+        
+        # return the best fitness value
+        return fitness[best_idx]
         
         
 # ----------------------------------------------------------------------------------------------------------------------
