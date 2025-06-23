@@ -184,13 +184,21 @@ class Tuner:
                 v = (g * (r.random(ng) < mutation) * r.randn(ng) * r.random() * sigma + 1).clip(0.3, 3.0)
             hyp = {k: float(x[i + 1] * v[i]) for i, k in enumerate(self.space.keys())}
         else:
-            # Sample randomly from the search space for the first generation
-            hyp = {k: np.random.uniform(v[0], v[1]) for k, v in self.space.items()}
+            # Get the parameters from space 
+            hyp = {k: getattr(self.args, k) for k in self.space.keys()}
+            
+            # Randomize training parameters that are enabled, but default to 0
+            for k, v in self.space.items():
+                if k in DEFAULT_SPACE and hyp[k] == 0:
+                    v = DEFAULT_SPACE[k]
+                    # Set to random value within the range for base training
+                    hyp[k] = float(np.random.uniform(v[0], v[1]))
 
         # Constrain to limits
         for k, v in self.space.items():
             hyp[k] = max(hyp[k], v[0])  # lower limit
             hyp[k] = min(hyp[k], v[1])  # upper limit
+            hyp[k] = float(np.round(hyp[k], 3)) # round for readability
 
         return hyp
     
@@ -219,13 +227,6 @@ class Tuner:
         base_train_args = {**vars(self.args)}
         # Remove model from train args to avoid conflicts
         base_train_args = {k: v for k, v in base_train_args.items() if k != 'model'}
-        
-        # Randomize training parameters enabled, but default to 0
-        for k, v in self.space.items():
-            if k in DEFAULT_SPACE:
-                v = DEFAULT_SPACE[k]
-                # Set to random value within the range for base training
-                base_train_args[k] = np.random.uniform(v[0], v[1])
                 
         # Use minimal training for the base model (can be customized)
         base_train_args['epochs'] = 1
