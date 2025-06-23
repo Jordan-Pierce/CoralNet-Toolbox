@@ -184,21 +184,24 @@ class Tuner:
                 v = (g * (r.random(ng) < mutation) * r.randn(ng) * r.random() * sigma + 1).clip(0.3, 3.0)
             hyp = {k: float(x[i + 1] * v[i]) for i, k in enumerate(self.space.keys())}
         else:
-            # Get the parameters from space 
-            hyp = {k: getattr(self.args, k) for k in self.space.keys()}
-            
-            # Randomize training parameters that are enabled, but default to 0
-            for k, v in self.space.items():
-                if k in DEFAULT_SPACE and hyp[k] == 0:
-                    v = DEFAULT_SPACE[k]
-                    # Set to random value within the range for base training
-                    hyp[k] = float(np.random.uniform(v[0], v[1]))
+            # Get the parameters from space - initialize with current args values
+            hyp = {k: getattr(self.args, k, 0.0) for k in self.space.keys()}
 
-        # Constrain to limits
+        # Apply special sampling for parameters that default to 0 but need proper initialization
         for k, v in self.space.items():
-            hyp[k] = max(hyp[k], v[0])  # lower limit
-            hyp[k] = min(hyp[k], v[1])  # upper limit
-            hyp[k] = float(np.round(hyp[k], 3)) # round for readability
+            if k in DEFAULT_SPACE and hyp[k] == 0:
+                v = DEFAULT_SPACE[k]
+                hyp[k] = float(np.random.uniform(v[0], v[1]))
+
+        # Constrain ALL parameters to their limits
+        for k, v in self.space.items():
+            # Get the bounds for this parameter
+            min_val, max_val = v[0], v[1]
+            # Apply bounds constraints
+            hyp[k] = max(hyp[k], min_val)  # lower limit
+            hyp[k] = min(hyp[k], max_val)  # upper limit
+            # Round for readability
+            hyp[k] = float(np.round(hyp[k], 5))
 
         return hyp
     
@@ -291,7 +294,7 @@ class Tuner:
         for i in range(start, iterations):
             iteration_start_time = time.time()
             self.generation = i
-            LOGGER.info(f"{self.prefix}Starting iteration {i + 1}/{iterations}")
+            LOGGER.info(f"\n{self.prefix}Starting iteration {i + 1}/{iterations}")
             
             # Step 1: Generate new hyperparameters
             mutated_hyp = self._mutate()
