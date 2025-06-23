@@ -714,46 +714,28 @@ class LabelWindow(QWidget):
 
     def edit_labels(self, old_label, new_label, delete_old=False):
         """Update annotations from old_label to new_label, optionally deleting the old one."""
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        try:
-            # Store affected image paths before making any changes
-            affected_images = set()
-            
-            # Update annotations to use the new label
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == old_label.id:
-                    affected_images.add(annotation.image_path)
-                    annotation.update_label(new_label)
-            
-            if delete_old:
-                # Remove the old label
-                self.labels.remove(old_label)
-                old_label.deleteLater()
-                self.update_label_count()
-                
-                # Update search bars and filters if labels changed
-                self.main_window.image_window.update_search_bars()
-            
-            # Update the active label if necessary
-            if self.active_label == old_label:
-                self.set_active_label(new_label)
-            
-            self.update_labels_per_row()
-            self.reorganize_labels()
-            
-            # Only update the scene if necessary, don't reload the entire image
-            self.annotation_window.scene.update()
-            self.annotation_window.viewport().update()
-            
-            # Update all affected images in the image window to refresh rasters
-            for image_path in affected_images:
-                self.main_window.image_window.update_image_annotations(image_path)
-                
-        finally:
-            # Restore cursor
-            QApplication.restoreOverrideCursor()
+        # Update annotations to use the new label
+        for annotation in self.annotation_window.annotations_dict.values():
+            if annotation.label.id == old_label.id:
+                annotation.update_label(new_label)
+
+        if delete_old:
+            # Remove the old label
+            self.labels.remove(old_label)
+            old_label.deleteLater()
+            self.update_label_count()
+
+        # Update the active label if necessary
+        if self.active_label == old_label:
+            self.set_active_label(new_label)
+
+        self.update_labels_per_row()
+        self.reorganize_labels()
+
+        # Refresh the scene with the new label (if applicable)
+        current_image_path = self.annotation_window.current_image_path
+        if current_image_path:
+            self.annotation_window.set_image(current_image_path)
 
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
@@ -1072,7 +1054,6 @@ class EditLabelDialog(QDialog):
         # Check if the label already exists, will return review label if not found
         existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code, return_review=False)
 
-        # If we're changing to match an existing label
         if existing_label and existing_label != self.label:
             text = (f"A label with the short code '{short_label_code}' "
                     f"and long code '{long_label_code}' already exists. "
@@ -1087,50 +1068,22 @@ class EditLabelDialog(QDialog):
             result = msg_box.exec_()
 
             if result == QMessageBox.Yes:
-                # Make cursor busy as this might take time
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                try:
-                    # Merge labels - this will update all annotations and UI
-                    self.label_window.edit_labels(self.label, existing_label, delete_old=True)
-                finally:
-                    # Restore cursor
-                    QApplication.restoreOverrideCursor()
+                self.label_window.edit_labels(self.label, existing_label, delete_old=True)
                 self.accept()
-            return
         else:
-            # If we're just updating the current label (no merge)
-            # Make cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-            try:
-                # Store affected image paths before update to refresh them later
-                affected_images = set()
-                for annotation in self.label_window.annotation_window.annotations_dict.values():
-                    if annotation.label.id == self.label.id:
-                        affected_images.add(annotation.image_path)
-                
-                # Update the label itself
-                self.label.short_label_code = short_label_code
-                self.label.long_label_code = long_label_code
-                self.label.color = self.color
-                self.label.update_label_color(self.color)
-                self.label.update()
-                self.label.setToolTip(long_label_code)
+            # Update the label itself
+            self.label.short_label_code = short_label_code
+            self.label.long_label_code = long_label_code
+            self.label.color = self.color
+            self.label.update_label_color(self.color)
+            self.label.update()
 
-                # Update all annotations that use this label
-                # This is just updating the existing label in place
-                self.label_window.edit_labels(self.label, self.label, delete_old=False)
+            # Force a refresh of the label window grid
+            self.label_window.update_labels_per_row()
+            self.label_window.reorganize_labels()
+            self.label_window.scroll_area.viewport().update()
 
-                # Force a refresh of the label window grid
-                self.label_window.update_labels_per_row()
-                self.label_window.reorganize_labels()
-                self.label_window.scroll_area.viewport().update()
-
-                # Update affected images in the image window
-                for image_path in affected_images:
-                    self.label_window.main_window.image_window.update_image_annotations(image_path)
-            finally:
-                # Restore cursor
-                QApplication.restoreOverrideCursor()
+            # Update annotation window
+            self.label_window.edit_labels(self.label, self.label, delete_old=False)
 
             self.accept()
