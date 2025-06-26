@@ -516,15 +516,15 @@ class AnnotationWindow(QGraphicsView):
             return type(self.selected_annotations[0])
         return None
 
-    def select_annotation(self, annotation, ctrl_pressed=False):
+    def select_annotation(self, annotation, multi_select=False):
         """Select an annotation and update the UI accordingly."""
         # If the annotation is already selected and Ctrl is pressed, unselect it
-        if annotation in self.selected_annotations and ctrl_pressed:
+        if annotation in self.selected_annotations and multi_select:
             self.unselect_annotation(annotation)
             return
 
         # If not adding to selection (Ctrl not pressed), deselect all others first
-        if not ctrl_pressed:
+        if not multi_select:
             self.unselect_annotations()
             
         # Only add if not already selected (shouldn't happen after the checks above, but just to be safe)
@@ -583,8 +583,8 @@ class AnnotationWindow(QGraphicsView):
             if label_locked and annotation.label.id != locked_label_id:
                 continue
                 
-            # Use ctrl_pressed=True to add to selection without clearing
-            self.select_annotation(annotation, ctrl_pressed=True)
+            # Use multi_select=True to add to selection without clearing
+            self.select_annotation(annotation, multi_select=True)
 
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
