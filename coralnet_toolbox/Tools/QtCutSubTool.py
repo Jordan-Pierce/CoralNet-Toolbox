@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
 
-from coralnet_toolbox.Annotations import (RectangleAnnotation, PolygonAnnotation, MultiPolygonAnnotation)
+from coralnet_toolbox.Annotations import MultiPolygonAnnotation
 
 
 # ----------------------------------------------------------------------------------------------------------------------

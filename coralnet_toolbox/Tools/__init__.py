@@ -10,6 +10,11 @@ from .QtSelectTool import SelectTool
 from .QtZoomTool import ZoomTool
 from .QtWorkAreaTool import WorkAreaTool
 
+from .QtCutSubTool import CutSubTool
+from .QtMoveSubTool import MoveSubTool
+from .QtResizeSubTool import ResizeSubTool
+from .QtSelectSubTool import SelectSubTool
+
 __all__ = [
     'PanTool',
     'PatchTool',
@@ -19,5 +24,9 @@ __all__ = [
     'SeeAnythingTool',
     'SelectTool',
     'ZoomTool',
-    'WorkAreaTool'
+    'WorkAreaTool',
+    'CutSubTool',
+    'MoveSubTool',
+    'ResizeSubTool',
+    'SelectSubTool',
 ]
