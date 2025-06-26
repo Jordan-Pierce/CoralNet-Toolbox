@@ -57,9 +57,9 @@ class SelectTool(Tool):
     
     def _connect_signals(self):
         """Connect signals for annotation changes."""
-        self.annotation_window.annotationSelected.connect(self.clear_resize_handles)
-        self.annotation_window.annotationSizeChanged.connect(self.clear_resize_handles)
-        self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
+        self.annotation_window.annotationSelected.connect(self.remove_resize_handles)
+        self.annotation_window.annotationSizeChanged.connect(self.remove_resize_handles)
+        self.annotation_window.annotationDeleted.connect(self.remove_resize_handles)
         
     def activate(self):
         """Activate the selection tool and set appropriate cursor."""
@@ -480,13 +480,10 @@ class SelectTool(Tool):
         selected_annotation = self.annotation_window.selected_annotations[0]
         if not self.annotation_window.is_annotation_moveable(selected_annotation):
             return
-
+        
+        # Do the resize operation
         self.resize_annotation(selected_annotation, current_pos)
         self.display_resize_handles(selected_annotation)
-    
-    def clear_resize_handles(self, annotation_id=None):
-        """Clear resize handles if annotations change."""
-        self.remove_resize_handles()
 
     def detect_resize_handle(self, annotation, current_pos):
         """Detect the closest resize handle to the current position."""
@@ -573,13 +570,20 @@ class SelectTool(Tool):
         """Resize the annotation based on the resize handle."""
         if annotation and hasattr(annotation, 'resize'):
             annotation.resize(self.resize_handle, new_pos)
+            # Create and display the cropped image in the confidence window
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            # Connect the confidence window back to the annotation
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            # Display the cropped image in the confidence window
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
     def remove_resize_handles(self):
         """Remove any displayed resize handles."""
+        # Remove all resize handles from the scene
         for handle in self.resize_handles:
             self.annotation_window.scene.removeItem(handle)
         self.resize_handles.clear()
-
+        
     def get_item_center(self, item):
         """Return the center point of the item."""
         if isinstance(item, QGraphicsRectItem):

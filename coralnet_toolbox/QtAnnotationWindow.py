@@ -237,10 +237,11 @@ class AnnotationWindow(QGraphicsView):
             # Disconnect the confidence window from the annotation, so it won't update while moving
             annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
             annotation.update_location(new_center_xy)
-            # Connect the confidence window back to the annotation
-            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
             # Create and display the cropped image in the confidence window
             annotation.create_cropped_image(self.rasterio_image)
+            # Connect the confidence window back to the annotation
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            # Display the cropped image in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
 
     def set_annotation_size(self, size=None, delta=0):

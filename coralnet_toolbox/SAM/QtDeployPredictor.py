@@ -407,10 +407,6 @@ class DeployPredictorDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window, "Error Setting Image", f"{e}")
-            # Deactivate the SAM tool if it is active, clearing the scene
-            if self.annotation_window.tools["sam"].is_active:
-                self.annotation_window.tools["sam"].deactivate()
-
             # Deactivate the model
             self.deactivate_model()
 

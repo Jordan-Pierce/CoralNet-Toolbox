@@ -6,6 +6,12 @@ import numpy as np
 import torch
 import argparse
 
+try:
+    import filterpy
+except ImportError:
+    print("Error: filterpy is required. Please install it with 'pip install filterpy>=1.4.5' before using this script.")
+    sys.exit(1)
+
 # Set MPS fallback for operations not supported on Apple Silicon
 if hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
     os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'

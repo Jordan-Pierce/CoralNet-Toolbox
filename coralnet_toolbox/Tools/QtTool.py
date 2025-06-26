@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class Tool:
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
+        self.main_window = annotation_window.main_window
         self.graphics_utility = self.annotation_window.graphics_utility
 
         self.active = False
