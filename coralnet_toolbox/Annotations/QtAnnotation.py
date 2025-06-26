@@ -462,37 +462,45 @@ class Annotation(QObject):
             if self.graphics_item_group is not None and self.graphics_item_group.isVisible():
                 self.update_graphics_item()
 
-    def update_label(self, new_label: 'Label', set_review=False):
-        """Update the annotation's label while preserving confidence values."""
-        # Initializing
+    def update_label(self, new_label: 'Label'):
+        """
+        Updates the annotation's label. This method correctly handles:
+        1.  Label re-assignment (merges): Re-assigns the annotation and cleans up confidence scores.
+        2.  Label property edits: Updates confidence dictionary keys if label codes change.
+        3.  Simple property changes (e.g., color): Efficiently updates graphics.
+        """
         if self.label is None:
             self.label = new_label
+            self.update_graphics_item()
+            return
 
-        # Updating (new label, or new color)
-        elif self.label.id != new_label.id or self.label.color != new_label.color:
+        # Check if the label's semantic identity has changed (based on __eq__ in Label class)
+        if self.label != new_label:
+            
+            old_label = self.label
+            
+            # --- Handle User Confidence ---
+            # The user's choice is now `new_label`. We transfer the confidence value.
+            if self.user_confidence:
+                old_confidence_value = self.user_confidence.pop(old_label, None)
+                if old_confidence_value is not None:
+                    self.user_confidence = {new_label: old_confidence_value}
+            
+            # --- Handle Machine Confidence ---
+            # The prediction for `old_label` is now irrelevant after the merge/edit.
+            # We remove it, preserving any other machine predictions.
+            if self.machine_confidence:
+                # The .pop() method safely removes the key if it exists, and does nothing otherwise.
+                self.machine_confidence.pop(old_label, None)
 
-            if not set_review:
-                # Update the label in user_confidence if it exists
-                if self.user_confidence:
-                    old_confidence = next(iter(self.user_confidence.values()))
-                    self.user_confidence = {new_label: old_confidence}
-
-                # Update the label in machine_confidence if it exists
-                if self.machine_confidence:
-                    new_machine_confidence = {}
-                    for label, confidence in self.machine_confidence.items():
-                        if label.id == self.label.id:
-                            new_machine_confidence[new_label] = confidence
-                        else:
-                            new_machine_confidence[label] = confidence
-
-                    # Update the machine confidence
-                    self.machine_confidence = new_machine_confidence
-
-            # Update the label
+            # Finally, update the annotation's primary label reference
             self.label = new_label
 
-        # Always update the graphics item
+        # If only the color or other non-identifying properties changed, the `if` block is skipped.
+        # We still need to make sure the label object reflects the latest color.
+        self.label.color = new_label.color
+
+        # Always update the graphics to reflect any change.
         self.update_graphics_item()
 
     def update_user_confidence(self, new_label: 'Label'):

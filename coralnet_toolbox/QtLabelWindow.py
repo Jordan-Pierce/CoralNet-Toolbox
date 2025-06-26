@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox, QLabel)
+                             QPushButton, QApplication, QGroupBox)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -210,11 +210,24 @@ class Label(QWidget):
                    QColor(*data['color']),
                    data['id'])
 
+    def __eq__(self, other):
+        """Two labels are considered equal if their id, short, and long codes are the same."""
+        if not isinstance(other, Label):
+            return NotImplemented
+        return (
+            self.short_label_code == other.short_label_code and
+            self.long_label_code == other.long_label_code
+        )
+
+    def __hash__(self):
+        """The hash is based on the id, short, and long codes."""
+        return hash((self.short_label_code, self.long_label_code))
+
     def __repr__(self):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
-                f"short_label_code={self.short_label_code}, "
-                f"long_label_code={self.long_label_code}, "
+                f"short_label_code='{self.short_label_code}', "
+                f"long_label_code='{self.long_label_code}', "
                 f"color={self.color.name()})")
         
     def __del__(self):
@@ -621,49 +634,60 @@ class LabelWindow(QWidget):
         for label in self.labels:
             if label.id == label_id:
                 return label
+                
         print(f"Warning: Label with ID '{label_id}' not found.")
-        
         if return_review:
             return self.get_review_label()
+        return None  # Return None if not found and not returning review label
 
     def get_label_by_codes(self, short_label_code, long_label_code, return_review=True):
-        """Find and return a label by its short and long codes."""
+        """Find and return a label by its short and long codes (case-insensitive)."""
+        s_code = short_label_code.strip().lower()
+        l_code = long_label_code.strip().lower()
         for label in self.labels:
-            if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
+            if (s_code == label.short_label_code.strip().lower() and
+                    l_code == label.long_label_code.strip().lower()):
                 return label
-        print(f"Warning: Label with short code '{short_label_code}' and long code '{long_label_code}' not found.")
-        
+
+        print(f"Warning: Label with codes '{short_label_code}'/'{long_label_code}' not found.")
         if return_review:
             return self.get_review_label()
-
+        return None  # Return None if not found and not returning review label
+    
     def get_label_by_short_code(self, short_label_code, return_review=True):
-        """Find and return a label by its short code."""
+        """Find and return a label by its short code (case-insensitive)."""
+        s_code = short_label_code.strip().lower()
         for label in self.labels:
-            if short_label_code == label.short_label_code:
+            if s_code == label.short_label_code.strip().lower():
                 return label
         print(f"Warning: Label with short code '{short_label_code}' not found.")
-        
+
         if return_review:
             return self.get_review_label()
+        return None  # Return None if not found and not returning review label
 
     def get_label_by_long_code(self, long_label_code, return_review=True):
-        """Find and return a label by its long code."""
+        """Find and return a label by its long code (case-insensitive)."""
+        l_code = long_label_code.strip().lower()
         for label in self.labels:
-            if long_label_code == label.long_label_code:
+            if l_code == label.long_label_code.strip().lower():
                 return label
         print(f"Warning: Label with long code '{long_label_code}' not found.")
-        
+
         if return_review:
             return self.get_review_label()
+        return None  # Return None if not found and not returning review label
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
-        """Check if a label with the given codes or ID already exists."""
+        """Check if a label with the given codes or ID already exists (case-insensitive for codes)."""
+        s_code = short_label_code.strip().lower()
+        l_code = long_label_code.strip().lower()
         for label in self.labels:
             if label_id is not None and label.id == label_id:
                 return True
-            if label.short_label_code == short_label_code:
+            if s_code == label.short_label_code.strip().lower():
                 return True
-            if label.long_label_code == long_label_code:
+            if l_code == label.long_label_code.strip().lower():
                 return True
         return False
 
@@ -683,15 +707,19 @@ class LabelWindow(QWidget):
         if long_label_code is None:
             long_label_code = short_label_code
 
+        s_code = short_label_code.strip().lower()
+        l_code = long_label_code.strip().lower()
+
         # First check if a label with the ID exists
         if label_id is not None:
             for label in self.labels:
                 if label.id == label_id:
                     return label
 
-        # Check if a label with matching short and long codes exists
+        # Check if a label with matching short and long codes exists (case-insensitive)
         for label in self.labels:
-            if label.short_label_code == short_label_code and label.long_label_code == long_label_code:
+            if (s_code == label.short_label_code.strip().lower() and
+                l_code == label.long_label_code.strip().lower()):
                 return label
 
         # Create default values if not provided
@@ -712,31 +740,75 @@ class LabelWindow(QWidget):
                 self.set_active_label(lbl)
                 break
 
-    def edit_labels(self, old_label, new_label, delete_old=False):
-        """Update annotations from old_label to new_label, optionally deleting the old one."""
-        # Update annotations to use the new label
+    def update_label_properties(self, label_to_update, new_short, new_long, new_color):
+        """
+        Updates the properties of a specific label and refreshes associated annotations.
+        This is for a simple edit, not a merge.
+        """
+        # Update the label object's properties
+        label_to_update.short_label_code = new_short
+        label_to_update.long_label_code = new_long
+        label_to_update.setToolTip(new_long)  # Update tooltip
+        label_to_update.update_label_color(new_color)  # This already updates color and emits signal
+
+        # Update all annotations that use this label to reflect the new color/properties
         for annotation in self.annotation_window.annotations_dict.values():
-            if annotation.label.id == old_label.id:
-                annotation.update_label(new_label)
+            if annotation.label.id == label_to_update.id:
+                # Re-apply the label to trigger a style update if needed (e.g., color change)
+                annotation.update_label(label_to_update)
 
-        if delete_old:
-            # Remove the old label
-            self.labels.remove(old_label)
-            old_label.deleteLater()
-            self.update_label_count()
+        # Force a repaint of the label widget itself and reorganize the grid
+        label_to_update.update()
+        self.reorganize_labels()
+        print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
-        # Update the active label if necessary
-        if self.active_label == old_label:
-            self.set_active_label(new_label)
+    def merge_labels(self, source_label, target_label):
+        """
+        Merges a source label into a target label. This is a global operation.
+        1. Re-assigns all annotations from source to target.
+        2. Scrubs the source_label from ALL machine_confidence dictionaries in the project.
+        3. Deletes the source label.
+        """
+        print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
+        
+        # --- GLOBAL CLEANUP OPERATION ---
+        # This is the crucial new logic to handle the "plot twist".
+        # We must iterate through every annotation in the project.
+        all_annotations = self.annotation_window.annotations_dict.values()
+        
+        for annotation in all_annotations:
+            # Task 1: Re-label annotations that have `source_label` as their primary label.
+            # This will trigger the logic inside `annotation.update_label`.
+            if annotation.label == source_label:
+                annotation.update_label(target_label)
 
-        self.update_labels_per_row()
+            # Task 2: Scrub the now-defunct `source_label` from the machine_confidence
+            # of ALL annotations, regardless of their primary label. This prevents
+            # dangling references to a label that no longer exists.
+            if annotation.machine_confidence:
+                # Safely pop the source_label key. It does nothing if the key isn't present.
+                annotation.machine_confidence.pop(source_label, None)
+
+        # --- FINALIZING THE MERGE ---
+
+        # Update the active label if it was the one being merged
+        if self.active_label == source_label:
+            self.set_active_label(target_label)
+            
+        # Remove the source label from the list and delete it
+        if source_label in self.labels:
+            self.labels.remove(source_label)
+            source_label.deleteLater()
+
+        # Update UI
+        self.update_label_count()
         self.reorganize_labels()
 
-        # Refresh the scene with the new label (if applicable)
+        # Refresh the main annotation view to show all changes
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
             self.annotation_window.set_image(current_image_path)
-
+            
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
         if (label.short_label_code == "Review" and
@@ -943,6 +1015,11 @@ class AddLabelDialog(QDialog):
 
         self.color = self.generate_random_color()
         self.update_color_button()
+        
+    def showEvent(self, event):
+        """Handle the show event for the dialog."""
+        super().showEvent(event)
+        self.label_window.annotation_window.unselect_annotations()  # Unselect any annotations when dialog opens
 
     def generate_random_color(self):
         """Generate a random QColor."""
@@ -1020,6 +1097,11 @@ class EditLabelDialog(QDialog):
 
         self.color = self.label.color
         self.update_color_button()
+        
+    def showEvent(self, event):
+        """Handle the show event for the dialog."""
+        super().showEvent(event)
+        self.label_window.annotation_window.unselect_annotations()  # Unselect any annotations when dialog opens
 
     def update_color_button(self):
         """Update the color button's background color."""
@@ -1032,58 +1114,72 @@ class EditLabelDialog(QDialog):
             self.color = color
             self.update_color_button()
 
+    def get_edited_details(self):
+        """Return the new details entered by the user."""
+        return (
+            self.short_label_input.text().strip(),
+            self.long_label_input.text().strip(),
+            self.color
+        )
+
     def validate_and_accept(self):
-        """Validate the input fields, handle potential merges, and accept the dialog."""
-        # Cannot edit Review
-        if self.label.short_label_code == 'Review' and self.label.long_label_code == 'Review':
-            QMessageBox.warning(self,
-                                "Cannot Edit Label",
-                                "The 'Review' label cannot be edited.")
+        """Validate input and signal the LabelWindow to perform the update or merge."""
+        if self.label.short_label_code == 'Review' and self.label.long_label_code == 'Review':  # Simplified check
+            QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be edited.")
             return
 
-        # Can map other labels to Review
-        short_label_code = self.short_label_input.text().strip()
-        long_label_code = self.long_label_input.text().strip()
+        new_short, new_long, new_color = self.get_edited_details()
 
-        if not short_label_code or not long_label_code:
-            QMessageBox.warning(self,
-                                "Input Error",
-                                "Both short and long label codes are required.")
+        if not new_short or not new_long:
+            QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
             return
 
-        # Check if the label already exists, will return review label if not found
-        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code, return_review=False)
+        # Use the improved, case-insensitive search and ask for None on failure
+        existing_label = self.label_window.get_label_by_codes(new_short, new_long, return_review=False)
 
-        if existing_label and existing_label != self.label:
-            text = (f"A label with the short code '{short_label_code}' "
-                    f"and long code '{long_label_code}' already exists. "
-                    f"Do you want to merge the labels?")
+        if existing_label and existing_label.id != self.label.id:
+            # --- MERGE PATH ---
+            
+            # Construct a more informative message for the user.
+            title = "Merge Labels?"
+            text = (f"A label with these codes ('{existing_label.short_label_code}') already exists.\n\n"
+                    f"Do you want to merge all annotations from '{self.label.short_label_code}' "
+                    f"into '{existing_label.short_label_code}'?")
+            
+            informative_text = (
+                "<b>This action has the following consequences:</b><br>"
+                "<ul>"
+                "<li>All annotations will be reassigned.</li>"
+                "<li>The original label ('{s_code}') will be deleted.</li>"
+                "<li>For annotations with machine predictions, the confidence score for '{s_code}' "
+                "will be <b>removed</b>, and the score for '{e_code}' will be kept if it exists."
+                "</ul>"
+            ).format(s_code=self.label.short_label_code, e_code=existing_label.short_label_code)
 
-            msg_box = QMessageBox()
+            msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
+            msg_box.setWindowTitle(title)
             msg_box.setText(text)
-            msg_box.setWindowTitle("Merge Labels?")
+            msg_box.setInformativeText(informative_text)
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             msg_box.setDefaultButton(QMessageBox.No)
-            result = msg_box.exec_()
+            
+            reply = msg_box.exec_()
 
-            if result == QMessageBox.Yes:
-                self.label_window.edit_labels(self.label, existing_label, delete_old=True)
+            if reply == QMessageBox.Yes:
+                # Tell LabelWindow to perform the merge.
+                self.label_window.merge_labels(source_label=self.label, target_label=existing_label)
                 self.accept()
+            else:
+                return # User cancelled the merge.
         else:
-            # Update the label itself
-            self.label.short_label_code = short_label_code
-            self.label.long_label_code = long_label_code
-            self.label.color = self.color
-            self.label.update_label_color(self.color)
-            self.label.update()
-
-            # Force a refresh of the label window grid
-            self.label_window.update_labels_per_row()
-            self.label_window.reorganize_labels()
-            self.label_window.scroll_area.viewport().update()
-
-            # Update annotation window
-            self.label_window.edit_labels(self.label, self.label, delete_old=False)
-
+            # --- EDIT PATH --- (no changes here, logic is already handled by update_label)
+            self.label_window.update_label_properties(
+                label_to_update=self.label,
+                new_short=new_short,
+                new_long=new_long,
+                new_color=new_color
+            )
             self.accept()
+            
+        
