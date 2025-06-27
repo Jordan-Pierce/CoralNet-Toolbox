@@ -127,7 +127,14 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         window = Window(0, 0, original_width, original_height)
 
         # Check for single-band image with colormap
-        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+        has_colormap = False
+        if rasterio_src.count == 1:
+            try:
+                has_colormap = rasterio_src.colormap(1) is not None
+            except ValueError:
+                has_colormap = False
+
+        if rasterio_src.count == 1 and has_colormap:
             # Read the single band
             image = rasterio_src.read(1,
                                       window=window,
@@ -184,7 +191,8 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
 
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
-            image = image.astype(float) * (255.0 / image.max())
+            if image.max() > 0:  # Avoid division by zero
+                image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
         # Convert the numpy array to QImage
@@ -214,7 +222,14 @@ def rasterio_to_cropped_image(rasterio_src, window):
     """
     try:
         # Check for single-band image with colormap
-        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+        has_colormap = False
+        if rasterio_src.count == 1:
+            try:
+                has_colormap = rasterio_src.colormap(1) is not None
+            except ValueError:
+                has_colormap = False
+
+        if rasterio_src.count == 1 and has_colormap:
             # Read only the first band
             image = rasterio_src.read(1, window=window)
 
@@ -234,7 +249,6 @@ def rasterio_to_cropped_image(rasterio_src, window):
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
 
             # Use the image as indices into the lookup table
-            # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
 
             # Use RGB format for colormap images
@@ -259,14 +273,15 @@ def rasterio_to_cropped_image(rasterio_src, window):
 
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
-            image = image.astype(float) * (255.0 / image.max())
+            if image.max() > 0:  # Avoid division by zero
+                image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
                         int(window.width),
                         int(window.height),
-                        int(window.width * num_bands),  # bytes per line for Greyscale or RGB
+                        int(window.width * num_bands),  # bytes per line
                         qimage_format)
 
         return qimage
@@ -308,7 +323,14 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         window = Window(0, 0, original_width, original_height)
 
         # Check for single-band image with colormap
-        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+        has_colormap = False
+        if rasterio_src.count == 1:
+            try:
+                has_colormap = rasterio_src.colormap(1) is not None
+            except ValueError:
+                has_colormap = False
+
+        if rasterio_src.count == 1 and has_colormap:
             # Read the single band
             image = rasterio_src.read(1,
                                       window=window,
@@ -362,7 +384,8 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
 
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
-            image = image.astype(float) * (255.0 / image.max())
+            if image.max() > 0:  # Avoid division by zero
+                image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
         return image
@@ -404,7 +427,15 @@ def work_area_to_numpy(rasterio_src, work_area):
     )
 
     try:
-        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+        # Check for single-band image with colormap
+        has_colormap = False
+        if rasterio_src.count == 1:
+            try:
+                has_colormap = rasterio_src.colormap(1) is not None
+            except ValueError:
+                has_colormap = False
+
+        if rasterio_src.count == 1 and has_colormap:
             # Read the single band
             image = rasterio_src.read(1, window=window)
             # Get the colormap
@@ -423,7 +454,6 @@ def work_area_to_numpy(rasterio_src, work_area):
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
 
             # Use the image as indices into the lookup table
-            # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
 
             # Use the colorized RGB version of the image
