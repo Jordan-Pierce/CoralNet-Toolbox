@@ -22,6 +22,8 @@ from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
+from coralnet_toolbox.Explorer import ExplorerWindow
+
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 
 from coralnet_toolbox.Tile import (
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
+        
+        self.explorer_window = ExplorerWindow(self)
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -438,11 +442,18 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
 
+        # Explorer menu
+        self.explorer_menu = self.menu_bar.addMenu("Explorer")
+        # Open Explorer
+        self.open_explorer_action = QAction("Open Explorer", self)
+        self.open_explorer_action.triggered.connect(self.open_explorer_window)
+        self.explorer_menu.addAction(self.open_explorer_action)
+        
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
-
+        
         # Tile menu
         self.tile_menu = self.menu_bar.addMenu("Tile")
 
@@ -471,6 +482,7 @@ class MainWindow(QMainWindow):
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        
         # CoralNet Authenticate
         self.coralnet_authenticate_action = QAction("Authenticate", self)
         self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
@@ -1594,8 +1606,32 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_explorer_window(self):
+        """Open the Explorer window to manage images and annotations"""
+        # if not self.image_window.raster_manager.image_paths:
+        #     QMessageBox.warning(self,
+        #                         "Explorer",
+        #                         "No images are present in the project.")
+        #     return
+        
+        # if not self.annotation_window.annotations_dict:
+        #     QMessageBox.warning(self,
+        #                         "Explorer",
+        #                         "No annotations are present in the project.")
+        #     return
+
+        try:
+            self.untoggle_all_tools()
+            if self.explorer_window is None:
+                self.explorer_window = ExplorerWindow(self)
+            self.explorer_window.showMaximized()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            self.explorer_window = None
 
     def open_patch_annotation_sampling_dialog(self):
+        """Open the Patch Annotation Sampling dialog to sample annotations from images"""
         # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
