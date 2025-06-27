@@ -103,14 +103,14 @@ def load_yolo_classification_dataset(dataset_dir: str) -> DatasetDict:
 # --- USER CONFIGURATION ---
 # Set this to the path of your YOLO dataset directory.
 # If you leave it as None, the script will run a self-contained demo.
-YOLO_DATASET_DIR = "C:\\Users\\jordan.pierce\\Downloads\\DelValle_Polyps\\YOLO_Classification_Dataset"
+YOLO_DATASET_DIR = "E:/JordanP/Click-a-Coral/data/reduced/MDBC_Transects_Coral_Sponges/YOLO_Classification_Dataset"
 
 # --- SCRIPT SETTINGS ---
 TRAIN_NAME = 'train'  # Name of the training split
 TEST_NAME = 'test'    # Name of the test split
 IMAGE_NAME = 'image'  # Key for image data
 LABEL_NAME = 'label'  # Key for label data
-BATCH_SIZE = 30       # Batch size for feature extraction
+BATCH_SIZE = 128       # Batch size for feature extraction
 
 
 # ==============================================================================
