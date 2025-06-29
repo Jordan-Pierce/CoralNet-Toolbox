@@ -284,6 +284,7 @@ class AnnotationImageWidget(QWidget):
         
         self.setup_ui()
         self.load_annotation_image()
+        self.apply_default_pen()  # Apply label-colored default pen
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -293,12 +294,27 @@ class AnnotationImageWidget(QWidget):
         self.image_label = QLabel()
         self.image_label.setFixedSize(self.widget_size - 4, self.widget_size - 4)
         
-        # No default border - only show marching ants when selected
-        self.image_label.setStyleSheet("border: none;")
+        # Default border will be set by apply_default_pen()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setScaledContents(True)  # Scale image to fit label
 
         layout.addWidget(self.image_label)
+
+    def apply_default_pen(self):
+        """Apply a default border that matches the annotation's label color."""
+        try:
+            # Get the label color from the annotation
+            if hasattr(self.annotation, 'label') and hasattr(self.annotation.label, 'color'):
+                label_color = self.annotation.label.color
+                # Convert QColor to hex string for CSS
+                color_hex = label_color.name()
+                self.image_label.setStyleSheet(f"border: 2px solid {color_hex};")
+            else:
+                # Fallback to gray if no label color available
+                self.image_label.setStyleSheet("border: 2px solid gray;")
+        except Exception:
+            # Fallback to gray if any error occurs
+            self.image_label.setStyleSheet("border: 2px solid gray;")
 
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
@@ -329,10 +345,10 @@ class AnnotationImageWidget(QWidget):
             # Start marching ants animation
             self.animation_timer.start()
         else:
-            # Stop animation and remove border
+            # Stop animation and restore default pen
             self.animation_timer.stop()
-            self.image_label.setStyleSheet("border: none;")    
-            
+            self.apply_default_pen()
+
     def animate_selection(self):
         """Animate selected border with marching ants effect using black dashed lines."""
         # Update animation offset for marching ants (same as QtAnnotation)
@@ -597,8 +613,6 @@ class SettingsWidget(QGroupBox):
         if hasattr(self.explorer_window, 'cluster_widget'):
             self.explorer_window.cluster_widget.update_clusters(cluster_data)
             self.explorer_window.cluster_widget.fit_view_to_points()
-            
-        self.show_status_message(f"{cluster_technique} clustering applied with {n_clusters} clusters.")
 
     def generate_demo_cluster_data(self, n_clusters, random_state):
         """Generate demonstration cluster data.
@@ -634,12 +648,6 @@ class SettingsWidget(QGroupBox):
                 cluster_data.append((x, y, cluster_id, annotation_data))
         
         return cluster_data
-
-    def show_status_message(self, message, error=False):
-        """Show a status message in the parent window."""
-        if hasattr(self.explorer_window, 'statusBar'):
-            timeout = 3000 if not error else 5000
-            self.explorer_window.statusBar().showMessage(message, timeout)
 
 
 class ClusterWidget(QWidget):
@@ -984,11 +992,6 @@ class ExplorerWindow(QMainWindow):
         self.apply_button.setToolTip("Apply changes")
         self.buttons_layout.addWidget(self.apply_button)
 
-        self.save_button = QPushButton('Save', self)
-        self.save_button.clicked.connect(self.save)
-        self.save_button.setToolTip("Save changes")
-        self.buttons_layout.addWidget(self.save_button)
-
         self.main_layout.addLayout(self.buttons_layout)
 
         # Initialize with sample data
@@ -1066,7 +1069,5 @@ class ExplorerWindow(QMainWindow):
         pass
 
     def apply(self):
-        self.statusBar().showMessage("Changes applied successfully.", 3000)
-
-    def save(self):
-        self.statusBar().showMessage("Changes saved successfully.", 3000)
+        # Remove status bar message
+        pass
