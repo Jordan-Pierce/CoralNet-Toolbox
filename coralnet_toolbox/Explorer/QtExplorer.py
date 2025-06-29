@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
-                             QSpinBox, QGraphicsEllipseItem, QGraphicsItem)
+                             QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider)
 import warnings
 import os
 import random
@@ -267,12 +267,20 @@ class ConditionsWidget(QGroupBox):
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, annotation, image_path, parent=None):
+    def __init__(self, annotation, image_path, widget_size=256, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.annotation = annotation
         self.image_path = image_path
         self.selected = False
-        self.setFixedSize(256, 256)
+        self.widget_size = widget_size
+        self.animation_offset = 0  # For marching ants animation
+        self.setFixedSize(widget_size, widget_size)
+        
+        # Timer for marching ants animation
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self.animate_selection)
+        self.animation_timer.setInterval(100)  # Update every 100ms
+        
         self.setup_ui()
         self.load_annotation_image()
 
@@ -280,21 +288,16 @@ class AnnotationImageWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
 
-        # Image label
+        # Image label (use full widget size minus margins)
         self.image_label = QLabel()
-        self.image_label.setFixedSize(250, 200)
-        self.image_label.setStyleSheet("border: 2px solid gray;")
+        self.image_label.setFixedSize(self.widget_size - 4, self.widget_size - 4)
+        
+        # No default border - only show marching ants when selected
+        self.image_label.setStyleSheet("border: none;")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setScaledContents(True)  # Scale image to fit label
 
         layout.addWidget(self.image_label)
-
-        # Info label
-        info_text = f"{self.annotation.label.short_label_code}\n{os.path.basename(self.image_path)}"
-        info_label = QLabel(info_text)
-        info_label.setAlignment(Qt.AlignCenter)
-        info_label.setMaximumHeight(50)
-        layout.addWidget(info_label)
 
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
@@ -316,15 +319,30 @@ class AnnotationImageWidget(QWidget):
                 
         except Exception as e:
             print(f"Error loading annotation image: {e}")
-            self.image_label.setText("Error\nLoading Image")
-
+            self.image_label.setText("Error\nLoading Image")    
+    
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
         self.selected = selected
         if selected:
-            self.image_label.setStyleSheet("border: 3px solid blue; background-color: lightblue;")
+            # Start marching ants animation
+            self.animation_timer.start()
         else:
-            self.image_label.setStyleSheet("border: 2px solid gray;")
+            # Stop animation and remove border
+            self.animation_timer.stop()
+            self.image_label.setStyleSheet("border: none;")    
+            
+    def animate_selection(self):
+        """Animate selected border with marching ants effect using black dashed lines."""
+        # Update animation offset for marching ants (same as QtAnnotation)
+        self.animation_offset = (self.animation_offset + 1) % 20  # Reset every 20 pixels
+        
+        # Create animated black dashed border similar to QtAnnotation
+        # Use a custom dash pattern with offset for marching ants effect
+        self.image_label.setStyleSheet(f"""
+            border: 3px dashed black;
+            border-image: none;
+        """)
 
     def is_selected(self):
         """Return whether this widget is selected."""
@@ -341,12 +359,13 @@ class AnnotationImageWidget(QWidget):
 
 class AnnotationViewerWidget(QWidget):
     """Scrollable grid widget for displaying annotation image crops."""
-
+    
     def __init__(self, parent=None):
         super(AnnotationViewerWidget, self).__init__(parent)
         self.annotation_widgets = []
         self.selected_widgets = []
         self.last_selected_index = -1
+        self.current_widget_size = 256  # Default size
         self.setup_ui()
 
     def setup_ui(self):
@@ -357,20 +376,87 @@ class AnnotationViewerWidget(QWidget):
         header = QLabel("Annotation Viewer")
         header.setStyleSheet("font-weight: bold; padding: 5px;")
         layout.addWidget(header)
-
+        
+        # Size control layout
+        size_layout = QHBoxLayout()
+        
+        # Size label
+        size_label = QLabel("Size:")
+        size_layout.addWidget(size_label)
+          # Size slider
+        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider.setMinimum(32)
+        self.size_slider.setMaximum(256)
+        self.size_slider.setValue(256)
+        self.size_slider.setTickPosition(QSlider.TicksBelow)
+        self.size_slider.setTickInterval(32)
+        self.size_slider.valueChanged.connect(self.on_size_changed)
+        size_layout.addWidget(self.size_slider)
+        
+        # Size value label
+        self.size_value_label = QLabel("256")
+        self.size_value_label.setMinimumWidth(30)
+        size_layout.addWidget(self.size_value_label)
+        
+        layout.addLayout(size_layout)
+        
         # Scroll area with selection support
         self.scroll_area = SelectableAnnotationViewer()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Fixed horizontal scroll
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.set_annotation_viewer(self)
-
+        
         self.content_widget = QWidget()
         self.grid_layout = QGridLayout(self.content_widget)
         self.grid_layout.setSpacing(5)
 
         self.scroll_area.setWidget(self.content_widget)
         layout.addWidget(self.scroll_area)
+
+    def resizeEvent(self, event):
+        """Handle resize events to recalculate grid layout."""
+        super().resizeEvent(event)
+        # Recalculate grid layout when widget is resized (e.g., splitter moved)
+        if hasattr(self, 'annotation_widgets') and self.annotation_widgets:
+            self.recalculate_grid_layout()    
+            
+    def on_size_changed(self, value):
+        """Handle slider value change to resize annotation widgets."""
+        self.current_widget_size = value
+        self.size_value_label.setText(str(value))
+        
+        # Update all existing annotation widgets
+        for widget in self.annotation_widgets:
+            widget.widget_size = value
+            widget.setFixedSize(value, value)
+            
+            # Update image label size (use full widget size minus margins)
+            widget.image_label.setFixedSize(value - 4, value - 4)
+        
+        # Recalculate grid layout with new widget sizes
+        self.recalculate_grid_layout()
+
+    def recalculate_grid_layout(self):
+        """Recalculate the grid layout based on current widget width."""
+        if not self.annotation_widgets:
+            return
+            
+        # Calculate columns based on current scroll area width and widget size
+        # Account for scrollbar width and margins
+        available_width = self.scroll_area.viewport().width() - 20  # Margin for scrollbar
+        widget_width = self.current_widget_size + 10  # Add spacing
+        cols = max(1, available_width // widget_width)
+        
+        # Remove all widgets from grid layout
+        for widget in self.annotation_widgets:
+            self.grid_layout.removeWidget(widget)
+        
+        # Re-add widgets in new grid arrangement
+        for i, widget in enumerate(self.annotation_widgets):
+            row = i // cols
+            col = i % cols
+            self.grid_layout.addWidget(widget, row, col)
 
     def update_annotations(self, annotations):
         """Update the displayed annotations."""
@@ -381,16 +467,17 @@ class AnnotationViewerWidget(QWidget):
         self.selected_widgets.clear()
         self.last_selected_index = -1
 
-        # Add new annotation widgets
-        # Calculate columns based on width
-        cols = max(1, self.scroll_area.width() // 260)
+        # Add new annotation widgets with current size
+        # Calculate columns based on width and current widget size
+        widget_width = self.current_widget_size + 10  # Add spacing
+        cols = max(1, self.scroll_area.width() // widget_width)
 
         for i, annotation in enumerate(annotations):
             row = i // cols
             col = i % cols
 
             annotation_widget = AnnotationImageWidget(
-                annotation, annotation.image_path)
+                annotation, annotation.image_path, self.current_widget_size)
             self.annotation_widgets.append(annotation_widget)
             self.grid_layout.addWidget(annotation_widget, row, col)
 
@@ -658,7 +745,7 @@ class ClusterWidget(QWidget):
 
     def add_demo_points(self):
         """Add demonstration cluster points."""
-        point_size = 10
+        point_size = 20
         colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), QColor("orange")]
         
         # Generate some clustered demo points
@@ -816,7 +903,8 @@ class SelectableAnnotationViewer(QScrollArea):
             if self.rubber_band:
                 self.rubber_band.hide()
         super().mousePressEvent(event)
-          def mouseMoveEvent(self, event):
+    
+    def mouseMoveEvent(self, event):
         """Handle mouse move for rubber band selection."""
         if (self.rubber_band_start and
                 event.buttons() == Qt.LeftButton and
@@ -874,7 +962,7 @@ class ExplorerWindow(QMainWindow):
 
         self.setWindowTitle("Explorer")
         # Set the window icon
-        explorer_icon_path = get_icon("coral.png")
+        explorer_icon_path = get_icon("magic.png")
         self.setWindowIcon(QIcon(explorer_icon_path))
 
         # Create a central widget and main layout
