@@ -470,7 +470,7 @@ class AnnotationViewerWidget(QWidget):
         modifiers = event.modifiers()
 
         if modifiers == Qt.ShiftModifier:
-            # Shift+Click: Range selection
+            # Shift+Click: Range selection (clear previous selection)
             if self.last_selected_index != -1:
                 self.clear_selection()
                 start = min(self.last_selected_index, widget_index)
@@ -483,8 +483,21 @@ class AnnotationViewerWidget(QWidget):
                 self.select_widget(widget)
                 self.last_selected_index = widget_index
 
+        elif modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
+            # Shift+Ctrl+Click: Add range to existing selection
+            if self.last_selected_index != -1:
+                start = min(self.last_selected_index, widget_index)
+                end = max(self.last_selected_index, widget_index)
+                for i in range(start, end + 1):
+                    if not self.annotation_widgets[i].is_selected():
+                        self.select_widget(self.annotation_widgets[i])
+            else:
+                # If no anchor, just select this widget
+                self.select_widget(widget)
+                self.last_selected_index = widget_index
+
         elif modifiers == Qt.ControlModifier:
-            # Ctrl+Click: Toggle selection
+            # Ctrl+Click: Toggle selection (don't clear others)
             if widget.is_selected():
                 self.deselect_widget(widget)
             else:
@@ -492,7 +505,7 @@ class AnnotationViewerWidget(QWidget):
             self.last_selected_index = widget_index
                 
         else:
-            # Normal click: Single selection
+            # Normal click: Single selection (clear others)
             # If the clicked widget is the only one selected, do nothing
             if len(self.selected_widgets) == 1 and self.selected_widgets[0] == widget:
                 return
