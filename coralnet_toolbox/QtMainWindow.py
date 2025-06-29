@@ -964,6 +964,15 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         self.showMaximized()
 
+    def closeEvent(self, event):
+        """Ensure the explorer window is closed when the main window closes."""
+        if self.explorer_window:
+            # Setting parent to None prevents it from being deleted with main window
+            # before it can be properly handled.
+            self.explorer_window.setParent(None)
+            self.explorer_window.close()
+        super().closeEvent(event)
+
     def changeEvent(self, event):
         """Handle window state changes (minimize, maximize, restore)."""
         super().changeEvent(event)
@@ -1608,26 +1617,37 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_explorer_window(self):
-        """Open the Explorer window to manage images and annotations"""
-        # if not self.image_window.raster_manager.image_paths:
-        #     QMessageBox.warning(self,
-        #                         "Explorer",
-        #                         "No images are present in the project.")
-        #     return
-        
-        # if not self.annotation_window.annotations_dict:
-        #     QMessageBox.warning(self,
-        #                         "Explorer",
-        #                         "No annotations are present in the project.")
-        #     return
-
+        """Open the Explorer window, moving the LabelWindow into it."""
         try:
             self.untoggle_all_tools()
             if self.explorer_window is None:
+                # Create the explorer window, passing the main window instance
                 self.explorer_window = ExplorerWindow(self)
+                
+                # Move the label_window from the main layout to the explorer
+                # The ExplorerWindow's __init__ will handle adding it to its own layout.
+                self.left_layout.removeWidget(self.label_window)
+                self.label_window.setParent(self.explorer_window.left_panel) # Re-parent
+                self.explorer_window.left_layout.insertWidget(1, self.label_window) # Add to explorer layout
+
             self.explorer_window.showMaximized()
+            self.explorer_window.activateWindow()
+            self.explorer_window.raise_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            if self.explorer_window:
+                self.explorer_window.close() # Ensure cleanup
+            self.explorer_window = None
+
+    def explorer_closed(self):
+        """Handle the explorer window being closed."""
+        if self.explorer_window:
+            # Move the label_window back to the main window's layout
+            self.label_window.setParent(self.central_widget) # Re-parent back
+            self.left_layout.addWidget(self.label_window, 15) # Add it back to the layout
+            self.label_window.show()
+            
+            # Clean up reference
             self.explorer_window = None
 
     def open_patch_annotation_sampling_dialog(self):
