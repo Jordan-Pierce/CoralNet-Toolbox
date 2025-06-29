@@ -1627,8 +1627,8 @@ class MainWindow(QMainWindow):
                 # Move the label_window from the main layout to the explorer
                 # The ExplorerWindow's __init__ will handle adding it to its own layout.
                 self.left_layout.removeWidget(self.label_window)
-                self.label_window.setParent(self.explorer_window.left_panel) # Re-parent
-                self.explorer_window.left_layout.insertWidget(1, self.label_window) # Add to explorer layout
+                self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+                self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
 
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
@@ -1636,15 +1636,15 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             if self.explorer_window:
-                self.explorer_window.close() # Ensure cleanup
+                self.explorer_window.close()  # Ensure cleanup
             self.explorer_window = None
 
     def explorer_closed(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
             # Move the label_window back to the main window's layout
-            self.label_window.setParent(self.central_widget) # Re-parent back
-            self.left_layout.addWidget(self.label_window, 15) # Add it back to the layout
+            self.label_window.setParent(self.central_widget)  # Re-parent back
+            self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
             self.label_window.show()
             
             # Clean up reference

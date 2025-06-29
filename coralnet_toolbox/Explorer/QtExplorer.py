@@ -339,7 +339,7 @@ class AnnotationImageWidget(QWidget):
         
         # Create animated black dashed border similar to QtAnnotation
         # Use a custom dash pattern with offset for marching ants effect
-        self.image_label.setStyleSheet(f"""
+        self.image_label.setStyleSheet("""
             border: 3px dashed black;
             border-image: none;
         """)
@@ -383,7 +383,7 @@ class AnnotationViewerWidget(QWidget):
         # Size label
         size_label = QLabel("Size:")
         size_layout.addWidget(size_label)
-          # Size slider
+        # Size slider
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
         self.size_slider.setMaximum(256)
@@ -541,62 +541,7 @@ class AnnotationViewerWidget(QWidget):
         return [widget.annotation for widget in self.selected_widgets]
 
 
-class EmbeddedLabelWindow(QWidget):
-    """Embedded version of the LabelWindow for the Explorer."""
-
-    def __init__(self, main_window, parent=None):
-        super(EmbeddedLabelWindow, self).__init__(parent)
-        self.main_window = main_window
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Header
-        header = QLabel("Label Window")
-        header.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(header)
-
-        # Use the actual label window from main window
-        if hasattr(self.main_window, 'label_window'):
-            # Create a simplified version that shares the same label data
-            self.label_scroll = QScrollArea()
-            self.label_scroll.setWidgetResizable(True)
-            self.label_scroll.setMaximumHeight(200)
-
-            self.label_content = QWidget()
-            self.label_layout = QGridLayout(self.label_content)
-
-            self.label_scroll.setWidget(self.label_content)
-            layout.addWidget(self.label_scroll)
-
-            self.update_labels()
-
-    def update_labels(self):
-        """Update the displayed labels from the main label window."""
-        if not hasattr(self.main_window, 'label_window'):
-            return
-
-        # Clear existing
-        while self.label_layout.count():
-            item = self.label_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        # Add labels in grid
-        cols = 3
-        for i, label in enumerate(self.main_window.label_window.labels):
-            row = i // cols
-            col = i % cols
-
-            label_widget = QLabel(label.short_label_code)
-            label_widget.setFixedHeight(30)
-            label_widget.setStyleSheet(
-                f"background-color: {label.color.name()}; border: 1px solid gray; padding: 5px;")
-            label_widget.setAlignment(Qt.AlignCenter)
-
-            self.label_layout.addWidget(label_widget, row, col)
+# EmbeddedLabelWindow class removed - now using re-parented actual LabelWindow
 
 
 class SettingsWidget(QGroupBox):
@@ -969,13 +914,19 @@ class ExplorerWindow(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
+        # Create a left panel widget and layout for the re-parented LabelWindow
+        self.left_panel = QWidget()
+        self.left_layout = QVBoxLayout(self.left_panel)
 
     def showEvent(self, event):
         self.setup_ui()
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
-        # Do any cleanup here if needed
+        # Move the label_window back to the main window
+        if hasattr(self.main_window, 'explorer_closed'):
+            self.main_window.explorer_closed()
+        
         # Clear the reference in the main window
         self.main_window.explorer_window = None
         event.accept()
@@ -1014,14 +965,13 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(self.cluster_widget)
 
         # Set splitter proportions (annotation viewer wider)
-        middle_splitter.setSizes([700, 300])
-
-        # Add middle section to main layout with stretch factor
+        middle_splitter.setSizes([700, 300])        # Add middle section to main layout with stretch factor
         self.main_layout.addWidget(middle_splitter, 1)
-        # Bottom section: Label Window (full width)
-        self.embedded_label_window = EmbeddedLabelWindow(self.main_window)
-        self.main_layout.addWidget(self.embedded_label_window)
-
+        
+        # Note: LabelWindow will be re-parented here by MainWindow.open_explorer_window()
+        # The LabelWindow will be added to self.left_layout at index 1 by the MainWindow
+        self.main_layout.addWidget(self.label_window)
+        
         # Bottom control buttons
         self.buttons_layout = QHBoxLayout()
         # Add stretch to push buttons to the right
@@ -1095,10 +1045,6 @@ class ExplorerWindow(QMainWindow):
         # Update annotation viewer
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.update_annotations(filtered_annotations)
-
-        # Update embedded label window
-        if hasattr(self, 'embedded_label_window'):
-            self.embedded_label_window.update_labels()
 
     def filter_images(self):
         self.refresh_filters()
