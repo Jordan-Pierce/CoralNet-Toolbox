@@ -1,6 +1,6 @@
 from coralnet_toolbox.Icons import get_icon
 from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter
-from PyQt5.QtCore import Qt, QTimer, QRectF
+from PyQt5.QtCore import Qt, QTimer, QRectF, QSize, QRect
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
@@ -267,10 +267,11 @@ class ConditionsWidget(QGroupBox):
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, annotation, image_path, widget_size=256, parent=None):
+    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.annotation = annotation
         self.image_path = image_path
+        self.annotation_viewer = annotation_viewer  # Direct reference to AnnotationViewerWidget
         self.selected = False
         self.widget_size = widget_size
         self.animation_offset = 0  # For marching ants animation
@@ -351,9 +352,9 @@ class AnnotationImageWidget(QWidget):
     def mousePressEvent(self, event):
         """Handle mouse press events for selection."""
         if event.button() == Qt.LeftButton:
-            # Get the parent AnnotationViewerWidget to handle selection logic
-            if hasattr(self.parent().parent().parent(), 'handle_annotation_selection'):
-                self.parent().parent().parent().handle_annotation_selection(self, event)
+            # Use direct reference to annotation viewer for selection handling
+            if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
+                self.annotation_viewer.handle_annotation_selection(self, event)
         super().mousePressEvent(event)
 
 
@@ -364,7 +365,7 @@ class AnnotationViewerWidget(QWidget):
         super(AnnotationViewerWidget, self).__init__(parent)
         self.annotation_widgets = []
         self.selected_widgets = []
-        self.last_selected_index = -1
+        self.last_selected_index = -1  # Anchor for shift-selection
         self.current_widget_size = 256  # Default size
         self.setup_ui()
 
@@ -401,11 +402,10 @@ class AnnotationViewerWidget(QWidget):
         layout.addLayout(size_layout)
         
         # Scroll area with selection support
-        self.scroll_area = SelectableAnnotationViewer()
+        self.scroll_area = SelectableAnnotationViewer(self) # Pass self to scroll area
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Fixed horizontal scroll
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.set_annotation_viewer(self)
         
         self.content_widget = QWidget()
         self.grid_layout = QGridLayout(self.content_widget)
@@ -417,7 +417,6 @@ class AnnotationViewerWidget(QWidget):
     def resizeEvent(self, event):
         """Handle resize events to recalculate grid layout."""
         super().resizeEvent(event)
-        # Recalculate grid layout when widget is resized (e.g., splitter moved)
         if hasattr(self, 'annotation_widgets') and self.annotation_widgets:
             self.recalculate_grid_layout()    
             
@@ -426,15 +425,11 @@ class AnnotationViewerWidget(QWidget):
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         
-        # Update all existing annotation widgets
         for widget in self.annotation_widgets:
             widget.widget_size = value
             widget.setFixedSize(value, value)
-            
-            # Update image label size (use full widget size minus margins)
             widget.image_label.setFixedSize(value - 4, value - 4)
         
-        # Recalculate grid layout with new widget sizes
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
@@ -442,78 +437,66 @@ class AnnotationViewerWidget(QWidget):
         if not self.annotation_widgets:
             return
             
-        # Calculate columns based on current scroll area width and widget size
-        # Account for scrollbar width and margins
-        available_width = self.scroll_area.viewport().width() - 20  # Margin for scrollbar
-        widget_width = self.current_widget_size + 10  # Add spacing
+        available_width = self.scroll_area.viewport().width() - 20
+        widget_width = self.current_widget_size + self.grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
-        # Remove all widgets from grid layout
-        for widget in self.annotation_widgets:
-            self.grid_layout.removeWidget(widget)
-        
-        # Re-add widgets in new grid arrangement
         for i, widget in enumerate(self.annotation_widgets):
-            row = i // cols
-            col = i % cols
-            self.grid_layout.addWidget(widget, row, col)
+            self.grid_layout.addWidget(widget, i // cols, i % cols)
 
     def update_annotations(self, annotations):
         """Update the displayed annotations."""
-        # Clear existing widgets and selection
         for widget in self.annotation_widgets:
             widget.deleteLater()
         self.annotation_widgets.clear()
         self.selected_widgets.clear()
         self.last_selected_index = -1
 
-        # Add new annotation widgets with current size
-        # Calculate columns based on width and current widget size
-        widget_width = self.current_widget_size + 10  # Add spacing
-        cols = max(1, self.scroll_area.width() // widget_width)
-
-        for i, annotation in enumerate(annotations):
-            row = i // cols
-            col = i % cols
-
+        for annotation in annotations:
             annotation_widget = AnnotationImageWidget(
-                annotation, annotation.image_path, self.current_widget_size)
+                annotation, annotation.image_path, self.current_widget_size, 
+                annotation_viewer=self)  # Pass self as annotation_viewer
             self.annotation_widgets.append(annotation_widget)
-            self.grid_layout.addWidget(annotation_widget, row, col)
+        
+        self.recalculate_grid_layout()
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
-        widget_index = self.annotation_widgets.index(widget)
-        
-        if event.modifiers() == Qt.ControlModifier:
+        try:
+            widget_index = self.annotation_widgets.index(widget)
+        except ValueError:
+            return # Widget not in list
+
+        modifiers = event.modifiers()
+
+        if modifiers == Qt.ShiftModifier:
+            # Shift+Click: Range selection
+            if self.last_selected_index != -1:
+                self.clear_selection()
+                start = min(self.last_selected_index, widget_index)
+                end = max(self.last_selected_index, widget_index)
+                for i in range(start, end + 1):
+                    self.select_widget(self.annotation_widgets[i])
+            else:
+                # If no anchor, treat as a single selection
+                self.clear_selection()
+                self.select_widget(widget)
+                self.last_selected_index = widget_index
+
+        elif modifiers == Qt.ControlModifier:
             # Ctrl+Click: Toggle selection
             if widget.is_selected():
                 self.deselect_widget(widget)
             else:
                 self.select_widget(widget)
             self.last_selected_index = widget_index
-            
-        elif event.modifiers() == Qt.ShiftModifier:
-            # Shift+Click: Range selection
-            if self.last_selected_index >= 0:
-                start_index = min(self.last_selected_index, widget_index)
-                end_index = max(self.last_selected_index, widget_index)
-                
-                # Clear current selection
-                self.clear_selection()
-                
-                # Select range
-                for i in range(start_index, end_index + 1):
-                    if i < len(self.annotation_widgets):
-                        self.select_widget(self.annotation_widgets[i])
-            else:
-                # No previous selection, just select this one
-                self.clear_selection()
-                self.select_widget(widget)
-                self.last_selected_index = widget_index
                 
         else:
             # Normal click: Single selection
+            # If the clicked widget is the only one selected, do nothing
+            if len(self.selected_widgets) == 1 and self.selected_widgets[0] == widget:
+                return
+
             self.clear_selection()
             self.select_widget(widget)
             self.last_selected_index = widget_index
@@ -532,16 +515,14 @@ class AnnotationViewerWidget(QWidget):
 
     def clear_selection(self):
         """Clear all selected widgets."""
-        for widget in self.selected_widgets:
-            widget.set_selected(False)
+        # Create a copy of the list to iterate over, as deselect_widget modifies it
+        for widget in list(self.selected_widgets):
+            self.deselect_widget(widget)
         self.selected_widgets.clear()
 
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
         return [widget.annotation for widget in self.selected_widgets]
-
-
-# EmbeddedLabelWindow class removed - now using re-parented actual LabelWindow
 
 
 class SettingsWidget(QGroupBox):
@@ -830,67 +811,69 @@ class ClusterWidget(QWidget):
 class SelectableAnnotationViewer(QScrollArea):
     """Scrollable area that supports rubber band selection with Ctrl+drag."""
     
-    def __init__(self, parent=None):
+    def __init__(self, annotation_viewer, parent=None):
         super().__init__(parent)
-        self.annotation_viewer = None
-        self.rubber_band_start = None
+        self.annotation_viewer = annotation_viewer
         self.rubber_band = None
-        
-    def set_annotation_viewer(self, viewer):
-        """Set the annotation viewer widget."""
-        self.annotation_viewer = viewer
+        self.rubber_band_origin = None
         
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Start rubber band selection
-            self.rubber_band_start = event.pos()
-            if self.rubber_band:
-                self.rubber_band.hide()
+            self.rubber_band_origin = event.pos()
+            if not self.rubber_band:
+                from PyQt5.QtWidgets import QRubberBand
+                self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+            self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
+            self.rubber_band.show()
+            event.accept()
+            return
+            
         super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event):
         """Handle mouse move for rubber band selection."""
-        if (self.rubber_band_start and
-                event.buttons() == Qt.LeftButton and
-                event.modifiers() == Qt.ControlModifier):
-            
-            # Create rubber band if it doesn't exist
-            if not self.rubber_band:
-                from PyQt5.QtWidgets import QRubberBand
-                self.rubber_band = QRubberBand(QRubberBand.Rectangle, self)
-                
-            # Update rubber band geometry
-            rect = QRectF(self.rubber_band_start, event.pos()).normalized().toRect()
+        if self.rubber_band_origin is not None:
+            rect = QRect(self.rubber_band_origin, event.pos()).normalized()
             self.rubber_band.setGeometry(rect)
-            self.rubber_band.show()
-            
+            event.accept()
+            return
+
         super().mouseMoveEvent(event)
         
     def mouseReleaseEvent(self, event):
         """Handle mouse release to complete rubber band selection."""
-        if (self.rubber_band_start and
-                event.button() == Qt.LeftButton and
-                event.modifiers() == Qt.ControlModifier and
-                self.rubber_band and
-                self.annotation_viewer):
-            
-            # Get the selection rectangle
-            selection_rect = QRectF(self.rubber_band_start, event.pos()).normalized()
-            
-            # Find widgets within the selection rectangle
-            self.annotation_viewer.clear_selection()
-            for widget in self.annotation_viewer.annotation_widgets:
-                widget_pos = widget.mapToParent(widget.rect().center())
-                # Convert to scroll area coordinates
-                scroll_pos = self.widget().mapTo(self, widget_pos)
-                if selection_rect.contains(scroll_pos):
-                    self.annotation_viewer.select_widget(widget)
-            
-            # Hide rubber band
+        if self.rubber_band_origin is not None and self.rubber_band:
             self.rubber_band.hide()
+            selection_rect = self.rubber_band.geometry()
             
-        self.rubber_band_start = None
+            # The content_widget is where the grid layout lives
+            content_widget = self.annotation_viewer.content_widget
+            
+            # Clear previous selection and find widgets within the rectangle
+            self.annotation_viewer.clear_selection()
+            
+            last_selected_in_rubber_band = -1
+            for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
+                # Map widget's position relative to the scroll area's viewport
+                widget_rect_in_content = widget.geometry()
+                widget_rect_in_viewport = QRect(
+                    content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
+                    widget_rect_in_content.size()
+                )
+
+                if selection_rect.intersects(widget_rect_in_viewport):
+                    self.annotation_viewer.select_widget(widget)
+                    last_selected_in_rubber_band = i
+
+            # Set the anchor for future shift-clicks to the last item in the selection
+            if last_selected_in_rubber_band != -1:
+                self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
+
+            self.rubber_band_origin = None
+            event.accept()
+            return
+
         super().mouseReleaseEvent(event)
 
 
