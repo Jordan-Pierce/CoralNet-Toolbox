@@ -529,6 +529,13 @@ class AnnotationImageWidget(QWidget):
                 # Use normal label color
                 color = self.annotation.label.color
 
+            # Special case: Use black for annotations with label.id == "-1", Review (easier to see)
+            if (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode and 
+                self.annotation._preview_label.id == "-1") or \
+               (not (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode) and 
+                self.annotation.label.id == "-1"):
+                color = QColor("black")
+
             # Get the pen using the annotation's own logic
             pen = self.annotation._create_pen(color)
             painter.setPen(pen)
