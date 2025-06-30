@@ -549,20 +549,17 @@ class AnnotationViewer(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        # Create main widget to contain all content
-        main_widget = QWidget()
-        layout = QVBoxLayout(main_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Size control layout - make it sticky by giving it fixed height
-        size_widget = QWidget()
-        size_widget.setFixedHeight(40)  # Fixed height to prevent it from scrolling away
-        size_layout = QHBoxLayout(size_widget)
-        size_layout.setContentsMargins(5, 5, 5, 5)
+        # Create main container widget for the entire AnnotationViewer
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Size control layout - this will stay fixed at the top
+        header_layout = QHBoxLayout()
         
         # Size label
         size_label = QLabel("Size:")
-        size_layout.addWidget(size_label)
+        header_layout.addWidget(size_label)
         # Size slider
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
@@ -571,26 +568,35 @@ class AnnotationViewer(QScrollArea):
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
         self.size_slider.valueChanged.connect(self.on_size_changed)
-        size_layout.addWidget(self.size_slider)
+        header_layout.addWidget(self.size_slider)
         
         # Size value label
         self.size_value_label = QLabel("256")
         self.size_value_label.setMinimumWidth(30)
-        size_layout.addWidget(self.size_value_label)
+        header_layout.addWidget(self.size_value_label)
         
-        layout.addWidget(size_widget)
+        # Add size controls to main layout (not scrollable)
+        main_layout.addLayout(header_layout)
         
-        # Content widget for the grid layout
+        # Create scrollable content widget for the grid layout only
         self.content_widget = QWidget()
         self.grid_layout = QGridLayout(self.content_widget)
         self.grid_layout.setSpacing(5)
 
-        layout.addWidget(self.content_widget)
-        layout.setStretchFactor(size_widget, 0)  # Don't stretch the size controls
-        layout.setStretchFactor(self.content_widget, 1)  # Let content area stretch
+        # Create a scroll area just for the content
+        content_scroll = QScrollArea()
+        content_scroll.setWidgetResizable(True)
+        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        content_scroll.setWidget(self.content_widget)
         
-        # Set the main widget as the scroll area's widget
-        self.setWidget(main_widget)
+        # Add the scrollable content to main layout
+        main_layout.addWidget(content_scroll)
+        
+        # Set the main container as the parent widget's content
+        # Since AnnotationViewer inherits from QScrollArea, we need to handle this differently
+        # We'll create a layout for self and add the main_container
+        self.setWidget(main_container)
 
     def resizeEvent(self, event):
         """Handle resize events to recalculate grid layout."""
