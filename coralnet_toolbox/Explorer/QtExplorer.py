@@ -753,17 +753,22 @@ class AnnotationViewerWidget(QWidget):
         """Update the label window selection based on currently selected annotations."""
         # Find the explorer window (our parent)
         explorer_window = self.parent()
-        while explorer_window and not hasattr(explorer_window, 'label_window'):
+        while explorer_window and not hasattr(explorer_window, 'main_window'):
             explorer_window = explorer_window.parent()
             
-        if not explorer_window or not hasattr(explorer_window, 'label_window'):
+        if not explorer_window or not hasattr(explorer_window, 'main_window'):
             return
             
-        label_window = explorer_window.label_window
+        # Get the main window and its components
+        main_window = explorer_window.main_window
+        label_window = main_window.label_window
+        annotation_window = main_window.annotation_window
         
         if not self.selected_widgets:
             # No annotations selected - deselect active label
             label_window.deselect_active_label()
+            # Also update annotation count display
+            label_window.update_annotation_count()
             return
             
         # Get all selected annotations
@@ -775,10 +780,16 @@ class AnnotationViewerWidget(QWidget):
         
         if all_same_label:
             # All annotations have the same label - set it as active
+            # Use the same signal emission as AnnotationWindow
             label_window.set_active_label(first_label)
+            # Emit the labelSelected signal just like AnnotationWindow does
+            annotation_window.labelSelected.emit(first_label.id)
         else:
             # Multiple different labels - deselect active label
             label_window.deselect_active_label()
+        
+        # Update annotation count display to show selection
+        label_window.update_annotation_count()
 
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
