@@ -783,24 +783,33 @@ class AnnotationViewerWidget(QWidget):
             label_window.update_annotation_count()
             return
             
-        # Get all selected annotations (use original labels for consistency check)
+        # Get all selected annotations
         selected_annotations = [widget.annotation for widget in self.selected_widgets]
         
-        # Check original labels for consistency (not preview labels)
-        first_original_label = self.original_label_assignments.get(
-            selected_annotations[0].id, selected_annotations[0].label)
-        all_same_original_label = True
+        # Check CURRENT labels for consistency (preview labels take priority over original)
+        def get_current_label(annotation):
+            """Get the current effective label (preview if exists, otherwise original)."""
+            if annotation.id in self.preview_label_assignments:
+                return self.preview_label_assignments[annotation.id]
+            else:
+                return annotation.label
+        
+        first_current_label = get_current_label(selected_annotations[0])
+        all_same_current_label = True
         
         for annotation in selected_annotations:
-            original_label = self.original_label_assignments.get(annotation.id, annotation.label)
-            if original_label.id != first_original_label.id:
-                all_same_original_label = False
+            current_label = get_current_label(annotation)
+            if current_label.id != first_current_label.id:
+                all_same_current_label = False
                 break
         
-        if all_same_original_label:
-            # All annotations have the same original label - set it as active
-            label_window.set_active_label(first_original_label)
-            annotation_window.labelSelected.emit(first_original_label.id)
+        if all_same_current_label:
+            # All annotations have the same current label - set it as active
+            # IMPORTANT: Don't emit labelSelected signal here to avoid triggering preview override
+            label_window.set_active_label(first_current_label)
+            # Only emit the signal if this is NOT a preview label to avoid circular updates
+            if selected_annotations[0].id not in self.preview_label_assignments:
+                annotation_window.labelSelected.emit(first_current_label.id)
         else:
             # Multiple different labels - deselect active label
             label_window.deselect_active_label()
@@ -1597,10 +1606,28 @@ class ExplorerWindow(QMainWindow):
     def on_label_selected_for_preview(self, label):
         """Handle label selection to update preview state."""
         if hasattr(self, 'annotation_viewer') and self.annotation_viewer.selected_widgets:
-            # Apply preview label to selected annotations
-            self.annotation_viewer.apply_preview_label_to_selected(label)
-            # Update button states
-            self.update_button_states()
+            # Check if we're actually changing to a different label
+            selected_annotations = [widget.annotation for widget in self.annotation_viewer.selected_widgets]
+            
+            # Check if all selected annotations already have this label (either as preview or original)
+            all_already_have_label = True
+            for annotation in selected_annotations:
+                current_label = None
+                if annotation.id in self.annotation_viewer.preview_label_assignments:
+                    current_label = self.annotation_viewer.preview_label_assignments[annotation.id]
+                else:
+                    current_label = annotation.label
+                
+                if current_label.id != label.id:
+                    all_already_have_label = False
+                    break
+            
+            # Only apply preview if we're actually changing the label
+            if not all_already_have_label:
+                # Apply preview label to selected annotations
+                self.annotation_viewer.apply_preview_label_to_selected(label)
+                # Update button states
+                self.update_button_states()
 
     def clear_preview_changes(self):
         """Clear all preview changes and revert to original labels."""
@@ -1612,8 +1639,7 @@ class ExplorerWindow(QMainWindow):
 
     def update_button_states(self):
         """Update the state of Clear Preview and Apply buttons based on preview changes."""
-        has_changes = (hasattr(self, 'annotation_viewer') and 
-                      self.annotation_viewer.has_preview_changes())
+        has_changes = (hasattr(self, 'annotation_viewer') and self.annotation_viewer.has_preview_changes())
         
         self.clear_preview_button.setEnabled(has_changes)
         self.apply_button.setEnabled(has_changes)
