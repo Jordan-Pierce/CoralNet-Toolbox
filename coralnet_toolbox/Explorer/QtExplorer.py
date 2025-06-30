@@ -260,7 +260,7 @@ class AnnotationImageWidget(QWidget):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class InteractiveClusterView(QGraphicsView):
+class ClusterViewer(QGraphicsView):
     """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
     
     def __init__(self, scene):
@@ -357,11 +357,11 @@ class InteractiveClusterView(QGraphicsView):
         self.translate(delta.x(), delta.y())
         
 
-class AnnotationViewerWidget(QScrollArea):
+class AnnotationViewer(QScrollArea):
     """Scrollable grid widget for displaying annotation image crops with selection support."""
     
     def __init__(self, parent=None):
-        super(AnnotationViewerWidget, self).__init__(parent)
+        super(AnnotationViewer, self).__init__(parent)
         self.annotation_widgets = []
         self.selected_widgets = []
         self.last_selected_index = -1  # Anchor for shift-selection
@@ -1261,7 +1261,7 @@ class ClusterWidget(QWidget):
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)  # Large world space
         
-        self.graphics_view = InteractiveClusterView(self.graphics_scene)
+        self.graphics_view = ClusterViewer(self.graphics_scene)
         self.graphics_view.setMinimumHeight(200)
 
         # Connect selection change signal
@@ -1443,7 +1443,7 @@ class ExplorerWindow(QMainWindow):
         # Create widgets in __init__ so they're always available
         self.conditions_widget = ConditionsWidget(self.main_window, self)
         self.settings_widget = SettingsWidget(self.main_window, self)
-        self.annotation_viewer = AnnotationViewerWidget()
+        self.annotation_viewer = AnnotationViewer()
         self.cluster_widget = ClusterWidget(self)
         
         # Create buttons
