@@ -808,6 +808,8 @@ class LabelWindow(QWidget):
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
             self.annotation_window.set_image(current_image_path)
+            # Update annotation count after merge
+            self.update_annotation_count()
             
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
@@ -1181,5 +1183,4 @@ class EditLabelDialog(QDialog):
                 new_color=new_color
             )
             self.accept()
-            
-        
+

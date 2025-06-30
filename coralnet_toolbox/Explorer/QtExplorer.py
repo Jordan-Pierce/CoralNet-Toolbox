@@ -231,6 +231,18 @@ class ConditionsWidget(QGroupBox):
             condition.label_dropdown.currentTextChanged.connect(
                 self.parent().refresh_filters)
 
+    def set_default_to_current_image(self):
+        """Set the first condition to filter by the current image."""
+        if self.conditions and hasattr(self.main_window, 'annotation_window'):
+            current_image_path = self.main_window.annotation_window.current_image_path
+            if current_image_path:
+                current_image_name = os.path.basename(current_image_path)
+                first_condition = self.conditions[0]
+                # Find and set the current image in the dropdown
+                index = first_condition.image_dropdown.findText(current_image_name)
+                if index >= 0:
+                    first_condition.image_dropdown.setCurrentIndex(index)
+
     def remove_condition(self, condition):
         if len(self.conditions) > 1:  # Keep at least one condition
             self.conditions.remove(condition)
@@ -418,7 +430,7 @@ class AnnotationViewerWidget(QWidget):
         layout.addLayout(size_layout)
         
         # Scroll area with selection support
-        self.scroll_area = SelectableAnnotationViewer(self) # Pass self to scroll area
+        self.scroll_area = SelectableAnnotationViewer(self)  # Pass self to scroll area
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -481,21 +493,20 @@ class AnnotationViewerWidget(QWidget):
         try:
             widget_index = self.annotation_widgets.index(widget)
         except ValueError:
-            return # Widget not in list
+            return  # Widget not in list
 
         modifiers = event.modifiers()
 
         if modifiers == Qt.ShiftModifier:
-            # Shift+Click: Range selection (clear previous selection)
+            # Shift+Click: Add range to existing selection (don't clear)
             if self.last_selected_index != -1:
-                self.clear_selection()
                 start = min(self.last_selected_index, widget_index)
                 end = max(self.last_selected_index, widget_index)
                 for i in range(start, end + 1):
-                    self.select_widget(self.annotation_widgets[i])
+                    if not self.annotation_widgets[i].is_selected():
+                        self.select_widget(self.annotation_widgets[i])
             else:
-                # If no anchor, treat as a single selection
-                self.clear_selection()
+                # If no anchor, just add this widget to selection
                 self.select_widget(widget)
                 self.last_selected_index = widget_index
 
@@ -508,12 +519,12 @@ class AnnotationViewerWidget(QWidget):
                     if not self.annotation_widgets[i].is_selected():
                         self.select_widget(self.annotation_widgets[i])
             else:
-                # If no anchor, just select this widget
+                # If no anchor, just add this widget to selection
                 self.select_widget(widget)
                 self.last_selected_index = widget_index
 
         elif modifiers == Qt.ControlModifier:
-            # Ctrl+Click: Toggle selection (don't clear others)
+            # Ctrl+Click: Toggle selection (add/remove individual items)
             if widget.is_selected():
                 self.deselect_widget(widget)
             else:
@@ -521,11 +532,7 @@ class AnnotationViewerWidget(QWidget):
             self.last_selected_index = widget_index
                 
         else:
-            # Normal click: Single selection (clear others)
-            # If the clicked widget is the only one selected, do nothing
-            if len(self.selected_widgets) == 1 and self.selected_widgets[0] == widget:
-                return
-
+            # Normal click: Clear all and select only this widget
             self.clear_selection()
             self.select_widget(widget)
             self.last_selected_index = widget_index
@@ -535,19 +542,57 @@ class AnnotationViewerWidget(QWidget):
         if widget not in self.selected_widgets:
             widget.set_selected(True)
             self.selected_widgets.append(widget)
+            # Update label window selection based on selected annotations
+        self.update_label_window_selection()
 
     def deselect_widget(self, widget):
         """Deselect a widget and remove it from the selection."""
         if widget in self.selected_widgets:
             widget.set_selected(False)
             self.selected_widgets.remove(widget)
+            # Update label window selection based on remaining selected annotations
+        self.update_label_window_selection()
 
     def clear_selection(self):
         """Clear all selected widgets."""
         # Create a copy of the list to iterate over, as deselect_widget modifies it
         for widget in list(self.selected_widgets):
-            self.deselect_widget(widget)
+            widget.set_selected(False)
         self.selected_widgets.clear()
+        
+        # Update label window selection (will deselect since no annotations selected)
+        self.update_label_window_selection()
+
+    def update_label_window_selection(self):
+        """Update the label window selection based on currently selected annotations."""
+        # Find the explorer window (our parent)
+        explorer_window = self.parent()
+        while explorer_window and not hasattr(explorer_window, 'label_window'):
+            explorer_window = explorer_window.parent()
+            
+        if not explorer_window or not hasattr(explorer_window, 'label_window'):
+            return
+            
+        label_window = explorer_window.label_window
+        
+        if not self.selected_widgets:
+            # No annotations selected - deselect active label
+            label_window.deselect_active_label()
+            return
+            
+        # Get all selected annotations
+        selected_annotations = [widget.annotation for widget in self.selected_widgets]
+        
+        # Check if all selected annotations have the same label
+        first_label = selected_annotations[0].label
+        all_same_label = all(annotation.label.id == first_label.id for annotation in selected_annotations)
+        
+        if all_same_label:
+            # All annotations have the same label - set it as active
+            label_window.set_active_label(first_label)
+        else:
+            # Multiple different labels - deselect active label
+            label_window.deselect_active_label()
 
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
@@ -837,62 +882,86 @@ class SelectableAnnotationViewer(QScrollArea):
         self.annotation_viewer = annotation_viewer
         self.rubber_band = None
         self.rubber_band_origin = None
+        self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
         
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # Store the origin but don't start rubber band yet - wait for drag
             self.rubber_band_origin = event.pos()
-            if not self.rubber_band:
-                from PyQt5.QtWidgets import QRubberBand
-                self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
-            self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
-            self.rubber_band.show()
-            event.accept()
+            # Don't accept the event yet - let it propagate to widgets first
+            super().mousePressEvent(event)
             return
             
         super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event):
         """Handle mouse move for rubber band selection."""
-        if self.rubber_band_origin is not None:
-            rect = QRect(self.rubber_band_origin, event.pos()).normalized()
-            self.rubber_band.setGeometry(rect)
-            event.accept()
-            return
+        if (self.rubber_band_origin is not None and 
+            event.buttons() == Qt.LeftButton and 
+            event.modifiers() == Qt.ControlModifier):
+            
+            # Check if we've moved enough to start rubber band selection
+            distance = (event.pos() - self.rubber_band_origin).manhattanLength()
+            
+            if distance > self.drag_threshold:
+                # Start rubber band if not already started
+                if not self.rubber_band:
+                    from PyQt5.QtWidgets import QRubberBand
+                    self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+                    self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
+                    self.rubber_band.show()
+                
+                # Update rubber band geometry
+                rect = QRect(self.rubber_band_origin, event.pos()).normalized()
+                self.rubber_band.setGeometry(rect)
+                event.accept()
+                return
 
         super().mouseMoveEvent(event)
         
     def mouseReleaseEvent(self, event):
         """Handle mouse release to complete rubber band selection."""
-        if self.rubber_band_origin is not None and self.rubber_band:
-            self.rubber_band.hide()
-            selection_rect = self.rubber_band.geometry()
+        if (self.rubber_band_origin is not None and 
+            event.button() == Qt.LeftButton and 
+            event.modifiers() == Qt.ControlModifier):
             
-            # The content_widget is where the grid layout lives
-            content_widget = self.annotation_viewer.content_widget
-            
-            # Clear previous selection and find widgets within the rectangle
-            self.annotation_viewer.clear_selection()
-            
-            last_selected_in_rubber_band = -1
-            for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
-                # Map widget's position relative to the scroll area's viewport
-                widget_rect_in_content = widget.geometry()
-                widget_rect_in_viewport = QRect(
-                    content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
-                    widget_rect_in_content.size()
-                )
+            # Only process rubber band selection if rubber band was actually shown
+            if self.rubber_band and self.rubber_band.isVisible():
+                self.rubber_band.hide()
+                selection_rect = self.rubber_band.geometry()
+                
+                # The content_widget is where the grid layout lives
+                content_widget = self.annotation_viewer.content_widget
+                
+                # Don't clear previous selection - rubber band adds to existing selection
+                
+                last_selected_in_rubber_band = -1
+                for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
+                    # Map widget's position relative to the scroll area's viewport
+                    widget_rect_in_content = widget.geometry()
+                    widget_rect_in_viewport = QRect(
+                        content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
+                        widget_rect_in_content.size()
+                    )
 
-                if selection_rect.intersects(widget_rect_in_viewport):
-                    self.annotation_viewer.select_widget(widget)
-                    last_selected_in_rubber_band = i
+                    if selection_rect.intersects(widget_rect_in_viewport):
+                        # Only select if not already selected (add to selection)
+                        if not widget.is_selected():
+                            self.annotation_viewer.select_widget(widget)
+                        last_selected_in_rubber_band = i
 
-            # Set the anchor for future shift-clicks to the last item in the selection
-            if last_selected_in_rubber_band != -1:
-                self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
+                # Set the anchor for future shift-clicks to the last item in the rubber band selection
+                if last_selected_in_rubber_band != -1:
+                    self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
 
+                event.accept()
+            else:
+                # No rubber band was shown, let the event propagate for normal Ctrl+Click handling
+                super().mouseReleaseEvent(event)
+
+            # Reset rubber band state
             self.rubber_band_origin = None
-            event.accept()
             return
 
         super().mouseReleaseEvent(event)
@@ -927,6 +996,10 @@ class ExplorerWindow(QMainWindow):
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
+        # Re-enable the main window before closing
+        if self.main_window:
+            self.main_window.setEnabled(True)
+        
         # Move the label_window back to the main window
         if hasattr(self.main_window, 'explorer_closed'):
             self.main_window.explorer_closed()
@@ -994,7 +1067,8 @@ class ExplorerWindow(QMainWindow):
 
         self.main_layout.addLayout(self.buttons_layout)
 
-        # Initialize with sample data
+        # Set default condition to current image and refresh filters
+        self.conditions_widget.set_default_to_current_image()
         self.refresh_filters()
 
     def get_filtered_annotations(self):
@@ -1069,5 +1143,50 @@ class ExplorerWindow(QMainWindow):
         pass
 
     def apply(self):
-        # Remove status bar message
-        pass
+        """Apply any modifications made in the Explorer to the actual annotations."""
+        try:
+            # Get selected annotations from the annotation viewer
+            selected_annotations = self.annotation_viewer.get_selected_annotations()
+            
+            if not selected_annotations:
+                return
+            
+            # Get the currently active label from the label window
+            active_label = self.label_window.active_label
+            if not active_label:
+                return
+            
+            # Track which images need to be updated
+            affected_images = set()
+            
+            # Update each selected annotation with the active label
+            for annotation in selected_annotations:
+                if annotation.label.id != active_label.id:
+                    # Store the image path before updating
+                    affected_images.add(annotation.image_path)
+                    
+                    # Update the annotation's label
+                    annotation.update_label(active_label)
+            
+            # Refresh the annotation window to show changes
+            if affected_images:
+                # Update image annotations for all affected images
+                for image_path in affected_images:
+                    self.image_window.update_image_annotations(image_path)
+                
+                # Reload annotations in the annotation window
+                self.annotation_window.load_annotations()
+                
+                # Update label counts
+                self.label_window.update_annotation_count()
+                
+                # Clear selection in annotation viewer
+                self.annotation_viewer.clear_selection()
+                
+                # Refresh the filtered view
+                self.refresh_filters()
+                
+                print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
+            
+        except Exception as e:
+            print(f"Error applying modifications: {e}")

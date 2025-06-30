@@ -1629,7 +1629,15 @@ class MainWindow(QMainWindow):
                 self.left_layout.removeWidget(self.label_window)
                 self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
                 self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+                # If explorer already exists, just refresh the default image filter
+                self.explorer_window.conditions_widget.set_default_to_current_image()
+                self.explorer_window.refresh_filters()
 
+            # Make the explorer window modal to block interaction with main window
+            self.explorer_window.setWindowModality(Qt.ApplicationModal)
+            # Disable the main window explicitly
+            self.setEnabled(False)
+            
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
@@ -1646,6 +1654,9 @@ class MainWindow(QMainWindow):
             self.label_window.setParent(self.central_widget)  # Re-parent back
             self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
             self.label_window.show()
+            
+            # Re-enable the main window
+            self.setEnabled(True)
             
             # Clean up reference
             self.explorer_window = None
@@ -1783,7 +1794,7 @@ class MainWindow(QMainWindow):
             self.untoggle_all_tools()
             self.detect_tile_dataset_dialog.exec_()
         except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
+                       QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_tile_dataset_dialog(self):
         """Open the Segment Tile Dataset dialog to segment tiled images."""
