@@ -1618,6 +1618,20 @@ class MainWindow(QMainWindow):
             
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening Explorer.")
+            return
+
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Explorer",
+                                "No annotations are present in the project.")
+            return
+        
         try:
             self.untoggle_all_tools()
             if self.explorer_window is None:
@@ -1629,6 +1643,7 @@ class MainWindow(QMainWindow):
                 self.left_layout.removeWidget(self.label_window)
                 self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
                 self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+                
                 # If explorer already exists, just refresh the default image filter
                 self.explorer_window.conditions_widget.set_default_to_current_image()
                 self.explorer_window.refresh_filters()
@@ -1654,6 +1669,8 @@ class MainWindow(QMainWindow):
             self.label_window.setParent(self.central_widget)  # Re-parent back
             self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
             self.label_window.show()
+            self.label_window.resizeEvent(None)
+            self.resizeEvent(None)
             
             # Re-enable the main window
             self.setEnabled(True)
@@ -1794,7 +1811,7 @@ class MainWindow(QMainWindow):
             self.untoggle_all_tools()
             self.detect_tile_dataset_dialog.exec_()
         except Exception as e:
-                       QMessageBox.critical(self, "Critical Error", f"{e}")
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_tile_dataset_dialog(self):
         """Open the Segment Tile Dataset dialog to segment tiled images."""

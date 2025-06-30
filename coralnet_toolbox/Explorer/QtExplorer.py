@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPainter
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 import warnings
 import os
 import random
@@ -538,6 +540,7 @@ class AnnotationImageWidget(QWidget):
 
             # Get the pen using the annotation's own logic
             pen = self.annotation._create_pen(color)
+            pen.setWidth(pen.width() + 1)
             painter.setPen(pen)
 
         finally:
@@ -1338,6 +1341,27 @@ class ExplorerWindow(QMainWindow):
         # Create a left panel widget and layout for the re-parented LabelWindow
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
+        
+        # Create widgets in __init__ so they're always available
+        self.conditions_widget = ConditionsWidget(self.main_window, self)
+        self.settings_widget = SettingsWidget(self.main_window, self)
+        self.annotation_viewer = AnnotationViewerWidget()
+        self.cluster_widget = ClusterWidget(self)
+        
+        # Create buttons
+        self.clear_preview_button = QPushButton('Clear Preview', self)
+        self.clear_preview_button.clicked.connect(self.clear_preview_changes)
+        self.clear_preview_button.setToolTip("Clear all preview changes and revert to original labels")
+        self.clear_preview_button.setEnabled(False)  # Initially disabled
+
+        self.exit_button = QPushButton('Exit', self)
+        self.exit_button.clicked.connect(self.close)
+        self.exit_button.setToolTip("Close the window")
+
+        self.apply_button = QPushButton('Apply', self)
+        self.apply_button.clicked.connect(self.apply)
+        self.apply_button.setToolTip("Apply changes")
+        self.apply_button.setEnabled(False)  # Initially disabled
 
     def showEvent(self, event):
         self.setup_ui()
@@ -1365,17 +1389,13 @@ class ExplorerWindow(QMainWindow):
         while self.main_layout.count():
             child = self.main_layout.takeAt(0)
             if child.widget():
-                child.widget().deleteLater()
+                child.widget().setParent(None)  # Remove from layout but don't delete
 
         # Top section: Conditions and Settings side by side
         top_layout = QHBoxLayout()
         
-        # Conditions on the left
-        self.conditions_widget = ConditionsWidget(self.main_window, self)
+        # Add existing widgets to layout
         top_layout.addWidget(self.conditions_widget, 2)  # Give more space to conditions
-        
-        # Settings on the right
-        self.settings_widget = SettingsWidget(self.main_window, self)
         top_layout.addWidget(self.settings_widget, 1)  # Less space for settings
         
         # Create container widget for top layout
@@ -1385,12 +1405,7 @@ class ExplorerWindow(QMainWindow):
 
         # Middle section: Annotation Viewer (left) and Cluster Widget (right)
         middle_splitter = QSplitter(Qt.Horizontal)
-        # Annotation Viewer (left side of middle section)
-        self.annotation_viewer = AnnotationViewerWidget()
         middle_splitter.addWidget(self.annotation_viewer)
-
-        # Cluster widget (right side of middle section)
-        self.cluster_widget = ClusterWidget(self)
         middle_splitter.addWidget(self.cluster_widget)
 
         # Set splitter proportions (annotation viewer wider)
@@ -1407,22 +1422,9 @@ class ExplorerWindow(QMainWindow):
         # Add stretch to push buttons to the right
         self.buttons_layout.addStretch(1)
 
-        # Main action buttons
-        self.clear_preview_button = QPushButton('Clear Preview', self)
-        self.clear_preview_button.clicked.connect(self.clear_preview_changes)
-        self.clear_preview_button.setToolTip("Clear all preview changes and revert to original labels")
-        self.clear_preview_button.setEnabled(False)  # Initially disabled
+        # Add existing buttons to layout
         self.buttons_layout.addWidget(self.clear_preview_button)
-
-        self.exit_button = QPushButton('Exit', self)
-        self.exit_button.clicked.connect(self.close)
-        self.exit_button.setToolTip("Close the window")
         self.buttons_layout.addWidget(self.exit_button)
-
-        self.apply_button = QPushButton('Apply', self)
-        self.apply_button.clicked.connect(self.apply)
-        self.apply_button.setToolTip("Apply changes")
-        self.apply_button.setEnabled(False)  # Initially disabled
         self.buttons_layout.addWidget(self.apply_button)
 
         self.main_layout.addLayout(self.buttons_layout)
@@ -1431,7 +1433,11 @@ class ExplorerWindow(QMainWindow):
         self.conditions_widget.set_default_to_current_image()
         self.refresh_filters()
         
-        # Connect label selection to preview updates
+        # Connect label selection to preview updates (only connect once)
+        try:
+            self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
+        except TypeError:
+            pass  # Signal wasn't connected yet
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
 
     def get_filtered_annotations(self):
@@ -1552,17 +1558,32 @@ class ExplorerWindow(QMainWindow):
             
             # Only crop annotations if there are any that need cropping
             if annotations_by_image:
-                # Crop annotations for each image using the AnnotationWindow method
-                # This ensures consistency with how cropped images are generated elsewhere
-                for image_path, image_annotations in annotations_by_image.items():
-                    # Use the existing crop_annotations method from AnnotationWindow
+                progress_bar = ProgressBar(self, "Cropping Image Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(len(annotations_by_image))
+                
+                try:
+                    # Crop annotations for each image using the AnnotationWindow method
                     # This ensures consistency with how cropped images are generated elsewhere
-                    self.annotation_window.crop_annotations(
-                        image_path=image_path, 
-                        annotations=image_annotations, 
-                        return_annotations=False,  # We don't need the return value
-                        verbose=True  # Show progress bar for filtering
-                    )
+                    for image_path, image_annotations in annotations_by_image.items():
+                        # Use the existing crop_annotations method from AnnotationWindow
+                        # This ensures consistency with how cropped images are generated elsewhere
+                        self.annotation_window.crop_annotations(
+                            image_path=image_path, 
+                            annotations=image_annotations, 
+                            return_annotations=False,  # We don't need the return value
+                            verbose=False
+                        )
+                        # Update progress bar
+                        progress_bar.update_progress()
+                        
+                except Exception as e:
+                    print(f"Error cropping annotations: {e}")
+                    
+                finally:
+                    progress_bar.finish_progress()
+                    progress_bar.stop_progress()
+                    progress_bar.close()
 
         return filtered_annotations
     
