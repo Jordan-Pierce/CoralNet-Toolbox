@@ -499,8 +499,7 @@ class AnnotationImageWidget(QWidget):
     def _update_animation_frame(self):
         """Update the animation offset and schedule a repaint."""
         # Increment and wrap the offset, matching the Annotation class
-        self.animation_offset = (self.animation_offset + 1) % 20
-        # self.update() schedules a call to paintEvent()
+        self.animation_offset = (self.animation_offset + 1) % 20        # self.update() schedules a call to paintEvent()
         self.update()
 
     def paintEvent(self, event):
@@ -515,21 +514,30 @@ class AnnotationImageWidget(QWidget):
         # We trick the annotation object into giving us the exact pen we need
         # by temporarily setting its state.
         original_selected = self.annotation.is_selected
-        original_offset = self.annotation._animated_line
+        original_offset = getattr(self.annotation, '_animated_line', 0)
         
         try:
             self.annotation.is_selected = self._is_selected
             if self._is_selected:
                 self.annotation._animated_line = self.animation_offset
 
+            # Check if annotation is in preview mode
+            if hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode:
+                # Use preview label color
+                color = self.annotation._preview_label.color
+            else:
+                # Use normal label color
+                color = self.annotation.label.color
+
             # Get the pen using the annotation's own logic
-            pen = self.annotation._create_pen(self.annotation.label.color)
+            pen = self.annotation._create_pen(color)
             painter.setPen(pen)
 
         finally:
             # IMPORTANT: Restore the annotation's original state
             self.annotation.is_selected = original_selected
-            self.annotation._animated_line = original_offset
+            if hasattr(self.annotation, '_animated_line'):
+                self.annotation._animated_line = original_offset
         
         # We don't want to draw a fill, just the border
         painter.setBrush(Qt.NoBrush)
@@ -577,6 +585,11 @@ class AnnotationViewerWidget(QWidget):
         self.selected_widgets = []
         self.last_selected_index = -1  # Anchor for shift-selection
         self.current_widget_size = 256  # Default size
+        
+        # NEW: Track preview states
+        self.preview_label_assignments = {}  # annotation_id -> preview_label
+        self.original_label_assignments = {}  # annotation_id -> original_label
+        
         self.setup_ui()
 
     def setup_ui(self):
@@ -745,7 +758,6 @@ class AnnotationViewerWidget(QWidget):
         for widget in list(self.selected_widgets):
             widget.set_selected(False)
         self.selected_widgets.clear()
-        
         # Update label window selection (will deselect since no annotations selected)
         self.update_label_window_selection()
 
@@ -765,25 +777,30 @@ class AnnotationViewerWidget(QWidget):
         annotation_window = main_window.annotation_window
         
         if not self.selected_widgets:
-            # No annotations selected - deselect active label
+            # No annotations selected - deselect active label and clear previews
+            self.clear_preview_states()
             label_window.deselect_active_label()
-            # Also update annotation count display
             label_window.update_annotation_count()
             return
             
-        # Get all selected annotations
+        # Get all selected annotations (use original labels for consistency check)
         selected_annotations = [widget.annotation for widget in self.selected_widgets]
         
-        # Check if all selected annotations have the same label
-        first_label = selected_annotations[0].label
-        all_same_label = all(annotation.label.id == first_label.id for annotation in selected_annotations)
+        # Check original labels for consistency (not preview labels)
+        first_original_label = self.original_label_assignments.get(
+            selected_annotations[0].id, selected_annotations[0].label)
+        all_same_original_label = True
         
-        if all_same_label:
-            # All annotations have the same label - set it as active
-            # Use the same signal emission as AnnotationWindow
-            label_window.set_active_label(first_label)
-            # Emit the labelSelected signal just like AnnotationWindow does
-            annotation_window.labelSelected.emit(first_label.id)
+        for annotation in selected_annotations:
+            original_label = self.original_label_assignments.get(annotation.id, annotation.label)
+            if original_label.id != first_original_label.id:
+                all_same_original_label = False
+                break
+        
+        if all_same_original_label:
+            # All annotations have the same original label - set it as active
+            label_window.set_active_label(first_original_label)
+            annotation_window.labelSelected.emit(first_original_label.id)
         else:
             # Multiple different labels - deselect active label
             label_window.deselect_active_label()
@@ -794,6 +811,85 @@ class AnnotationViewerWidget(QWidget):
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
         return [widget.annotation for widget in self.selected_widgets]
+
+    def apply_preview_label_to_selected(self, preview_label):
+        """Apply a preview label to selected annotations (visual only)."""
+        if not self.selected_widgets or not preview_label:
+            return
+            
+        for widget in self.selected_widgets:
+            annotation = widget.annotation
+            
+            # Store original label if this is the first preview change
+            if annotation.id not in self.original_label_assignments:
+                self.original_label_assignments[annotation.id] = annotation.label
+            
+            # Track the preview assignment
+            self.preview_label_assignments[annotation.id] = preview_label
+            
+            # Update visual appearance temporarily
+            self._apply_preview_visual_state(annotation, preview_label)
+            
+            # Force widget to repaint with new color
+            widget.update()
+
+    def _apply_preview_visual_state(self, annotation, preview_label):
+        """Apply visual preview state to annotation without changing actual label."""
+        # Temporarily override the annotation's visual properties
+        annotation._preview_label = preview_label
+        annotation._preview_mode = True
+        
+        # Update the graphics item if it exists
+        if hasattr(annotation, 'graphics_item') and annotation.graphics_item:
+            # Force a visual update
+            annotation.graphics_item.update()
+
+    def clear_preview_states(self):
+        """Clear all preview states and revert to original labels."""
+        for annotation_id in list(self.preview_label_assignments.keys()):
+            # Get the annotation
+            annotation = self._get_annotation_by_id(annotation_id)
+            if annotation:
+                # Clear preview mode
+                if hasattr(annotation, '_preview_mode'):
+                    annotation._preview_mode = False
+                if hasattr(annotation, '_preview_label'):
+                    delattr(annotation, '_preview_label')
+                    
+                # Update graphics
+                if hasattr(annotation, 'graphics_item') and annotation.graphics_item:
+                    annotation.graphics_item.update()
+        
+        # Clear tracking dictionaries
+        self.preview_label_assignments.clear()
+        self.original_label_assignments.clear()
+        
+        # Update all widgets
+        for widget in self.annotation_widgets:
+            widget.update()
+
+    def apply_preview_changes_permanently(self):
+        """Apply all preview changes permanently to the annotation data."""
+        applied_annotations = []
+        
+        for annotation_id, preview_label in self.preview_label_assignments.items():
+            annotation = self._get_annotation_by_id(annotation_id)
+            if annotation:
+                # Actually update the annotation's label
+                annotation.update_label(preview_label)
+                applied_annotations.append(annotation)
+        
+        # Clear preview state after applying
+        self.clear_preview_states()
+        
+        return applied_annotations
+
+    def _get_annotation_by_id(self, annotation_id):
+        """Helper to get annotation by ID."""
+        for widget in self.annotation_widgets:
+            if widget.annotation.id == annotation_id:
+                return widget.annotation
+        return None
 
 
 class SettingsWidget(QGroupBox):
@@ -1204,7 +1300,7 @@ class ExplorerWindow(QMainWindow):
         # Create a central widget and main layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)        
         # Create a left panel widget and layout for the re-parented LabelWindow
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -1214,6 +1310,10 @@ class ExplorerWindow(QMainWindow):
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
+        # Clear any preview states before closing
+        if hasattr(self, 'annotation_viewer'):
+            self.annotation_viewer.clear_preview_states()
+        
         # Re-enable the main window before closing
         if self.main_window:
             self.main_window.setEnabled(True)
@@ -1289,6 +1389,9 @@ class ExplorerWindow(QMainWindow):
         # Set default condition to current image and refresh filters
         self.conditions_widget.set_default_to_current_image()
         self.refresh_filters()
+        
+        # Connect label selection to preview updates
+        self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
 
     def get_filtered_annotations(self):
         """Get annotations that match all conditions."""
@@ -1460,51 +1563,83 @@ class ExplorerWindow(QMainWindow):
         """Update the cluster graphics view."""
         # Delegate to cluster widget
         if hasattr(self, 'cluster_widget'):
-            pass  # TODO: Implement clustering visualization in cluster widget
+            pass        # TODO: Implement clustering visualization in cluster widget
 
     def update_scroll_area(self):
         """Legacy method - functionality moved to annotation viewer."""
         pass
 
+    def on_label_selected_for_preview(self, label):
+        """Handle label selection to update preview state."""
+        if hasattr(self, 'annotation_viewer') and self.annotation_viewer.selected_widgets:
+            # Apply preview label to selected annotations
+            self.annotation_viewer.apply_preview_label_to_selected(label)
+
     def apply(self):
         """Apply any modifications made in the Explorer to the actual annotations."""
         try:
-            # Get selected annotations from the annotation viewer
-            selected_annotations = self.annotation_viewer.get_selected_annotations()
-            if not selected_annotations:
-                return
-
-            # Get the currently active label from the label window
-            active_label = self.label_window.active_label
-            if not active_label:
-                return
-
-            # Track which images need to be updated
-            affected_images = set()
-
-            # Update each selected annotation with the active label
-            for annotation in selected_annotations:
-                if annotation.label.id != active_label.id:
-                    # Store the image path before updating
+            # Apply preview changes permanently first
+            applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
+            
+            if applied_annotations:
+                # Track which images need to be updated
+                affected_images = set()
+                for annotation in applied_annotations:
                     affected_images.add(annotation.image_path)
-                    # Update the annotation's label
-                    annotation.update_label(active_label)
 
-            # Update image annotations for all affected images
-            for image_path in affected_images:
-                self.image_window.update_image_annotations(image_path)
+                # Update image annotations for all affected images
+                for image_path in affected_images:
+                    self.image_window.update_image_annotations(image_path)
 
-            # Reload annotations in the annotation window
-            self.annotation_window.load_annotations()
+                # Reload annotations in the annotation window
+                self.annotation_window.load_annotations()
 
-            # Refresh the filtered view
-            self.refresh_filters()
+                # Refresh the filtered view
+                self.refresh_filters()
 
-            # Clear selection in the annotation viewer
-            self.annotation_viewer.clear_selection()
+                # Clear selection in the annotation viewer
+                self.annotation_viewer.clear_selection()
 
-            # Optionally print a message
-            print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
+                # Optionally print a message
+                print(f"Applied changes to {len(applied_annotations)} annotation(s)")
+            else:
+                # Fall back to old behavior if no preview changes
+                # Get selected annotations from the annotation viewer
+                selected_annotations = self.annotation_viewer.get_selected_annotations()
+                if not selected_annotations:
+                    return
+
+                # Get the currently active label from the label window
+                active_label = self.label_window.active_label
+                if not active_label:
+                    return
+
+                # Track which images need to be updated
+                affected_images = set()
+
+                # Update each selected annotation with the active label
+                for annotation in selected_annotations:
+                    if annotation.label.id != active_label.id:
+                        # Store the image path before updating
+                        affected_images.add(annotation.image_path)
+                        # Update the annotation's label
+                        annotation.update_label(active_label)
+
+                # Update image annotations for all affected images
+                for image_path in affected_images:
+                    self.image_window.update_image_annotations(image_path)
+
+                # Reload annotations in the annotation window
+                self.annotation_window.load_annotations()
+
+                # Refresh the filtered view
+                self.refresh_filters()
+
+                # Clear selection in the annotation viewer
+                self.annotation_viewer.clear_selection()
+
+                # Optionally print a message
+                print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
