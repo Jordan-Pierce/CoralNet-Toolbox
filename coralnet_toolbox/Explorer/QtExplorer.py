@@ -1,15 +1,11 @@
 from coralnet_toolbox.Icons import get_icon
 from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter
-from PyQt5.QtCore import Qt, QTimer, QRectF, QSize, QRect
+from PyQt5.QtCore import Qt, QTimer, QSize, QRect
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
                              QListWidget, QDoubleSpinBox, QApplication)
-
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QPainter
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -100,103 +96,6 @@ class AnnotationDataItem:
             return list(self.annotation.machine_confidence.values())[0]
         return 0.0
 
-
-class InteractiveClusterView(QGraphicsView):
-    """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
-    
-    def __init__(self, scene):
-        super().__init__(scene)
-        self.setRenderHint(QPainter.Antialiasing)  # Make the points look smooth
-        
-        # Set the default interaction mode to panning
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        
-        # Remove scrollbars for a cleaner look
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-    def mousePressEvent(self, event):
-        """Handle mouse press for selection mode with Ctrl key and right-click panning."""
-        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # If Ctrl is pressed, switch to RubberBandDrag mode for selection
-            self.setDragMode(QGraphicsView.RubberBandDrag)
-        elif event.button() == Qt.RightButton:
-            # Right mouse button for panning - force ScrollHandDrag mode
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
-            # Convert right-click to left-click for proper panning behavior
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
-            super().mousePressEvent(left_event)
-            return
-        # Call the base class implementation to handle the event
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release to revert to no drag mode."""
-        if event.button() == Qt.RightButton:
-            # Convert right-click release to left-click release for proper panning
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
-            super().mouseReleaseEvent(left_event)
-            self.setDragMode(QGraphicsView.NoDrag)
-            return
-        # Call the base class implementation first
-        super().mouseReleaseEvent(event)
-        # After the event is handled, revert to no drag mode for normal selection
-        self.setDragMode(QGraphicsView.NoDrag)
-
-    def mouseMoveEvent(self, event):
-        """Handle mouse move events for right-click panning."""
-        if event.buttons() == Qt.RightButton:
-            # Convert right-click move to left-click move for proper panning
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
-            super().mouseMoveEvent(left_event)
-            return
-        super().mouseMoveEvent(event)
-
-    def wheelEvent(self, event):
-        """Handle mouse wheel for zooming."""
-        # Zoom Factor
-        zoom_in_factor = 1.25
-        zoom_out_factor = 1 / zoom_in_factor
-
-        # Set Anchors
-        self.setTransformationAnchor(QGraphicsView.NoAnchor)
-        self.setResizeAnchor(QGraphicsView.NoAnchor)
-
-        # Save the scene pos
-        old_pos = self.mapToScene(event.pos())
-
-        # Zoom
-        if event.angleDelta().y() > 0:
-            zoom_factor = zoom_in_factor
-        else:
-            zoom_factor = zoom_out_factor
-        self.scale(zoom_factor, zoom_factor)
-
-        # Get the new position
-        new_pos = self.mapToScene(event.pos())
-
-        # Move scene to old position
-        delta = new_pos - old_pos
-        self.translate(delta.x(), delta.y())
-        
         
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
@@ -357,21 +256,183 @@ class AnnotationImageWidget(QWidget):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Viewers
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SelectableAnnotationViewer(QScrollArea):
-    """Scrollable area that supports rubber band selection with Ctrl+drag."""
+class InteractiveClusterView(QGraphicsView):
+    """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
     
-    def __init__(self, annotation_viewer, parent=None):
-        super().__init__(parent)
-        self.annotation_viewer = annotation_viewer
+    def __init__(self, scene):
+        super().__init__(scene)
+        self.setRenderHint(QPainter.Antialiasing)  # Make the points look smooth
+        
+        # Set the default interaction mode to panning
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        
+        # Remove scrollbars for a cleaner look
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for selection mode with Ctrl key and right-click panning."""
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # If Ctrl is pressed, switch to RubberBandDrag mode for selection
+            self.setDragMode(QGraphicsView.RubberBandDrag)
+        elif event.button() == Qt.RightButton:
+            # Right mouse button for panning - force ScrollHandDrag mode
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+            # Convert right-click to left-click for proper panning behavior
+            left_event = event.__class__(
+                event.type(),
+                event.localPos(),
+                Qt.LeftButton,  # Convert to left button
+                Qt.LeftButton,  # Convert to left button
+                event.modifiers()
+            )
+            super().mousePressEvent(left_event)
+            return
+        # Call the base class implementation to handle the event
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to revert to no drag mode."""
+        if event.button() == Qt.RightButton:
+            # Convert right-click release to left-click release for proper panning
+            left_event = event.__class__(
+                event.type(),
+                event.localPos(),
+                Qt.LeftButton,  # Convert to left button
+                Qt.LeftButton,  # Convert to left button
+                event.modifiers()
+            )
+            super().mouseReleaseEvent(left_event)
+            self.setDragMode(QGraphicsView.NoDrag)
+            return
+        # Call the base class implementation first
+        super().mouseReleaseEvent(event)
+        # After the event is handled, revert to no drag mode for normal selection
+        self.setDragMode(QGraphicsView.NoDrag)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move events for right-click panning."""
+        if event.buttons() == Qt.RightButton:
+            # Convert right-click move to left-click move for proper panning
+            left_event = event.__class__(
+                event.type(),
+                event.localPos(),
+                Qt.LeftButton,  # Convert to left button
+                Qt.LeftButton,  # Convert to left button
+                event.modifiers()
+            )
+            super().mouseMoveEvent(left_event)
+            return
+        super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel for zooming."""
+        # Zoom Factor
+        zoom_in_factor = 1.25
+        zoom_out_factor = 1 / zoom_in_factor
+
+        # Set Anchors
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.NoAnchor)
+
+        # Save the scene pos
+        old_pos = self.mapToScene(event.pos())
+
+        # Zoom
+        if event.angleDelta().y() > 0:
+            zoom_factor = zoom_in_factor
+        else:
+            zoom_factor = zoom_out_factor
+        self.scale(zoom_factor, zoom_factor)
+
+        # Get the new position
+        new_pos = self.mapToScene(event.pos())
+
+        # Move scene to old position
+        delta = new_pos - old_pos
+        self.translate(delta.x(), delta.y())
+        
+
+class AnnotationViewerWidget(QScrollArea):
+    """Scrollable grid widget for displaying annotation image crops with selection support."""
+    
+    def __init__(self, parent=None):
+        super(AnnotationViewerWidget, self).__init__(parent)
+        self.annotation_widgets = []
+        self.selected_widgets = []
+        self.last_selected_index = -1  # Anchor for shift-selection
+        self.current_widget_size = 256  # Default size
+        
+        # Rubber band selection state
         self.rubber_band = None
         self.rubber_band_origin = None
         self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
         self.mouse_pressed_on_widget = False  # Track if mouse was pressed on a widget
         
+        # Track preview states
+        self.preview_label_assignments = {}  # annotation_id -> preview_label
+        self.original_label_assignments = {}  # annotation_id -> original_label
+        
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Set up scroll area properties
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create main widget to contain all content
+        main_widget = QWidget()
+        layout = QVBoxLayout(main_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Header
+        header = QLabel("Annotation Viewer")
+        header.setStyleSheet("font-weight: bold; padding: 5px;")
+        layout.addWidget(header)
+        
+        # Size control layout
+        size_layout = QHBoxLayout()
+        
+        # Size label
+        size_label = QLabel("Size:")
+        size_layout.addWidget(size_label)
+        # Size slider
+        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider.setMinimum(32)
+        self.size_slider.setMaximum(256)
+        self.size_slider.setValue(256)
+        self.size_slider.setTickPosition(QSlider.TicksBelow)
+        self.size_slider.setTickInterval(32)
+        self.size_slider.valueChanged.connect(self.on_size_changed)
+        size_layout.addWidget(self.size_slider)
+        
+        # Size value label
+        self.size_value_label = QLabel("256")
+        self.size_value_label.setMinimumWidth(30)
+        size_layout.addWidget(self.size_value_label)
+        
+        layout.addLayout(size_layout)
+        
+        # Content widget for the grid layout
+        self.content_widget = QWidget()
+        self.grid_layout = QGridLayout(self.content_widget)
+        self.grid_layout.setSpacing(5)
+
+        layout.addWidget(self.content_widget)
+        # Set the main widget as the scroll area's widget
+        self.setWidget(main_widget)
+
+    def resizeEvent(self, event):
+        """Handle resize events to recalculate grid layout."""
+        super().resizeEvent(event)
+        if hasattr(self, 'annotation_widgets') and self.annotation_widgets:
+            self.recalculate_grid_layout()
+
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
@@ -385,7 +446,7 @@ class SelectableAnnotationViewer(QScrollArea):
                 # Find the annotation widget (traverse up the hierarchy)
                 widget = child_widget
                 while widget and widget != self:
-                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self.annotation_viewer:
+                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
                         self.mouse_pressed_on_widget = True
                         break
                     widget = widget.parent()
@@ -433,12 +494,12 @@ class SelectableAnnotationViewer(QScrollArea):
                 selection_rect = self.rubber_band.geometry()
                 
                 # The content_widget is where the grid layout lives
-                content_widget = self.annotation_viewer.content_widget
+                content_widget = self.content_widget
                 
                 # Don't clear previous selection - rubber band adds to existing selection
                 
                 last_selected_in_rubber_band = -1
-                for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
+                for i, widget in enumerate(self.annotation_widgets):
                     # Map widget's position relative to the scroll area's viewport
                     widget_rect_in_content = widget.geometry()
                     widget_rect_in_viewport = QRect(
@@ -449,12 +510,12 @@ class SelectableAnnotationViewer(QScrollArea):
                     if selection_rect.intersects(widget_rect_in_viewport):
                         # Only select if not already selected (add to selection)
                         if not widget.is_selected():
-                            self.annotation_viewer.select_widget(widget)
+                            self.select_widget(widget)
                         last_selected_in_rubber_band = i
 
                 # Set the anchor for future shift-clicks to the last item in the rubber band selection
                 if last_selected_in_rubber_band != -1:
-                    self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
+                    self.last_selected_index = last_selected_in_rubber_band
 
                 # Clean up rubber band for next use
                 self.rubber_band.deleteLater()
@@ -471,74 +532,6 @@ class SelectableAnnotationViewer(QScrollArea):
             return
 
         super().mouseReleaseEvent(event)
-
-
-class AnnotationViewerWidget(QWidget):
-    """Scrollable grid widget for displaying annotation image crops."""
-    
-    def __init__(self, parent=None):
-        super(AnnotationViewerWidget, self).__init__(parent)
-        self.annotation_widgets = []
-        self.selected_widgets = []
-        self.last_selected_index = -1  # Anchor for shift-selection
-        self.current_widget_size = 256  # Default size
-        
-        # NEW: Track preview states
-        self.preview_label_assignments = {}  # annotation_id -> preview_label
-        self.original_label_assignments = {}  # annotation_id -> original_label
-        
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Header
-        header = QLabel("Annotation Viewer")
-        header.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(header)
-        
-        # Size control layout
-        size_layout = QHBoxLayout()
-        
-        # Size label
-        size_label = QLabel("Size:")
-        size_layout.addWidget(size_label)
-        # Size slider
-        self.size_slider = QSlider(Qt.Horizontal)
-        self.size_slider.setMinimum(32)
-        self.size_slider.setMaximum(256)
-        self.size_slider.setValue(256)
-        self.size_slider.setTickPosition(QSlider.TicksBelow)
-        self.size_slider.setTickInterval(32)
-        self.size_slider.valueChanged.connect(self.on_size_changed)
-        size_layout.addWidget(self.size_slider)
-        
-        # Size value label
-        self.size_value_label = QLabel("256")
-        self.size_value_label.setMinimumWidth(30)
-        size_layout.addWidget(self.size_value_label)
-        
-        layout.addLayout(size_layout)
-        
-        # Scroll area with selection support
-        self.scroll_area = SelectableAnnotationViewer(self)  # Pass self to scroll area
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        self.content_widget = QWidget()
-        self.grid_layout = QGridLayout(self.content_widget)
-        self.grid_layout.setSpacing(5)
-
-        self.scroll_area.setWidget(self.content_widget)
-        layout.addWidget(self.scroll_area)
-
-    def resizeEvent(self, event):
-        """Handle resize events to recalculate grid layout."""
-        super().resizeEvent(event)
-        if hasattr(self, 'annotation_widgets') and self.annotation_widgets:
-            self.recalculate_grid_layout()    
             
     def on_size_changed(self, value):
         """Handle slider value change to resize annotation widgets."""
@@ -552,7 +545,6 @@ class AnnotationViewerWidget(QWidget):
         # Tell each widget to update its own size and content
         for widget in self.annotation_widgets:
             widget.update_size(value)
-        
         # After all widgets are resized, recalculate the grid
         self.recalculate_grid_layout()
 
@@ -561,7 +553,7 @@ class AnnotationViewerWidget(QWidget):
         if not self.annotation_widgets:
             return
             
-        available_width = self.scroll_area.viewport().width() - 20
+        available_width = self.viewport().width() - 20
         widget_width = self.current_widget_size + self.grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
@@ -834,6 +826,11 @@ class AnnotationViewerWidget(QWidget):
             if widget.annotation.id == annotation_id:
                 return widget.annotation
         return None
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Widgets
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class ConditionsWidget(QGroupBox):
@@ -1412,6 +1409,11 @@ class ClusterWidget(QWidget):
         """Fit the view to show all cluster points."""
         if self.cluster_points:
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ExplorerWindow
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class ExplorerWindow(QMainWindow):
