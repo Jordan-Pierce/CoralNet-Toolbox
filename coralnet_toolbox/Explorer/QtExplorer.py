@@ -196,314 +196,8 @@ class InteractiveClusterView(QGraphicsView):
         # Move scene to old position
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class ConditionsWidget(QGroupBox):
-    """Widget containing all filter conditions in a multi-column layout."""
-
-    def __init__(self, main_window, parent=None):
-        super(ConditionsWidget, self).__init__("Conditions", parent)
-        self.main_window = main_window
-        self.explorer_window = parent  # Store reference to ExplorerWindow
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-
-        # Main conditions layout - horizontal with vertical columns
-        conditions_layout = QHBoxLayout()
-
-        # Images column
-        images_column = QVBoxLayout()
-        images_label = QLabel("Images:")
-        images_label.setStyleSheet("font-weight: bold;")
-        images_column.addWidget(images_label)
         
-        self.images_list = QListWidget()
-        self.images_list.setSelectionMode(QListWidget.MultiSelection)
-        self.images_list.setMaximumHeight(100)
         
-        # Add available images (no "All" item)
-        if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
-            for path in self.main_window.image_window.raster_manager.image_paths:
-                self.images_list.addItem(os.path.basename(path))
-        
-        images_column.addWidget(self.images_list)
-        
-        # Images selection buttons at bottom
-        images_buttons_layout = QHBoxLayout()
-        self.images_select_all_btn = QPushButton("Select All")
-        self.images_select_all_btn.clicked.connect(self.select_all_images)
-        images_buttons_layout.addWidget(self.images_select_all_btn)
-        
-        self.images_deselect_all_btn = QPushButton("Deselect All")
-        self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
-        images_buttons_layout.addWidget(self.images_deselect_all_btn)
-        images_column.addLayout(images_buttons_layout)
-        
-        conditions_layout.addLayout(images_column)
-
-        # Annotation Type column
-        type_column = QVBoxLayout()
-        type_label = QLabel("Annotation Type:")
-        type_label.setStyleSheet("font-weight: bold;")
-        type_column.addWidget(type_label)
-        
-        self.annotation_type_list = QListWidget()
-        self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
-        self.annotation_type_list.setMaximumHeight(100)
-        self.annotation_type_list.addItems(["PatchAnnotation", 
-                                            "RectangleAnnotation", 
-                                            "PolygonAnnotation", 
-                                            "MultiPolygonAnnotation"])
-        
-        type_column.addWidget(self.annotation_type_list)
-        
-        # Annotation type selection buttons at bottom
-        type_buttons_layout = QHBoxLayout()
-        self.type_select_all_btn = QPushButton("Select All")
-        self.type_select_all_btn.clicked.connect(self.select_all_annotation_types)
-        type_buttons_layout.addWidget(self.type_select_all_btn)
-        
-        self.type_deselect_all_btn = QPushButton("Deselect All")
-        self.type_deselect_all_btn.clicked.connect(self.deselect_all_annotation_types)
-        type_buttons_layout.addWidget(self.type_deselect_all_btn)
-        type_column.addLayout(type_buttons_layout)
-        
-        conditions_layout.addLayout(type_column)
-
-        # Label column
-        label_column = QVBoxLayout()
-        label_label = QLabel("Label:")
-        label_label.setStyleSheet("font-weight: bold;")
-        label_column.addWidget(label_label)
-        
-        self.label_list = QListWidget()
-        self.label_list.setSelectionMode(QListWidget.MultiSelection)
-        self.label_list.setMaximumHeight(100)
-        
-        # Add available labels (no "All" item)
-        if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
-            for label in self.main_window.label_window.labels:
-                self.label_list.addItem(label.short_label_code)
-        
-        label_column.addWidget(self.label_list)
-        
-        # Label selection buttons at bottom
-        label_buttons_layout = QHBoxLayout()
-        self.label_select_all_btn = QPushButton("Select All")
-        self.label_select_all_btn.clicked.connect(self.select_all_labels)
-        label_buttons_layout.addWidget(self.label_select_all_btn)
-        
-        self.label_deselect_all_btn = QPushButton("Deselect All")
-        self.label_deselect_all_btn.clicked.connect(self.deselect_all_labels)
-        label_buttons_layout.addWidget(self.label_deselect_all_btn)
-        label_column.addLayout(label_buttons_layout)
-        
-        conditions_layout.addLayout(label_column)
-
-        # TopK column
-        topk_column = QVBoxLayout()
-        topk_label = QLabel("TopK:")
-        topk_label.setStyleSheet("font-weight: bold;")
-        topk_column.addWidget(topk_label)
-        
-        self.topk_combo = QComboBox()
-        self.topk_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
-        self.topk_combo.setCurrentText("Top1")
-        
-        topk_column.addWidget(self.topk_combo)
-        topk_column.addStretch()  # Add stretch to align with other columns
-        conditions_layout.addLayout(topk_column)
-
-        # Confidence column
-        confidence_column = QVBoxLayout()
-        confidence_label = QLabel("Confidence:")
-        confidence_label.setStyleSheet("font-weight: bold;")
-        confidence_column.addWidget(confidence_label)
-        
-        self.confidence_operator_combo = QComboBox()
-        self.confidence_operator_combo.addItems([">", "<", ">=", "<=", "==", "!="])
-        self.confidence_operator_combo.setCurrentText(">=")
-        confidence_column.addWidget(self.confidence_operator_combo)
-        
-        self.confidence_value_spin = QDoubleSpinBox()
-        self.confidence_value_spin.setRange(0.0, 1.0)
-        self.confidence_value_spin.setSingleStep(0.1)
-        self.confidence_value_spin.setDecimals(2)
-        self.confidence_value_spin.setValue(0.5)
-        confidence_column.addWidget(self.confidence_value_spin)
-        
-        confidence_column.addStretch()  # Add stretch to align with other columns
-        conditions_layout.addLayout(confidence_column)
-
-        layout.addLayout(conditions_layout)
-
-        # Bottom buttons layout with Apply and Clear buttons on the right
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addStretch()  # Push buttons to the right
-        
-        self.apply_button = QPushButton("Apply")
-        self.apply_button.clicked.connect(self.apply_conditions)
-        bottom_layout.addWidget(self.apply_button)
-        
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.clicked.connect(self.clear_all_conditions)
-        bottom_layout.addWidget(self.clear_button)
-
-        layout.addLayout(bottom_layout)
-
-        # Set defaults
-        self.set_defaults()
-
-    def select_all_images(self):
-        """Select all items in the images list."""
-        for i in range(self.images_list.count()):
-            self.images_list.item(i).setSelected(True)
-
-    def deselect_all_images(self):
-        """Deselect all items in the images list."""
-        self.images_list.clearSelection()
-
-    def select_all_annotation_types(self):
-        """Select all items in the annotation types list."""
-        for i in range(self.annotation_type_list.count()):
-            self.annotation_type_list.item(i).setSelected(True)
-
-    def deselect_all_annotation_types(self):
-        """Deselect all items in the annotation types list."""
-        self.annotation_type_list.clearSelection()
-
-    def select_all_labels(self):
-        """Select all items in the labels list."""
-        for i in range(self.label_list.count()):
-            self.label_list.item(i).setSelected(True)
-
-    def deselect_all_labels(self):
-        """Deselect all items in the labels list."""
-        self.label_list.clearSelection()
-
-    def set_defaults(self):
-        """Set default selections."""
-        # Set current image as default (not all images)
-        self.set_default_to_current_image()
-        
-        # Set all annotation types as default
-        self.select_all_annotation_types()
-        
-        # Set all labels as default
-        self.select_all_labels()
-
-    def set_default_to_current_image(self):
-        """Set the current image as the default selection."""
-        if hasattr(self.main_window, 'annotation_window'):
-            current_image_path = self.main_window.annotation_window.current_image_path
-            if current_image_path:
-                current_image_name = os.path.basename(current_image_path)
-                # Find and select the current image
-                for i in range(self.images_list.count()):
-                    item = self.images_list.item(i)
-                    if item.text() == current_image_name:
-                        item.setSelected(True)
-                        return
-        
-        # Fallback to selecting all images if current image not found
-        self.select_all_images()
-
-    def clear_all_conditions(self):
-        """Reset all conditions to their defaults."""
-        # Clear all selections
-        self.images_list.clearSelection()
-        self.annotation_type_list.clearSelection()
-        self.label_list.clearSelection()
-        
-        # Reset to defaults
-        self.set_defaults()
-        
-        # Reset TopK and Confidence to defaults
-        self.topk_combo.setCurrentText("Top1")
-        self.confidence_operator_combo.setCurrentText(">=")
-        self.confidence_value_spin.setValue(0.5)
-        
-        # Auto-refresh on clear to show default results
-        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
-            self.explorer_window.refresh_filters()
-
-    def apply_conditions(self):
-        """Apply the current filter conditions."""
-        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
-            self.explorer_window.refresh_filters()
-
-    def get_selected_images(self):
-        """Get selected image names."""
-        selected_items = self.images_list.selectedItems()
-        if not selected_items:
-            # If nothing selected, return empty list (no filtering)
-            return []
-        
-        return [item.text() for item in selected_items]
-
-    def get_single_selected_image_path(self):
-        """Get the full path of the single selected image, or None if multiple/none selected."""
-        selected_images = self.get_selected_images()
-        if len(selected_images) == 1:
-            # Find the full path for this image name
-            image_name = selected_images[0]
-            if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
-                for path in self.main_window.image_window.raster_manager.image_paths:
-                    if os.path.basename(path) == image_name:
-                        return path
-        return None
-
-    def refresh_filters(self):
-        """Refresh the display based on current filter conditions."""
-        # Check if only one image is selected and load it in annotation window
-        single_image_path = self.get_single_selected_image_path()
-        if single_image_path and hasattr(self.main_window, 'image_window'):
-            # Load the single selected image in the annotation window
-            self.main_window.image_window.load_image_by_path(single_image_path)
-        
-        # Get filtered annotations
-        filtered_annotations = self.get_filtered_annotations()
-
-        # Update annotation viewer
-        if hasattr(self, 'annotation_viewer'):
-            self.annotation_viewer.update_annotations(filtered_annotations)
-
-    def get_selected_annotation_types(self):
-        """Get selected annotation types."""
-        selected_items = self.annotation_type_list.selectedItems()
-        if not selected_items:
-            # If nothing selected, return empty list (no filtering)
-            return []
-        
-        return [item.text() for item in selected_items]
-
-    def get_selected_labels(self):
-        """Get selected labels."""
-        selected_items = self.label_list.selectedItems()
-        if not selected_items:
-            # If nothing selected, return empty list (no filtering)
-            return []
-        
-        return [item.text() for item in selected_items]
-
-    def get_topk_selection(self):
-        """Get TopK selection."""
-        return self.topk_combo.currentText()
-
-    def get_confidence_condition(self):
-        """Get confidence operator and value."""
-        operator = self.confidence_operator_combo.currentText()
-        value = self.confidence_value_spin.value()
-        return operator, value
-
-
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
@@ -660,6 +354,123 @@ class AnnotationImageWidget(QWidget):
             if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
                 self.annotation_viewer.handle_annotation_selection(self, event)
         super().mousePressEvent(event)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class SelectableAnnotationViewer(QScrollArea):
+    """Scrollable area that supports rubber band selection with Ctrl+drag."""
+    
+    def __init__(self, annotation_viewer, parent=None):
+        super().__init__(parent)
+        self.annotation_viewer = annotation_viewer
+        self.rubber_band = None
+        self.rubber_band_origin = None
+        self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
+        self.mouse_pressed_on_widget = False  # Track if mouse was pressed on a widget
+        
+    def mousePressEvent(self, event):
+        """Handle mouse press for starting rubber band selection."""
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # Store the origin for potential rubber band
+            self.rubber_band_origin = event.pos()
+            self.mouse_pressed_on_widget = False
+            
+            # Check if we clicked on a widget
+            child_widget = self.childAt(event.pos())
+            if child_widget:
+                # Find the annotation widget (traverse up the hierarchy)
+                widget = child_widget
+                while widget and widget != self:
+                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self.annotation_viewer:
+                        self.mouse_pressed_on_widget = True
+                        break
+                    widget = widget.parent()
+            
+            # Always let the event propagate first
+            super().mousePressEvent(event)
+            return
+            
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for rubber band selection."""
+        if (self.rubber_band_origin is not None and 
+            event.buttons() == Qt.LeftButton and 
+            event.modifiers() == Qt.ControlModifier):
+            
+            # Check if we've moved enough to start rubber band selection
+            distance = (event.pos() - self.rubber_band_origin).manhattanLength()
+            
+            if distance > self.drag_threshold and not self.mouse_pressed_on_widget:
+                # Start rubber band if not already started and didn't click on a widget
+                if not self.rubber_band:
+                    from PyQt5.QtWidgets import QRubberBand
+                    self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+                    self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
+                    self.rubber_band.show()
+                
+                # Update rubber band geometry
+                rect = QRect(self.rubber_band_origin, event.pos()).normalized()
+                self.rubber_band.setGeometry(rect)
+                event.accept()
+                return
+
+        super().mouseMoveEvent(event)
+        
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to complete rubber band selection."""
+        if (self.rubber_band_origin is not None and 
+            event.button() == Qt.LeftButton and 
+            event.modifiers() == Qt.ControlModifier):
+            
+            # Only process rubber band selection if rubber band was actually shown
+            if self.rubber_band and self.rubber_band.isVisible():
+                self.rubber_band.hide()
+                selection_rect = self.rubber_band.geometry()
+                
+                # The content_widget is where the grid layout lives
+                content_widget = self.annotation_viewer.content_widget
+                
+                # Don't clear previous selection - rubber band adds to existing selection
+                
+                last_selected_in_rubber_band = -1
+                for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
+                    # Map widget's position relative to the scroll area's viewport
+                    widget_rect_in_content = widget.geometry()
+                    widget_rect_in_viewport = QRect(
+                        content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
+                        widget_rect_in_content.size()
+                    )
+
+                    if selection_rect.intersects(widget_rect_in_viewport):
+                        # Only select if not already selected (add to selection)
+                        if not widget.is_selected():
+                            self.annotation_viewer.select_widget(widget)
+                        last_selected_in_rubber_band = i
+
+                # Set the anchor for future shift-clicks to the last item in the rubber band selection
+                if last_selected_in_rubber_band != -1:
+                    self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
+
+                # Clean up rubber band for next use
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+                
+                event.accept()
+            else:
+                # No rubber band was shown, let the event propagate for normal Ctrl+Click handling
+                super().mouseReleaseEvent(event)
+
+            # Reset rubber band state
+            self.rubber_band_origin = None
+            self.mouse_pressed_on_widget = False
+            return
+
+        super().mouseReleaseEvent(event)
 
 
 class AnnotationViewerWidget(QWidget):
@@ -1025,6 +836,307 @@ class AnnotationViewerWidget(QWidget):
         return None
 
 
+class ConditionsWidget(QGroupBox):
+    """Widget containing all filter conditions in a multi-column layout."""
+
+    def __init__(self, main_window, parent=None):
+        super(ConditionsWidget, self).__init__("Conditions", parent)
+        self.main_window = main_window
+        self.explorer_window = parent  # Store reference to ExplorerWindow
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Main conditions layout - horizontal with vertical columns
+        conditions_layout = QHBoxLayout()
+
+        # Images column
+        images_column = QVBoxLayout()
+        images_label = QLabel("Images:")
+        images_label.setStyleSheet("font-weight: bold;")
+        images_column.addWidget(images_label)
+        
+        self.images_list = QListWidget()
+        self.images_list.setSelectionMode(QListWidget.MultiSelection)
+        self.images_list.setMaximumHeight(100)
+        
+        # Add available images (no "All" item)
+        if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
+            for path in self.main_window.image_window.raster_manager.image_paths:
+                self.images_list.addItem(os.path.basename(path))
+        
+        images_column.addWidget(self.images_list)
+        
+        # Images selection buttons at bottom
+        images_buttons_layout = QHBoxLayout()
+        self.images_select_all_btn = QPushButton("Select All")
+        self.images_select_all_btn.clicked.connect(self.select_all_images)
+        images_buttons_layout.addWidget(self.images_select_all_btn)
+        
+        self.images_deselect_all_btn = QPushButton("Deselect All")
+        self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
+        images_buttons_layout.addWidget(self.images_deselect_all_btn)
+        images_column.addLayout(images_buttons_layout)
+        
+        conditions_layout.addLayout(images_column)
+
+        # Annotation Type column
+        type_column = QVBoxLayout()
+        type_label = QLabel("Annotation Type:")
+        type_label.setStyleSheet("font-weight: bold;")
+        type_column.addWidget(type_label)
+        
+        self.annotation_type_list = QListWidget()
+        self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
+        self.annotation_type_list.setMaximumHeight(100)
+        self.annotation_type_list.addItems(["PatchAnnotation", 
+                                            "RectangleAnnotation", 
+                                            "PolygonAnnotation", 
+                                            "MultiPolygonAnnotation"])
+        
+        type_column.addWidget(self.annotation_type_list)
+        
+        # Annotation type selection buttons at bottom
+        type_buttons_layout = QHBoxLayout()
+        self.type_select_all_btn = QPushButton("Select All")
+        self.type_select_all_btn.clicked.connect(self.select_all_annotation_types)
+        type_buttons_layout.addWidget(self.type_select_all_btn)
+        
+        self.type_deselect_all_btn = QPushButton("Deselect All")
+        self.type_deselect_all_btn.clicked.connect(self.deselect_all_annotation_types)
+        type_buttons_layout.addWidget(self.type_deselect_all_btn)
+        type_column.addLayout(type_buttons_layout)
+        
+        conditions_layout.addLayout(type_column)
+
+        # Label column
+        label_column = QVBoxLayout()
+        label_label = QLabel("Label:")
+        label_label.setStyleSheet("font-weight: bold;")
+        label_column.addWidget(label_label)
+        
+        self.label_list = QListWidget()
+        self.label_list.setSelectionMode(QListWidget.MultiSelection)
+        self.label_list.setMaximumHeight(100)
+        
+        # Add available labels (no "All" item)
+        if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
+            for label in self.main_window.label_window.labels:
+                self.label_list.addItem(label.short_label_code)
+        
+        label_column.addWidget(self.label_list)
+        
+        # Label selection buttons at bottom
+        label_buttons_layout = QHBoxLayout()
+        self.label_select_all_btn = QPushButton("Select All")
+        self.label_select_all_btn.clicked.connect(self.select_all_labels)
+        label_buttons_layout.addWidget(self.label_select_all_btn)
+        
+        self.label_deselect_all_btn = QPushButton("Deselect All")
+        self.label_deselect_all_btn.clicked.connect(self.deselect_all_labels)
+        label_buttons_layout.addWidget(self.label_deselect_all_btn)
+        label_column.addLayout(label_buttons_layout)
+        
+        conditions_layout.addLayout(label_column)
+
+        # TopK column
+        topk_column = QVBoxLayout()
+        topk_label = QLabel("TopK:")
+        topk_label.setStyleSheet("font-weight: bold;")
+        topk_column.addWidget(topk_label)
+        
+        self.topk_combo = QComboBox()
+        self.topk_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
+        self.topk_combo.setCurrentText("Top1")
+        
+        topk_column.addWidget(self.topk_combo)
+        topk_column.addStretch()  # Add stretch to align with other columns
+        conditions_layout.addLayout(topk_column)
+
+        # Confidence column
+        confidence_column = QVBoxLayout()
+        confidence_label = QLabel("Confidence:")
+        confidence_label.setStyleSheet("font-weight: bold;")
+        confidence_column.addWidget(confidence_label)
+        
+        self.confidence_operator_combo = QComboBox()
+        self.confidence_operator_combo.addItems([">", "<", ">=", "<=", "==", "!="])
+        self.confidence_operator_combo.setCurrentText(">=")
+        confidence_column.addWidget(self.confidence_operator_combo)
+        
+        self.confidence_value_spin = QDoubleSpinBox()
+        self.confidence_value_spin.setRange(0.0, 1.0)
+        self.confidence_value_spin.setSingleStep(0.1)
+        self.confidence_value_spin.setDecimals(2)
+        self.confidence_value_spin.setValue(0.5)
+        confidence_column.addWidget(self.confidence_value_spin)
+        
+        confidence_column.addStretch()  # Add stretch to align with other columns
+        conditions_layout.addLayout(confidence_column)
+
+        layout.addLayout(conditions_layout)
+
+        # Bottom buttons layout with Apply and Clear buttons on the right
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch()  # Push buttons to the right
+        
+        self.apply_button = QPushButton("Apply")
+        self.apply_button.clicked.connect(self.apply_conditions)
+        bottom_layout.addWidget(self.apply_button)
+        
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.clicked.connect(self.clear_all_conditions)
+        bottom_layout.addWidget(self.clear_button)
+
+        layout.addLayout(bottom_layout)
+
+        # Set defaults
+        self.set_defaults()
+
+    def select_all_images(self):
+        """Select all items in the images list."""
+        for i in range(self.images_list.count()):
+            self.images_list.item(i).setSelected(True)
+
+    def deselect_all_images(self):
+        """Deselect all items in the images list."""
+        self.images_list.clearSelection()
+
+    def select_all_annotation_types(self):
+        """Select all items in the annotation types list."""
+        for i in range(self.annotation_type_list.count()):
+            self.annotation_type_list.item(i).setSelected(True)
+
+    def deselect_all_annotation_types(self):
+        """Deselect all items in the annotation types list."""
+        self.annotation_type_list.clearSelection()
+
+    def select_all_labels(self):
+        """Select all items in the labels list."""
+        for i in range(self.label_list.count()):
+            self.label_list.item(i).setSelected(True)
+
+    def deselect_all_labels(self):
+        """Deselect all items in the labels list."""
+        self.label_list.clearSelection()
+
+    def set_defaults(self):
+        """Set default selections."""
+        # Set current image as default (not all images)
+        self.set_default_to_current_image()
+        
+        # Set all annotation types as default
+        self.select_all_annotation_types()
+        
+        # Set all labels as default
+        self.select_all_labels()
+
+    def set_default_to_current_image(self):
+        """Set the current image as the default selection."""
+        if hasattr(self.main_window, 'annotation_window'):
+            current_image_path = self.main_window.annotation_window.current_image_path
+            if current_image_path:
+                current_image_name = os.path.basename(current_image_path)
+                # Find and select the current image
+                for i in range(self.images_list.count()):
+                    item = self.images_list.item(i)
+                    if item.text() == current_image_name:
+                        item.setSelected(True)
+                        return
+        
+        # Fallback to selecting all images if current image not found
+        self.select_all_images()
+
+    def clear_all_conditions(self):
+        """Reset all conditions to their defaults."""
+        # Clear all selections
+        self.images_list.clearSelection()
+        self.annotation_type_list.clearSelection()
+        self.label_list.clearSelection()
+        
+        # Reset to defaults
+        self.set_defaults()
+        
+        # Reset TopK and Confidence to defaults
+        self.topk_combo.setCurrentText("Top1")
+        self.confidence_operator_combo.setCurrentText(">=")
+        self.confidence_value_spin.setValue(0.5)
+        
+        # Auto-refresh on clear to show default results
+        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
+            self.explorer_window.refresh_filters()
+
+    def apply_conditions(self):
+        """Apply the current filter conditions."""
+        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
+            self.explorer_window.refresh_filters()
+
+    def get_selected_images(self):
+        """Get selected image names."""
+        selected_items = self.images_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_single_selected_image_path(self):
+        """Get the full path of the single selected image, or None if multiple/none selected."""
+        selected_images = self.get_selected_images()
+        if len(selected_images) == 1:
+            # Find the full path for this image name
+            image_name = selected_images[0]
+            if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
+                for path in self.main_window.image_window.raster_manager.image_paths:
+                    if os.path.basename(path) == image_name:
+                        return path
+        return None
+
+    def refresh_filters(self):
+        """Refresh the display based on current filter conditions."""
+        # Check if only one image is selected and load it in annotation window
+        single_image_path = self.get_single_selected_image_path()
+        if single_image_path and hasattr(self.main_window, 'image_window'):
+            # Load the single selected image in the annotation window
+            self.main_window.image_window.load_image_by_path(single_image_path)
+        
+        # Get filtered annotations
+        filtered_annotations = self.get_filtered_annotations()
+
+        # Update annotation viewer
+        if hasattr(self, 'annotation_viewer'):
+            self.annotation_viewer.update_annotations(filtered_annotations)
+
+    def get_selected_annotation_types(self):
+        """Get selected annotation types."""
+        selected_items = self.annotation_type_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_selected_labels(self):
+        """Get selected labels."""
+        selected_items = self.label_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_topk_selection(self):
+        """Get TopK selection."""
+        return self.topk_combo.currentText()
+
+    def get_confidence_condition(self):
+        """Get confidence operator and value."""
+        operator = self.confidence_operator_combo.currentText()
+        value = self.confidence_value_spin.value()
+        return operator, value
+    
+    
 class SettingsWidget(QGroupBox):
     """Widget containing settings with tabs for models and clustering."""
 
@@ -1300,118 +1412,6 @@ class ClusterWidget(QWidget):
         """Fit the view to show all cluster points."""
         if self.cluster_points:
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
-
-
-class SelectableAnnotationViewer(QScrollArea):
-    """Scrollable area that supports rubber band selection with Ctrl+drag."""
-    
-    def __init__(self, annotation_viewer, parent=None):
-        super().__init__(parent)
-        self.annotation_viewer = annotation_viewer
-        self.rubber_band = None
-        self.rubber_band_origin = None
-        self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
-        self.mouse_pressed_on_widget = False  # Track if mouse was pressed on a widget
-        
-    def mousePressEvent(self, event):
-        """Handle mouse press for starting rubber band selection."""
-        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Store the origin for potential rubber band
-            self.rubber_band_origin = event.pos()
-            self.mouse_pressed_on_widget = False
-            
-            # Check if we clicked on a widget
-            child_widget = self.childAt(event.pos())
-            if child_widget:
-                # Find the annotation widget (traverse up the hierarchy)
-                widget = child_widget
-                while widget and widget != self:
-                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self.annotation_viewer:
-                        self.mouse_pressed_on_widget = True
-                        break
-                    widget = widget.parent()
-            
-            # Always let the event propagate first
-            super().mousePressEvent(event)
-            return
-            
-        super().mousePressEvent(event)
-    
-    def mouseMoveEvent(self, event):
-        """Handle mouse move for rubber band selection."""
-        if (self.rubber_band_origin is not None and 
-            event.buttons() == Qt.LeftButton and 
-            event.modifiers() == Qt.ControlModifier):
-            
-            # Check if we've moved enough to start rubber band selection
-            distance = (event.pos() - self.rubber_band_origin).manhattanLength()
-            
-            if distance > self.drag_threshold and not self.mouse_pressed_on_widget:
-                # Start rubber band if not already started and didn't click on a widget
-                if not self.rubber_band:
-                    from PyQt5.QtWidgets import QRubberBand
-                    self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
-                    self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
-                    self.rubber_band.show()
-                
-                # Update rubber band geometry
-                rect = QRect(self.rubber_band_origin, event.pos()).normalized()
-                self.rubber_band.setGeometry(rect)
-                event.accept()
-                return
-
-        super().mouseMoveEvent(event)
-        
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release to complete rubber band selection."""
-        if (self.rubber_band_origin is not None and 
-            event.button() == Qt.LeftButton and 
-            event.modifiers() == Qt.ControlModifier):
-            
-            # Only process rubber band selection if rubber band was actually shown
-            if self.rubber_band and self.rubber_band.isVisible():
-                self.rubber_band.hide()
-                selection_rect = self.rubber_band.geometry()
-                
-                # The content_widget is where the grid layout lives
-                content_widget = self.annotation_viewer.content_widget
-                
-                # Don't clear previous selection - rubber band adds to existing selection
-                
-                last_selected_in_rubber_band = -1
-                for i, widget in enumerate(self.annotation_viewer.annotation_widgets):
-                    # Map widget's position relative to the scroll area's viewport
-                    widget_rect_in_content = widget.geometry()
-                    widget_rect_in_viewport = QRect(
-                        content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
-                        widget_rect_in_content.size()
-                    )
-
-                    if selection_rect.intersects(widget_rect_in_viewport):
-                        # Only select if not already selected (add to selection)
-                        if not widget.is_selected():
-                            self.annotation_viewer.select_widget(widget)
-                        last_selected_in_rubber_band = i
-
-                # Set the anchor for future shift-clicks to the last item in the rubber band selection
-                if last_selected_in_rubber_band != -1:
-                    self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
-
-                # Clean up rubber band for next use
-                self.rubber_band.deleteLater()
-                self.rubber_band = None
-                
-                event.accept()
-            else:
-                # No rubber band was shown, let the event propagate for normal Ctrl+Click handling
-                super().mouseReleaseEvent(event)
-
-            # Reset rubber band state
-            self.rubber_band_origin = None
-            self.mouse_pressed_on_widget = False
-            return
-
-        super().mouseReleaseEvent(event)
 
 
 class ExplorerWindow(QMainWindow):
