@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
-                             QListWidget, QDoubleSpinBox)
+                             QListWidget, QDoubleSpinBox, QApplication)
 import warnings
 import os
 import random
@@ -174,7 +174,10 @@ class ConditionsWidget(QGroupBox):
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
         self.annotation_type_list.setMaximumHeight(100)
-        self.annotation_type_list.addItems(["PatchAnnotation", "RectangleAnnotation", "PolygonAnnotation"])
+        self.annotation_type_list.addItems(["PatchAnnotation", 
+                                            "RectangleAnnotation", 
+                                            "PolygonAnnotation", 
+                                            "MultiPolygonAnnotation"])
         
         type_column.addWidget(self.annotation_type_list)
         
@@ -361,6 +364,33 @@ class ConditionsWidget(QGroupBox):
             return []
         
         return [item.text() for item in selected_items]
+
+    def get_single_selected_image_path(self):
+        """Get the full path of the single selected image, or None if multiple/none selected."""
+        selected_images = self.get_selected_images()
+        if len(selected_images) == 1:
+            # Find the full path for this image name
+            image_name = selected_images[0]
+            if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
+                for path in self.main_window.image_window.raster_manager.image_paths:
+                    if os.path.basename(path) == image_name:
+                        return path
+        return None
+
+    def refresh_filters(self):
+        """Refresh the display based on current filter conditions."""
+        # Check if only one image is selected and load it in annotation window
+        single_image_path = self.get_single_selected_image_path()
+        if single_image_path and hasattr(self.main_window, 'image_window'):
+            # Load the single selected image in the annotation window
+            self.main_window.image_window.load_image_by_path(single_image_path)
+        
+        # Get filtered annotations
+        filtered_annotations = self.get_filtered_annotations()
+
+        # Update annotation viewer
+        if hasattr(self, 'annotation_viewer'):
+            self.annotation_viewer.update_annotations(filtered_annotations)
 
     def get_selected_annotation_types(self):
         """Get selected annotation types."""
@@ -758,7 +788,6 @@ class SettingsWidget(QGroupBox):
         layout.addLayout(form_layout)
 
         # TODO: Add model and clustering settings tabs
-
 
     def apply_clustering(self):
         """Apply clustering with the current settings."""
@@ -1312,16 +1341,54 @@ class ExplorerWindow(QMainWindow):
             if annotation_matches:
                 filtered_annotations.append(annotation)
 
-        return filtered_annotations    
+        # Ensure all filtered annotations have cropped images
+        if filtered_annotations:
+            # Group annotations by image path to process efficiently, but only for those that need cropping
+            annotations_by_image = {}
+            for annotation in filtered_annotations:
+                # Only process annotations that don't have cropped images
+                if not annotation.cropped_image:
+                    image_path = annotation.image_path
+                    if image_path not in annotations_by_image:
+                        annotations_by_image[image_path] = []
+                    annotations_by_image[image_path].append(annotation)
+            
+            # Only crop annotations if there are any that need cropping
+            if annotations_by_image:
+                # Crop annotations for each image using the AnnotationWindow method
+                # This ensures consistency with how cropped images are generated elsewhere
+                for image_path, image_annotations in annotations_by_image.items():
+                    # Use the existing crop_annotations method from AnnotationWindow
+                    # This ensures consistency with how cropped images are generated elsewhere
+                    self.annotation_window.crop_annotations(
+                        image_path=image_path, 
+                        annotations=image_annotations, 
+                        return_annotations=False,  # We don't need the return value
+                        verbose=True  # Show progress bar for filtering
+                    )
+
+        return filtered_annotations
     
     def refresh_filters(self):
         """Refresh the display based on current filter conditions."""
-        # Get filtered annotations
-        filtered_annotations = self.get_filtered_annotations()
+        # Set cursor to busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Check if only one image is selected and load it in annotation window
+            single_image_path = self.conditions_widget.get_single_selected_image_path()
+            if single_image_path and hasattr(self.main_window, 'image_window'):
+                # Load the single selected image in the annotation window
+                self.main_window.image_window.load_image_by_path(single_image_path)
+            
+            # Get filtered annotations
+            filtered_annotations = self.get_filtered_annotations()
 
-        # Update annotation viewer
-        if hasattr(self, 'annotation_viewer'):
-            self.annotation_viewer.update_annotations(filtered_annotations)
+            # Update annotation viewer
+            if hasattr(self, 'annotation_viewer'):
+                self.annotation_viewer.update_annotations(filtered_annotations)
+        finally:
+            # Restore cursor to normal
+            QApplication.restoreOverrideCursor()
 
     def filter_images(self):
         self.refresh_filters()
