@@ -263,8 +263,12 @@ class AnnotationImageWidget(QWidget):
 class ClusterViewer(QGraphicsView):
     """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
     
-    def __init__(self, scene):
-        super().__init__(scene)
+    def __init__(self, parent=None):
+        # Create scene first
+        self.graphics_scene = QGraphicsScene()
+        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)  # Large world space
+        
+        super().__init__(self.graphics_scene)
         self.setRenderHint(QPainter.Antialiasing)  # Make the points look smooth
         
         # Set the default interaction mode to panning
@@ -273,6 +277,28 @@ class ClusterViewer(QGraphicsView):
         # Remove scrollbars for a cleaner look
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Store reference to explorer window
+        self.explorer_window = parent
+        
+        # Cluster management attributes
+        self.cluster_points = []  # Store cluster point data
+        self.selected_points = []  # Store currently selected points
+        self.animation_offset = 0  # For marching ants animation
+        
+        # Timer for marching ants animation
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self.animate_selection)
+        self.animation_timer.setInterval(100)  # Update every 100ms
+        
+        # Connect selection change signal
+        self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
+        
+        # Set minimum height
+        self.setMinimumHeight(200)
+        
+        # Add some demo points initially
+        self.add_demo_points()
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection mode with Ctrl key and right-click panning."""
@@ -355,7 +381,145 @@ class ClusterViewer(QGraphicsView):
         # Move scene to old position
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
+
+    def add_demo_points(self):
+        """Add demonstration cluster points."""
+        point_size = 20
+        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), QColor("orange")]
         
+        # Generate some clustered demo points
+        for cluster_id in range(5):
+            cluster_color = colors[cluster_id % len(colors)]
+            # Generate points around cluster centers
+            center_x = random.uniform(-2000, 2000)
+            center_y = random.uniform(-2000, 2000)
+            
+            for _ in range(40):  # 40 points per cluster
+                # Add some randomness around cluster center
+                x = center_x + random.gauss(0, 300)
+                y = center_y + random.gauss(0, 300)
+                
+                # Create a point as a QGraphicsEllipseItem
+                point = QGraphicsEllipseItem(0, 0, point_size, point_size)
+                point.setPos(x, y)
+                
+                # Style the point with cluster color
+                point.setBrush(QBrush(cluster_color))
+                point.setPen(QPen(QColor("black"), 0.5))
+                
+                # Make point size independent of zoom level
+                point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+                
+                # Make the item selectable
+                point.setFlag(QGraphicsItem.ItemIsSelectable)
+                
+                # Store cluster information
+                point.setData(0, cluster_id)  # Store cluster ID as user data
+                
+                self.graphics_scene.addItem(point)
+                self.cluster_points.append(point)
+
+    def update_clusters(self, cluster_data):
+        """Update the cluster visualization with new data.
+        
+        Args:
+            cluster_data: List of tuples (x, y, cluster_id, annotation_data)
+        """
+        # Clear existing points
+        self.clear_points()
+        
+        point_size = 10
+        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
+                  QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
+        
+        for x, y, cluster_id, annotation_data in cluster_data:
+            cluster_color = colors[cluster_id % len(colors)]
+            
+            # Create point
+            point = QGraphicsEllipseItem(0, 0, point_size, point_size)
+            point.setPos(x, y)
+            
+            # Style the point
+            point.setBrush(QBrush(cluster_color))
+            point.setPen(QPen(QColor("black"), 0.5))
+            
+            # Point appearance settings
+            point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+            point.setFlag(QGraphicsItem.ItemIsSelectable)
+            
+            # Store data
+            point.setData(0, cluster_id)  # Cluster ID
+            point.setData(1, annotation_data)  # Annotation data
+            
+            self.graphics_scene.addItem(point)
+            self.cluster_points.append(point)
+
+    def clear_points(self):
+        """Clear all cluster points from the scene."""
+        for point in self.cluster_points:
+            self.graphics_scene.removeItem(point)
+        self.cluster_points.clear()    
+        
+    def on_selection_changed(self):
+        """Handle point selection changes."""
+        selected_items = self.graphics_scene.selectedItems()
+        
+        # Stop any running animation
+        self.animation_timer.stop()
+        
+        if selected_items:
+            print(f"{len(selected_items)} cluster points selected.")
+            
+            # Store selected points for animation
+            self.selected_points = [item for item in selected_items if isinstance(item, QGraphicsEllipseItem)]
+            
+            # Start marching ants animation
+            self.animation_timer.start()
+                    
+            # Optionally notify parent about selection
+            if hasattr(self.explorer_window, 'on_cluster_points_selected'):
+                selected_data = []
+                for item in selected_items:
+                    cluster_id = item.data(0)
+                    annotation_data = item.data(1)
+                    selected_data.append((cluster_id, annotation_data))
+                self.explorer_window.on_cluster_points_selected(selected_data)
+                
+        else:
+            # Clear selected points and revert to original pen
+            self.selected_points = []
+            for item in self.cluster_points:
+                if isinstance(item, QGraphicsEllipseItem):
+                    # Reset to original thin black pen
+                    item.setPen(QPen(QColor("black"), 0.5))
+            print("Cluster selection cleared.")
+
+    def animate_selection(self):
+        """Animate selected points with marching ants effect using darker versions of point colors."""
+        # Update animation offset for marching ants
+        self.animation_offset = (self.animation_offset + 1) % 20  # Reset every 20 pixels like QtAnnotation
+        
+        # Apply animated pen to selected points using their darker colors
+        for item in self.selected_points:
+            # Get the original color from the brush
+            original_color = item.brush().color()
+            
+            # Create darker version of the color (reduce brightness by 40%)
+            darker_color = original_color.darker(150)  # 150% darker
+            
+            # Create animated dotted pen with darker color
+            animated_pen = QPen(darker_color, 2)
+            animated_pen.setStyle(Qt.CustomDashLine)
+            animated_pen.setDashPattern([1, 2])  # Small dots with small gaps like QtAnnotation
+            animated_pen.setDashOffset(self.animation_offset)
+            
+            item.setPen(animated_pen)
+
+    def fit_view_to_points(self):
+        """Fit the view to show all cluster points."""
+        if self.cluster_points:
+            self.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
 
 class AnnotationViewer(QScrollArea):
     """Scrollable grid widget for displaying annotation image crops with selection support."""
@@ -833,11 +997,11 @@ class AnnotationViewer(QScrollArea):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ConditionsWidget(QGroupBox):
-    """Widget containing all filter conditions in a multi-column layout."""
+class AnnotationSettingsWidget(QGroupBox):
+    """Widget containing all filter annotation conditions in a multi-column layout."""
 
     def __init__(self, main_window, parent=None):
-        super(ConditionsWidget, self).__init__("Conditions", parent)
+        super(AnnotationSettingsWidget, self).__init__("Annotation Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent  # Store reference to ExplorerWindow
         self.setup_ui()
@@ -1134,11 +1298,11 @@ class ConditionsWidget(QGroupBox):
         return operator, value
     
     
-class SettingsWidget(QGroupBox):
+class ClusterSettingsWidget(QGroupBox):
     """Widget containing settings with tabs for models and clustering."""
 
     def __init__(self, main_window, parent=None):
-        super(SettingsWidget, self).__init__("Settings", parent)
+        super(ClusterSettingsWidget, self).__init__("Cluster Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
         self.loaded_model = None
@@ -1230,186 +1394,7 @@ class SettingsWidget(QGroupBox):
                 cluster_data.append((x, y, cluster_id, annotation_data))
         
         return cluster_data
-
-
-class ClusterWidget(QWidget):
-    """Widget containing interactive cluster viewer with zoom, pan, and selection."""
-
-    def __init__(self, parent=None):
-        super(ClusterWidget, self).__init__(parent)
-        self.explorer_window = parent
-        self.cluster_points = []  # Store cluster point data
-        self.selected_points = []  # Store currently selected points
-        self.animation_offset = 0  # For marching ants animation
-        self.setup_ui()
-        
-        # Timer for marching ants animation
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self.animate_selection)
-        self.animation_timer.setInterval(100)  # Update every 100ms
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Header
-        header = QLabel("Cluster Viewer")
-        header.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(header)
-
-        # Create scene and interactive view
-        self.graphics_scene = QGraphicsScene()
-        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)  # Large world space
-        
-        self.graphics_view = ClusterViewer(self.graphics_scene)
-        self.graphics_view.setMinimumHeight(200)
-
-        # Connect selection change signal
-        self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
-
-        layout.addWidget(self.graphics_view)
-        
-        # Add some demo points initially
-        self.add_demo_points()
-
-    def add_demo_points(self):
-        """Add demonstration cluster points."""
-        point_size = 20
-        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), QColor("orange")]
-        
-        # Generate some clustered demo points
-        for cluster_id in range(5):
-            cluster_color = colors[cluster_id % len(colors)]
-            # Generate points around cluster centers
-            center_x = random.uniform(-2000, 2000)
-            center_y = random.uniform(-2000, 2000)
-            
-            for _ in range(40):  # 40 points per cluster
-                # Add some randomness around cluster center
-                x = center_x + random.gauss(0, 300)
-                y = center_y + random.gauss(0, 300)
-                
-                # Create a point as a QGraphicsEllipseItem
-                point = QGraphicsEllipseItem(0, 0, point_size, point_size)
-                point.setPos(x, y)
-                
-                # Style the point with cluster color
-                point.setBrush(QBrush(cluster_color))
-                point.setPen(QPen(QColor("black"), 0.5))
-                
-                # Make point size independent of zoom level
-                point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-                
-                # Make the item selectable
-                point.setFlag(QGraphicsItem.ItemIsSelectable)
-                
-                # Store cluster information
-                point.setData(0, cluster_id)  # Store cluster ID as user data
-                
-                self.graphics_scene.addItem(point)
-                self.cluster_points.append(point)
-
-    def update_clusters(self, cluster_data):
-        """Update the cluster visualization with new data.
-        
-        Args:
-            cluster_data: List of tuples (x, y, cluster_id, annotation_data)
-        """
-        # Clear existing points
-        self.clear_points()
-        
-        point_size = 10
-        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
-                  QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
-        
-        for x, y, cluster_id, annotation_data in cluster_data:
-            cluster_color = colors[cluster_id % len(colors)]
-            
-            # Create point
-            point = QGraphicsEllipseItem(0, 0, point_size, point_size)
-            point.setPos(x, y)
-            
-            # Style the point
-            point.setBrush(QBrush(cluster_color))
-            point.setPen(QPen(QColor("black"), 0.5))
-            
-            # Point appearance settings
-            point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-            point.setFlag(QGraphicsItem.ItemIsSelectable)
-            
-            # Store data
-            point.setData(0, cluster_id)  # Cluster ID
-            point.setData(1, annotation_data)  # Annotation data
-            
-            self.graphics_scene.addItem(point)
-            self.cluster_points.append(point)
-
-    def clear_points(self):
-        """Clear all cluster points from the scene."""
-        for point in self.cluster_points:
-            self.graphics_scene.removeItem(point)
-        self.cluster_points.clear()    
-        
-    def on_selection_changed(self):
-        """Handle point selection changes."""
-        selected_items = self.graphics_scene.selectedItems()
-        
-        # Stop any running animation
-        self.animation_timer.stop()
-        
-        if selected_items:
-            print(f"{len(selected_items)} cluster points selected.")
-            
-            # Store selected points for animation
-            self.selected_points = [item for item in selected_items if isinstance(item, QGraphicsEllipseItem)]
-            
-            # Start marching ants animation
-            self.animation_timer.start()
-                    
-            # Optionally notify parent about selection
-            if hasattr(self.explorer_window, 'on_cluster_points_selected'):
-                selected_data = []
-                for item in selected_items:
-                    cluster_id = item.data(0)
-                    annotation_data = item.data(1)
-                    selected_data.append((cluster_id, annotation_data))
-                self.explorer_window.on_cluster_points_selected(selected_data)
-                
-        else:
-            # Clear selected points and revert to original pen
-            self.selected_points = []
-            for item in self.cluster_points:
-                if isinstance(item, QGraphicsEllipseItem):
-                    # Reset to original thin black pen
-                    item.setPen(QPen(QColor("black"), 0.5))
-            print("Cluster selection cleared.")
-
-    def animate_selection(self):
-        """Animate selected points with marching ants effect using darker versions of point colors."""
-        # Update animation offset for marching ants
-        self.animation_offset = (self.animation_offset + 1) % 20  # Reset every 20 pixels like QtAnnotation
-        
-        # Apply animated pen to selected points using their darker colors
-        for item in self.selected_points:
-            # Get the original color from the brush
-            original_color = item.brush().color()
-            
-            # Create darker version of the color (reduce brightness by 40%)
-            darker_color = original_color.darker(150)  # 150% darker
-            
-            # Create animated dotted pen with darker color
-            animated_pen = QPen(darker_color, 2)
-            animated_pen.setStyle(Qt.CustomDashLine)
-            animated_pen.setDashPattern([1, 2])  # Small dots with small gaps like QtAnnotation
-            animated_pen.setDashOffset(self.animation_offset)
-            
-            item.setPen(animated_pen)
-
-    def fit_view_to_points(self):
-        """Fit the view to show all cluster points."""
-        if self.cluster_points:
-            self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
-
+    
 
 # ----------------------------------------------------------------------------------------------------------------------
 # ExplorerWindow
@@ -1441,10 +1426,10 @@ class ExplorerWindow(QMainWindow):
         self.left_layout = QVBoxLayout(self.left_panel)
         
         # Create widgets in __init__ so they're always available
-        self.conditions_widget = ConditionsWidget(self.main_window, self)
-        self.settings_widget = SettingsWidget(self.main_window, self)
+        self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
+        self.cluster_settings_widget = ClusterSettingsWidget(self.main_window, self)
         self.annotation_viewer = AnnotationViewer()
-        self.cluster_widget = ClusterWidget(self)
+        self.cluster_viewer = ClusterViewer(self)
         
         # Create buttons
         self.clear_preview_button = QPushButton('Clear Preview', self)
@@ -1493,18 +1478,18 @@ class ExplorerWindow(QMainWindow):
         top_layout = QHBoxLayout()
         
         # Add existing widgets to layout
-        top_layout.addWidget(self.conditions_widget, 2)  # Give more space to conditions
-        top_layout.addWidget(self.settings_widget, 1)  # Less space for settings
+        top_layout.addWidget(self.annotation_settings_widget, 2)  # Give more space to conditions
+        top_layout.addWidget(self.cluster_settings_widget, 1)  # Less space for settings
         
         # Create container widget for top layout
         top_container = QWidget()
         top_container.setLayout(top_layout)
         self.main_layout.addWidget(top_container)
 
-        # Middle section: Annotation Viewer (left) and Cluster Widget (right)
+        # Middle section: Annotation Viewer (left) and Cluster Viewer (right)
         middle_splitter = QSplitter(Qt.Horizontal)
         middle_splitter.addWidget(self.annotation_viewer)
-        middle_splitter.addWidget(self.cluster_widget)
+        middle_splitter.addWidget(self.cluster_viewer)  # Changed from cluster_widget to cluster_viewer
 
         # Set splitter proportions (annotation viewer wider)
         middle_splitter.setSizes([700, 300])        
@@ -1528,7 +1513,7 @@ class ExplorerWindow(QMainWindow):
         self.main_layout.addLayout(self.buttons_layout)
 
         # Set default condition to current image and refresh filters
-        self.conditions_widget.set_default_to_current_image()
+        self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
         
         # Connect label selection to preview updates (only connect once)
@@ -1547,11 +1532,11 @@ class ExplorerWindow(QMainWindow):
             return filtered_annotations
 
         # Get current filter conditions
-        selected_images = self.conditions_widget.get_selected_images()
-        selected_types = self.conditions_widget.get_selected_annotation_types()
-        selected_labels = self.conditions_widget.get_selected_labels()
-        topk_selection = self.conditions_widget.get_topk_selection()
-        confidence_operator, confidence_value = self.conditions_widget.get_confidence_condition()
+        selected_images = self.annotation_settings_widget.get_selected_images()
+        selected_types = self.annotation_settings_widget.get_selected_annotation_types()
+        selected_labels = self.annotation_settings_widget.get_selected_labels()
+        topk_selection = self.annotation_settings_widget.get_topk_selection()
+        confidence_operator, confidence_value = self.annotation_settings_widget.get_confidence_condition()
 
         for annotation in self.main_window.annotation_window.annotations_dict.values():
             annotation_matches = True
@@ -1691,7 +1676,7 @@ class ExplorerWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # Check if only one image is selected and load it in annotation window
-            single_image_path = self.conditions_widget.get_single_selected_image_path()
+            single_image_path = self.annotation_settings_widget.get_single_selected_image_path()
             if single_image_path and hasattr(self.main_window, 'image_window'):
                 # Load the single selected image in the annotation window
                 self.main_window.image_window.load_image_by_path(single_image_path)
@@ -1721,9 +1706,9 @@ class ExplorerWindow(QMainWindow):
 
     def update_graphics(self):
         """Update the cluster graphics view."""
-        # Delegate to cluster widget
-        if hasattr(self, 'cluster_widget'):
-            pass        # TODO: Implement clustering visualization in cluster widget
+        # Delegate to cluster viewer
+        if hasattr(self, 'cluster_viewer'):
+            pass        # TODO: Implement clustering visualization in cluster viewer
 
     def update_scroll_area(self):
         """Legacy method - functionality moved to annotation viewer."""
