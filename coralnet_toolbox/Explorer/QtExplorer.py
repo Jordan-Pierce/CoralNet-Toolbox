@@ -554,13 +554,11 @@ class AnnotationViewer(QScrollArea):
         layout = QVBoxLayout(main_widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Header
-        header = QLabel("Annotation Viewer")
-        header.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(header)
-        
-        # Size control layout
-        size_layout = QHBoxLayout()
+        # Size control layout - make it sticky by giving it fixed height
+        size_widget = QWidget()
+        size_widget.setFixedHeight(40)  # Fixed height to prevent it from scrolling away
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(5, 5, 5, 5)
         
         # Size label
         size_label = QLabel("Size:")
@@ -580,7 +578,7 @@ class AnnotationViewer(QScrollArea):
         self.size_value_label.setMinimumWidth(30)
         size_layout.addWidget(self.size_value_label)
         
-        layout.addLayout(size_layout)
+        layout.addWidget(size_widget)
         
         # Content widget for the grid layout
         self.content_widget = QWidget()
@@ -588,6 +586,9 @@ class AnnotationViewer(QScrollArea):
         self.grid_layout.setSpacing(5)
 
         layout.addWidget(self.content_widget)
+        layout.setStretchFactor(size_widget, 0)  # Don't stretch the size controls
+        layout.setStretchFactor(self.content_widget, 1)  # Let content area stretch
+        
         # Set the main widget as the scroll area's widget
         self.setWidget(main_widget)
 
@@ -1488,11 +1489,22 @@ class ExplorerWindow(QMainWindow):
 
         # Middle section: Annotation Viewer (left) and Cluster Viewer (right)
         middle_splitter = QSplitter(Qt.Horizontal)
-        middle_splitter.addWidget(self.annotation_viewer)
-        middle_splitter.addWidget(self.cluster_viewer)  # Changed from cluster_widget to cluster_viewer
+        
+        # Wrap annotation viewer in a group box
+        annotation_group = QGroupBox("Annotation Viewer")
+        annotation_layout = QVBoxLayout(annotation_group)
+        annotation_layout.addWidget(self.annotation_viewer)
+        middle_splitter.addWidget(annotation_group)
+        
+        # Wrap cluster viewer in a group box
+        cluster_group = QGroupBox("Cluster Viewer")
+        cluster_layout = QVBoxLayout(cluster_group)
+        cluster_layout.addWidget(self.cluster_viewer)
+        middle_splitter.addWidget(cluster_group)
 
         # Set splitter proportions (annotation viewer wider)
-        middle_splitter.setSizes([700, 300])        
+        middle_splitter.setSizes([700, 300])
+        
         # Add middle section to main layout with stretch factor
         self.main_layout.addWidget(middle_splitter, 1)
         
