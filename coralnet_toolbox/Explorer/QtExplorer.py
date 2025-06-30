@@ -4,7 +4,8 @@ from PyQt5.QtCore import Qt, QTimer, QRectF, QSize, QRect
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
-                             QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider)
+                             QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
+                             QListWidget, QDoubleSpinBox)
 import warnings
 import os
 import random
@@ -119,161 +120,177 @@ class InteractiveClusterView(QGraphicsView):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ConditionWidget(QWidget):
-    """A single condition widget with Image, Annotation Type, and Label dropdowns."""
-
-    def __init__(self, main_window, parent=None):
-        super(ConditionWidget, self).__init__(parent)
-        self.main_window = main_window
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        # Image dropdown
-        layout.addWidget(QLabel("Image:"))
-        self.image_dropdown = QComboBox()
-        self.image_dropdown.addItem("All")
-        if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
-            self.image_dropdown.addItems([os.path.basename(
-                path) for path in self.main_window.image_window.raster_manager.image_paths])
-        layout.addWidget(self.image_dropdown)
-
-        # Annotation Type dropdown
-        layout.addWidget(QLabel("Type:"))
-        self.annotation_dropdown = QComboBox()
-        self.annotation_dropdown.addItems(
-            ["All", "PatchAnnotation", "RectangleAnnotation", "PolygonAnnotation"])
-        layout.addWidget(self.annotation_dropdown)
-
-        # Label dropdown
-        layout.addWidget(QLabel("Label:"))
-        self.label_dropdown = QComboBox()
-        self.label_dropdown.addItem("All")
-        if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
-            self.label_dropdown.addItems(
-                [label.short_label_code for label in self.main_window.label_window.labels])
-        layout.addWidget(self.label_dropdown)
-
-        # Remove button
-        self.remove_button = QPushButton("×")
-        self.remove_button.setFixedSize(25, 25)
-        self.remove_button.setStyleSheet(
-            "QPushButton { color: red; font-weight: bold; }")
-        layout.addWidget(self.remove_button)
-
-        layout.addStretch()
-
-
 class ConditionsWidget(QGroupBox):
-    """Widget containing all conditions with add/remove functionality."""
+    """Widget containing all filter conditions in a multi-column layout."""
 
     def __init__(self, main_window, parent=None):
         super(ConditionsWidget, self).__init__("Conditions", parent)
         self.main_window = main_window
-        self.conditions = []
+        self.explorer_window = parent  # Store reference to ExplorerWindow
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Header with buttons
-        header_layout = QHBoxLayout()
+        # Main conditions layout - horizontal with vertical columns
+        conditions_layout = QHBoxLayout()
+
+        # Images column
+        images_column = QVBoxLayout()
+        images_label = QLabel("Images:")
+        images_label.setStyleSheet("font-weight: bold;")
+        images_column.addWidget(images_label)
         
-        # Add Condition button on the far left
-        self.add_condition_button = QPushButton("Add Condition")
-        self.add_condition_button.clicked.connect(self.add_condition)
-        header_layout.addWidget(self.add_condition_button)
+        self.images_list = QListWidget()
+        self.images_list.setSelectionMode(QListWidget.MultiSelection)
+        self.images_list.setMaximumHeight(120)
+        self.images_list.addItem("All")
         
-        # Stretch to push other buttons to the right
-        header_layout.addStretch()
+        # Add available images
+        if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
+            for path in self.main_window.image_window.raster_manager.image_paths:
+                self.images_list.addItem(os.path.basename(path))
         
-        # Apply and Clear buttons on the far right
+        images_column.addWidget(self.images_list)
+        conditions_layout.addLayout(images_column)
+
+        # Annotation Type column
+        type_column = QVBoxLayout()
+        type_label = QLabel("Annotation Type:")
+        type_label.setStyleSheet("font-weight: bold;")
+        type_column.addWidget(type_label)
+        
+        self.annotation_type_list = QListWidget()
+        self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
+        self.annotation_type_list.setMaximumHeight(120)
+        self.annotation_type_list.addItems(["All", "PatchAnnotation", "RectangleAnnotation", "PolygonAnnotation"])
+        
+        type_column.addWidget(self.annotation_type_list)
+        conditions_layout.addLayout(type_column)
+
+        # Label column
+        label_column = QVBoxLayout()
+        label_label = QLabel("Label:")
+        label_label.setStyleSheet("font-weight: bold;")
+        label_column.addWidget(label_label)
+        
+        self.label_list = QListWidget()
+        self.label_list.setSelectionMode(QListWidget.MultiSelection)
+        self.label_list.setMaximumHeight(120)
+        self.label_list.addItem("All")
+        
+        # Add available labels
+        if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
+            for label in self.main_window.label_window.labels:
+                self.label_list.addItem(label.short_label_code)
+        
+        label_column.addWidget(self.label_list)
+        conditions_layout.addLayout(label_column)
+
+        # TopK column
+        topk_column = QVBoxLayout()
+        topk_label = QLabel("TopK:")
+        topk_label.setStyleSheet("font-weight: bold;")
+        topk_column.addWidget(topk_label)
+        
+        self.topk_combo = QComboBox()
+        self.topk_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
+        self.topk_combo.setCurrentText("Top1")
+        
+        topk_column.addWidget(self.topk_combo)
+        topk_column.addStretch()  # Add stretch to align with other columns
+        conditions_layout.addLayout(topk_column)
+
+        # Confidence column
+        confidence_column = QVBoxLayout()
+        confidence_label = QLabel("Confidence:")
+        confidence_label.setStyleSheet("font-weight: bold;")
+        confidence_column.addWidget(confidence_label)
+        
+        self.confidence_operator_combo = QComboBox()
+        self.confidence_operator_combo.addItems([">", "<", ">=", "<=", "==", "!="])
+        self.confidence_operator_combo.setCurrentText(">=")
+        confidence_column.addWidget(self.confidence_operator_combo)
+        
+        self.confidence_value_spin = QDoubleSpinBox()
+        self.confidence_value_spin.setRange(0.0, 1.0)
+        self.confidence_value_spin.setSingleStep(0.1)
+        self.confidence_value_spin.setDecimals(2)
+        self.confidence_value_spin.setValue(0.5)
+        confidence_column.addWidget(self.confidence_value_spin)
+        
+        confidence_column.addStretch()  # Add stretch to align with other columns
+        conditions_layout.addLayout(confidence_column)
+
+        layout.addLayout(conditions_layout)
+
+        # Bottom buttons layout with Apply and Clear buttons on the right
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch()  # Push buttons to the right
+        
         self.apply_button = QPushButton("Apply")
         self.apply_button.clicked.connect(self.apply_conditions)
-        header_layout.addWidget(self.apply_button)
+        bottom_layout.addWidget(self.apply_button)
         
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_all_conditions)
-        header_layout.addWidget(self.clear_button)
+        bottom_layout.addWidget(self.clear_button)
 
-        layout.addLayout(header_layout)
+        layout.addLayout(bottom_layout)
 
-        # Scroll area for conditions
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setMaximumHeight(150)
+        # Set defaults
+        self.set_defaults()
 
-        self.conditions_widget = QWidget()
-        self.conditions_layout = QVBoxLayout(self.conditions_widget)
-        self.conditions_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.scroll_area.setWidget(self.conditions_widget)
-        layout.addWidget(self.scroll_area)
-
-        # Add initial condition
-        self.add_condition()
-
-    def add_condition(self):
-        condition = ConditionWidget(self.main_window, self)
-        condition.remove_button.clicked.connect(
-            lambda: self.remove_condition(condition))
-        self.conditions.append(condition)
-        self.conditions_layout.addWidget(condition)
-
-        # Connect condition changes to refresh
-        if hasattr(self.parent(), 'refresh_filters'):
-            condition.image_dropdown.currentTextChanged.connect(
-                self.parent().refresh_filters)
-            condition.annotation_dropdown.currentTextChanged.connect(
-                self.parent().refresh_filters)
-            condition.label_dropdown.currentTextChanged.connect(
-                self.parent().refresh_filters)
+    def set_defaults(self):
+        """Set default selections."""
+        # Set current image as default (not "All")
+        self.set_default_to_current_image()
+        
+        # Set "All" as default for annotation types
+        self.annotation_type_list.item(0).setSelected(True)  # "All"
+        
+        # Set "All" as default for labels
+        self.label_list.item(0).setSelected(True)  # "All"
 
     def set_default_to_current_image(self):
-        """Set the first condition to filter by the current image."""
-        if self.conditions and hasattr(self.main_window, 'annotation_window'):
+        """Set the current image as the default selection."""
+        if hasattr(self.main_window, 'annotation_window'):
             current_image_path = self.main_window.annotation_window.current_image_path
             if current_image_path:
                 current_image_name = os.path.basename(current_image_path)
-                first_condition = self.conditions[0]
-                # Find and set the current image in the dropdown
-                index = first_condition.image_dropdown.findText(current_image_name)
-                if index >= 0:
-                    first_condition.image_dropdown.setCurrentIndex(index)
+                # Find and select the current image
+                for i in range(self.images_list.count()):
+                    item = self.images_list.item(i)
+                    if item.text() == current_image_name:
+                        item.setSelected(True)
+                        return
+        
+        # Fallback to "All" if current image not found
+        self.images_list.item(0).setSelected(True)
 
-    def remove_condition(self, condition):
-        if len(self.conditions) > 1:  # Keep at least one condition
-            self.conditions.remove(condition)
-            condition.deleteLater()
-            # Refresh after removing condition
-            if hasattr(self.parent(), 'refresh_filters'):
-                self.parent().refresh_filters()
+    def clear_all_conditions(self):
+        """Reset all conditions to their defaults."""
+        # Clear all selections
+        self.images_list.clearSelection()
+        self.annotation_type_list.clearSelection()
+        self.label_list.clearSelection()
+        
+        # Reset to defaults
+        self.set_defaults()
+        
+        # Reset TopK and Confidence to defaults
+        self.topk_combo.setCurrentText("Top1")
+        self.confidence_operator_combo.setCurrentText(">=")
+        self.confidence_value_spin.setValue(0.5)
+        
+        # Auto-refresh on clear to show default results
+        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
+            self.explorer_window.refresh_filters()
 
     def apply_conditions(self):
         """Apply the current filter conditions."""
-        if hasattr(self.parent(), 'refresh_filters'):
-            self.parent().refresh_filters()
-
-    def clear_all_conditions(self):
-        """Clear all conditions and add one default condition."""
-        # Remove all conditions except keep at least one
-        while len(self.conditions) > 1:
-            condition = self.conditions[-1]
-            self.conditions.remove(condition)
-            condition.deleteLater()
-        
-        # Reset the remaining condition to defaults
-        if self.conditions:
-            condition = self.conditions[0]
-            condition.image_dropdown.setCurrentText("All")
-            condition.annotation_dropdown.setCurrentText("All")
-            condition.label_dropdown.setCurrentText("All")
-        
-        # Refresh after clearing
-        if hasattr(self.parent(), 'refresh_filters'):
-            self.parent().refresh_filters()
+        if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
+            self.explorer_window.refresh_filters()
 
 
 class AnnotationImageWidget(QWidget):
@@ -642,6 +659,9 @@ class SettingsWidget(QGroupBox):
         form_layout.addRow("", self.apply_cluster_button)
 
         layout.addLayout(form_layout)
+
+        # TODO: Add model and clustering settings tabs
+
 
     def apply_clustering(self):
         """Apply clustering with the current settings."""
@@ -1099,31 +1119,61 @@ class ExplorerWindow(QMainWindow):
            not hasattr(self.main_window.annotation_window, 'annotations_dict'):
             return filtered_annotations
 
+        # Get current filter conditions
+        selected_images = self.conditions_widget.get_selected_images()
+        selected_types = self.conditions_widget.get_selected_annotation_types()
+        selected_labels = self.conditions_widget.get_selected_labels()
+        topk_selection = self.conditions_widget.get_topk_selection()
+        confidence_operator, confidence_value = self.conditions_widget.get_confidence_condition()
+
         for annotation in self.main_window.annotation_window.annotations_dict.values():
             annotation_matches = True
 
-            # Check each condition
-            for condition in self.conditions_widget.conditions:
-                # Check image condition
-                image_selection = condition.image_dropdown.currentText()
-                if image_selection != "All":
-                    if os.path.basename(annotation.image_path) != image_selection:
-                        annotation_matches = False
-                        break
+            # Check image condition
+            if selected_images != ["All"]:
+                annotation_image = os.path.basename(annotation.image_path)
+                if annotation_image not in selected_images:
+                    annotation_matches = False
 
-                # Check annotation type condition
-                type_selection = condition.annotation_dropdown.currentText()
-                if type_selection != "All":
-                    if type(annotation).__name__ != type_selection:
-                        annotation_matches = False
-                        break
+            # Check annotation type condition
+            if annotation_matches and selected_types != ["All"]:
+                annotation_type = type(annotation).__name__
+                if annotation_type not in selected_types:
+                    annotation_matches = False
 
-                # Check label condition
-                label_selection = condition.label_dropdown.currentText()
-                if label_selection != "All":
-                    if annotation.label.short_label_code != label_selection:
+            # Check label condition
+            if annotation_matches and selected_labels != ["All"]:
+                annotation_label = annotation.label.short_label_code
+                if annotation_label not in selected_labels:
+                    annotation_matches = False
+
+            # Check TopK condition (assuming annotations have a rank or top_k attribute)
+            if annotation_matches and hasattr(annotation, 'rank'):
+                topk_num = int(topk_selection.replace("Top", ""))
+                if annotation.rank > topk_num:
+                    annotation_matches = False
+
+            # Check confidence condition
+            if annotation_matches and hasattr(annotation, 'confidence'):
+                conf_value = float(annotation.confidence)
+                if confidence_operator == ">":
+                    if not (conf_value > confidence_value):
                         annotation_matches = False
-                        break
+                elif confidence_operator == "<":
+                    if not (conf_value < confidence_value):
+                        annotation_matches = False
+                elif confidence_operator == "==":
+                    if not (abs(conf_value - confidence_value) < 1e-6):
+                        annotation_matches = False
+                elif confidence_operator == ">=":
+                    if not (conf_value >= confidence_value):
+                        annotation_matches = False
+                elif confidence_operator == "<=":
+                    if not (conf_value <= confidence_value):
+                        annotation_matches = False
+                elif confidence_operator == "!=":
+                    if not (abs(conf_value - confidence_value) >= 1e-6):
+                        annotation_matches = False
 
             if annotation_matches:
                 filtered_annotations.append(annotation)
