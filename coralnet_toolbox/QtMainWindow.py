@@ -1634,20 +1634,15 @@ class MainWindow(QMainWindow):
         
         try:
             self.untoggle_all_tools()
-            if self.explorer_window is None:
-                # Create the explorer window, passing the main window instance
-                self.explorer_window = ExplorerWindow(self)
+            # Recreate the explorer window, passing the main window instance
+            self.explorer_window = ExplorerWindow(self)
+            
+            # Move the label_window from the main layout to the explorer
+            # The ExplorerWindow's __init__ will handle adding it to its own layout.
+            self.left_layout.removeWidget(self.label_window)
+            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+            self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
                 
-                # Move the label_window from the main layout to the explorer
-                # The ExplorerWindow's __init__ will handle adding it to its own layout.
-                self.left_layout.removeWidget(self.label_window)
-                self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-                self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
-                
-                # If explorer already exists, just refresh the default image filter
-                self.explorer_window.conditions_widget.set_default_to_current_image()
-                self.explorer_window.refresh_filters()
-
             # Make the explorer window modal to block interaction with main window
             self.explorer_window.setWindowModality(Qt.ApplicationModal)
             # Disable the main window explicitly
