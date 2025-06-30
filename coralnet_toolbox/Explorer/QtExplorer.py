@@ -521,9 +521,9 @@ class AnnotationImageWidget(QWidget):
             if self._is_selected:
                 self.annotation._animated_line = self.animation_offset
 
-            # Check if annotation is in preview mode
+            # Determine which color to use - preview takes priority over original
             if hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode:
-                # Use preview label color
+                # Use preview label color (persistent until cleared or applied)
                 color = self.annotation._preview_label.color
             else:
                 # Use normal label color
@@ -777,8 +777,8 @@ class AnnotationViewerWidget(QWidget):
         annotation_window = main_window.annotation_window
         
         if not self.selected_widgets:
-            # No annotations selected - deselect active label and clear previews
-            self.clear_preview_states()
+            # No annotations selected - deselect active label but DON'T clear previews
+            # Users should be able to see their preview changes even when nothing is selected
             label_window.deselect_active_label()
             label_window.update_annotation_count()
             return
@@ -846,6 +846,9 @@ class AnnotationViewerWidget(QWidget):
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
+        if not self.preview_label_assignments:
+            return  # Nothing to clear
+            
         for annotation_id in list(self.preview_label_assignments.keys()):
             # Get the annotation
             annotation = self._get_annotation_by_id(annotation_id)
@@ -864,9 +867,24 @@ class AnnotationViewerWidget(QWidget):
         self.preview_label_assignments.clear()
         self.original_label_assignments.clear()
         
-        # Update all widgets
+        # Update all widgets to show original colors
         for widget in self.annotation_widgets:
             widget.update()
+        
+        # Update the label window selection after clearing previews
+        self.update_label_window_selection()
+
+    def has_preview_changes(self):
+        """Check if there are any pending preview changes."""
+        return bool(self.preview_label_assignments)
+
+    def get_preview_changes_summary(self):
+        """Get a summary of preview changes for user feedback."""
+        if not self.preview_label_assignments:
+            return "No preview changes"
+        
+        change_count = len(self.preview_label_assignments)
+        return f"{change_count} annotation(s) with preview changes"
 
     def apply_preview_changes_permanently(self):
         """Apply all preview changes permanently to the annotation data."""
@@ -1374,6 +1392,12 @@ class ExplorerWindow(QMainWindow):
         self.buttons_layout.addStretch(1)
 
         # Main action buttons
+        self.clear_preview_button = QPushButton('Clear Preview', self)
+        self.clear_preview_button.clicked.connect(self.clear_preview_changes)
+        self.clear_preview_button.setToolTip("Clear all preview changes and revert to original labels")
+        self.clear_preview_button.setEnabled(False)  # Initially disabled
+        self.buttons_layout.addWidget(self.clear_preview_button)
+
         self.exit_button = QPushButton('Exit', self)
         self.exit_button.clicked.connect(self.close)
         self.exit_button.setToolTip("Close the window")
@@ -1382,6 +1406,7 @@ class ExplorerWindow(QMainWindow):
         self.apply_button = QPushButton('Apply', self)
         self.apply_button.clicked.connect(self.apply)
         self.apply_button.setToolTip("Apply changes")
+        self.apply_button.setEnabled(False)  # Initially disabled
         self.buttons_layout.addWidget(self.apply_button)
 
         self.main_layout.addLayout(self.buttons_layout)
@@ -1574,6 +1599,33 @@ class ExplorerWindow(QMainWindow):
         if hasattr(self, 'annotation_viewer') and self.annotation_viewer.selected_widgets:
             # Apply preview label to selected annotations
             self.annotation_viewer.apply_preview_label_to_selected(label)
+            # Update button states
+            self.update_button_states()
+
+    def clear_preview_changes(self):
+        """Clear all preview changes and revert to original labels."""
+        if hasattr(self, 'annotation_viewer'):
+            self.annotation_viewer.clear_preview_states()
+            # Update button states
+            self.update_button_states()
+            print("Cleared all preview changes")
+
+    def update_button_states(self):
+        """Update the state of Clear Preview and Apply buttons based on preview changes."""
+        has_changes = (hasattr(self, 'annotation_viewer') and 
+                      self.annotation_viewer.has_preview_changes())
+        
+        self.clear_preview_button.setEnabled(has_changes)
+        self.apply_button.setEnabled(has_changes)
+        
+        # Update button tooltips with summary
+        if has_changes:
+            summary = self.annotation_viewer.get_preview_changes_summary()
+            self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
+            self.apply_button.setToolTip(f"Apply changes - {summary}")
+        else:
+            self.clear_preview_button.setToolTip("Clear all preview changes and revert to original labels")
+            self.apply_button.setToolTip("Apply changes")
 
     def apply(self):
         """Apply any modifications made in the Explorer to the actual annotations."""
@@ -1600,46 +1652,13 @@ class ExplorerWindow(QMainWindow):
                 # Clear selection in the annotation viewer
                 self.annotation_viewer.clear_selection()
 
+                # Update button states
+                self.update_button_states()
+
                 # Optionally print a message
                 print(f"Applied changes to {len(applied_annotations)} annotation(s)")
             else:
-                # Fall back to old behavior if no preview changes
-                # Get selected annotations from the annotation viewer
-                selected_annotations = self.annotation_viewer.get_selected_annotations()
-                if not selected_annotations:
-                    return
-
-                # Get the currently active label from the label window
-                active_label = self.label_window.active_label
-                if not active_label:
-                    return
-
-                # Track which images need to be updated
-                affected_images = set()
-
-                # Update each selected annotation with the active label
-                for annotation in selected_annotations:
-                    if annotation.label.id != active_label.id:
-                        # Store the image path before updating
-                        affected_images.add(annotation.image_path)
-                        # Update the annotation's label
-                        annotation.update_label(active_label)
-
-                # Update image annotations for all affected images
-                for image_path in affected_images:
-                    self.image_window.update_image_annotations(image_path)
-
-                # Reload annotations in the annotation window
-                self.annotation_window.load_annotations()
-
-                # Refresh the filtered view
-                self.refresh_filters()
-
-                # Clear selection in the annotation viewer
-                self.annotation_viewer.clear_selection()
-
-                # Optionally print a message
-                print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
+                print("No preview changes to apply")
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
