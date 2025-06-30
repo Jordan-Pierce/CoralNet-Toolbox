@@ -6,6 +6,11 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
                              QListWidget, QDoubleSpinBox, QApplication)
+
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPainter
+
 import warnings
 import os
 import random
@@ -427,104 +432,118 @@ class AnnotationImageWidget(QWidget):
         super(AnnotationImageWidget, self).__init__(parent)
         self.annotation = annotation
         self.image_path = image_path
-        self.annotation_viewer = annotation_viewer  # Direct reference to AnnotationViewerWidget
-        self.selected = False
+        self.annotation_viewer = annotation_viewer
+        self._is_selected = False
         self.widget_size = widget_size
-        self.animation_offset = 0  # For marching ants animation
+        self.animation_offset = 0
+
         self.setFixedSize(widget_size, widget_size)
-        
+
         # Timer for marching ants animation
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self.animate_selection)
-        self.animation_timer.setInterval(100)  # Update every 100ms
-        
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self._update_animation_frame)
+        self.animation_timer.setInterval(75)  # Match the annotation's timer for consistency
+
         self.setup_ui()
         self.load_annotation_image()
-        self.apply_default_pen()  # Apply label-colored default pen
 
     def setup_ui(self):
+        """Set up the basic UI with a label for the image."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        # Use smaller margins so the border drawn in paintEvent is clearly visible
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        # Image label (use full widget size minus margins)
         self.image_label = QLabel()
-        self.image_label.setFixedSize(self.widget_size - 4, self.widget_size - 4)
-        
-        # Default border will be set by apply_default_pen()
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setScaledContents(True)  # Scale image to fit label
+        self.image_label.setScaledContents(True)
+        # We no longer set the border here; paintEvent handles it.
+        self.image_label.setStyleSheet("border: none;")
 
         layout.addWidget(self.image_label)
-
-    def apply_default_pen(self):
-        """Apply a default border that matches the annotation's label color."""
-        try:
-            # Get the label color from the annotation
-            if hasattr(self.annotation, 'label') and hasattr(self.annotation.label, 'color'):
-                label_color = self.annotation.label.color
-                # Convert QColor to hex string for CSS
-                color_hex = label_color.name()
-                self.image_label.setStyleSheet(f"border: 2px solid {color_hex};")
-            else:
-                # Fallback to gray if no label color available
-                self.image_label.setStyleSheet("border: 2px solid gray;")
-        except Exception:
-            # Fallback to gray if any error occurs
-            self.image_label.setStyleSheet("border: 2px solid gray;")
 
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
         try:
-            # Get the cropped image graphic from the annotation
-            cropped_pixmap = self.annotation.get_cropped_image_graphic()
+            # Assuming get_cropped_image returns a QPixmap or QImage
+            cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
             
-            if cropped_pixmap and not cropped_pixmap.isNull():
-                # Scale the image to fit the label while maintaining aspect ratio
-                scaled_pixmap = cropped_pixmap.scaled(
-                    self.image_label.size(), 
-                    Qt.KeepAspectRatio, 
-                    Qt.SmoothTransformation
-                )
-                self.image_label.setPixmap(scaled_pixmap)
+            if cropped_image and not cropped_image.isNull():
+                self.image_label.setPixmap(cropped_image)
             else:
-                # Fallback to text if no image available
                 self.image_label.setText("No Image\nAvailable")
-                
         except Exception as e:
+            # Check for a more specific method if get_cropped_image is not the one
             print(f"Error loading annotation image: {e}")
-            self.image_label.setText("Error\nLoading Image")    
-    
+            self.image_label.setText("Error\nLoading Image")
+
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
-        self.selected = selected
-        if selected:
-            # Start marching ants animation
+        if self._is_selected == selected:
+            return
+
+        self._is_selected = selected
+        if self._is_selected:
             self.animation_timer.start()
         else:
-            # Stop animation and restore default pen
             self.animation_timer.stop()
-            self.apply_default_pen()
+            self.animation_offset = 0  # Reset offset when deselected
 
-    def animate_selection(self):
-        """Animate selected border with marching ants effect using black dashed lines."""
-        # Update animation offset for marching ants (same as QtAnnotation)
-        self.animation_offset = (self.animation_offset + 1) % 20  # Reset every 20 pixels
-        
-        # Create animated black dashed border similar to QtAnnotation
-        # Use a custom dash pattern with offset for marching ants effect
-        self.image_label.setStyleSheet("""
-            border: 3px dashed black;
-            border-image: none;
-        """)
+        # Trigger a repaint to update the border
+        self.update()
 
     def is_selected(self):
         """Return whether this widget is selected."""
-        return self.selected
+        return self._is_selected
+
+    def _update_animation_frame(self):
+        """Update the animation offset and schedule a repaint."""
+        # Increment and wrap the offset, matching the Annotation class
+        self.animation_offset = (self.animation_offset + 1) % 20
+        # self.update() schedules a call to paintEvent()
+        self.update()
+
+    def paintEvent(self, event):
+        """Handle all custom drawing for the widget, including the border."""
+        # First, let the widget draw its children (the QLabel)
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # --- This is the key part ---
+        # We trick the annotation object into giving us the exact pen we need
+        # by temporarily setting its state.
+        original_selected = self.annotation.is_selected
+        original_offset = self.annotation._animated_line
+        
+        try:
+            self.annotation.is_selected = self._is_selected
+            if self._is_selected:
+                self.annotation._animated_line = self.animation_offset
+
+            # Get the pen using the annotation's own logic
+            pen = self.annotation._create_pen(self.annotation.label.color)
+            painter.setPen(pen)
+
+        finally:
+            # IMPORTANT: Restore the annotation's original state
+            self.annotation.is_selected = original_selected
+            self.annotation._animated_line = original_offset
+        
+        # We don't want to draw a fill, just the border
+        painter.setBrush(Qt.NoBrush)
+
+        # Draw a rectangle around the widget's edges.
+        # .adjusted() moves the rectangle inwards so the border doesn't get clipped.
+        width = painter.pen().width()
+        # Use integer division to get an integer result
+        half_width = (width - 1) // 2
+        rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
+        painter.drawRect(rect)
 
     def mousePressEvent(self, event):
         """Handle mouse press events for selection."""
         if event.button() == Qt.LeftButton:
-            # Use direct reference to annotation viewer for selection handling
             if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
                 self.annotation_viewer.handle_annotation_selection(self, event)
         super().mousePressEvent(event)
