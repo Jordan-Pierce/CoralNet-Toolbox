@@ -914,6 +914,26 @@ class AnnotationViewerWidget(QWidget):
             if annotation:
                 # Actually update the annotation's label
                 annotation.update_label(preview_label)
+                
+                # MISSING: Update user confidence for the new label
+                annotation.update_user_confidence(preview_label)
+                
+                # MISSING: Regenerate cropped image with new label context
+                # Get the rasterio image for cropping
+                explorer_window = self.parent()
+                while explorer_window and not hasattr(explorer_window, 'main_window'):
+                    explorer_window = explorer_window.parent()
+                
+                if explorer_window and hasattr(explorer_window, 'main_window'):
+                    main_window = explorer_window.main_window
+                    if hasattr(main_window, 'annotation_window') and main_window.annotation_window.rasterio_image:
+                        annotation.create_cropped_image(main_window.annotation_window.rasterio_image)
+                    
+                    # MISSING: Update confidence window if annotation is selected
+                    if (hasattr(main_window, 'confidence_window') and 
+                        annotation in main_window.annotation_window.selected_annotations):
+                        main_window.confidence_window.display_cropped_image(annotation)
+                
                 applied_annotations.append(annotation)
         
         # Clear preview state after applying
