@@ -55,8 +55,12 @@ class AnnotationDataItem:
         return self._is_selected
     
     def set_selected(self, selected):
-        """Set the selection state."""
+        """Set the selection state and synchronize with annotation."""
         self._is_selected = selected
+        
+        # Also update the annotation's selection state if possible
+        if hasattr(self.annotation, 'set_selected'):
+            self.annotation.set_selected(selected)
     
     def set_preview_label(self, label):
         """Set a preview label for this annotation."""
@@ -99,6 +103,10 @@ class AnnotationDataItem:
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
             return list(self.annotation.machine_confidence.values())[0]
         return 0.0
+    
+    def has_cropped_image(self):
+        """Check if the underlying annotation has a cropped image."""
+        return hasattr(self.annotation, 'cropped_image') and self.annotation.cropped_image is not None
 
 
 class InteractiveClusterView(QGraphicsView):
@@ -462,18 +470,27 @@ class ConditionsWidget(QGroupBox):
 
     def refresh_filters(self):
         """Refresh the display based on current filter conditions."""
-        # Check if only one image is selected and load it in annotation window
-        single_image_path = self.get_single_selected_image_path()
-        if single_image_path and hasattr(self.main_window, 'image_window'):
-            # Load the single selected image in the annotation window
-            self.main_window.image_window.load_image_by_path(single_image_path)
-        
-        # Get filtered annotations
-        filtered_annotations = self.get_filtered_annotations()
+        # Set cursor to busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Check if only one image is selected and load it in annotation window
+            single_image_path = self.get_single_selected_image_path()
+            if single_image_path and hasattr(self.main_window, 'image_window'):
+                # Load the single selected image in the annotation window
+                self.main_window.image_window.load_image_by_path(single_image_path)
+            
+            # Get filtered annotations as AnnotationDataItem objects
+            filtered_annotations = self.get_filtered_annotations()
+            
+            # Store for later use in clustering
+            self.filtered_annotations = filtered_annotations
 
-        # Update annotation viewer
-        if hasattr(self, 'annotation_viewer'):
-            self.annotation_viewer.update_annotations(filtered_annotations)
+            # Update annotation viewer
+            if hasattr(self, 'annotation_viewer'):
+                self.annotation_viewer.update_annotations(filtered_annotations)
+        finally:
+            # Restore cursor to normal
+            QApplication.restoreOverrideCursor()
 
     def get_selected_annotation_types(self):
         """Get selected annotation types."""
@@ -506,12 +523,13 @@ class ConditionsWidget(QGroupBox):
 
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
-
-    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, parent=None):
+    
+    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, data_item=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.annotation = annotation
         self.image_path = image_path
         self.annotation_viewer = annotation_viewer
+        self.data_item = data_item  # Store reference to the AnnotationDataItem
         self._is_selected = False
         self.widget_size = widget_size
         self.animation_offset = 0
@@ -553,14 +571,19 @@ class AnnotationImageWidget(QWidget):
                 self.image_label.setText("No Image\nAvailable")
         except Exception as e:
             print(f"Error loading annotation image: {e}")
-            self.image_label.setText("Error\nLoading Image")
-
+            self.image_label.setText("Error\nLoading Image")    
+    
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
         if self._is_selected == selected:
             return
 
         self._is_selected = selected
+        
+        # Also update the data_item's selection state if available
+        if hasattr(self, 'data_item') and self.data_item:
+            self.data_item.set_selected(selected)
+        
         if self._is_selected:
             self.animation_timer.start()
         else:
@@ -749,15 +772,15 @@ class AnnotationViewerWidget(QWidget):
         """Recalculate the grid layout based on current widget width."""
         if not self.annotation_widgets:
             return
-            
+        
         available_width = self.scroll_area.viewport().width() - 20
         widget_width = self.current_widget_size + self.grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
         for i, widget in enumerate(self.annotation_widgets):
             self.grid_layout.addWidget(widget, i // cols, i % cols)
-
-    def update_annotations(self, annotations):
+            
+    def update_annotations(self, annotation_data_items):
         """Update the displayed annotations."""
         for widget in self.annotation_widgets:
             widget.deleteLater()
@@ -765,10 +788,12 @@ class AnnotationViewerWidget(QWidget):
         self.selected_widgets.clear()
         self.last_selected_index = -1
 
-        for annotation in annotations:
-            annotation_widget = AnnotationImageWidget(
-                annotation, annotation.image_path, self.current_widget_size, 
-                annotation_viewer=self)  # Pass self as annotation_viewer
+        for data_item in annotation_data_items:
+            annotation_widget = AnnotationImageWidget(data_item.annotation, 
+                                                      data_item.annotation.image_path, 
+                                                      self.current_widget_size, 
+                                                      annotation_viewer=self, data_item=data_item)  
+            # Pass the data_item to the widget
             self.annotation_widgets.append(annotation_widget)
         
         self.recalculate_grid_layout()
@@ -812,7 +837,7 @@ class AnnotationViewerWidget(QWidget):
             # Ctrl+Click: Toggle selection (add/remove individual items)
             if widget.is_selected():
                 self.deselect_widget(widget)
-            else:
+            else:            
                 self.select_widget(widget)
             self.last_selected_index = widget_index
                 
@@ -821,31 +846,62 @@ class AnnotationViewerWidget(QWidget):
             self.clear_selection()
             self.select_widget(widget)
             self.last_selected_index = widget_index
-
+            
+        # Sync selection with cluster view
+        explorer_window = self.parent()
+        while explorer_window and not hasattr(explorer_window, 'sync_selection_between_views'):
+            explorer_window = explorer_window.parent()
+            
+        if explorer_window and hasattr(explorer_window, 'sync_selection_between_views'):
+            explorer_window.sync_selection_between_views(from_annotation_view=True)
+            
     def select_widget(self, widget):
         """Select a widget and add it to the selection."""
         if widget not in self.selected_widgets:
             widget.set_selected(True)
             self.selected_widgets.append(widget)
+            
+            # Also update the AnnotationDataItem selection state if available
+            if hasattr(widget, 'data_item') and widget.data_item:
+                widget.data_item.set_selected(True)
+                
             # Update label window selection based on selected annotations
-        self.update_label_window_selection()
-
+            self.update_label_window_selection()
+            
     def deselect_widget(self, widget):
         """Deselect a widget and remove it from the selection."""
         if widget in self.selected_widgets:
             widget.set_selected(False)
             self.selected_widgets.remove(widget)
+            
+            # Also update the AnnotationDataItem selection state if available
+            if hasattr(widget, 'data_item') and widget.data_item:
+                widget.data_item.set_selected(False)
+                
             # Update label window selection based on remaining selected annotations
-        self.update_label_window_selection()
-
+            self.update_label_window_selection()    
+            
     def clear_selection(self):
         """Clear all selected widgets."""
         # Create a copy of the list to iterate over, as deselect_widget modifies it
         for widget in list(self.selected_widgets):
             widget.set_selected(False)
+            
+            # Also update the AnnotationDataItem selection state if available
+            if hasattr(widget, 'data_item') and widget.data_item:
+                widget.data_item.set_selected(False)
+                
         self.selected_widgets.clear()
         # Update label window selection (will deselect since no annotations selected)
         self.update_label_window_selection()
+        
+        # Sync selection with cluster view
+        explorer_window = self.parent()
+        while explorer_window and not hasattr(explorer_window, 'sync_selection_between_views'):
+            explorer_window = explorer_window.parent()
+            
+        if explorer_window and hasattr(explorer_window, 'sync_selection_between_views'):
+            explorer_window.sync_selection_between_views(from_annotation_view=True)
 
     def update_label_window_selection(self):
         """Update the label window selection based on currently selected annotations."""
@@ -1069,56 +1125,123 @@ class SettingsWidget(QGroupBox):
 
         layout.addLayout(form_layout)
 
-        # TODO: Add model and clustering settings tabs
-
+        # TODO: Add model and clustering settings tabs    
+    
     def apply_clustering(self):
-        """Apply clustering with the current settings."""
+        """Apply clustering with the current settings to the filtered annotations."""
         # Get the current settings
         cluster_technique = self.cluster_technique_combo.currentText()
         n_clusters = self.n_clusters_spin.value()
         random_state = self.random_state_spin.value()
         
-        # TODO: Implement actual clustering logic with real annotation features
-        # For now, generate demo cluster data
-        cluster_data = self.generate_demo_cluster_data(n_clusters, random_state)
-        
-        # Update the cluster viewer
-        if hasattr(self.explorer_window, 'cluster_widget'):
-            self.explorer_window.cluster_widget.update_clusters(cluster_data)
-            self.explorer_window.cluster_widget.fit_view_to_points()
-
+        # Get filtered annotations from the explorer window
+        if self.explorer_window.annotation_viewer.annotation_widgets:
+            annotation_data_items = []
+            for widget in self.explorer_window.annotation_viewer.annotation_widgets:
+                if hasattr(widget, 'data_item'):
+                    annotation_data_items.append(widget.data_item)
+            
+            # If no annotation_data_items found, try to get them from filtered_annotations
+            if not annotation_data_items and hasattr(self.explorer_window, 'filtered_annotations'):
+                annotation_data_items = self.explorer_window.filtered_annotations
+            
+            if not annotation_data_items:
+                print("No annotations available for clustering")
+                return
+                
+            # For demonstration, generate random cluster coordinates
+            # TODO: Replace with actual clustering algorithm based on annotation features
+            random.seed(random_state)
+            
+            # Generate cluster centers
+            centers = []
+            for i in range(n_clusters):
+                center_x = random.uniform(-2000, 2000)
+                center_y = random.uniform(-2000, 2000)
+                centers.append((center_x, center_y))
+            
+            # Assign each annotation to a cluster
+            for data_item in annotation_data_items:
+                # Randomly assign to a cluster for demonstration
+                cluster_id = random.randint(0, n_clusters - 1)
+                center_x, center_y = centers[cluster_id]
+                
+                # Add Gaussian noise around the center
+                x = center_x + random.gauss(0, 300)
+                y = center_y + random.gauss(0, 300)
+                
+                # Update the data item with cluster coordinates
+                data_item.cluster_x = x
+                data_item.cluster_y = y
+                data_item.cluster_id = cluster_id
+            
+            # Update the cluster viewer with the annotated data items
+            if hasattr(self.explorer_window, 'cluster_widget'):
+                self.explorer_window.cluster_widget.update_clusters(annotation_data_items)
+                self.explorer_window.cluster_widget.fit_view_to_points()
+                
+                # Store the clustered annotations for later use
+                self.explorer_window.filtered_annotations = annotation_data_items
+                
+            print(f"Applied {cluster_technique} clustering with {n_clusters} clusters")
+        else:
+            print("No annotations available for clustering")    
+            
     def generate_demo_cluster_data(self, n_clusters, random_state):
-        """Generate demonstration cluster data.
+        """Generate demonstration cluster data for testing when no real data is available.
         
         Returns:
-            List of tuples (x, y, cluster_id, annotation_data)
+            List of AnnotationDataItem objects with cluster coordinates
         """
+        # This is a fallback method that creates synthetic data
+        # when no real annotations are available
+        
         random.seed(random_state)
         cluster_data = []
         
         # Generate cluster centers
-        centers = []
+        cluster_centers = []
         for i in range(n_clusters):
             center_x = random.uniform(-2000, 2000)
             center_y = random.uniform(-2000, 2000)
-            centers.append((center_x, center_y))
+            cluster_centers.append((center_x, center_y))
         
-        # Generate points around each center
-        for cluster_id, (center_x, center_y) in enumerate(centers):
-            n_points = random.randint(20, 60)  # Variable cluster sizes
-            for _ in range(n_points):
-                # Add gaussian noise around center
+        # Generate mock annotations and data items
+        for i in range(n_clusters * 10):  # Create 10 items per cluster
+            # Create a mock annotation with some attributes
+            annotation = type('', (), {})()
+            annotation.id = i
+            annotation.is_selected = False
+            annotation.image_path = f"demo_image_{i % 5}.png"
+            
+            # Create label
+            label = type('', (), {})()
+            label.id = str(i % 5)
+            label.short_label_code = f"Label{i % 5}"
+            label.color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            
+            annotation.label = label
+            annotation.verified = random.random() > 0.5
+            
+            # Create confidence dictionaries
+            annotation.machine_confidence = {label: random.random() for label in [label]}
+            annotation.user_confidence = {label: random.random()} if annotation.verified else {}
+            
+            # Assign to a cluster
+            cluster_id = i % n_clusters
+            
+            # Create cluster coordinates
+            if cluster_id < len(cluster_centers):
+                center_x, center_y = cluster_centers[cluster_id]
                 x = center_x + random.gauss(0, 300)
                 y = center_y + random.gauss(0, 300)
-                
-                # Mock annotation data
-                annotation_data = {
-                    'id': len(cluster_data),
-                    'label': f'cluster_{cluster_id}',
-                    'confidence': random.uniform(0.7, 1.0)
-                }
-                
-                cluster_data.append((x, y, cluster_id, annotation_data))
+            else:
+                x = random.uniform(-2000, 2000)
+                y = random.uniform(-2000, 2000)
+            
+            # Create data item with annotation and cluster info
+            data_item = AnnotationDataItem(annotation, x, y, cluster_id)
+            cluster_data.append(data_item)
         
         return cluster_data
 
@@ -1198,13 +1321,13 @@ class ClusterWidget(QWidget):
                 point.setData(0, cluster_id)  # Store cluster ID as user data
                 
                 self.graphics_scene.addItem(point)
-                self.cluster_points.append(point)
-
-    def update_clusters(self, cluster_data):
-        """Update the cluster visualization with new data.
+                self.cluster_points.append(point)    
+                
+    def update_clusters(self, annotation_data_items):
+        """Update the cluster visualization with data from AnnotationDataItem objects.
         
         Args:
-            cluster_data: List of tuples (x, y, cluster_id, annotation_data)
+            annotation_data_items: List of AnnotationDataItem objects
         """
         # Clear existing points
         self.clear_points()
@@ -1213,24 +1336,34 @@ class ClusterWidget(QWidget):
         colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
                   QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
         
-        for x, y, cluster_id, annotation_data in cluster_data:
-            cluster_color = colors[cluster_id % len(colors)]
+        for data_item in annotation_data_items:
+            # Use the cluster coordinates and ID from the data item
+            x = data_item.cluster_x
+            y = data_item.cluster_y
+            cluster_id = data_item.cluster_id
+            
+            # Get color based on the cluster or annotation label
+            if cluster_id < len(colors):
+                point_color = colors[cluster_id]
+            else:
+                # If we have more clusters than colors, use the annotation label color
+                point_color = data_item.effective_color
             
             # Create point
             point = QGraphicsEllipseItem(0, 0, point_size, point_size)
             point.setPos(x, y)
             
             # Style the point
-            point.setBrush(QBrush(cluster_color))
+            point.setBrush(QBrush(point_color))
             point.setPen(QPen(QColor("black"), 0.5))
             
             # Point appearance settings
             point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             point.setFlag(QGraphicsItem.ItemIsSelectable)
             
-            # Store data
+            # Store the AnnotationDataItem in the point for reference
             point.setData(0, cluster_id)  # Cluster ID
-            point.setData(1, annotation_data)  # Annotation data
+            point.setData(1, data_item)   # Store reference to the AnnotationDataItem
             
             self.graphics_scene.addItem(point)
             self.cluster_points.append(point)
@@ -1240,9 +1373,9 @@ class ClusterWidget(QWidget):
         for point in self.cluster_points:
             self.graphics_scene.removeItem(point)
         self.cluster_points.clear()    
-        
+      
     def on_selection_changed(self):
-        """Handle point selection changes."""
+        """Handle point selection changes and sync with annotation viewer."""
         selected_items = self.graphics_scene.selectedItems()
         
         # Stop any running animation
@@ -1256,16 +1389,31 @@ class ClusterWidget(QWidget):
             
             # Start marching ants animation
             self.animation_timer.start()
-                    
-            # Optionally notify parent about selection
-            if hasattr(self.explorer_window, 'on_cluster_points_selected'):
-                selected_data = []
-                for item in selected_items:
-                    cluster_id = item.data(0)
-                    annotation_data = item.data(1)
-                    selected_data.append((cluster_id, annotation_data))
-                self.explorer_window.on_cluster_points_selected(selected_data)
+            
+            # Get the corresponding annotation data items
+            selected_data_items = []
+            for item in selected_items:
+                data_item = item.data(1)
+                if data_item and isinstance(data_item, AnnotationDataItem):
+                    selected_data_items.append(data_item)
+                    # Update the selection state in the data item
+                    data_item.set_selected(True)
+            
+            # Sync selection with annotation viewer
+            if selected_data_items and hasattr(self.explorer_window, 'annotation_viewer'):
+                annotation_viewer = self.explorer_window.annotation_viewer
                 
+                # Get current selection to determine if we need to add or replace
+                ctrl_pressed = QApplication.keyboardModifiers() & Qt.ControlModifier
+                
+                if not ctrl_pressed:
+                    # Clear the current selection if Ctrl is not pressed
+                    annotation_viewer.clear_selection()
+                
+                # Select widgets corresponding to the selected data items
+                for widget in annotation_viewer.annotation_widgets:
+                    if hasattr(widget, 'data_item') and widget.data_item in selected_data_items:
+                        annotation_viewer.select_widget(widget)
         else:
             # Clear selected points and revert to original pen
             self.selected_points = []
@@ -1273,6 +1421,17 @@ class ClusterWidget(QWidget):
                 if isinstance(item, QGraphicsEllipseItem):
                     # Reset to original thin black pen
                     item.setPen(QPen(QColor("black"), 0.5))
+                    
+                    # Clear data item selection state
+                    data_item = item.data(1)
+                    if data_item and isinstance(data_item, AnnotationDataItem):
+                        data_item.set_selected(False)
+            
+            # If this was triggered by clearing the selection in the scene
+            # (not by an external selection change), clear annotation selection too
+            if not QApplication.keyboardModifiers() & Qt.ControlModifier:
+                self.explorer_window.annotation_viewer.clear_selection()
+
             print("Cluster selection cleared.")
 
     def animate_selection(self):
@@ -1326,7 +1485,7 @@ class SelectableAnnotationViewer(QScrollArea):
                 # Find the annotation widget (traverse up the hierarchy)
                 widget = child_widget
                 while widget and widget != self:
-                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self.annotation_viewer:
+                    if widget.annotation_viewer == self.annotation_viewer:
                         self.mouse_pressed_on_widget = True
                         break
                     widget = widget.parent()
@@ -1420,10 +1579,10 @@ class ExplorerWindow(QMainWindow):
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.label_window = main_window.label_window
-        self.annotation_window = main_window.annotation_window
-
+        self.annotation_window = main_window.annotation_window        
         self.model_path = ""
         self.loaded_model = None
+        self.filtered_annotations = []  # Initialize empty list for filtered annotations
 
         self.setWindowTitle("Explorer")
         # Set the window icon
@@ -1534,10 +1693,10 @@ class ExplorerWindow(QMainWindow):
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
         except TypeError:
             pass  # Signal wasn't connected yet
-        self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
-
+        self.label_window.labelSelected.connect(self.on_label_selected_for_preview)    
+        
     def get_filtered_annotations(self):
-        """Get annotations that match all conditions."""
+        """Get annotations that match all conditions and return as AnnotationDataItem objects."""
         filtered_annotations = []
 
         if not hasattr(self.main_window, 'annotation_window') or \
@@ -1635,22 +1794,26 @@ class ExplorerWindow(QMainWindow):
                             annotation_matches = False
                     elif confidence_operator == "!=":
                         if not (abs(conf_value - confidence_value) >= 1e-6):
-                            annotation_matches = False
-
+                            annotation_matches = False            
+                            
             if annotation_matches:
-                filtered_annotations.append(annotation)
+                # Create an AnnotationDataItem for each matching annotation
+                # Initially without cluster coordinates - these will be added later
+                data_item = AnnotationDataItem(annotation)
+                filtered_annotations.append(data_item)
 
         # Ensure all filtered annotations have cropped images
         if filtered_annotations:
             # Group annotations by image path to process efficiently, but only for those that need cropping
             annotations_by_image = {}
-            for annotation in filtered_annotations:
+            for data_item in filtered_annotations:
                 # Only process annotations that don't have cropped images
-                if not annotation.cropped_image:
-                    image_path = annotation.image_path
+                # Check the underlying annotation's cropped_image attribute
+                if not data_item.has_cropped_image():
+                    image_path = data_item.annotation.image_path
                     if image_path not in annotations_by_image:
                         annotations_by_image[image_path] = []
-                    annotations_by_image[image_path].append(annotation)
+                    annotations_by_image[image_path].append(data_item.annotation)
             
             # Only crop annotations if there are any that need cropping
             if annotations_by_image:
@@ -1682,7 +1845,7 @@ class ExplorerWindow(QMainWindow):
                     progress_bar.close()
 
         return filtered_annotations
-    
+      
     def refresh_filters(self):
         """Refresh the display based on current filter conditions."""
         # Set cursor to busy
@@ -1694,8 +1857,11 @@ class ExplorerWindow(QMainWindow):
                 # Load the single selected image in the annotation window
                 self.main_window.image_window.load_image_by_path(single_image_path)
             
-            # Get filtered annotations
+            # Get filtered annotations as AnnotationDataItem objects
             filtered_annotations = self.get_filtered_annotations()
+            
+            # Store for later use in clustering
+            self.filtered_annotations = filtered_annotations
 
             # Update annotation viewer
             if hasattr(self, 'annotation_viewer'):
@@ -1812,3 +1978,43 @@ class ExplorerWindow(QMainWindow):
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
+
+    def sync_selection_between_views(self, from_annotation_view=True):
+        """Synchronize selection between annotation and cluster views.
+        
+        Args:
+            from_annotation_view: If True, sync from annotation to cluster view.
+                                   If False, sync from cluster to annotation view.
+        """
+        if from_annotation_view:
+            # Get selected annotations from viewer
+            if not hasattr(self, 'annotation_viewer'):
+                return
+                
+            selected_data_items = []
+            for widget in self.annotation_viewer.selected_widgets:
+                if hasattr(widget, 'data_item') and widget.data_item:
+                    selected_data_items.append(widget.data_item)
+            
+            # Select corresponding cluster points
+            if hasattr(self, 'cluster_widget') and selected_data_items:
+                # Block signals to prevent recursive selection
+                self.cluster_widget.graphics_scene.blockSignals(True)
+                
+                # Clear current selection first
+                self.cluster_widget.graphics_scene.clearSelection()
+                
+                # Select points that correspond to selected annotations
+                for point in self.cluster_widget.cluster_points:
+                    data_item = point.data(1)
+                    if data_item and data_item in selected_data_items:
+                        point.setSelected(True)
+                
+                # Unblock signals
+                self.cluster_widget.graphics_scene.blockSignals(False)
+                
+                # Force update of selection (animation etc.)
+                self.cluster_widget.on_selection_changed()
+        else:
+            # This direction is handled by ClusterWidget.on_selection_changed()
+            pass
