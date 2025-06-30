@@ -425,6 +425,7 @@ class ConditionsWidget(QGroupBox):
         value = self.confidence_value_spin.value()
         return operator, value
 
+
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
@@ -464,7 +465,8 @@ class AnnotationImageWidget(QWidget):
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
         try:
-            # Assuming get_cropped_image returns a QPixmap or QImage
+            # This now correctly uses the updated self.widget_size
+            # The -8 accounts for the 4px margins on each side
             cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
             
             if cropped_image and not cropped_image.isNull():
@@ -472,7 +474,6 @@ class AnnotationImageWidget(QWidget):
             else:
                 self.image_label.setText("No Image\nAvailable")
         except Exception as e:
-            # Check for a more specific method if get_cropped_image is not the one
             print(f"Error loading annotation image: {e}")
             self.image_label.setText("Error\nLoading Image")
 
@@ -540,6 +541,24 @@ class AnnotationImageWidget(QWidget):
         half_width = (width - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
+        
+    def update_size(self, new_size):
+        """
+        Updates the widget's size and reloads/rescales its content.
+        This should be called by the parent view when resizing.
+        """
+        self.widget_size = new_size
+        self.setFixedSize(new_size, new_size)
+        
+        # Adjust the inner label size based on the new widget size
+        # The margin (e.g., 4) should be consistent with setup_ui
+        self.image_label.setFixedSize(new_size - 8, new_size - 8)
+        
+        # CRITICAL: Reload and rescale the image for the new size
+        self.load_annotation_image()
+        
+        # Trigger a repaint to ensure the border is redrawn correctly
+        self.update()
 
     def mousePressEvent(self, event):
         """Handle mouse press events for selection."""
@@ -613,14 +632,18 @@ class AnnotationViewerWidget(QWidget):
             
     def on_size_changed(self, value):
         """Handle slider value change to resize annotation widgets."""
+        # Ensure value is even to avoid rounding issues with borders
+        if value % 2 != 0:
+            value -= 1
+            
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         
+        # Tell each widget to update its own size and content
         for widget in self.annotation_widgets:
-            widget.widget_size = value
-            widget.setFixedSize(value, value)
-            widget.image_label.setFixedSize(value - 4, value - 4)
+            widget.update_size(value)
         
+        # After all widgets are resized, recalculate the grid
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
