@@ -107,6 +107,170 @@ class AnnotationDataItem:
     def has_cropped_image(self):
         """Check if the underlying annotation has a cropped image."""
         return hasattr(self.annotation, 'cropped_image') and self.annotation.cropped_image is not None
+    
+    
+class AnnotationImageWidget(QWidget):
+    """Widget to display a single annotation image crop with selection support."""
+    
+    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, data_item=None, parent=None):
+        super(AnnotationImageWidget, self).__init__(parent)
+        self.annotation = annotation
+        self.image_path = image_path
+        self.annotation_viewer = annotation_viewer
+        self.data_item = data_item  # Store reference to the AnnotationDataItem
+        self._is_selected = False
+        self.widget_size = widget_size
+        self.animation_offset = 0
+
+        self.setFixedSize(widget_size, widget_size)
+
+        # Timer for marching ants animation
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self._update_animation_frame)
+        self.animation_timer.setInterval(75)  # Match the annotation's timer for consistency
+
+        self.setup_ui()
+        self.load_annotation_image()
+
+    def setup_ui(self):
+        """Set up the basic UI with a label for the image."""
+        layout = QVBoxLayout(self)
+        # Use smaller margins so the border drawn in paintEvent is clearly visible
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setScaledContents(True)
+        # We no longer set the border here; paintEvent handles it.
+        self.image_label.setStyleSheet("border: none;")
+
+        layout.addWidget(self.image_label)
+
+    def load_annotation_image(self):
+        """Load and display the actual annotation cropped image."""
+        try:
+            # This now correctly uses the updated self.widget_size
+            # The -8 accounts for the 4px margins on each side
+            cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
+            
+            if cropped_image and not cropped_image.isNull():
+                self.image_label.setPixmap(cropped_image)
+            else:
+                self.image_label.setText("No Image\nAvailable")
+        except Exception as e:
+            print(f"Error loading annotation image: {e}")
+            self.image_label.setText("Error\nLoading Image")    
+    
+    def set_selected(self, selected):
+        """Set the selection state and update visual appearance."""
+        if self._is_selected == selected:
+            return
+
+        self._is_selected = selected
+        
+        # Also update the data_item's selection state if available
+        if hasattr(self, 'data_item') and self.data_item:
+            self.data_item.set_selected(selected)
+        
+        if self._is_selected:
+            self.animation_timer.start()
+        else:
+            self.animation_timer.stop()
+            self.animation_offset = 0  # Reset offset when deselected
+
+        # Trigger a repaint to update the border
+        self.update()
+
+    def is_selected(self):
+        """Return whether this widget is selected."""
+        return self._is_selected
+
+    def _update_animation_frame(self):
+        """Update the animation offset and schedule a repaint."""
+        # Increment and wrap the offset, matching the Annotation class
+        self.animation_offset = (self.animation_offset + 1) % 20       
+        self.update()
+
+    def paintEvent(self, event):
+        """Handle all custom drawing for the widget, including the border."""
+        # First, let the widget draw its children (the QLabel)
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # --- This is the key part ---
+        # We trick the annotation object into giving us the exact pen we need
+        # by temporarily setting its state.
+        original_selected = self.annotation.is_selected
+        original_offset = getattr(self.annotation, '_animated_line', 0)
+        
+        try:
+            self.annotation.is_selected = self._is_selected
+            if self._is_selected:
+                self.annotation._animated_line = self.animation_offset
+
+            # Determine which color to use - preview takes priority over original
+            if hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode:
+                # Use preview label color (persistent until cleared or applied)
+                color = self.annotation._preview_label.color
+            else:
+                # Use normal label color
+                color = self.annotation.label.color
+
+            # Special case: Use black for annotations with label.id == "-1", Review (easier to see)
+            if (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode and 
+                self.annotation._preview_label.id == "-1") or \
+               (not (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode) and 
+                self.annotation.label.id == "-1"):
+                color = QColor("black")
+
+            # Get the pen using the annotation's own logic
+            pen = self.annotation._create_pen(color)
+            pen.setWidth(pen.width() + 1)
+            painter.setPen(pen)
+
+        finally:
+            # IMPORTANT: Restore the annotation's original state
+            self.annotation.is_selected = original_selected
+            if hasattr(self.annotation, '_animated_line'):
+                self.annotation._animated_line = original_offset
+        
+        # We don't want to draw a fill, just the border
+        painter.setBrush(Qt.NoBrush)
+
+        # Draw a rectangle around the widget's edges.
+        # .adjusted() moves the rectangle inwards so the border doesn't get clipped.
+        width = painter.pen().width()
+        # Use integer division to get an integer result
+        half_width = (width - 1) // 2
+        rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
+        painter.drawRect(rect)
+        
+    def update_size(self, new_size):
+        """
+        Updates the widget's size and reloads/rescales its content.
+        This should be called by the parent view when resizing.
+        """
+        self.widget_size = new_size
+        self.setFixedSize(new_size, new_size)
+        
+        # Adjust the inner label size based on the new widget size
+        # The margin (e.g., 4) should be consistent with setup_ui
+        self.image_label.setFixedSize(new_size - 8, new_size - 8)
+        
+        # CRITICAL: Reload and rescale the image for the new size
+        self.load_annotation_image()
+        
+        # Trigger a repaint to ensure the border is redrawn correctly
+        self.update()
+
+    def mousePressEvent(self, event):
+        """Handle mouse press events for selection."""
+        if event.button() == Qt.LeftButton:
+            if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
+                self.annotation_viewer.handle_annotation_selection(self, event)
+        super().mousePressEvent(event)
 
 
 class InteractiveClusterView(QGraphicsView):
@@ -204,11 +368,6 @@ class InteractiveClusterView(QGraphicsView):
         # Move scene to old position
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
 
 
 class ConditionsWidget(QGroupBox):
@@ -519,170 +678,6 @@ class ConditionsWidget(QGroupBox):
         operator = self.confidence_operator_combo.currentText()
         value = self.confidence_value_spin.value()
         return operator, value
-
-
-class AnnotationImageWidget(QWidget):
-    """Widget to display a single annotation image crop with selection support."""
-    
-    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, data_item=None, parent=None):
-        super(AnnotationImageWidget, self).__init__(parent)
-        self.annotation = annotation
-        self.image_path = image_path
-        self.annotation_viewer = annotation_viewer
-        self.data_item = data_item  # Store reference to the AnnotationDataItem
-        self._is_selected = False
-        self.widget_size = widget_size
-        self.animation_offset = 0
-
-        self.setFixedSize(widget_size, widget_size)
-
-        # Timer for marching ants animation
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_animation_frame)
-        self.animation_timer.setInterval(75)  # Match the annotation's timer for consistency
-
-        self.setup_ui()
-        self.load_annotation_image()
-
-    def setup_ui(self):
-        """Set up the basic UI with a label for the image."""
-        layout = QVBoxLayout(self)
-        # Use smaller margins so the border drawn in paintEvent is clearly visible
-        layout.setContentsMargins(4, 4, 4, 4)
-
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setScaledContents(True)
-        # We no longer set the border here; paintEvent handles it.
-        self.image_label.setStyleSheet("border: none;")
-
-        layout.addWidget(self.image_label)
-
-    def load_annotation_image(self):
-        """Load and display the actual annotation cropped image."""
-        try:
-            # This now correctly uses the updated self.widget_size
-            # The -8 accounts for the 4px margins on each side
-            cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
-            
-            if cropped_image and not cropped_image.isNull():
-                self.image_label.setPixmap(cropped_image)
-            else:
-                self.image_label.setText("No Image\nAvailable")
-        except Exception as e:
-            print(f"Error loading annotation image: {e}")
-            self.image_label.setText("Error\nLoading Image")    
-    
-    def set_selected(self, selected):
-        """Set the selection state and update visual appearance."""
-        if self._is_selected == selected:
-            return
-
-        self._is_selected = selected
-        
-        # Also update the data_item's selection state if available
-        if hasattr(self, 'data_item') and self.data_item:
-            self.data_item.set_selected(selected)
-        
-        if self._is_selected:
-            self.animation_timer.start()
-        else:
-            self.animation_timer.stop()
-            self.animation_offset = 0  # Reset offset when deselected
-
-        # Trigger a repaint to update the border
-        self.update()
-
-    def is_selected(self):
-        """Return whether this widget is selected."""
-        return self._is_selected
-
-    def _update_animation_frame(self):
-        """Update the animation offset and schedule a repaint."""
-        # Increment and wrap the offset, matching the Annotation class
-        self.animation_offset = (self.animation_offset + 1) % 20        # self.update() schedules a call to paintEvent()
-        self.update()
-
-    def paintEvent(self, event):
-        """Handle all custom drawing for the widget, including the border."""
-        # First, let the widget draw its children (the QLabel)
-        super().paintEvent(event)
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # --- This is the key part ---
-        # We trick the annotation object into giving us the exact pen we need
-        # by temporarily setting its state.
-        original_selected = self.annotation.is_selected
-        original_offset = getattr(self.annotation, '_animated_line', 0)
-        
-        try:
-            self.annotation.is_selected = self._is_selected
-            if self._is_selected:
-                self.annotation._animated_line = self.animation_offset
-
-            # Determine which color to use - preview takes priority over original
-            if hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode:
-                # Use preview label color (persistent until cleared or applied)
-                color = self.annotation._preview_label.color
-            else:
-                # Use normal label color
-                color = self.annotation.label.color
-
-            # Special case: Use black for annotations with label.id == "-1", Review (easier to see)
-            if (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode and 
-                self.annotation._preview_label.id == "-1") or \
-               (not (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode) and 
-                self.annotation.label.id == "-1"):
-                color = QColor("black")
-
-            # Get the pen using the annotation's own logic
-            pen = self.annotation._create_pen(color)
-            pen.setWidth(pen.width() + 1)
-            painter.setPen(pen)
-
-        finally:
-            # IMPORTANT: Restore the annotation's original state
-            self.annotation.is_selected = original_selected
-            if hasattr(self.annotation, '_animated_line'):
-                self.annotation._animated_line = original_offset
-        
-        # We don't want to draw a fill, just the border
-        painter.setBrush(Qt.NoBrush)
-
-        # Draw a rectangle around the widget's edges.
-        # .adjusted() moves the rectangle inwards so the border doesn't get clipped.
-        width = painter.pen().width()
-        # Use integer division to get an integer result
-        half_width = (width - 1) // 2
-        rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
-        painter.drawRect(rect)
-        
-    def update_size(self, new_size):
-        """
-        Updates the widget's size and reloads/rescales its content.
-        This should be called by the parent view when resizing.
-        """
-        self.widget_size = new_size
-        self.setFixedSize(new_size, new_size)
-        
-        # Adjust the inner label size based on the new widget size
-        # The margin (e.g., 4) should be consistent with setup_ui
-        self.image_label.setFixedSize(new_size - 8, new_size - 8)
-        
-        # CRITICAL: Reload and rescale the image for the new size
-        self.load_annotation_image()
-        
-        # Trigger a repaint to ensure the border is redrawn correctly
-        self.update()
-
-    def mousePressEvent(self, event):
-        """Handle mouse press events for selection."""
-        if event.button() == Qt.LeftButton:
-            if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
-                self.annotation_viewer.handle_annotation_selection(self, event)
-        super().mousePressEvent(event)
 
 
 class AnnotationViewerWidget(QWidget):
