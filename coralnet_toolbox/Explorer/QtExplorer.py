@@ -883,13 +883,27 @@ class SelectableAnnotationViewer(QScrollArea):
         self.rubber_band = None
         self.rubber_band_origin = None
         self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
+        self.mouse_pressed_on_widget = False  # Track if mouse was pressed on a widget
         
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Store the origin but don't start rubber band yet - wait for drag
+            # Store the origin for potential rubber band
             self.rubber_band_origin = event.pos()
-            # Don't accept the event yet - let it propagate to widgets first
+            self.mouse_pressed_on_widget = False
+            
+            # Check if we clicked on a widget
+            child_widget = self.childAt(event.pos())
+            if child_widget:
+                # Find the annotation widget (traverse up the hierarchy)
+                widget = child_widget
+                while widget and widget != self:
+                    if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self.annotation_viewer:
+                        self.mouse_pressed_on_widget = True
+                        break
+                    widget = widget.parent()
+            
+            # Always let the event propagate first
             super().mousePressEvent(event)
             return
             
@@ -904,8 +918,8 @@ class SelectableAnnotationViewer(QScrollArea):
             # Check if we've moved enough to start rubber band selection
             distance = (event.pos() - self.rubber_band_origin).manhattanLength()
             
-            if distance > self.drag_threshold:
-                # Start rubber band if not already started
+            if distance > self.drag_threshold and not self.mouse_pressed_on_widget:
+                # Start rubber band if not already started and didn't click on a widget
                 if not self.rubber_band:
                     from PyQt5.QtWidgets import QRubberBand
                     self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
@@ -955,6 +969,10 @@ class SelectableAnnotationViewer(QScrollArea):
                 if last_selected_in_rubber_band != -1:
                     self.annotation_viewer.last_selected_index = last_selected_in_rubber_band
 
+                # Clean up rubber band for next use
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+                
                 event.accept()
             else:
                 # No rubber band was shown, let the event propagate for normal Ctrl+Click handling
@@ -962,6 +980,7 @@ class SelectableAnnotationViewer(QScrollArea):
 
             # Reset rubber band state
             self.rubber_band_origin = None
+            self.mouse_pressed_on_widget = False
             return
 
         super().mouseReleaseEvent(event)
@@ -1042,7 +1061,8 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(self.cluster_widget)
 
         # Set splitter proportions (annotation viewer wider)
-        middle_splitter.setSizes([700, 300])        # Add middle section to main layout with stretch factor
+        middle_splitter.setSizes([700, 300])        
+        # Add middle section to main layout with stretch factor
         self.main_layout.addWidget(middle_splitter, 1)
         
         # Note: LabelWindow will be re-parented here by MainWindow.open_explorer_window()
