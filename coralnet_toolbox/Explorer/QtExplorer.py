@@ -143,15 +143,26 @@ class ConditionsWidget(QGroupBox):
         
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.MultiSelection)
-        self.images_list.setMaximumHeight(120)
-        self.images_list.addItem("All")
+        self.images_list.setMaximumHeight(100)
         
-        # Add available images
+        # Add available images (no "All" item)
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
                 self.images_list.addItem(os.path.basename(path))
         
         images_column.addWidget(self.images_list)
+        
+        # Images selection buttons at bottom
+        images_buttons_layout = QHBoxLayout()
+        self.images_select_all_btn = QPushButton("Select All")
+        self.images_select_all_btn.clicked.connect(self.select_all_images)
+        images_buttons_layout.addWidget(self.images_select_all_btn)
+        
+        self.images_deselect_all_btn = QPushButton("Deselect All")
+        self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
+        images_buttons_layout.addWidget(self.images_deselect_all_btn)
+        images_column.addLayout(images_buttons_layout)
+        
         conditions_layout.addLayout(images_column)
 
         # Annotation Type column
@@ -162,10 +173,22 @@ class ConditionsWidget(QGroupBox):
         
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
-        self.annotation_type_list.setMaximumHeight(120)
-        self.annotation_type_list.addItems(["All", "PatchAnnotation", "RectangleAnnotation", "PolygonAnnotation"])
+        self.annotation_type_list.setMaximumHeight(100)
+        self.annotation_type_list.addItems(["PatchAnnotation", "RectangleAnnotation", "PolygonAnnotation"])
         
         type_column.addWidget(self.annotation_type_list)
+        
+        # Annotation type selection buttons at bottom
+        type_buttons_layout = QHBoxLayout()
+        self.type_select_all_btn = QPushButton("Select All")
+        self.type_select_all_btn.clicked.connect(self.select_all_annotation_types)
+        type_buttons_layout.addWidget(self.type_select_all_btn)
+        
+        self.type_deselect_all_btn = QPushButton("Deselect All")
+        self.type_deselect_all_btn.clicked.connect(self.deselect_all_annotation_types)
+        type_buttons_layout.addWidget(self.type_deselect_all_btn)
+        type_column.addLayout(type_buttons_layout)
+        
         conditions_layout.addLayout(type_column)
 
         # Label column
@@ -176,15 +199,26 @@ class ConditionsWidget(QGroupBox):
         
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.MultiSelection)
-        self.label_list.setMaximumHeight(120)
-        self.label_list.addItem("All")
+        self.label_list.setMaximumHeight(100)
         
-        # Add available labels
+        # Add available labels (no "All" item)
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
                 self.label_list.addItem(label.short_label_code)
         
         label_column.addWidget(self.label_list)
+        
+        # Label selection buttons at bottom
+        label_buttons_layout = QHBoxLayout()
+        self.label_select_all_btn = QPushButton("Select All")
+        self.label_select_all_btn.clicked.connect(self.select_all_labels)
+        label_buttons_layout.addWidget(self.label_select_all_btn)
+        
+        self.label_deselect_all_btn = QPushButton("Deselect All")
+        self.label_deselect_all_btn.clicked.connect(self.deselect_all_labels)
+        label_buttons_layout.addWidget(self.label_deselect_all_btn)
+        label_column.addLayout(label_buttons_layout)
+        
         conditions_layout.addLayout(label_column)
 
         # TopK column
@@ -241,16 +275,43 @@ class ConditionsWidget(QGroupBox):
         # Set defaults
         self.set_defaults()
 
+    def select_all_images(self):
+        """Select all items in the images list."""
+        for i in range(self.images_list.count()):
+            self.images_list.item(i).setSelected(True)
+
+    def deselect_all_images(self):
+        """Deselect all items in the images list."""
+        self.images_list.clearSelection()
+
+    def select_all_annotation_types(self):
+        """Select all items in the annotation types list."""
+        for i in range(self.annotation_type_list.count()):
+            self.annotation_type_list.item(i).setSelected(True)
+
+    def deselect_all_annotation_types(self):
+        """Deselect all items in the annotation types list."""
+        self.annotation_type_list.clearSelection()
+
+    def select_all_labels(self):
+        """Select all items in the labels list."""
+        for i in range(self.label_list.count()):
+            self.label_list.item(i).setSelected(True)
+
+    def deselect_all_labels(self):
+        """Deselect all items in the labels list."""
+        self.label_list.clearSelection()
+
     def set_defaults(self):
         """Set default selections."""
-        # Set current image as default (not "All")
+        # Set current image as default (not all images)
         self.set_default_to_current_image()
         
-        # Set "All" as default for annotation types
-        self.annotation_type_list.item(0).setSelected(True)  # "All"
+        # Set all annotation types as default
+        self.select_all_annotation_types()
         
-        # Set "All" as default for labels
-        self.label_list.item(0).setSelected(True)  # "All"
+        # Set all labels as default
+        self.select_all_labels()
 
     def set_default_to_current_image(self):
         """Set the current image as the default selection."""
@@ -265,8 +326,8 @@ class ConditionsWidget(QGroupBox):
                         item.setSelected(True)
                         return
         
-        # Fallback to "All" if current image not found
-        self.images_list.item(0).setSelected(True)
+        # Fallback to selecting all images if current image not found
+        self.select_all_images()
 
     def clear_all_conditions(self):
         """Reset all conditions to their defaults."""
@@ -292,6 +353,42 @@ class ConditionsWidget(QGroupBox):
         if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
             self.explorer_window.refresh_filters()
 
+    def get_selected_images(self):
+        """Get selected image names."""
+        selected_items = self.images_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_selected_annotation_types(self):
+        """Get selected annotation types."""
+        selected_items = self.annotation_type_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_selected_labels(self):
+        """Get selected labels."""
+        selected_items = self.label_list.selectedItems()
+        if not selected_items:
+            # If nothing selected, return empty list (no filtering)
+            return []
+        
+        return [item.text() for item in selected_items]
+
+    def get_topk_selection(self):
+        """Get TopK selection."""
+        return self.topk_combo.currentText()
+
+    def get_confidence_condition(self):
+        """Get confidence operator and value."""
+        operator = self.confidence_operator_combo.currentText()
+        value = self.confidence_value_spin.value()
+        return operator, value
 
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
@@ -1129,51 +1226,88 @@ class ExplorerWindow(QMainWindow):
         for annotation in self.main_window.annotation_window.annotations_dict.values():
             annotation_matches = True
 
-            # Check image condition
-            if selected_images != ["All"]:
+            # Check image condition - if empty list, no annotations match
+            if selected_images:
                 annotation_image = os.path.basename(annotation.image_path)
                 if annotation_image not in selected_images:
                     annotation_matches = False
+            else:
+                # No images selected means no annotations should match
+                annotation_matches = False
 
-            # Check annotation type condition
-            if annotation_matches and selected_types != ["All"]:
-                annotation_type = type(annotation).__name__
-                if annotation_type not in selected_types:
+            # Check annotation type condition - if empty list, no annotations match
+            if annotation_matches:
+                if selected_types:
+                    annotation_type = type(annotation).__name__
+                    if annotation_type not in selected_types:
+                        annotation_matches = False
+                else:
+                    # No types selected means no annotations should match
                     annotation_matches = False
 
-            # Check label condition
-            if annotation_matches and selected_labels != ["All"]:
-                annotation_label = annotation.label.short_label_code
-                if annotation_label not in selected_labels:
+            # Check label condition - if empty list, no annotations match
+            if annotation_matches:
+                if selected_labels:
+                    annotation_label = annotation.label.short_label_code
+                    if annotation_label not in selected_labels:
+                        annotation_matches = False
+                else:
+                    # No labels selected means no annotations should match
                     annotation_matches = False
 
-            # Check TopK condition (assuming annotations have a rank or top_k attribute)
-            if annotation_matches and hasattr(annotation, 'rank'):
+            # Check TopK condition using machine_confidence
+            if annotation_matches and hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
                 topk_num = int(topk_selection.replace("Top", ""))
-                if annotation.rank > topk_num:
+                # Get sorted confidence values (already sorted in descending order)
+                confidence_list = list(annotation.machine_confidence.values())
+                # Check if the current label is within the TopK predictions
+                if len(confidence_list) < topk_num:
+                    # If we don't have enough predictions for the requested TopK, exclude
                     annotation_matches = False
+                else:
+                    # Check if current label is in the top K predictions
+                    sorted_labels = list(annotation.machine_confidence.keys())
+                    current_label_in_topk = False
+                    for i in range(min(topk_num, len(sorted_labels))):
+                        if sorted_labels[i].short_label_code == annotation.label.short_label_code:
+                            current_label_in_topk = True
+                            break
+                    if not current_label_in_topk:
+                        annotation_matches = False
 
             # Check confidence condition
-            if annotation_matches and hasattr(annotation, 'confidence'):
-                conf_value = float(annotation.confidence)
-                if confidence_operator == ">":
-                    if not (conf_value > confidence_value):
-                        annotation_matches = False
-                elif confidence_operator == "<":
-                    if not (conf_value < confidence_value):
-                        annotation_matches = False
-                elif confidence_operator == "==":
-                    if not (abs(conf_value - confidence_value) < 1e-6):
-                        annotation_matches = False
-                elif confidence_operator == ">=":
-                    if not (conf_value >= confidence_value):
-                        annotation_matches = False
-                elif confidence_operator == "<=":
-                    if not (conf_value <= confidence_value):
-                        annotation_matches = False
-                elif confidence_operator == "!=":
-                    if not (abs(conf_value - confidence_value) >= 1e-6):
-                        annotation_matches = False
+            if annotation_matches:
+                conf_value = None
+                
+                # Get confidence value based on verification status
+                if annotation.verified and hasattr(annotation, 'user_confidence') and annotation.user_confidence:
+                    # For verified annotations, use user_confidence (Top1)
+                    conf_value = list(annotation.user_confidence.values())[0]
+                elif hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
+                    # For unverified annotations, use the top machine confidence (Top1)
+                    conf_value = list(annotation.machine_confidence.values())[0]
+                
+                # Apply confidence filter if we have a confidence value
+                if conf_value is not None:
+                    conf_value = float(conf_value)
+                    if confidence_operator == ">":
+                        if not (conf_value > confidence_value):
+                            annotation_matches = False
+                    elif confidence_operator == "<":
+                        if not (conf_value < confidence_value):
+                            annotation_matches = False
+                    elif confidence_operator == "==":
+                        if not (abs(conf_value - confidence_value) < 1e-6):
+                            annotation_matches = False
+                    elif confidence_operator == ">=":
+                        if not (conf_value >= confidence_value):
+                            annotation_matches = False
+                    elif confidence_operator == "<=":
+                        if not (conf_value <= confidence_value):
+                            annotation_matches = False
+                    elif confidence_operator == "!=":
+                        if not (abs(conf_value - confidence_value) >= 1e-6):
+                            annotation_matches = False
 
             if annotation_matches:
                 filtered_annotations.append(annotation)
@@ -1217,46 +1351,40 @@ class ExplorerWindow(QMainWindow):
         try:
             # Get selected annotations from the annotation viewer
             selected_annotations = self.annotation_viewer.get_selected_annotations()
-            
             if not selected_annotations:
                 return
-            
+
             # Get the currently active label from the label window
             active_label = self.label_window.active_label
             if not active_label:
                 return
-            
+
             # Track which images need to be updated
             affected_images = set()
-            
+
             # Update each selected annotation with the active label
             for annotation in selected_annotations:
                 if annotation.label.id != active_label.id:
                     # Store the image path before updating
                     affected_images.add(annotation.image_path)
-                    
                     # Update the annotation's label
                     annotation.update_label(active_label)
-            
-            # Refresh the annotation window to show changes
-            if affected_images:
-                # Update image annotations for all affected images
-                for image_path in affected_images:
-                    self.image_window.update_image_annotations(image_path)
-                
-                # Reload annotations in the annotation window
-                self.annotation_window.load_annotations()
-                
-                # Update label counts
-                self.label_window.update_annotation_count()
-                
-                # Clear selection in annotation viewer
-                self.annotation_viewer.clear_selection()
-                
-                # Refresh the filtered view
-                self.refresh_filters()
-                
-                print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
-            
+
+            # Update image annotations for all affected images
+            for image_path in affected_images:
+                self.image_window.update_image_annotations(image_path)
+
+            # Reload annotations in the annotation window
+            self.annotation_window.load_annotations()
+
+            # Refresh the filtered view
+            self.refresh_filters()
+
+            # Clear selection in the annotation viewer
+            self.annotation_viewer.clear_selection()
+
+            # Optionally print a message
+            print(f"Applied label '{active_label.short_label_code}' to {len(selected_annotations)} annotation(s)")
+
         except Exception as e:
             print(f"Error applying modifications: {e}")
