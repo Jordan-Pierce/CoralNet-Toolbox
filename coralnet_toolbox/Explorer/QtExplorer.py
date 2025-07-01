@@ -266,21 +266,27 @@ class ClusterPointItem(QGraphicsEllipseItem):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ClusterViewer(QGraphicsView):
+class ClusterViewer(QWidget):  # Change inheritance to QWidget
     """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
     
     # Define signal to report selection changes
     selection_changed = pyqtSignal(list)  # list of all currently selected annotation IDs
     
     def __init__(self, parent=None):
+        # Create the graphics scene first
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
         
-        super().__init__(self.graphics_scene)
-        self.setRenderHint(QPainter.Antialiasing)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Initialize as a QWidget
+        super(ClusterViewer, self).__init__(parent)
+        
+        # Create the actual graphics view
+        self.graphics_view = QGraphicsView(self.graphics_scene)
+        self.graphics_view.setRenderHint(QPainter.Antialiasing)
+        self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.graphics_view.setMinimumHeight(200)
         
         self.explorer_window = parent
         self.points_by_id = {}  # Map annotation ID to cluster point
@@ -293,30 +299,90 @@ class ClusterViewer(QGraphicsView):
         self.animation_timer.setInterval(100)
         
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
-        self.setMinimumHeight(200)
+        
+        # Setup the UI with header
+        self.setup_ui()
+        
+        # Connect mouse events to the graphics view - CORRECTED
+        self.graphics_view.mousePressEvent = self.mousePressEvent
+        self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
+        self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
+        self.graphics_view.wheelEvent = self.wheelEvent
+
+    def setup_ui(self):
+        """Set up the UI with header layout and graphics view."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Header layout
+        header_layout = QHBoxLayout()
+        
+        # Home button
+        self.home_button = QPushButton("Home")
+        self.home_button.setToolTip("Reset view to fit all points")
+        self.home_button.clicked.connect(self.reset_view)
+        header_layout.addWidget(self.home_button)
+        
+        # Add stretch to push future controls to the right if needed
+        header_layout.addStretch()
+        
+        layout.addLayout(header_layout)
+        
+        # Add the graphics view
+        layout.addWidget(self.graphics_view)
+        
+    def reset_view(self):
+        """Reset the view to fit all cluster points."""
+        self.fit_view_to_points()
+
+    # Delegate graphics view methods
+    def setRenderHint(self, hint):
+        self.graphics_view.setRenderHint(hint)
+    
+    def setDragMode(self, mode):
+        self.graphics_view.setDragMode(mode)
+    
+    def setTransformationAnchor(self, anchor):
+        self.graphics_view.setTransformationAnchor(anchor)
+    
+    def setResizeAnchor(self, anchor):
+        self.graphics_view.setResizeAnchor(anchor)
+    
+    def mapToScene(self, point):
+        return self.graphics_view.mapToScene(point)
+    
+    def scale(self, sx, sy):
+        self.graphics_view.scale(sx, sy)
+    
+    def translate(self, dx, dy):
+        self.graphics_view.translate(dx, dy)
+    
+    def fitInView(self, rect, aspect_ratio):
+        self.graphics_view.fitInView(rect, aspect_ratio)
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection mode with Ctrl key and right-click panning."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             # Enable rubber band selection
-            self.setDragMode(QGraphicsView.RubberBandDrag)
-            super().mousePressEvent(event)
+            self.graphics_view.setDragMode(QGraphicsView.RubberBandDrag)
+            # Call the original QGraphicsView method
+            QGraphicsView.mousePressEvent(self.graphics_view, event)
             return
         elif event.button() == Qt.RightButton:
             # Right-click is for panning only - don't allow selection
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
             # Convert right-click to left-click for panning
             left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
-            super().mousePressEvent(left_event)
+                                        event.localPos(), 
+                                        Qt.LeftButton, 
+                                        Qt.LeftButton, 
+                                        event.modifiers())
+            QGraphicsView.mousePressEvent(self.graphics_view, left_event)
             return
         elif event.button() == Qt.LeftButton:
             # Regular left-click without Ctrl - allow single selection
-            self.setDragMode(QGraphicsView.NoDrag)
-            super().mousePressEvent(event)
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            QGraphicsView.mousePressEvent(self.graphics_view, event)
             return
         else:
             # For any other button, ignore
@@ -327,17 +393,17 @@ class ClusterViewer(QGraphicsView):
         if event.button() == Qt.RightButton:
             # Handle right-click panning release
             left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
-            super().mouseReleaseEvent(left_event)
-            self.setDragMode(QGraphicsView.NoDrag)
+                                        event.localPos(), 
+                                        Qt.LeftButton, 
+                                        Qt.LeftButton, 
+                                        event.modifiers())
+            QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             return
         elif event.button() == Qt.LeftButton:
             # Handle left-click release
-            super().mouseReleaseEvent(event)
-            self.setDragMode(QGraphicsView.NoDrag)
+            QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             return
         else:
             event.ignore()
@@ -347,32 +413,32 @@ class ClusterViewer(QGraphicsView):
         if event.buttons() == Qt.RightButton:
             # Convert right-click drag to left-click for panning
             left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
-            super().mouseMoveEvent(left_event)
+                                        event.localPos(), 
+                                        Qt.LeftButton, 
+                                        Qt.LeftButton, 
+                                        event.modifiers())
+            QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
             return
         else:
             # Let the base class handle other mouse moves (including rubber band)
-            super().mouseMoveEvent(event)
+            QGraphicsView.mouseMoveEvent(self.graphics_view, event)
 
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming."""
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
 
-        self.setTransformationAnchor(QGraphicsView.NoAnchor)
-        self.setResizeAnchor(QGraphicsView.NoAnchor)
+        self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
 
-        old_pos = self.mapToScene(event.pos())
+        old_pos = self.graphics_view.mapToScene(event.pos())
 
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
-        self.scale(zoom_factor, zoom_factor)
+        self.graphics_view.scale(zoom_factor, zoom_factor)
 
-        new_pos = self.mapToScene(event.pos())
+        new_pos = self.graphics_view.mapToScene(event.pos())
         delta = new_pos - old_pos
-        self.translate(delta.x(), delta.y())
+        self.graphics_view.translate(delta.x(), delta.y())
 
     def update_clusters(self, data_items):
         """Update the cluster visualization with new data.
@@ -382,18 +448,12 @@ class ClusterViewer(QGraphicsView):
         """
         self.clear_points()
         
-        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
-                  QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
-        
         for item in data_items:
-            cluster_color = colors[item.cluster_id % len(colors)]
-            
-            # *** The only change is here: Use the new ClusterPointItem ***
             point = ClusterPointItem(0, 0, POINT_SIZE, POINT_SIZE)
             point.setPos(item.cluster_x, item.cluster_y)
             
-            point.setBrush(QBrush(cluster_color))
-            point.setPen(QPen(QColor("black"), POINT_WIDTH))  # Increased from 0.5 to 1.5
+            # No need to set initial brush - paint() will handle it
+            point.setPen(QPen(QColor("black"), POINT_WIDTH))
             
             point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             point.setFlag(QGraphicsItem.ItemIsSelectable)
@@ -403,7 +463,7 @@ class ClusterViewer(QGraphicsView):
             
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
-
+            
     def clear_points(self):
         """Clear all cluster points from the scene."""
         for point in self.points_by_id.values():
@@ -468,8 +528,11 @@ class ClusterViewer(QGraphicsView):
     def fit_view_to_points(self):
         """Fit the view to show all cluster points."""
         if self.points_by_id:
-            self.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
-
+            self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+        else:
+            # If no points, reset to default view
+            self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
+            
 
 class AnnotationViewer(QScrollArea):
     """Scrollable grid widget for displaying annotation image crops with selection support."""
@@ -1277,11 +1340,11 @@ class ExplorerWindow(QMainWindow):
         if self.main_window:
             self.main_window.setEnabled(True)
         
-        # Move the label_window back to the main window
+        # Move the label_window back to the main_window
         if hasattr(self.main_window, 'explorer_closed'):
             self.main_window.explorer_closed()
         
-        # Clear the reference in the main window
+        # Clear the reference in the main_window
         self.main_window.explorer_window = None
         event.accept()
 
