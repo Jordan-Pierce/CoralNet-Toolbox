@@ -30,6 +30,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
+
+ANNOTATION_WIDTH = 5
+
+POINT_SIZE = 15
+POINT_WIDTH = 3
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -114,7 +123,7 @@ class AnnotationDataItem:
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, data_item, widget_size=256, annotation_viewer=None, parent=None):
+    def __init__(self, data_item, widget_size=128, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.data_item = data_item
         self.annotation = data_item.annotation  # For convenience
@@ -196,12 +205,12 @@ class AnnotationImageWidget(QWidget):
         color = self.data_item.effective_color
         
         if self.is_selected():
-            pen = QPen(color, 2)
+            pen = QPen(color, ANNOTATION_WIDTH)  
             pen.setStyle(Qt.CustomDashLine)
             pen.setDashPattern([2, 3])
             pen.setDashOffset(self.animation_offset)
         else:
-            pen = QPen(color, 2)
+            pen = QPen(color, ANNOTATION_WIDTH)  
             pen.setStyle(Qt.SolidLine)
         
         painter.setPen(pen)
@@ -335,7 +344,6 @@ class ClusterViewer(QGraphicsView):
         """
         self.clear_points()
         
-        point_size = 10
         colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
                   QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
         
@@ -343,11 +351,11 @@ class ClusterViewer(QGraphicsView):
             cluster_color = colors[item.cluster_id % len(colors)]
             
             # *** The only change is here: Use the new ClusterPointItem ***
-            point = ClusterPointItem(0, 0, point_size, point_size)
+            point = ClusterPointItem(0, 0, POINT_SIZE, POINT_SIZE)
             point.setPos(item.cluster_x, item.cluster_y)
             
             point.setBrush(QBrush(cluster_color))
-            point.setPen(QPen(QColor("black"), 0.5))
+            point.setPen(QPen(QColor("black"), POINT_WIDTH))  # Increased from 0.5 to 1.5
             
             point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             point.setFlag(QGraphicsItem.ItemIsSelectable)
@@ -384,7 +392,7 @@ class ClusterViewer(QGraphicsView):
         self.animation_timer.stop()
         for point in self.points_by_id.values():
             if not point.isSelected():
-                point.setPen(QPen(QColor("black"), 0.5))
+                point.setPen(QPen(QColor("black"), POINT_WIDTH))
         
         if selected_items:
             self.animation_timer.start()
@@ -411,8 +419,8 @@ class ClusterViewer(QGraphicsView):
         for item in self.graphics_scene.selectedItems():
             original_color = item.brush().color()
             darker_color = original_color.darker(150)
-            
-            animated_pen = QPen(darker_color, 2)
+
+            animated_pen = QPen(darker_color, POINT_WIDTH)
             animated_pen.setStyle(Qt.CustomDashLine)
             animated_pen.setDashPattern([1, 2])
             animated_pen.setDashOffset(self.animation_offset)
@@ -437,7 +445,7 @@ class AnnotationViewer(QScrollArea):
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
         self.last_selected_index = -1
-        self.current_widget_size = 256
+        self.current_widget_size = 128
         
         self.rubber_band = None
         self.rubber_band_origin = None
@@ -464,13 +472,13 @@ class AnnotationViewer(QScrollArea):
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
         self.size_slider.setMaximum(256)
-        self.size_slider.setValue(256)
+        self.size_slider.setValue(128)
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
         self.size_slider.valueChanged.connect(self.on_size_changed)
         header_layout.addWidget(self.size_slider)
-        
-        self.size_value_label = QLabel("256")
+
+        self.size_value_label = QLabel("128")
         self.size_value_label.setMinimumWidth(30)
         header_layout.addWidget(self.size_value_label)
         
@@ -1366,7 +1374,7 @@ class ExplorerWindow(QMainWindow):
         for ann_id in changed_ann_ids:
             point = self.cluster_viewer.points_by_id.get(ann_id)
             if point:
-                point.update() # Force the point to repaint itself
+                point.update()  # Force the point to repaint itself
 
     def update_label_window_selection(self):
         """Update the label window based on the selection in the annotation viewer."""
