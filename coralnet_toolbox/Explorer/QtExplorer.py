@@ -1720,8 +1720,8 @@ class ExplorerWindow(QMainWindow):
             norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
             
             # Scale and center the points in the view
-            item.embedded_x = (norm_x * scale_factor) - (scale_factor / 2)
-            item.embedded_y = (norm_y * scale_factor) - (scale_factor / 2)
+            item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
+            item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
 
     def run_embedding_pipeline(self, data_items):
         """Orchestrates the feature extraction and dimensionality reduction pipeline."""
