@@ -1,3 +1,4 @@
+
 from coralnet_toolbox.Icons import get_icon
 from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter
 from PyQt5.QtCore import Qt, QTimer, QSize, QRect
@@ -5,13 +6,24 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
-                             QListWidget, QDoubleSpinBox, QApplication)
+                             QListWidget, QDoubleSpinBox, QApplication, QStyle)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 import warnings
 import os
 import random
+
+# Mock imports for clustering if scikit-learn is not available
+try:
+    from sklearn.manifold import TSNE
+    from sklearn.cluster import KMeans
+    import numpy as np
+except ImportError:
+    TSNE = None
+    KMeans = None
+    np = None
+
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -20,23 +32,24 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class AnnotationDataItem:
     """Holds annotation information for consistent display across viewers."""
-    
+
     def __init__(self, annotation, cluster_x=None, cluster_y=None, cluster_id=None):
         self.annotation = annotation
-        self.cluster_x = cluster_x or 0.0
-        self.cluster_y = cluster_y or 0.0
-        self.cluster_id = cluster_id or 0
+        self.cluster_x = cluster_x if cluster_x is not None else 0.0
+        self.cluster_y = cluster_y if cluster_y is not None else 0.0
+        self.cluster_id = cluster_id if cluster_id is not None else 0
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
-        
+
     @property
     def effective_label(self):
         """Get the current effective label (preview if exists, otherwise original)."""
         return self._preview_label if self._preview_label else self.annotation.label
-    
+
     @property
     def effective_color(self):
         """Get the effective color for this annotation."""
@@ -44,28 +57,28 @@ class AnnotationDataItem:
         if self.effective_label.id == "-1":
             return QColor("black")
         return self.effective_label.color
-    
+
     @property
     def is_selected(self):
         """Check if this annotation is selected."""
         return self._is_selected
-    
+
     def set_selected(self, selected):
         """Set the selection state."""
         self._is_selected = selected
-    
+
     def set_preview_label(self, label):
         """Set a preview label for this annotation."""
         self._preview_label = label
-    
+
     def clear_preview_label(self):
         """Clear the preview label and revert to original."""
         self._preview_label = None
-    
+
     def has_preview_changes(self):
         """Check if this annotation has preview changes."""
         return self._preview_label is not None
-    
+
     def apply_preview_permanently(self):
         """Apply the preview label permanently to the annotation."""
         if self._preview_label:
@@ -75,7 +88,7 @@ class AnnotationDataItem:
             self._preview_label = None
             return True
         return False
-    
+
     def get_display_info(self):
         """Get display information for this annotation."""
         return {
@@ -87,7 +100,7 @@ class AnnotationDataItem:
             'cluster_id': self.cluster_id,
             'color': self.effective_color
         }
-    
+
     def get_effective_confidence(self):
         """Get the effective confidence value."""
         if self.annotation.verified and hasattr(self.annotation, 'user_confidence') and self.annotation.user_confidence:
@@ -96,16 +109,15 @@ class AnnotationDataItem:
             return list(self.annotation.machine_confidence.values())[0]
         return 0.0
 
-        
+
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, annotation, image_path, widget_size=256, annotation_viewer=None, parent=None):
+    def __init__(self, data_item, widget_size=256, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
-        self.annotation = annotation
-        self.image_path = image_path
+        self.data_item = data_item
+        self.annotation = data_item.annotation  # For convenience
         self.annotation_viewer = annotation_viewer
-        self._is_selected = False
         self.widget_size = widget_size
         self.animation_offset = 0
 
@@ -114,7 +126,7 @@ class AnnotationImageWidget(QWidget):
         # Timer for marching ants animation
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._update_animation_frame)
-        self.animation_timer.setInterval(75)  # Match the annotation's timer for consistency
+        self.animation_timer.setInterval(75)
 
         self.setup_ui()
         self.load_annotation_image()
@@ -122,13 +134,11 @@ class AnnotationImageWidget(QWidget):
     def setup_ui(self):
         """Set up the basic UI with a label for the image."""
         layout = QVBoxLayout(self)
-        # Use smaller margins so the border drawn in paintEvent is clearly visible
         layout.setContentsMargins(4, 4, 4, 4)
 
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setScaledContents(True)
-        # We no longer set the border here; paintEvent handles it.
         self.image_label.setStyleSheet("border: none;")
 
         layout.addWidget(self.image_label)
@@ -136,10 +146,7 @@ class AnnotationImageWidget(QWidget):
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
         try:
-            # This now correctly uses the updated self.widget_size
-            # The -8 accounts for the 4px margins on each side
             cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
-            
             if cropped_image and not cropped_image.isNull():
                 self.image_label.setPixmap(cropped_image)
             else:
@@ -150,101 +157,61 @@ class AnnotationImageWidget(QWidget):
 
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
-        if self._is_selected == selected:
+        if self.is_selected() == selected:
             return
+            
+        # Update the shared data item
+        self.data_item.set_selected(selected)
 
-        self._is_selected = selected
-        if self._is_selected:
+        if self.is_selected():
             self.animation_timer.start()
         else:
             self.animation_timer.stop()
-            self.animation_offset = 0  # Reset offset when deselected
+            self.animation_offset = 0
 
-        # Trigger a repaint to update the border
         self.update()
 
     def is_selected(self):
-        """Return whether this widget is selected."""
-        return self._is_selected
+        """Return whether this widget is selected via the data item."""
+        return self.data_item.is_selected
 
     def _update_animation_frame(self):
         """Update the animation offset and schedule a repaint."""
-        # Increment and wrap the offset, matching the Annotation class
-        self.animation_offset = (self.animation_offset + 1) % 20        # self.update() schedules a call to paintEvent()
+        self.animation_offset = (self.animation_offset + 1) % 20
         self.update()
 
     def paintEvent(self, event):
-        """Handle all custom drawing for the widget, including the border."""
-        # First, let the widget draw its children (the QLabel)
+        """Handle custom drawing for the widget, including the border."""
         super().paintEvent(event)
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
-        # --- This is the key part ---
-        # We trick the annotation object into giving us the exact pen we need
-        # by temporarily setting its state.
-        original_selected = self.annotation.is_selected
-        original_offset = getattr(self.annotation, '_animated_line', 0)
         
-        try:
-            self.annotation.is_selected = self._is_selected
-            if self._is_selected:
-                self.annotation._animated_line = self.animation_offset
-
-            # Determine which color to use - preview takes priority over original
-            if hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode:
-                # Use preview label color (persistent until cleared or applied)
-                color = self.annotation._preview_label.color
-            else:
-                # Use normal label color
-                color = self.annotation.label.color
-
-            # Special case: Use black for annotations with label.id == "-1", Review (easier to see)
-            if (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode and 
-                self.annotation._preview_label.id == "-1") or \
-               (not (hasattr(self.annotation, '_preview_mode') and self.annotation._preview_mode) and 
-                self.annotation.label.id == "-1"):
-                color = QColor("black")
-
-            # Get the pen using the annotation's own logic
-            pen = self.annotation._create_pen(color)
-            pen.setWidth(pen.width() + 1)
-            painter.setPen(pen)
-
-        finally:
-            # IMPORTANT: Restore the annotation's original state
-            self.annotation.is_selected = original_selected
-            if hasattr(self.annotation, '_animated_line'):
-                self.annotation._animated_line = original_offset
+        # Base the pen on the shared data_item's state
+        color = self.data_item.effective_color
         
-        # We don't want to draw a fill, just the border
+        if self.is_selected():
+            pen = QPen(color, 2)
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([2, 3])
+            pen.setDashOffset(self.animation_offset)
+        else:
+            pen = QPen(color, 2)
+            pen.setStyle(Qt.SolidLine)
+        
+        painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-
-        # Draw a rectangle around the widget's edges.
-        # .adjusted() moves the rectangle inwards so the border doesn't get clipped.
-        width = painter.pen().width()
-        # Use integer division to get an integer result
+        
+        width = pen.width()
         half_width = (width - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
-        
+
     def update_size(self, new_size):
-        """
-        Updates the widget's size and reloads/rescales its content.
-        This should be called by the parent view when resizing.
-        """
+        """Updates the widget's size and reloads/rescales its content."""
         self.widget_size = new_size
         self.setFixedSize(new_size, new_size)
-        
-        # Adjust the inner label size based on the new widget size
-        # The margin (e.g., 4) should be consistent with setup_ui
         self.image_label.setFixedSize(new_size - 8, new_size - 8)
-        
-        # CRITICAL: Reload and rescale the image for the new size
         self.load_annotation_image()
-        
-        # Trigger a repaint to ensure the border is redrawn correctly
         self.update()
 
     def mousePressEvent(self, event):
@@ -255,211 +222,130 @@ class AnnotationImageWidget(QWidget):
         super().mousePressEvent(event)
 
 
+class ClusterPointItem(QGraphicsEllipseItem):
+    """
+    A custom QGraphicsEllipseItem that prevents the default selection
+    rectangle from being drawn, allowing for custom selection visuals.
+    """
+    def paint(self, painter, option, widget):
+        # By removing the 'State_Selected' flag from the style option,
+        # we prevent the default paint method from drawing the dotted
+        # selection rectangle around the item.
+        option.state &= ~QStyle.State_Selected
+        super(ClusterPointItem, self).paint(painter, option, widget)
+        
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Viewers
 # ----------------------------------------------------------------------------------------------------------------------
 
-
 class ClusterViewer(QGraphicsView):
     """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
-    
+
     def __init__(self, parent=None):
-        # Create scene first
         self.graphics_scene = QGraphicsScene()
-        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)  # Large world space
+        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
         
         super().__init__(self.graphics_scene)
-        self.setRenderHint(QPainter.Antialiasing)  # Make the points look smooth
-        
-        # Set the default interaction mode to panning
+        self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
-        
-        # Remove scrollbars for a cleaner look
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
-        # Store reference to explorer window
         self.explorer_window = parent
+        self.points_by_id = {} # Map annotation ID to cluster point
+        self.animation_offset = 0
         
-        # Cluster management attributes
-        self.cluster_points = []  # Store cluster point data
-        self.selected_points = []  # Store currently selected points
-        self.animation_offset = 0  # For marching ants animation
-        
-        # Timer for marching ants animation
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.animate_selection)
-        self.animation_timer.setInterval(100)  # Update every 100ms
+        self.animation_timer.setInterval(100)
         
-        # Connect selection change signal
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
-        
-        # Set minimum height
         self.setMinimumHeight(200)
-        
-        # Add some demo points initially
-        self.add_demo_points()
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection mode with Ctrl key and right-click panning."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # If Ctrl is pressed, switch to RubberBandDrag mode for selection
             self.setDragMode(QGraphicsView.RubberBandDrag)
         elif event.button() == Qt.RightButton:
-            # Right mouse button for panning - force ScrollHandDrag mode
             self.setDragMode(QGraphicsView.ScrollHandDrag)
-            # Convert right-click to left-click for proper panning behavior
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
+            left_event = event.__class__(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             super().mousePressEvent(left_event)
             return
-        # Call the base class implementation to handle the event
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release to revert to no drag mode."""
         if event.button() == Qt.RightButton:
-            # Convert right-click release to left-click release for proper panning
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
+            left_event = event.__class__(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             super().mouseReleaseEvent(left_event)
             self.setDragMode(QGraphicsView.NoDrag)
             return
-        # Call the base class implementation first
         super().mouseReleaseEvent(event)
-        # After the event is handled, revert to no drag mode for normal selection
         self.setDragMode(QGraphicsView.NoDrag)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for right-click panning."""
         if event.buttons() == Qt.RightButton:
-            # Convert right-click move to left-click move for proper panning
-            left_event = event.__class__(
-                event.type(),
-                event.localPos(),
-                Qt.LeftButton,  # Convert to left button
-                Qt.LeftButton,  # Convert to left button
-                event.modifiers()
-            )
+            left_event = event.__class__(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             super().mouseMoveEvent(left_event)
             return
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming."""
-        # Zoom Factor
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
 
-        # Set Anchors
         self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.setResizeAnchor(QGraphicsView.NoAnchor)
 
-        # Save the scene pos
         old_pos = self.mapToScene(event.pos())
 
-        # Zoom
-        if event.angleDelta().y() > 0:
-            zoom_factor = zoom_in_factor
-        else:
-            zoom_factor = zoom_out_factor
+        zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.scale(zoom_factor, zoom_factor)
 
-        # Get the new position
         new_pos = self.mapToScene(event.pos())
-
-        # Move scene to old position
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
 
-    def add_demo_points(self):
-        """Add demonstration cluster points."""
-        point_size = 20
-        colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), QColor("orange")]
-        
-        # Generate some clustered demo points
-        for cluster_id in range(5):
-            cluster_color = colors[cluster_id % len(colors)]
-            # Generate points around cluster centers
-            center_x = random.uniform(-2000, 2000)
-            center_y = random.uniform(-2000, 2000)
-            
-            for _ in range(40):  # 40 points per cluster
-                # Add some randomness around cluster center
-                x = center_x + random.gauss(0, 300)
-                y = center_y + random.gauss(0, 300)
-                
-                # Create a point as a QGraphicsEllipseItem
-                point = QGraphicsEllipseItem(0, 0, point_size, point_size)
-                point.setPos(x, y)
-                
-                # Style the point with cluster color
-                point.setBrush(QBrush(cluster_color))
-                point.setPen(QPen(QColor("black"), 0.5))
-                
-                # Make point size independent of zoom level
-                point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-                
-                # Make the item selectable
-                point.setFlag(QGraphicsItem.ItemIsSelectable)
-                
-                # Store cluster information
-                point.setData(0, cluster_id)  # Store cluster ID as user data
-                
-                self.graphics_scene.addItem(point)
-                self.cluster_points.append(point)
-
-    def update_clusters(self, cluster_data):
+    def update_clusters(self, data_items):
         """Update the cluster visualization with new data.
         
         Args:
-            cluster_data: List of tuples (x, y, cluster_id, annotation_data)
+            data_items: List of AnnotationDataItem objects.
         """
-        # Clear existing points
         self.clear_points()
         
         point_size = 10
         colors = [QColor("cyan"), QColor("red"), QColor("green"), QColor("blue"), 
                   QColor("orange"), QColor("purple"), QColor("brown"), QColor("pink")]
         
-        for x, y, cluster_id, annotation_data in cluster_data:
-            cluster_color = colors[cluster_id % len(colors)]
+        for item in data_items:
+            cluster_color = colors[item.cluster_id % len(colors)]
             
-            # Create point
-            point = QGraphicsEllipseItem(0, 0, point_size, point_size)
-            point.setPos(x, y)
+            # *** The only change is here: Use the new ClusterPointItem ***
+            point = ClusterPointItem(0, 0, point_size, point_size)
+            point.setPos(item.cluster_x, item.cluster_y)
             
-            # Style the point
             point.setBrush(QBrush(cluster_color))
             point.setPen(QPen(QColor("black"), 0.5))
             
-            # Point appearance settings
             point.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             point.setFlag(QGraphicsItem.ItemIsSelectable)
             
-            # Store data
-            point.setData(0, cluster_id)  # Cluster ID
-            point.setData(1, annotation_data)  # Annotation data
+            # This is the crucial link: store the shared AnnotationDataItem
+            point.setData(0, item)
             
             self.graphics_scene.addItem(point)
-            self.cluster_points.append(point)
+            self.points_by_id[item.annotation.id] = point
 
     def clear_points(self):
         """Clear all cluster points from the scene."""
-        for point in self.cluster_points:
+        for point in self.points_by_id.values():
             self.graphics_scene.removeItem(point)
-        self.cluster_points.clear()    
-        
+        self.points_by_id.clear()
+
     def on_selection_changed(self):
         """Handle point selection changes."""
         selected_items = self.graphics_scene.selectedItems()
@@ -467,57 +353,37 @@ class ClusterViewer(QGraphicsView):
         # Stop any running animation
         self.animation_timer.stop()
         
+        # Reset the pen for all points that are no longer selected
+        for point in self.points_by_id.values():
+            if not point.isSelected():
+                point.setPen(QPen(QColor("black"), 0.5))
+        
         if selected_items:
             print(f"{len(selected_items)} cluster points selected.")
-            
-            # Store selected points for animation
-            self.selected_points = [item for item in selected_items if isinstance(item, QGraphicsEllipseItem)]
-            
-            # Start marching ants animation
             self.animation_timer.start()
-                    
-            # Optionally notify parent about selection
-            if hasattr(self.explorer_window, 'on_cluster_points_selected'):
-                selected_data = []
-                for item in selected_items:
-                    cluster_id = item.data(0)
-                    annotation_data = item.data(1)
-                    selected_data.append((cluster_id, annotation_data))
-                self.explorer_window.on_cluster_points_selected(selected_data)
-                
         else:
-            # Clear selected points and revert to original pen
-            self.selected_points = []
-            for item in self.cluster_points:
-                if isinstance(item, QGraphicsEllipseItem):
-                    # Reset to original thin black pen
-                    item.setPen(QPen(QColor("black"), 0.5))
             print("Cluster selection cleared.")
 
     def animate_selection(self):
         """Animate selected points with marching ants effect using darker versions of point colors."""
-        # Update animation offset for marching ants
-        self.animation_offset = (self.animation_offset + 1) % 20  # Reset every 20 pixels like QtAnnotation
+        self.animation_offset = (self.animation_offset + 1) % 20
         
-        # Apply animated pen to selected points using their darker colors
-        for item in self.selected_points:
-            # Get the original color from the brush
+        # This logic remains the same. It applies the custom pen to the selected items.
+        # Because the items are ClusterPointItem, the default selection box won't be drawn.
+        for item in self.graphics_scene.selectedItems():
             original_color = item.brush().color()
+            darker_color = original_color.darker(150)
             
-            # Create darker version of the color (reduce brightness by 40%)
-            darker_color = original_color.darker(150)  # 150% darker
-            
-            # Create animated dotted pen with darker color
             animated_pen = QPen(darker_color, 2)
             animated_pen.setStyle(Qt.CustomDashLine)
-            animated_pen.setDashPattern([1, 2])  # Small dots with small gaps like QtAnnotation
+            animated_pen.setDashPattern([1, 2])
             animated_pen.setDashOffset(self.animation_offset)
             
             item.setPen(animated_pen)
 
     def fit_view_to_points(self):
         """Fit the view to show all cluster points."""
-        if self.cluster_points:
+        if self.points_by_id:
             self.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
 
@@ -526,41 +392,33 @@ class AnnotationViewer(QScrollArea):
     
     def __init__(self, parent=None):
         super(AnnotationViewer, self).__init__(parent)
-        self.annotation_widgets = []
+        self.annotation_widgets_by_id = {}
         self.selected_widgets = []
-        self.last_selected_index = -1  # Anchor for shift-selection
-        self.current_widget_size = 256  # Default size
+        self.last_selected_index = -1
+        self.current_widget_size = 256
         
-        # Rubber band selection state
         self.rubber_band = None
         self.rubber_band_origin = None
-        self.drag_threshold = 5  # Minimum pixels to drag before starting rubber band
-        self.mouse_pressed_on_widget = False  # Track if mouse was pressed on a widget
+        self.drag_threshold = 5
+        self.mouse_pressed_on_widget = False
         
-        # Track preview states
-        self.preview_label_assignments = {}  # annotation_id -> preview_label
-        self.original_label_assignments = {}  # annotation_id -> original_label
+        self.preview_label_assignments = {}
+        self.original_label_assignments = {}
         
         self.setup_ui()
 
     def setup_ui(self):
-        # Set up scroll area properties
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        # Create main container widget for the entire AnnotationViewer
         main_container = QWidget()
         main_layout = QVBoxLayout(main_container)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Size control layout - this will stay fixed at the top
         header_layout = QHBoxLayout()
-        
-        # Size label
         size_label = QLabel("Size:")
         header_layout.addWidget(size_label)
-        # Size slider
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
         self.size_slider.setMaximum(256)
@@ -570,62 +428,46 @@ class AnnotationViewer(QScrollArea):
         self.size_slider.valueChanged.connect(self.on_size_changed)
         header_layout.addWidget(self.size_slider)
         
-        # Size value label
         self.size_value_label = QLabel("256")
         self.size_value_label.setMinimumWidth(30)
         header_layout.addWidget(self.size_value_label)
         
-        # Add size controls to main layout (not scrollable)
         main_layout.addLayout(header_layout)
         
-        # Create scrollable content widget for the grid layout only
         self.content_widget = QWidget()
         self.grid_layout = QGridLayout(self.content_widget)
         self.grid_layout.setSpacing(5)
 
-        # Create a scroll area just for the content
         content_scroll = QScrollArea()
         content_scroll.setWidgetResizable(True)
         content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         content_scroll.setWidget(self.content_widget)
         
-        # Add the scrollable content to main layout
         main_layout.addWidget(content_scroll)
-        
-        # Set the main container as the parent widget's content
-        # Since AnnotationViewer inherits from QScrollArea, we need to handle this differently
-        # We'll create a layout for self and add the main_container
         self.setWidget(main_container)
 
     def resizeEvent(self, event):
         """Handle resize events to recalculate grid layout."""
         super().resizeEvent(event)
-        if hasattr(self, 'annotation_widgets') and self.annotation_widgets:
+        if hasattr(self, 'annotation_widgets_by_id') and self.annotation_widgets_by_id:
             self.recalculate_grid_layout()
 
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Store the origin for potential rubber band
             self.rubber_band_origin = event.pos()
             self.mouse_pressed_on_widget = False
-            
-            # Check if we clicked on a widget
             child_widget = self.childAt(event.pos())
             if child_widget:
-                # Find the annotation widget (traverse up the hierarchy)
                 widget = child_widget
                 while widget and widget != self:
                     if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
                         self.mouse_pressed_on_widget = True
                         break
                     widget = widget.parent()
-            
-            # Always let the event propagate first
             super().mousePressEvent(event)
             return
-            
         super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event):
@@ -634,23 +476,18 @@ class AnnotationViewer(QScrollArea):
             event.buttons() == Qt.LeftButton and 
             event.modifiers() == Qt.ControlModifier):
             
-            # Check if we've moved enough to start rubber band selection
             distance = (event.pos() - self.rubber_band_origin).manhattanLength()
             
             if distance > self.drag_threshold and not self.mouse_pressed_on_widget:
-                # Start rubber band if not already started and didn't click on a widget
                 if not self.rubber_band:
                     from PyQt5.QtWidgets import QRubberBand
                     self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
                     self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
                     self.rubber_band.show()
-                
-                # Update rubber band geometry
                 rect = QRect(self.rubber_band_origin, event.pos()).normalized()
                 self.rubber_band.setGeometry(rect)
                 event.accept()
                 return
-
         super().mouseMoveEvent(event)
         
     def mouseReleaseEvent(self, event):
@@ -659,19 +496,15 @@ class AnnotationViewer(QScrollArea):
             event.button() == Qt.LeftButton and 
             event.modifiers() == Qt.ControlModifier):
             
-            # Only process rubber band selection if rubber band was actually shown
             if self.rubber_band and self.rubber_band.isVisible():
                 self.rubber_band.hide()
                 selection_rect = self.rubber_band.geometry()
-                
-                # The content_widget is where the grid layout lives
                 content_widget = self.content_widget
                 
-                # Don't clear previous selection - rubber band adds to existing selection
-                
                 last_selected_in_rubber_band = -1
-                for i, widget in enumerate(self.annotation_widgets):
-                    # Map widget's position relative to the scroll area's viewport
+                # Use list() to avoid issues with dict size changes during iteration
+                widget_list = list(self.annotation_widgets_by_id.values())
+                for i, widget in enumerate(widget_list):
                     widget_rect_in_content = widget.geometry()
                     widget_rect_in_viewport = QRect(
                         content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
@@ -679,119 +512,90 @@ class AnnotationViewer(QScrollArea):
                     )
 
                     if selection_rect.intersects(widget_rect_in_viewport):
-                        # Only select if not already selected (add to selection)
                         if not widget.is_selected():
                             self.select_widget(widget)
                         last_selected_in_rubber_band = i
 
-                # Set the anchor for future shift-clicks to the last item in the rubber band selection
                 if last_selected_in_rubber_band != -1:
                     self.last_selected_index = last_selected_in_rubber_band
 
-                # Clean up rubber band for next use
                 self.rubber_band.deleteLater()
                 self.rubber_band = None
-                
                 event.accept()
             else:
-                # No rubber band was shown, let the event propagate for normal Ctrl+Click handling
                 super().mouseReleaseEvent(event)
 
-            # Reset rubber band state
             self.rubber_band_origin = None
             self.mouse_pressed_on_widget = False
             return
-
         super().mouseReleaseEvent(event)
             
     def on_size_changed(self, value):
         """Handle slider value change to resize annotation widgets."""
-        # Ensure value is even to avoid rounding issues with borders
         if value % 2 != 0:
             value -= 1
-            
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         
-        # Tell each widget to update its own size and content
-        for widget in self.annotation_widgets:
+        for widget in self.annotation_widgets_by_id.values():
             widget.update_size(value)
-        # After all widgets are resized, recalculate the grid
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
         """Recalculate the grid layout based on current widget width."""
-        if not self.annotation_widgets:
+        if not self.annotation_widgets_by_id:
             return
             
         available_width = self.viewport().width() - 20
         widget_width = self.current_widget_size + self.grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
-        for i, widget in enumerate(self.annotation_widgets):
+        for i, widget in enumerate(self.annotation_widgets_by_id.values()):
             self.grid_layout.addWidget(widget, i // cols, i % cols)
 
-    def update_annotations(self, annotations):
-        """Update the displayed annotations."""
-        for widget in self.annotation_widgets:
+    def update_annotations(self, data_items):
+        """Update the displayed annotations from a list of AnnotationDataItems."""
+        for widget in self.annotation_widgets_by_id.values():
             widget.deleteLater()
-        self.annotation_widgets.clear()
+        self.annotation_widgets_by_id.clear()
         self.selected_widgets.clear()
         self.last_selected_index = -1
 
-        for annotation in annotations:
+        for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
-                annotation, annotation.image_path, self.current_widget_size, 
-                annotation_viewer=self)  # Pass self as annotation_viewer
-            self.annotation_widgets.append(annotation_widget)
+                data_item, self.current_widget_size, 
+                annotation_viewer=self)
+            self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
         
         self.recalculate_grid_layout()
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
+        widget_list = list(self.annotation_widgets_by_id.values())
         try:
-            widget_index = self.annotation_widgets.index(widget)
+            widget_index = widget_list.index(widget)
         except ValueError:
-            return  # Widget not in list
+            return
 
         modifiers = event.modifiers()
 
-        if modifiers == Qt.ShiftModifier:
-            # Shift+Click: Add range to existing selection (don't clear)
+        if modifiers == Qt.ShiftModifier or modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
             if self.last_selected_index != -1:
                 start = min(self.last_selected_index, widget_index)
                 end = max(self.last_selected_index, widget_index)
                 for i in range(start, end + 1):
-                    if not self.annotation_widgets[i].is_selected():
-                        self.select_widget(self.annotation_widgets[i])
+                    if not widget_list[i].is_selected():
+                        self.select_widget(widget_list[i])
             else:
-                # If no anchor, just add this widget to selection
                 self.select_widget(widget)
                 self.last_selected_index = widget_index
-
-        elif modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
-            # Shift+Ctrl+Click: Add range to existing selection
-            if self.last_selected_index != -1:
-                start = min(self.last_selected_index, widget_index)
-                end = max(self.last_selected_index, widget_index)
-                for i in range(start, end + 1):
-                    if not self.annotation_widgets[i].is_selected():
-                        self.select_widget(self.annotation_widgets[i])
-            else:
-                # If no anchor, just add this widget to selection
-                self.select_widget(widget)
-                self.last_selected_index = widget_index
-
         elif modifiers == Qt.ControlModifier:
-            # Ctrl+Click: Toggle selection (add/remove individual items)
             if widget.is_selected():
                 self.deselect_widget(widget)
             else:
                 self.select_widget(widget)
             self.last_selected_index = widget_index
-                
         else:
-            # Normal click: Clear all and select only this widget
             self.clear_selection()
             self.select_widget(widget)
             self.last_selected_index = widget_index
@@ -801,7 +605,6 @@ class AnnotationViewer(QScrollArea):
         if widget not in self.selected_widgets:
             widget.set_selected(True)
             self.selected_widgets.append(widget)
-            # Update label window selection based on selected annotations
         self.update_label_window_selection()
 
     def deselect_widget(self, widget):
@@ -809,21 +612,17 @@ class AnnotationViewer(QScrollArea):
         if widget in self.selected_widgets:
             widget.set_selected(False)
             self.selected_widgets.remove(widget)
-            # Update label window selection based on remaining selected annotations
         self.update_label_window_selection()
 
     def clear_selection(self):
         """Clear all selected widgets."""
-        # Create a copy of the list to iterate over, as deselect_widget modifies it
         for widget in list(self.selected_widgets):
             widget.set_selected(False)
         self.selected_widgets.clear()
-        # Update label window selection (will deselect since no annotations selected)
         self.update_label_window_selection()
 
     def update_label_window_selection(self):
         """Update the label window selection based on currently selected annotations."""
-        # Find the explorer window (our parent)
         explorer_window = self.parent()
         while explorer_window and not hasattr(explorer_window, 'main_window'):
             explorer_window = explorer_window.parent()
@@ -831,50 +630,27 @@ class AnnotationViewer(QScrollArea):
         if not explorer_window or not hasattr(explorer_window, 'main_window'):
             return
             
-        # Get the main window and its components
         main_window = explorer_window.main_window
         label_window = main_window.label_window
         annotation_window = main_window.annotation_window
         
         if not self.selected_widgets:
-            # No annotations selected - deselect active label but DON'T clear previews
-            # Users should be able to see their preview changes even when nothing is selected
             label_window.deselect_active_label()
             label_window.update_annotation_count()
             return
             
-        # Get all selected annotations
-        selected_annotations = [widget.annotation for widget in self.selected_widgets]
+        selected_data_items = [widget.data_item for widget in self.selected_widgets]
         
-        # Check CURRENT labels for consistency (preview labels take priority over original)
-        def get_current_label(annotation):
-            """Get the current effective label (preview if exists, otherwise original)."""
-            if annotation.id in self.preview_label_assignments:
-                return self.preview_label_assignments[annotation.id]
-            else:
-                return annotation.label
-        
-        first_current_label = get_current_label(selected_annotations[0])
-        all_same_current_label = True
-        
-        for annotation in selected_annotations:
-            current_label = get_current_label(annotation)
-            if current_label.id != first_current_label.id:
-                all_same_current_label = False
-                break
+        first_effective_label = selected_data_items[0].effective_label
+        all_same_current_label = all(item.effective_label.id == first_effective_label.id for item in selected_data_items)
         
         if all_same_current_label:
-            # All annotations have the same current label - set it as active
-            # IMPORTANT: Don't emit labelSelected signal here to avoid triggering preview override
-            label_window.set_active_label(first_current_label)
-            # Only emit the signal if this is NOT a preview label to avoid circular updates
-            if selected_annotations[0].id not in self.preview_label_assignments:
-                annotation_window.labelSelected.emit(first_current_label.id)
+            label_window.set_active_label(first_effective_label)
+            if not selected_data_items[0].has_preview_changes():
+                annotation_window.labelSelected.emit(first_effective_label.id)
         else:
-            # Multiple different labels - deselect active label
             label_window.deselect_active_label()
         
-        # Update annotation count display to show selection
         label_window.update_annotation_count()
 
     def get_selected_annotations(self):
@@ -887,116 +663,43 @@ class AnnotationViewer(QScrollArea):
             return
             
         for widget in self.selected_widgets:
-            annotation = widget.annotation
-            
-            # Store original label if this is the first preview change
-            if annotation.id not in self.original_label_assignments:
-                self.original_label_assignments[annotation.id] = annotation.label
-            
-            # Track the preview assignment
-            self.preview_label_assignments[annotation.id] = preview_label
-            
-            # Update visual appearance temporarily
-            self._apply_preview_visual_state(annotation, preview_label)
-            
-            # Force widget to repaint with new color
+            # The data item is the shared source of truth now
+            widget.data_item.set_preview_label(preview_label)
             widget.update()
-
-    def _apply_preview_visual_state(self, annotation, preview_label):
-        """Apply visual preview state to annotation without changing actual label."""
-        # Temporarily override the annotation's visual properties
-        annotation._preview_label = preview_label
-        annotation._preview_mode = True
-        
-        # Update the graphics item if it exists
-        if hasattr(annotation, 'graphics_item') and annotation.graphics_item:
-            # Force a visual update
-            annotation.graphics_item.update()
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
-        if not self.preview_label_assignments:
-            return  # Nothing to clear
-            
-        for annotation_id in list(self.preview_label_assignments.keys()):
-            # Get the annotation
-            annotation = self._get_annotation_by_id(annotation_id)
-            if annotation:
-                # Clear preview mode
-                if hasattr(annotation, '_preview_mode'):
-                    annotation._preview_mode = False
-                if hasattr(annotation, '_preview_label'):
-                    delattr(annotation, '_preview_label')
-                    
-                # Update graphics
-                if hasattr(annotation, 'graphics_item') and annotation.graphics_item:
-                    annotation.graphics_item.update()
+        # We just need to iterate through all widgets and tell their data_items to clear
+        something_cleared = False
+        for widget in self.annotation_widgets_by_id.values():
+            if widget.data_item.has_preview_changes():
+                widget.data_item.clear_preview_label()
+                widget.update() # Repaint to show original color
+                something_cleared = True
         
-        # Clear tracking dictionaries
-        self.preview_label_assignments.clear()
-        self.original_label_assignments.clear()
-        
-        # Update all widgets to show original colors
-        for widget in self.annotation_widgets:
-            widget.update()
-        
-        # Update the label window selection after clearing previews
-        self.update_label_window_selection()
+        if something_cleared:
+            self.update_label_window_selection()
 
     def has_preview_changes(self):
         """Check if there are any pending preview changes."""
-        return bool(self.preview_label_assignments)
+        return any(w.data_item.has_preview_changes() for w in self.annotation_widgets_by_id.values())
 
     def get_preview_changes_summary(self):
         """Get a summary of preview changes for user feedback."""
-        if not self.preview_label_assignments:
+        change_count = sum(1 for w in self.annotation_widgets_by_id.values() if w.data_item.has_preview_changes())
+        if not change_count:
             return "No preview changes"
-        
-        change_count = len(self.preview_label_assignments)
         return f"{change_count} annotation(s) with preview changes"
 
     def apply_preview_changes_permanently(self):
         """Apply all preview changes permanently to the annotation data."""
         applied_annotations = []
-        
-        for annotation_id, preview_label in self.preview_label_assignments.items():
-            annotation = self._get_annotation_by_id(annotation_id)
-            if annotation:
-                # Actually update the annotation's label
-                annotation.update_label(preview_label)
-                
-                # MISSING: Update user confidence for the new label
-                annotation.update_user_confidence(preview_label)
-                
-                # MISSING: Regenerate cropped image with new label context
-                # Get the rasterio image for cropping
-                explorer_window = self.parent()
-                while explorer_window and not hasattr(explorer_window, 'main_window'):
-                    explorer_window = explorer_window.parent()
-                
-                if explorer_window and hasattr(explorer_window, 'main_window'):
-                    main_window = explorer_window.main_window
-                    if hasattr(main_window, 'annotation_window') and main_window.annotation_window.rasterio_image:
-                        annotation.create_cropped_image(main_window.annotation_window.rasterio_image)
-                    
-                    # MISSING: Update confidence window if annotation is selected
-                    if (hasattr(main_window, 'confidence_window') and 
-                        annotation in main_window.annotation_window.selected_annotations):
-                        main_window.confidence_window.display_cropped_image(annotation)
-                
-                applied_annotations.append(annotation)
-        
-        # Clear preview state after applying
-        self.clear_preview_states()
+        for widget in self.annotation_widgets_by_id.values():
+            # Tell the data_item to apply its changes to the underlying annotation
+            if widget.data_item.apply_preview_permanently():
+                applied_annotations.append(widget.annotation)
         
         return applied_annotations
-
-    def _get_annotation_by_id(self, annotation_id):
-        """Helper to get annotation by ID."""
-        for widget in self.annotation_widgets:
-            if widget.annotation.id == annotation_id:
-                return widget.annotation
-        return None
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1435,7 +1138,7 @@ class ExplorerWindow(QMainWindow):
         # Create widgets in __init__ so they're always available
         self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
         self.cluster_settings_widget = ClusterSettingsWidget(self.main_window, self)
-        self.annotation_viewer = AnnotationViewer()
+        self.annotation_viewer = AnnotationViewer(self)  # Pass self as parent
         self.cluster_viewer = ClusterViewer(self)
         
         # Create buttons
@@ -1541,13 +1244,11 @@ class ExplorerWindow(QMainWindow):
             pass  # Signal wasn't connected yet
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
 
-    def get_filtered_annotations(self):
-        """Get annotations that match all conditions."""
-        filtered_annotations = []
-
-        if not hasattr(self.main_window, 'annotation_window') or \
-           not hasattr(self.main_window.annotation_window, 'annotations_dict'):
-            return filtered_annotations
+    def get_filtered_data_items(self):
+        """Get annotations that match all conditions, returned as AnnotationDataItem objects."""
+        data_items = []
+        if not hasattr(self.main_window.annotation_window, 'annotations_dict'):
+            return data_items
 
         # Get current filter conditions
         selected_images = self.annotation_settings_widget.get_selected_images()
@@ -1556,6 +1257,7 @@ class ExplorerWindow(QMainWindow):
         topk_selection = self.annotation_settings_widget.get_topk_selection()
         confidence_operator, confidence_value = self.annotation_settings_widget.get_confidence_condition()
 
+        annotations_to_process = []
         for annotation in self.main_window.annotation_window.annotations_dict.values():
             annotation_matches = True
 
@@ -1643,126 +1345,151 @@ class ExplorerWindow(QMainWindow):
                             annotation_matches = False
 
             if annotation_matches:
-                filtered_annotations.append(annotation)
+                annotations_to_process.append(annotation)
 
         # Ensure all filtered annotations have cropped images
-        if filtered_annotations:
-            # Group annotations by image path to process efficiently, but only for those that need cropping
-            annotations_by_image = {}
-            for annotation in filtered_annotations:
-                # Only process annotations that don't have cropped images
-                if not annotation.cropped_image:
-                    image_path = annotation.image_path
-                    if image_path not in annotations_by_image:
-                        annotations_by_image[image_path] = []
-                    annotations_by_image[image_path].append(annotation)
-            
-            # Only crop annotations if there are any that need cropping
-            if annotations_by_image:
-                progress_bar = ProgressBar(self, "Cropping Image Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(len(annotations_by_image))
-                
-                try:
-                    # Crop annotations for each image using the AnnotationWindow method
-                    # This ensures consistency with how cropped images are generated elsewhere
-                    for image_path, image_annotations in annotations_by_image.items():
-                        # Use the existing crop_annotations method from AnnotationWindow
-                        # This ensures consistency with how cropped images are generated elsewhere
-                        self.annotation_window.crop_annotations(
-                            image_path=image_path, 
-                            annotations=image_annotations, 
-                            return_annotations=False,  # We don't need the return value
-                            verbose=False
-                        )
-                        # Update progress bar
-                        progress_bar.update_progress()
-                        
-                except Exception as e:
-                    print(f"Error cropping annotations: {e}")
-                    
-                finally:
-                    progress_bar.finish_progress()
-                    progress_bar.stop_progress()
-                    progress_bar.close()
+        self._ensure_cropped_images(annotations_to_process)
+        
+        # Wrap in AnnotationDataItem
+        for ann in annotations_to_process:
+            data_items.append(AnnotationDataItem(ann))
 
-        return filtered_annotations
+        return data_items
     
+    def _ensure_cropped_images(self, annotations):
+        """Ensure all provided annotations have a cropped image available."""
+        annotations_by_image = {}
+        for annotation in annotations:
+            # Only process annotations that don't have a cropped image yet
+            if not annotation.cropped_image:
+                image_path = annotation.image_path
+                if image_path not in annotations_by_image:
+                    annotations_by_image[image_path] = []
+                annotations_by_image[image_path].append(annotation)
+        
+        # Only proceed if there are annotations that actually need cropping
+        if annotations_by_image:
+            progress_bar = ProgressBar(self, "Cropping Image Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(annotations_by_image))
+            
+            try:
+                # Crop annotations for each image using the AnnotationWindow method
+                # This ensures consistency with how cropped images are generated elsewhere
+                for image_path, image_annotations in annotations_by_image.items():
+                    self.annotation_window.crop_annotations(
+                        image_path=image_path, 
+                        annotations=image_annotations, 
+                        return_annotations=False,  # We don't need the return value
+                        verbose=False
+                    )
+                    # Update progress bar
+                    progress_bar.update_progress()
+                    
+            except Exception as e:
+                print(f"Error cropping annotations: {e}")
+                
+            finally:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+    
+    def run_clustering_on_items(self, data_items):
+        """
+        Extracts features, runs dimensionality reduction and clustering,
+        and updates the AnnotationDataItem objects in place.
+        """
+        if not data_items:
+            return
+
+        # 1. Get settings from the UI
+        technique = self.cluster_settings_widget.cluster_technique_combo.currentText()
+        n_clusters = self.cluster_settings_widget.n_clusters_spin.value()
+        random_state = self.cluster_settings_widget.random_state_spin.value()
+        
+        # 2. Extract features (MOCK IMPLEMENTATION)
+        # In a real application, this would use a deep learning model.
+        # Here we mock it, ensuring each annotation gets a feature vector.
+        if np is None:
+            print("Warning: numpy/scikit-learn not installed. Using random cluster data.")
+            for item in data_items:
+                item.cluster_x = random.uniform(-2000, 2000)
+                item.cluster_y = random.uniform(-2000, 2000)
+                item.cluster_id = random.randint(0, n_clusters - 1)
+            return
+
+        print("Extracting mock features...")
+        features = []
+        for item in data_items:
+            if not hasattr(item.annotation, 'features'):
+                # Create a mock feature vector
+                item.annotation.features = np.random.rand(1, 128)
+            features.append(item.annotation.features.flatten())
+        
+        features = np.array(features)
+        
+        # 3. Dimensionality Reduction (TSNE/UMAP)
+        print(f"Running {technique}...")
+        if technique == "TSNE" and TSNE:
+            reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1))
+            embedded_features = reducer.fit_transform(features)
+        else: # Default to UMAP or if TSNE fails
+            # UMAP would be used here, but we'll use TSNE as a stand-in for the example
+            reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1))
+            embedded_features = reducer.fit_transform(features)
+            
+        # 4. Clustering (KMeans)
+        print("Running KMeans clustering...")
+        kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+        cluster_labels = kmeans.fit_predict(embedded_features)
+
+        # 5. Update the AnnotationDataItem objects with results
+        # Scale coordinates for better visualization
+        scale_factor = 3000
+        min_x, min_y = np.min(embedded_features, axis=0)
+        max_x, max_y = np.max(embedded_features, axis=0)
+
+        for i, item in enumerate(data_items):
+            # Normalize and scale
+            norm_x = (embedded_features[i, 0] - min_x) / (max_x - min_x) if max_x > min_x else 0
+            norm_y = (embedded_features[i, 1] - min_y) / (max_y - min_y) if max_y > min_y else 0
+            
+            item.cluster_x = norm_x * scale_factor - (scale_factor / 2)
+            item.cluster_y = norm_y * scale_factor - (scale_factor / 2)
+            item.cluster_id = cluster_labels[i]
+
     def refresh_filters(self):
-        """Refresh the display based on current filter conditions."""
-        # Set cursor to busy
+        """Refresh display: filter -> cluster -> update viewers."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # Check if only one image is selected and load it in annotation window
             single_image_path = self.annotation_settings_widget.get_single_selected_image_path()
-            if single_image_path and hasattr(self.main_window, 'image_window'):
-                # Load the single selected image in the annotation window
+            if single_image_path:
                 self.main_window.image_window.load_image_by_path(single_image_path)
             
-            # Get filtered annotations
-            filtered_annotations = self.get_filtered_annotations()
+            # 1. Get filtered annotations as data items
+            data_items = self.get_filtered_data_items()
 
-            # Update annotation viewer
-            if hasattr(self, 'annotation_viewer'):
-                self.annotation_viewer.update_annotations(filtered_annotations)
+            # 2. Run clustering and update the data items in place
+            self.run_clustering_on_items(data_items)
+
+            # 3. Update viewers with the single source of truth
+            self.annotation_viewer.update_annotations(data_items)
+            self.cluster_viewer.update_clusters(data_items)
+            self.cluster_viewer.fit_view_to_points()
+
         finally:
-            # Restore cursor to normal
             QApplication.restoreOverrideCursor()
-
-    def filter_images(self):
-        self.refresh_filters()
-
-    def filter_labels(self):
-        self.refresh_filters()
-
-    def filter_annotations(self):
-        self.refresh_filters()
-
-    def update_table(self):
-        """Legacy method - functionality moved to annotation viewer."""
-        pass
-
-    def update_graphics(self):
-        """Update the cluster graphics view."""
-        # Delegate to cluster viewer
-        if hasattr(self, 'cluster_viewer'):
-            pass        # TODO: Implement clustering visualization in cluster viewer
-
-    def update_scroll_area(self):
-        """Legacy method - functionality moved to annotation viewer."""
-        pass
 
     def on_label_selected_for_preview(self, label):
         """Handle label selection to update preview state."""
         if hasattr(self, 'annotation_viewer') and self.annotation_viewer.selected_widgets:
-            # Check if we're actually changing to a different label
-            selected_annotations = [widget.annotation for widget in self.annotation_viewer.selected_widgets]
-            
-            # Check if all selected annotations already have this label (either as preview or original)
-            all_already_have_label = True
-            for annotation in selected_annotations:
-                current_label = None
-                if annotation.id in self.annotation_viewer.preview_label_assignments:
-                    current_label = self.annotation_viewer.preview_label_assignments[annotation.id]
-                else:
-                    current_label = annotation.label
-                
-                if current_label.id != label.id:
-                    all_already_have_label = False
-                    break
-            
-            # Only apply preview if we're actually changing the label
-            if not all_already_have_label:
-                # Apply preview label to selected annotations
-                self.annotation_viewer.apply_preview_label_to_selected(label)
-                # Update button states
-                self.update_button_states()
+            self.annotation_viewer.apply_preview_label_to_selected(label)
+            self.update_button_states()
 
     def clear_preview_changes(self):
         """Clear all preview changes and revert to original labels."""
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
-            # Update button states
             self.update_button_states()
             print("Cleared all preview changes")
 
@@ -1773,47 +1500,24 @@ class ExplorerWindow(QMainWindow):
         self.clear_preview_button.setEnabled(has_changes)
         self.apply_button.setEnabled(has_changes)
         
-        # Update button tooltips with summary
-        if has_changes:
-            summary = self.annotation_viewer.get_preview_changes_summary()
-            self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
-            self.apply_button.setToolTip(f"Apply changes - {summary}")
-        else:
-            self.clear_preview_button.setToolTip("Clear all preview changes and revert to original labels")
-            self.apply_button.setToolTip("Apply changes")
+        summary = self.annotation_viewer.get_preview_changes_summary()
+        self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
+        self.apply_button.setToolTip(f"Apply changes - {summary}")
 
     def apply(self):
         """Apply any modifications made in the Explorer to the actual annotations."""
         try:
-            # Apply preview changes permanently first
             applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
-            
             if applied_annotations:
-                # Track which images need to be updated
-                affected_images = set()
-                for annotation in applied_annotations:
-                    affected_images.add(annotation.image_path)
-
-                # Update image annotations for all affected images
+                affected_images = {ann.image_path for ann in applied_annotations}
                 for image_path in affected_images:
                     self.image_window.update_image_annotations(image_path)
-
-                # Reload annotations in the annotation window
                 self.annotation_window.load_annotations()
-
-                # Refresh the filtered view
                 self.refresh_filters()
-
-                # Clear selection in the annotation viewer
                 self.annotation_viewer.clear_selection()
-
-                # Update button states
                 self.update_button_states()
-
-                # Optionally print a message
                 print(f"Applied changes to {len(applied_annotations)} annotation(s)")
             else:
                 print("No preview changes to apply")
-
         except Exception as e:
             print(f"Error applying modifications: {e}")
