@@ -18,11 +18,13 @@ import warnings
 import os
 
 try:
+    from sklearn.preprocessing import StandardScaler
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
     from umap import UMAP  
 except ImportError:
     print("Warning: sklearn or umap not installed. Some features may be unavailable.")
+    StandardScaler = None
     PCA = None
     TSNE = None
     UMAP = None  
@@ -1673,23 +1675,33 @@ class ExplorerWindow(QMainWindow):
             return None
 
         try:
+            # Scale features before dimensionality reduction
+            if StandardScaler is not None:
+                scaler = StandardScaler()
+                features_scaled = scaler.fit_transform(features)
+                print(f"Features scaled - original range: [{features.min():.3f}, {features.max():.3f}], "
+                    f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
+            else:
+                features_scaled = features
+                print("StandardScaler not available, using unscaled features")
+            
             if technique == "PCA":
                 reducer = PCA(n_components=2, random_state=random_state)
-                return reducer.fit_transform(features)
+                return reducer.fit_transform(features_scaled)
                 
             elif technique == "UMAP":
                 reducer = UMAP(n_components=2, 
                                random_state=random_state, 
-                               n_neighbors=min(15, len(features) - 1))
+                               n_neighbors=min(15, len(features_scaled) - 1))
                 
-                return reducer.fit_transform(features)
+                return reducer.fit_transform(features_scaled)
             
             else:  # Default to TSNE
                 reducer = TSNE(n_components=2, 
                                random_state=random_state, 
-                               perplexity=min(30, len(features) - 1))
+                               perplexity=min(30, len(features_scaled) - 1))
                 
-                return reducer.fit_transform(features)
+                return reducer.fit_transform(features_scaled)
             
         except Exception as e:
             print(f"Error during {technique} dimensionality reduction: {e}")
