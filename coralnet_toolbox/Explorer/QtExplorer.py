@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, p
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
-                             QMainWindow, QSplitter, QGroupBox, QFormLayout, QTabWidget,
+                             QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
                              QListWidget, QDoubleSpinBox, QApplication, QStyle)
 
@@ -67,9 +67,6 @@ class AnnotationDataItem:
     @property
     def effective_color(self):
         """Get the effective color for this annotation."""
-        # Special case for Review label (id == "-1")
-        if self.effective_label.id == "-1":
-            return QColor("white")
         return self.effective_label.color
 
     @property
@@ -205,16 +202,24 @@ class AnnotationImageWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Base the pen on the shared data_item's state
-        color = self.data_item.effective_color
+        # Get the label that is currently active (which could be a preview)
+        effective_label = self.data_item.effective_label
         
+        # Check if the active label is the special "Review" label (id == "-1")
+        if effective_label and effective_label.id == "-1":
+            # If it is, ALWAYS use a black pen for visibility against the white background.
+            pen_color = QColor("black")
+        else:
+            # Otherwise, use the effective color from the data item.
+            pen_color = self.data_item.effective_color
+
         if self.is_selected():
-            pen = QPen(color, ANNOTATION_WIDTH)  
+            pen = QPen(pen_color, ANNOTATION_WIDTH)
             pen.setStyle(Qt.CustomDashLine)
             pen.setDashPattern([2, 3])
             pen.setDashOffset(self.animation_offset)
         else:
-            pen = QPen(color, ANNOTATION_WIDTH)  
+            pen = QPen(pen_color, ANNOTATION_WIDTH)  
             pen.setStyle(Qt.SolidLine)
         
         painter.setPen(pen)
@@ -376,10 +381,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
             # Convert right-click to left-click for panning
             left_event = event.__class__(event.type(), 
-                                        event.localPos(), 
-                                        Qt.LeftButton, 
-                                        Qt.LeftButton, 
-                                        event.modifiers())
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
             QGraphicsView.mousePressEvent(self.graphics_view, left_event)
             return
         elif event.button() == Qt.LeftButton:
@@ -396,10 +401,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         if event.button() == Qt.RightButton:
             # Handle right-click panning release
             left_event = event.__class__(event.type(), 
-                                        event.localPos(), 
-                                        Qt.LeftButton, 
-                                        Qt.LeftButton, 
-                                        event.modifiers())
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             return
@@ -416,10 +421,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         if event.buttons() == Qt.RightButton:
             # Convert right-click drag to left-click for panning
             left_event = event.__class__(event.type(), 
-                                        event.localPos(), 
-                                        Qt.LeftButton, 
-                                        Qt.LeftButton, 
-                                        event.modifiers())
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
             return
         else:
@@ -556,19 +561,19 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         else:
             # If no points, reset to default view
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
-          
+            
 
 class AnnotationViewer(QScrollArea):
-    """Scrollable and tabbed widget for displaying annotation image crops with selection support."""
+    """Scrollable grid widget for displaying annotation image crops with selection support."""
     
-    selection_changed = pyqtSignal(list)
-    preview_changed = pyqtSignal(list)
+    # Define signals to report changes to the ExplorerWindow
+    selection_changed = pyqtSignal(list)  # list of changed annotation IDs
+    preview_changed = pyqtSignal(list)   # list of annotation IDs with new previews
     
     def __init__(self, parent=None):
         super(AnnotationViewer, self).__init__(parent)
         self.annotation_widgets_by_id = {}
-        self.selected_widgets = []          # Holds the LIVE selection, updated instantly.
-        self.selected_tab_working_set = []  # A STATIC "working set" for the Selected tab's view.
+        self.selected_widgets = []
         self.last_selected_index = -1
         self.current_widget_size = 96
         
@@ -600,46 +605,30 @@ class AnnotationViewer(QScrollArea):
         self.size_slider.setValue(96)
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
-        self.size_slider.valueChanged.connect(self.on_size_value_changed) # Updates the label
-        self.size_slider.sliderReleased.connect(self.on_size_slider_released) # Rebuilds the grid
+        self.size_slider.valueChanged.connect(self.on_size_changed)
         header_layout.addWidget(self.size_slider)
 
         self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
         header_layout.addWidget(self.size_value_label)
+        
         main_layout.addLayout(header_layout)
         
-        self.tab_widget = QTabWidget()
-        self.tab_widget.currentChanged.connect(self.on_tab_changed)
-        main_layout.addWidget(self.tab_widget)
+        self.content_widget = QWidget()
+        self.grid_layout = QGridLayout(self.content_widget)
+        self.grid_layout.setSpacing(5)
 
-        all_tab_page = QWidget()
-        all_tab_page_layout = QVBoxLayout(all_tab_page)
-        all_tab_page_layout.setContentsMargins(0, 0, 0, 0)
-        self.all_tab_scroll = QScrollArea()
-        self.all_tab_scroll.setWidgetResizable(True)
-        all_content_widget = QWidget()
-        self.all_grid_layout = QGridLayout(all_content_widget)
-        self.all_grid_layout.setSpacing(5)
-        self.all_tab_scroll.setWidget(all_content_widget)
-        all_tab_page_layout.addWidget(self.all_tab_scroll)
-        self.tab_widget.addTab(all_tab_page, "All")
-
-        selected_tab_page = QWidget()
-        selected_tab_page_layout = QVBoxLayout(selected_tab_page)
-        selected_tab_page_layout.setContentsMargins(0, 0, 0, 0)
-        self.selected_tab_scroll = QScrollArea()
-        self.selected_tab_scroll.setWidgetResizable(True)
-        selected_content_widget = QWidget()
-        self.selected_grid_layout = QGridLayout(selected_content_widget)
-        self.selected_grid_layout.setSpacing(5)
-        self.selected_tab_scroll.setWidget(selected_content_widget)
-        selected_tab_page_layout.addWidget(self.selected_tab_scroll)
-        self.tab_widget.addTab(selected_tab_page, "Selected (0)")
+        content_scroll = QScrollArea()
+        content_scroll.setWidgetResizable(True)
+        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        content_scroll.setWidget(self.content_widget)
         
+        main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
 
     def resizeEvent(self, event):
+        """Handle resize events to recalculate grid layout."""
         super().resizeEvent(event)
         if hasattr(self, 'annotation_widgets_by_id') and self.annotation_widgets_by_id:
             self.recalculate_grid_layout()
@@ -724,95 +713,45 @@ class AnnotationViewer(QScrollArea):
             self.mouse_pressed_on_widget = False
             return
         super().mouseReleaseEvent(event)
-        
-    def on_size_value_changed(self, value):
-        """Updates the size label text as the slider moves."""
+            
+    def on_size_changed(self, value):
+        """Handle slider value change to resize annotation widgets."""
         if value % 2 != 0:
             value -= 1
+        self.current_widget_size = value
         self.size_value_label.setText(str(value))
-
-    def on_size_slider_released(self):
-        """
-        Performs the expensive grid rebuild only ONCE, after the user is done.
-        """
-        new_size = self.size_slider.value()
-        if new_size % 2 != 0:
-            new_size -= 1
         
-        self.current_widget_size = new_size
         for widget in self.annotation_widgets_by_id.values():
-            widget.update_size(new_size)
+            widget.update_size(value)
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
-        """
-        The "Selected" tab now populates its grid from the static working set,
-        not the live selection list. This prevents items from disappearing.
-        """
-        current_index = self.tab_widget.currentIndex()
-        
-        if current_index == 0:  # "All" tab is active
-            grid_layout = self.all_grid_layout
-            scroll_area = self.all_tab_scroll
-            widgets_to_display = list(self.annotation_widgets_by_id.values())
-        else:  # "Selected" tab is active
-            grid_layout = self.selected_grid_layout
-            scroll_area = self.selected_tab_scroll
-            # Use the static working set for display!
-            widgets_to_display = self.selected_tab_working_set
-
-        while grid_layout.count():
-            child = grid_layout.takeAt(0)
-            if child.widget():
-                child.widget().setParent(None)
-
+        """Recalculate the grid layout based on current widget width."""
         if not self.annotation_widgets_by_id:
             return
-
-        available_width = scroll_area.viewport().width() - 20
-        widget_width = self.current_widget_size + grid_layout.spacing()
+            
+        available_width = self.viewport().width() - 20
+        widget_width = self.current_widget_size + self.grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
-        for i, widget in enumerate(widgets_to_display):
-            grid_layout.addWidget(widget, i // cols, i % cols)
+        for i, widget in enumerate(self.annotation_widgets_by_id.values()):
+            self.grid_layout.addWidget(widget, i // cols, i % cols)
 
     def update_annotations(self, data_items):
-        """Update displayed annotations, clearing old state including the working set."""
+        """Update the displayed annotations from a list of AnnotationDataItems."""
         for widget in self.annotation_widgets_by_id.values():
-            widget.setParent(None)
             widget.deleteLater()
         self.annotation_widgets_by_id.clear()
         self.selected_widgets.clear()
-        self.selected_tab_working_set = [] # Clear the working set.
         self.last_selected_index = -1
 
         for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
-                data_item, self.current_widget_size, annotation_viewer=self)
+                data_item, self.current_widget_size, 
+                annotation_viewer=self)
             self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
         
         self.recalculate_grid_layout()
-        self.update_selected_tab_title()
-        
-    @pyqtSlot(int)
-    def on_tab_changed(self, index):
-        """
-        When the tab changes, we now wrap the logic in setUpdatesEnabled
-        to reduce flicker.
-        """
-        self.tab_widget.setUpdatesEnabled(False)
-        
-        if index == 1:
-            self.selected_tab_working_set = list(self.selected_widgets)
-        else:
-            self.selected_tab_working_set = []
-
-        self.recalculate_grid_layout()
-        self.tab_widget.setUpdatesEnabled(True)
-
-    def update_selected_tab_title(self):
-        count = len(self.selected_widgets)
-        self.tab_widget.setTabText(1, f"Selected ({count})")
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
@@ -870,28 +809,23 @@ class AnnotationViewer(QScrollArea):
             self.selection_changed.emit(changed_ids)
 
     def select_widget(self, widget):
-        """
-        Selection logic no longer triggers a grid refresh. It only updates the
-        model and the selected count, allowing for stable sub-selection.
-        """
+        """Select a widget, update the data_item, and return True if state changed."""
         if not widget.is_selected():
-            widget.set_selected(True)
-            widget.data_item.set_selected(True)
+            widget.set_selected(True) # This updates visuals
+            widget.data_item.set_selected(True) # This updates the model
             self.selected_widgets.append(widget)
             self.update_label_window_selection()
-            self.update_selected_tab_title() # Still update the count.
             return True
         return False
 
     def deselect_widget(self, widget):
-        """Selection logic no longer triggers a grid refresh."""
+        """Deselect a widget, update the data_item, and return True if state changed."""
         if widget.is_selected():
             widget.set_selected(False)
             widget.data_item.set_selected(False)
             if widget in self.selected_widgets:
                 self.selected_widgets.remove(widget)
             self.update_label_window_selection()
-            self.update_selected_tab_title() # Still update the count.
             return True
         return False
 
@@ -923,7 +857,11 @@ class AnnotationViewer(QScrollArea):
         selected_data_items = [widget.data_item for widget in self.selected_widgets]
         
         first_effective_label = selected_data_items[0].effective_label
-        all_same_current_label = all(item.effective_label.id == first_effective_label.id for item in selected_data_items)
+        all_same_current_label = True
+        for item in selected_data_items:
+            if item.effective_label.id != first_effective_label.id:
+                all_same_current_label = False
+                break
         
         if all_same_current_label:
             label_window.set_active_label(first_effective_label)
@@ -939,22 +877,22 @@ class AnnotationViewer(QScrollArea):
         return [widget.annotation for widget in self.selected_widgets]
     
     def render_selection_from_ids(self, selected_ids):
-        """Handles selection from external sources like the EmbeddingViewer."""
+        """Update the visual selection of widgets based on a set of IDs from the controller."""
+        # Block signals temporarily to prevent cascade updates
         self.setUpdatesEnabled(False)
+        
         try:
             for ann_id, widget in self.annotation_widgets_by_id.items():
-                widget.set_selected(ann_id in selected_ids)
+                is_selected = ann_id in selected_ids
+                widget.set_selected(is_selected)
             
+            # Resync internal list of selected widgets
             self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
-            self.update_selected_tab_title()
             
-            # If the selection change happens while the user is on the "Selected" tab,
-            # we must update the working set and refresh the view.
-            if self.tab_widget.currentIndex() == 1:
-                self.selected_tab_working_set = list(self.selected_widgets)
-                self.recalculate_grid_layout()
         finally:
             self.setUpdatesEnabled(True)
+        
+        # Update label window once at the end
         self.update_label_window_selection()
     
     def apply_preview_label_to_selected(self, preview_label):
@@ -1327,7 +1265,8 @@ class EmbeddingSettingsWidget(QGroupBox):
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
         
-        # Model selection dropdown updated for feature selection
+        # Model selection dropdown (editable) - at the top
+       # Model selection dropdown updated for feature selection
         self.model_combo = QComboBox()
         self.model_combo.setEditable(False) # Prevent custom text
         self.model_combo.addItems([
@@ -1747,7 +1686,7 @@ class ExplorerWindow(QMainWindow):
                 scaler = StandardScaler()
                 features_scaled = scaler.fit_transform(features)
                 print(f"Features scaled - original range: [{features.min():.3f}, {features.max():.3f}], "
-                      f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
+                    f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
             else:
                 features_scaled = features
                 print("StandardScaler not available, using unscaled features")
