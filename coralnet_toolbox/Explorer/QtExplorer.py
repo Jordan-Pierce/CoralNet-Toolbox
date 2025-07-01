@@ -1,6 +1,9 @@
-from coralnet_toolbox.Icons import get_icon
+import numpy as np
 
-from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter, QImage
+from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.utilities import pixmap_to_numpy
+
+from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage
 from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, pyqtSlot
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -13,17 +16,15 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 import warnings
 import os
-import random
 
 try:
+    from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
-    from sklearn.cluster import KMeans
-    import numpy as np
     from umap import UMAP  
 except ImportError:
+    print("Warning: sklearn or umap not installed. Some features may be unavailable.")
+    PCA = None
     TSNE = None
-    KMeans = None
-    np = None
     UMAP = None  
 
 
@@ -47,11 +48,11 @@ POINT_WIDTH = 3
 class AnnotationDataItem:
     """Holds annotation information for consistent display across viewers."""
 
-    def __init__(self, annotation, cluster_x=None, cluster_y=None, cluster_id=None):
+    def __init__(self, annotation, embedding_x=None, embedding_y=None, embedding_id=None):
         self.annotation = annotation
-        self.cluster_x = cluster_x if cluster_x is not None else 0.0
-        self.cluster_y = cluster_y if cluster_y is not None else 0.0
-        self.cluster_id = cluster_id if cluster_id is not None else 0
+        self.embedding_x = embedding_x if embedding_x is not None else 0.0
+        self.embedding_y = embedding_y if embedding_y is not None else 0.0
+        self.embedding_id = embedding_id if embedding_id is not None else 0
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
@@ -108,7 +109,7 @@ class AnnotationDataItem:
             'confidence': self.get_effective_confidence(),
             'type': type(self.annotation).__name__,
             'image': os.path.basename(self.annotation.image_path),
-            'cluster_id': self.cluster_id,
+            'embedding_id': self.embedding_id,
             'color': self.effective_color
         }
 
@@ -242,7 +243,7 @@ class AnnotationImageWidget(QWidget):
         super().mousePressEvent(event)
         
 
-class ClusterPointItem(QGraphicsEllipseItem):
+class EmbeddingPointItem(QGraphicsEllipseItem):
     """
     A custom QGraphicsEllipseItem that prevents the default selection
     rectangle from being drawn, and dynamically gets its color from the
@@ -258,7 +259,7 @@ class ClusterPointItem(QGraphicsEllipseItem):
 
         # Remove the 'State_Selected' flag to prevent the default box
         option.state &= ~QStyle.State_Selected
-        super(ClusterPointItem, self).paint(painter, option, widget)
+        super(EmbeddingPointItem, self).paint(painter, option, widget)
         
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -266,8 +267,8 @@ class ClusterPointItem(QGraphicsEllipseItem):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ClusterViewer(QWidget):  # Change inheritance to QWidget
-    """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
+class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
+    """Custom QGraphicsView for interactive embedding visualization with zooming, panning, and selection."""
     
     # Define signal to report selection changes
     selection_changed = pyqtSignal(list)  # list of all currently selected annotation IDs
@@ -278,7 +279,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
         
         # Initialize as a QWidget
-        super(ClusterViewer, self).__init__(parent)
+        super(EmbeddingViewer, self).__init__(parent)
         
         # Create the actual graphics view
         self.graphics_view = QGraphicsView(self.graphics_scene)
@@ -289,7 +290,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_view.setMinimumHeight(200)
         
         self.explorer_window = parent
-        self.points_by_id = {}  # Map annotation ID to cluster point
+        self.points_by_id = {}  # Map annotation ID to embedding point
         self.animation_offset = 0
         
         self.previous_selection_ids = set()  # Track previous selection to detect changes
@@ -332,7 +333,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         layout.addWidget(self.graphics_view)
         
     def reset_view(self):
-        """Reset the view to fit all cluster points."""
+        """Reset the view to fit all embedding points."""
         self.fit_view_to_points()
 
     # Delegate graphics view methods
@@ -440,17 +441,17 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
 
-    def update_clusters(self, data_items):
-        """Update the cluster visualization with new data.
-        
+    def update_embeddings(self, data_items):
+        """Update the embedding visualization with new data.
+
         Args:
             data_items: List of AnnotationDataItem objects.
         """
         self.clear_points()
         
         for item in data_items:
-            point = ClusterPointItem(0, 0, POINT_SIZE, POINT_SIZE)
-            point.setPos(item.cluster_x, item.cluster_y)
+            point = EmbeddingPointItem(0, 0, POINT_SIZE, POINT_SIZE)
+            point.setPos(item.embedding_x, item.embedding_y)
             
             # No need to set initial brush - paint() will handle it
             point.setPen(QPen(QColor("black"), POINT_WIDTH))
@@ -465,7 +466,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
             self.points_by_id[item.annotation.id] = point
             
     def clear_points(self):
-        """Clear all cluster points from the scene."""
+        """Clear all embedding points from the scene."""
         for point in self.points_by_id.values():
             self.graphics_scene.removeItem(point)
         self.points_by_id.clear()
@@ -521,7 +522,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         self.animation_offset = (self.animation_offset + 1) % 20
         
         # This logic remains the same. It applies the custom pen to the selected items.
-        # Because the items are ClusterPointItem, the default selection box won't be drawn.
+        # Because the items are EmbeddingPointItem, the default selection box won't be drawn.
         for item in selected_items:
             original_color = item.brush().color()
             darker_color = original_color.darker(150)
@@ -547,7 +548,7 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         self.on_selection_changed()
 
     def fit_view_to_points(self):
-        """Fit the view to show all cluster points."""
+        """Fit the view to show all embedding points."""
         if self.points_by_id:
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
@@ -884,7 +885,7 @@ class AnnotationViewer(QScrollArea):
         self.update_label_window_selection()
     
     def apply_preview_label_to_selected(self, preview_label):
-        """Apply a preview label and emit a signal for the cluster view to update."""
+        """Apply a preview label and emit a signal for the embedding view to update."""
         if not self.selected_widgets or not preview_label:
             return
 
@@ -1238,11 +1239,11 @@ class AnnotationSettingsWidget(QGroupBox):
         return operator, value
     
     
-class ClusterSettingsWidget(QGroupBox):
-    """Widget containing settings with tabs for models and clustering."""
+class EmbeddingSettingsWidget(QGroupBox):
+    """Widget containing settings with tabs for models and embedding."""
 
     def __init__(self, main_window, parent=None):
-        super(ClusterSettingsWidget, self).__init__("Cluster Settings", parent)
+        super(EmbeddingSettingsWidget, self).__init__("Embedding Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
         self.loaded_model = None
@@ -1268,31 +1269,26 @@ class ClusterSettingsWidget(QGroupBox):
         self.model_combo.setCurrentIndex(0)  # Default to simple color
         form_layout.addRow("Feature Model:", self.model_combo)
 
-        # Cluster technique dropdown
-        self.cluster_technique_combo = QComboBox()
-        self.cluster_technique_combo.addItems(["TSNE", "UMAP"])
-        form_layout.addRow("Technique:", self.cluster_technique_combo)
-
-        self.n_clusters_spin = QSpinBox()
-        self.n_clusters_spin.setRange(2, 20)
-        self.n_clusters_spin.setValue(5)
-        form_layout.addRow("Number of Clusters:", self.n_clusters_spin)
+        # Embedding technique dropdown
+        self.embedding_technique_combo = QComboBox()
+        self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
+        form_layout.addRow("Technique:", self.embedding_technique_combo)
 
         self.random_state_spin = QSpinBox()
         self.random_state_spin.setRange(0, 1000)
         self.random_state_spin.setValue(42)
         form_layout.addRow("Random State:", self.random_state_spin)
 
-        # Apply clustering button
-        self.apply_cluster_button = QPushButton("Apply Clustering")
-        self.apply_cluster_button.clicked.connect(self.apply_clustering)
-        form_layout.addRow("", self.apply_cluster_button)
+        # Apply embedding button
+        self.apply_embedding_button = QPushButton("Apply Embedding")
+        self.apply_embedding_button.clicked.connect(self.apply_embedding)
+        form_layout.addRow("", self.apply_embedding_button)
 
         layout.addLayout(form_layout)
 
-    def apply_clustering(self):
-        """Apply clustering with the current settings."""
-        # This button now just triggers a full refresh, which includes clustering.
+    def apply_embedding(self):
+        """Apply embedding with the current settings."""
+        # This button now just triggers a full refresh, which includes embedding.
         # The main logic is in the ExplorerWindow.refresh_filters() method.
         if self.explorer_window:
             self.explorer_window.refresh_filters()
@@ -1322,17 +1318,17 @@ class ExplorerWindow(QMainWindow):
         # Create a central widget and main layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)      
+        self.main_layout = QVBoxLayout(self.central_widget)
         # Create a left panel widget and layout for the re-parented LabelWindow
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
-        
+
         # Create widgets in __init__ so they're always available
         self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
-        self.cluster_settings_widget = ClusterSettingsWidget(self.main_window, self)
-        self.annotation_viewer = AnnotationViewer(self)  # Pass self as parent
-        self.cluster_viewer = ClusterViewer(self)
-        
+        self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
+        self.annotation_viewer = AnnotationViewer(self) 
+        self.embedding_viewer = EmbeddingViewer(self)
+
         # Create buttons
         self.clear_preview_button = QPushButton('Clear Preview', self)
         self.clear_preview_button.clicked.connect(self.clear_preview_changes)
@@ -1354,22 +1350,22 @@ class ExplorerWindow(QMainWindow):
 
     def closeEvent(self, event):
         # Stop any running timers to prevent errors during cleanup
-        if hasattr(self, 'cluster_viewer') and self.cluster_viewer:
-            if hasattr(self.cluster_viewer, 'animation_timer') and self.cluster_viewer.animation_timer:
-                self.cluster_viewer.animation_timer.stop()
-                
+        if hasattr(self, 'embedding_viewer') and self.embedding_viewer:
+            if hasattr(self.embedding_viewer, 'animation_timer') and self.embedding_viewer.animation_timer:
+                self.embedding_viewer.animation_timer.stop()
+
         # Clear any preview states before closing
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
-        
+
         # Re-enable the main window before closing
         if self.main_window:
             self.main_window.setEnabled(True)
-        
+
         # Move the label_window back to the main_window
         if hasattr(self.main_window, 'explorer_closed'):
             self.main_window.explorer_closed()
-        
+
         # Clear the reference in the main_window
         self.main_window.explorer_window = None
         event.accept()
@@ -1383,41 +1379,41 @@ class ExplorerWindow(QMainWindow):
 
         # Top section: Conditions and Settings side by side
         top_layout = QHBoxLayout()
-        
+
         # Add existing widgets to layout
-        top_layout.addWidget(self.annotation_settings_widget, 2)  # Give more space to conditions
-        top_layout.addWidget(self.cluster_settings_widget, 1)  # Less space for settings
-        
+        top_layout.addWidget(self.annotation_settings_widget, 2)  # Give annotation settings more space
+        top_layout.addWidget(self.embedding_settings_widget, 1)   # Add embedding settings to the right
+
         # Create container widget for top layout
         top_container = QWidget()
         top_container.setLayout(top_layout)
         self.main_layout.addWidget(top_container)
 
-        # Middle section: Annotation Viewer (left) and Cluster Viewer (right)
+        # Middle section: Annotation Viewer (left) and Embedding Viewer (right)
         middle_splitter = QSplitter(Qt.Horizontal)
-        
+
         # Wrap annotation viewer in a group box
         annotation_group = QGroupBox("Annotation Viewer")
         annotation_layout = QVBoxLayout(annotation_group)
         annotation_layout.addWidget(self.annotation_viewer)
         middle_splitter.addWidget(annotation_group)
-        
-        # Wrap cluster viewer in a group box
-        cluster_group = QGroupBox("Cluster Viewer")
-        cluster_layout = QVBoxLayout(cluster_group)
-        cluster_layout.addWidget(self.cluster_viewer)
-        middle_splitter.addWidget(cluster_group)
+
+        # Wrap embedding viewer in a group box
+        embedding_group = QGroupBox("Embedding Viewer")
+        embedding_layout = QVBoxLayout(embedding_group)
+        embedding_layout.addWidget(self.embedding_viewer)
+        middle_splitter.addWidget(embedding_group)
 
         # Set splitter proportions (annotation viewer wider)
         middle_splitter.setSizes([700, 300])
-        
+
         # Add middle section to main layout with stretch factor
         self.main_layout.addWidget(middle_splitter, 1)
-        
+
         # Note: LabelWindow will be re-parented here by MainWindow.open_explorer_window()
         # The LabelWindow will be added to self.left_layout at index 1 by the MainWindow
         self.main_layout.addWidget(self.label_window)
-        
+
         # Bottom control buttons
         self.buttons_layout = QHBoxLayout()
         # Add stretch to push buttons to the right
@@ -1433,45 +1429,44 @@ class ExplorerWindow(QMainWindow):
         # Set default condition to current image and refresh filters
         self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
-        
+
         # Connect label selection to preview updates (only connect once)
         try:
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
         except TypeError:
             pass  # Signal wasn't connected yet
-        
+
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
         self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
         self.annotation_viewer.preview_changed.connect(self.on_preview_changed)
-        self.cluster_viewer.selection_changed.connect(self.on_cluster_view_selection_changed)
-        
+        self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
+
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
-        """A selection was made in the AnnotationViewer, so update the ClusterViewer."""
-        print(f"Syncing selection from Annotation View to Cluster View for {len(changed_ann_ids)} items.")
+        """A selection was made in the AnnotationViewer, so update the EmbeddingViewer."""
+        print(f"Syncing selection from Annotation View to Embedding View for {len(changed_ann_ids)} items.")
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
-        self.cluster_viewer.render_selection_from_ids(all_selected_ids)
+        self.embedding_viewer.render_selection_from_ids(all_selected_ids)
         self.update_label_window_selection() # Keep label window in sync
 
     @pyqtSlot(list)
-    def on_cluster_view_selection_changed(self, all_selected_ann_ids):
-        """A selection was made in the ClusterViewer, so update the AnnotationViewer."""
-        print(f"Syncing selection from Cluster View to Annotation View for {len(all_selected_ann_ids)} items.")
+    def on_embedding_view_selection_changed(self, all_selected_ann_ids):
+        """A selection was made in the EmbeddingViewer, so update the AnnotationViewer."""
+        print(f"Syncing selection from Embedding View to Annotation View for {len(all_selected_ann_ids)} items.")
         self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
         self.update_label_window_selection() # Keep label window in sync
 
     @pyqtSlot(list)
     def on_preview_changed(self, changed_ann_ids):
-        """A preview color was changed in the AnnotationViewer, so update the ClusterViewer points."""
+        """A preview color was changed in the AnnotationViewer, so update the EmbeddingViewer points."""
         print(f"Syncing preview color change for {len(changed_ann_ids)} items.")
         for ann_id in changed_ann_ids:
-            point = self.cluster_viewer.points_by_id.get(ann_id)
+            point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
                 point.update()  # Force the point to repaint itself
 
     def update_label_window_selection(self):
         """Update the label window based on the selection in the annotation viewer."""
-        # This logic can now be simpler as it just reads the state from the annotation_viewer
         self.annotation_viewer.update_label_window_selection()
 
     def get_filtered_data_items(self):
@@ -1632,12 +1627,8 @@ class ExplorerWindow(QMainWindow):
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
-                qimage = pixmap.toImage().convertToFormat(QImage.Format_RGB888)
-                width, height = qimage.width(), qimage.height()
-                
-                ptr = qimage.bits()
-                ptr.setsize(height * width * 3)
-                arr = np.array(ptr).reshape((height, width, 3))
+                # Convert QPixmap to numpy array
+                arr = pixmap_to_numpy(pixmap)
                 
                 mean_color = np.mean(arr, axis=(0, 1))
                 features.append(mean_color)
@@ -1664,7 +1655,7 @@ class ExplorerWindow(QMainWindow):
         Dispatcher method to call the appropriate feature extraction function
         based on the user's selection in the UI.
         """
-        model_name = self.cluster_settings_widget.model_combo.currentText()
+        model_name = self.embedding_settings_widget.model_combo.currentText()
 
         if model_name == "Simple Color (Mean RGB)":
             return self._extract_rgb_features(data_items)
@@ -1675,97 +1666,90 @@ class ExplorerWindow(QMainWindow):
             return np.array([]), []
 
     def _run_dimensionality_reduction(self, features, technique, random_state):
-        """Runs UMAP or t-SNE on the feature matrix."""
+        """Runs PCA, UMAP or t-SNE on the feature matrix."""
         print(f"Running {technique} on {len(features)} items...")
         if len(features) <= 1:
             print("Not enough data points for dimensionality reduction.")
             return None
 
         try:
-            if technique == "UMAP":
-                reducer = UMAP(n_components=2, random_state=random_state, n_neighbors=min(15, len(features)-1))
+            if technique == "PCA":
+                reducer = PCA(n_components=2, random_state=random_state)
                 return reducer.fit_transform(features)
+                
+            elif technique == "UMAP":
+                reducer = UMAP(n_components=2, 
+                               random_state=random_state, 
+                               n_neighbors=min(15, len(features) - 1))
+                
+                return reducer.fit_transform(features)
+            
             else:  # Default to TSNE
-                reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1), n_init='auto')
+                reducer = TSNE(n_components=2, 
+                               random_state=random_state, 
+                               perplexity=min(30, len(features) - 1))
+                
                 return reducer.fit_transform(features)
+            
         except Exception as e:
             print(f"Error during {technique} dimensionality reduction: {e}")
             return None
 
-    def _run_clustering(self, embedded_features, n_clusters, random_state):
-        """Runs KMeans clustering on the embedded features."""
-        print("Running KMeans clustering...")
-        
-        actual_n_clusters = min(n_clusters, len(embedded_features))
-        if actual_n_clusters < 2:
-            print("Not enough data for multiple clusters. Assigning all to cluster 0.")
-            return np.zeros(len(embedded_features), dtype=int)
-            
-        kmeans = KMeans(n_clusters=actual_n_clusters, random_state=random_state, n_init=10)
-        return kmeans.fit_predict(embedded_features)
-
-    def _update_data_items(self, data_items, embedded_features, cluster_labels):
-        """Updates AnnotationDataItem objects with cluster results."""
+    def _update_data_items_with_embedding(self, data_items, embedded_features):
+        """Updates AnnotationDataItem objects with embedding results."""
         scale_factor = 4000
         min_vals = np.min(embedded_features, axis=0)
         max_vals = np.max(embedded_features, axis=0)
         range_vals = max_vals - min_vals
 
         for i, item in enumerate(data_items):
+            # Normalize coordinates for consistent display
             norm_x = (embedded_features[i, 0] - min_vals[0]) / range_vals[0] if range_vals[0] > 0 else 0.5
             norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
             
-            item.cluster_x = (norm_x * scale_factor) - (scale_factor / 2)
-            item.cluster_y = (norm_y * scale_factor) - (scale_factor / 2)
-            item.cluster_id = cluster_labels[i]
+            # Scale and center the points in the view
+            item.embedded_x = (norm_x * scale_factor) - (scale_factor / 2)
+            item.embedded_y = (norm_y * scale_factor) - (scale_factor / 2)
 
-    def run_clustering_on_items(self, data_items):
-        """Orchestrates the new, modular clustering pipeline."""
+    def run_embedding_pipeline(self, data_items):
+        """Orchestrates the feature extraction and dimensionality reduction pipeline."""
         if not data_items:
-            print("No items to cluster.")
+            print("No items to process.")
             return
 
-        technique = self.cluster_settings_widget.cluster_technique_combo.currentText()
-        if np is None or KMeans is None or (technique == 'TSNE' and TSNE is None) or (technique == 'UMAP' and UMAP is None):
+        technique = self.embedding_settings_widget.embedding_technique_combo.currentText()
+        if (technique == 'TSNE' and TSNE is None) or (technique == 'UMAP' and UMAP is None):
             print(f"Warning: Required library for {technique} not installed.")
             return
 
-        # 1. Extract Features (using the new dispatcher)
+        # 1. Extract Features
         features, valid_data_items = self._extract_features(data_items)
         if not valid_data_items:
-            print("No valid features could be extracted. Aborting clustering.")
-            # Clear cluster view if feature extraction fails
-            self.cluster_viewer.clear_points()
+            print("No valid features could be extracted. Aborting embedding.")
+            self.embedding_viewer.clear_points()
             return
 
         # 2. Dimensionality Reduction
-        n_clusters = self.cluster_settings_widget.n_clusters_spin.value()
-        random_state = self.cluster_settings_widget.random_state_spin.value()
+        random_state = self.embedding_settings_widget.random_state_spin.value()
         embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
         if embedded_features is None:
+            self.embedding_viewer.clear_points()
             return
 
-        # 3. Clustering
-        cluster_labels = self._run_clustering(embedded_features, n_clusters, random_state)
-        
-        # 4. Update Data Items with Results
-        self._update_data_items(valid_data_items, embedded_features, cluster_labels)
-        
-        # Also update the items for which feature extraction failed
-        all_ids = {item.annotation.id for item in valid_data_items}
-        for item in data_items:
-            if item.annotation.id not in all_ids:
-                item.cluster_x, item.cluster_y, item.cluster_id = 0, 0, -1 # Assign to a null cluster
-                
+        # 3. Update Data Items with 2D coordinates
+        self._update_data_items_with_embedding(valid_data_items, embedded_features)
+
+        # Update the viewers only with items that were successfully processed
+        self.annotation_viewer.update_annotations(valid_data_items)
+        self.embedding_viewer.update_embeddings(valid_data_items)
+
     def refresh_filters(self):
-        """Refresh display: filter -> cluster -> update viewers."""
+        """Refresh display: filter data, run embedding, and update viewers."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             data_items = self.get_filtered_data_items()
-            self.run_clustering_on_items(data_items)
-            self.annotation_viewer.update_annotations(data_items)   
-            self.cluster_viewer.update_clusters(data_items)
-            self.cluster_viewer.fit_view_to_points()
+            self.run_embedding_pipeline(data_items)
+            self.embedding_viewer.fit_view_to_points()
         finally:
             QApplication.restoreOverrideCursor()
 
