@@ -472,7 +472,16 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
 
     def on_selection_changed(self):
         """Handle point selection changes and emit a signal to the controller."""
-        selected_items = self.graphics_scene.selectedItems()
+        # Check if graphics_scene still exists and is valid
+        if not self.graphics_scene or not hasattr(self.graphics_scene, 'selectedItems'):
+            return
+            
+        try:
+            selected_items = self.graphics_scene.selectedItems()
+        except RuntimeError:
+            # Scene has been deleted
+            return
+            
         current_selection_ids = {item.data(0).annotation.id for item in selected_items}
 
         # If the selection has actually changed, update the model and emit
@@ -486,14 +495,43 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
             self.selection_changed.emit(list(current_selection_ids))
             self.previous_selection_ids = current_selection_ids
 
-        # Handle local animation
-        self.animation_timer.stop()
+        # Handle local animation - check if animation_timer still exists
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()
+            
         for point in self.points_by_id.values():
             if not point.isSelected():
                 point.setPen(QPen(QColor("black"), POINT_WIDTH))
         
-        if selected_items:
+        if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.start()
+
+    def animate_selection(self):
+        """Animate selected points with marching ants effect using darker versions of point colors."""
+        # Check if graphics_scene still exists and is valid
+        if not self.graphics_scene or not hasattr(self.graphics_scene, 'selectedItems'):
+            return
+            
+        try:
+            selected_items = self.graphics_scene.selectedItems()
+        except RuntimeError:
+            # Scene has been deleted
+            return
+            
+        self.animation_offset = (self.animation_offset + 1) % 20
+        
+        # This logic remains the same. It applies the custom pen to the selected items.
+        # Because the items are ClusterPointItem, the default selection box won't be drawn.
+        for item in selected_items:
+            original_color = item.brush().color()
+            darker_color = original_color.darker(150)
+
+            animated_pen = QPen(darker_color, POINT_WIDTH)
+            animated_pen.setStyle(Qt.CustomDashLine)
+            animated_pen.setDashPattern([1, 2])
+            animated_pen.setDashOffset(self.animation_offset)
+            
+            item.setPen(animated_pen)
             
     def render_selection_from_ids(self, selected_ids):
         """Update the visual selection of points based on a set of IDs from the controller."""
@@ -507,23 +545,6 @@ class ClusterViewer(QWidget):  # Change inheritance to QWidget
         
         # Trigger animation update
         self.on_selection_changed()
-
-    def animate_selection(self):
-        """Animate selected points with marching ants effect using darker versions of point colors."""
-        self.animation_offset = (self.animation_offset + 1) % 20
-        
-        # This logic remains the same. It applies the custom pen to the selected items.
-        # Because the items are ClusterPointItem, the default selection box won't be drawn.
-        for item in self.graphics_scene.selectedItems():
-            original_color = item.brush().color()
-            darker_color = original_color.darker(150)
-
-            animated_pen = QPen(darker_color, POINT_WIDTH)
-            animated_pen.setStyle(Qt.CustomDashLine)
-            animated_pen.setDashPattern([1, 2])
-            animated_pen.setDashOffset(self.animation_offset)
-            
-            item.setPen(animated_pen)
 
     def fit_view_to_points(self):
         """Fit the view to show all cluster points."""
@@ -1332,6 +1353,11 @@ class ExplorerWindow(QMainWindow):
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
+        # Stop any running timers to prevent errors during cleanup
+        if hasattr(self, 'cluster_viewer') and self.cluster_viewer:
+            if hasattr(self.cluster_viewer, 'animation_timer') and self.cluster_viewer.animation_timer:
+                self.cluster_viewer.animation_timer.stop()
+                
         # Clear any preview states before closing
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
