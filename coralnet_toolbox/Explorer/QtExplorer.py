@@ -1,6 +1,6 @@
-
 from coralnet_toolbox.Icons import get_icon
-from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter
+
+from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter, QImage
 from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, pyqtSlot
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -15,15 +15,16 @@ import warnings
 import os
 import random
 
-# Mock imports for clustering if scikit-learn is not available
 try:
     from sklearn.manifold import TSNE
     from sklearn.cluster import KMeans
     import numpy as np
+    from umap import UMAP  
 except ImportError:
     TSNE = None
     KMeans = None
     np = None
+    UMAP = None  
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -1155,11 +1156,19 @@ class ClusterSettingsWidget(QGroupBox):
         form_layout = QFormLayout()
         
         # Model selection dropdown (editable) - at the top
+       # Model selection dropdown updated for feature selection
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)  # Allow users to edit
-        self.model_combo.addItems(["yolov8n.pt", "yolov8s.pt", "yolov8m.pt",
-                                  "yolov8l.pt", "yolov8x.pt"])
-        form_layout.addRow("Model:", self.model_combo)
+        self.model_combo.setEditable(False) # Prevent custom text
+        self.model_combo.addItems([
+            "Simple Color (Mean RGB)",
+            "yolov8n.pt", 
+            "yolov8s.pt", 
+            "yolov8m.pt",
+            "yolov8l.pt", 
+            "yolov8x.pt"
+        ])
+        self.model_combo.setCurrentIndex(0)  # Default to simple color
+        form_layout.addRow("Feature Model:", self.model_combo)
 
         # Cluster technique dropdown
         self.cluster_technique_combo = QComboBox()
@@ -1183,58 +1192,12 @@ class ClusterSettingsWidget(QGroupBox):
 
         layout.addLayout(form_layout)
 
-        # TODO: Add model and clustering settings tabs
-
     def apply_clustering(self):
         """Apply clustering with the current settings."""
-        # Get the current settings
-        cluster_technique = self.cluster_technique_combo.currentText()
-        n_clusters = self.n_clusters_spin.value()
-        random_state = self.random_state_spin.value()
-        
-        # TODO: Implement actual clustering logic with real annotation features
-        # For now, generate demo cluster data
-        cluster_data = self.generate_demo_cluster_data(n_clusters, random_state)
-        
-        # Update the cluster viewer
-        if hasattr(self.explorer_window, 'cluster_widget'):
-            self.explorer_window.cluster_widget.update_clusters(cluster_data)
-            self.explorer_window.cluster_widget.fit_view_to_points()
-
-    def generate_demo_cluster_data(self, n_clusters, random_state):
-        """Generate demonstration cluster data.
-        
-        Returns:
-            List of tuples (x, y, cluster_id, annotation_data)
-        """
-        random.seed(random_state)
-        cluster_data = []
-        
-        # Generate cluster centers
-        centers = []
-        for i in range(n_clusters):
-            center_x = random.uniform(-2000, 2000)
-            center_y = random.uniform(-2000, 2000)
-            centers.append((center_x, center_y))
-        
-        # Generate points around each center
-        for cluster_id, (center_x, center_y) in enumerate(centers):
-            n_points = random.randint(20, 60)  # Variable cluster sizes
-            for _ in range(n_points):
-                # Add gaussian noise around center
-                x = center_x + random.gauss(0, 300)
-                y = center_y + random.gauss(0, 300)
-                
-                # Mock annotation data
-                annotation_data = {
-                    'id': len(cluster_data),
-                    'label': f'cluster_{cluster_id}',
-                    'confidence': random.uniform(0.7, 1.0)
-                }
-                
-                cluster_data.append((x, y, cluster_id, annotation_data))
-        
-        return cluster_data
+        # This button now just triggers a full refresh, which includes clustering.
+        # The main logic is in the ExplorerWindow.refresh_filters() method.
+        if self.explorer_window:
+            self.explorer_window.refresh_filters()
     
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1261,7 +1224,7 @@ class ExplorerWindow(QMainWindow):
         # Create a central widget and main layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)        
+        self.main_layout = QVBoxLayout(self.central_widget)      
         # Create a left panel widget and layout for the re-parented LabelWindow
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -1557,90 +1520,149 @@ class ExplorerWindow(QMainWindow):
                 progress_bar.finish_progress()
                 progress_bar.stop_progress()
                 progress_bar.close()
-    
-    def run_clustering_on_items(self, data_items):
-        """
-        Extracts features, runs dimensionality reduction and clustering,
-        and updates the AnnotationDataItem objects in place.
-        """
-        if not data_items:
-            return
 
-        # 1. Get settings from the UI
-        technique = self.cluster_settings_widget.cluster_technique_combo.currentText()
-        n_clusters = self.cluster_settings_widget.n_clusters_spin.value()
-        random_state = self.cluster_settings_widget.random_state_spin.value()
-        
-        # 2. Extract features (MOCK IMPLEMENTATION)
-        # In a real application, this would use a deep learning model.
-        # Here we mock it, ensuring each annotation gets a feature vector.
-        if np is None:
-            print("Warning: numpy/scikit-learn not installed. Using random cluster data.")
-            for item in data_items:
-                item.cluster_x = random.uniform(-2000, 2000)
-                item.cluster_y = random.uniform(-2000, 2000)
-                item.cluster_id = random.randint(0, n_clusters - 1)
-            return
-
-        print("Extracting mock features...")
+    def _extract_rgb_features(self, data_items):
+        """Extracts mean RGB color features from annotation crops."""
+        print("Extracting features (mean RGB)...")
         features = []
+        valid_data_items = []
         for item in data_items:
-            if not hasattr(item.annotation, 'features'):
-                # Create a mock feature vector
-                item.annotation.features = np.random.rand(1, 128)
-            features.append(item.annotation.features.flatten())
-        
-        features = np.array(features)
-        
-        # 3. Dimensionality Reduction (TSNE/UMAP)
-        print(f"Running {technique}...")
-        if technique == "TSNE" and TSNE:
-            reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1))
-            embedded_features = reducer.fit_transform(features)
-        else: # Default to UMAP or if TSNE fails
-            # UMAP would be used here, but we'll use TSNE as a stand-in for the example
-            reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1))
-            embedded_features = reducer.fit_transform(features)
-            
-        # 4. Clustering (KMeans)
-        print("Running KMeans clustering...")
-        kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-        cluster_labels = kmeans.fit_predict(embedded_features)
+            pixmap = item.annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull():
+                qimage = pixmap.toImage().convertToFormat(QImage.Format_RGB888)
+                width, height = qimage.width(), qimage.height()
+                
+                ptr = qimage.bits()
+                ptr.setsize(height * width * 3)
+                arr = np.array(ptr).reshape((height, width, 3))
+                
+                mean_color = np.mean(arr, axis=(0, 1))
+                features.append(mean_color)
+                valid_data_items.append(item)
+            else:
+                print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
 
-        # 5. Update the AnnotationDataItem objects with results
-        # Scale coordinates for better visualization
-        scale_factor = 3000
-        min_x, min_y = np.min(embedded_features, axis=0)
-        max_x, max_y = np.max(embedded_features, axis=0)
+        return np.array(features), valid_data_items
+
+    def _extract_yolo_features(self, data_items, model_name):
+        """Placeholder for extracting features using a YOLO model."""
+        print(f"Attempting to extract features with YOLO model: {model_name}")
+        print("NOTE: YOLO feature extraction is not yet implemented.")
+        # In a real implementation, you would:
+        # 1. Load the specified YOLO model.
+        # 2. Pre-process each cropped image into a tensor.
+        # 3. Pass the tensor through the model's backbone.
+        # 4. Get the resulting feature vector.
+        # For now, we return empty results to prevent the app from crashing.
+        return np.array([]), []
+
+    def _extract_features(self, data_items):
+        """
+        Dispatcher method to call the appropriate feature extraction function
+        based on the user's selection in the UI.
+        """
+        model_name = self.cluster_settings_widget.model_combo.currentText()
+
+        if model_name == "Simple Color (Mean RGB)":
+            return self._extract_rgb_features(data_items)
+        elif ".pt" in model_name:  # Simple check for a YOLO model
+            return self._extract_yolo_features(data_items, model_name)
+        else:
+            print(f"Unknown feature model selected: {model_name}")
+            return np.array([]), []
+
+    def _run_dimensionality_reduction(self, features, technique, random_state):
+        """Runs UMAP or t-SNE on the feature matrix."""
+        print(f"Running {technique} on {len(features)} items...")
+        if len(features) <= 1:
+            print("Not enough data points for dimensionality reduction.")
+            return None
+
+        try:
+            if technique == "UMAP":
+                reducer = UMAP(n_components=2, random_state=random_state, n_neighbors=min(15, len(features)-1))
+                return reducer.fit_transform(features)
+            else:  # Default to TSNE
+                reducer = TSNE(n_components=2, random_state=random_state, perplexity=min(30, len(features)-1), n_init='auto')
+                return reducer.fit_transform(features)
+        except Exception as e:
+            print(f"Error during {technique} dimensionality reduction: {e}")
+            return None
+
+    def _run_clustering(self, embedded_features, n_clusters, random_state):
+        """Runs KMeans clustering on the embedded features."""
+        print("Running KMeans clustering...")
+        
+        actual_n_clusters = min(n_clusters, len(embedded_features))
+        if actual_n_clusters < 2:
+            print("Not enough data for multiple clusters. Assigning all to cluster 0.")
+            return np.zeros(len(embedded_features), dtype=int)
+            
+        kmeans = KMeans(n_clusters=actual_n_clusters, random_state=random_state, n_init=10)
+        return kmeans.fit_predict(embedded_features)
+
+    def _update_data_items(self, data_items, embedded_features, cluster_labels):
+        """Updates AnnotationDataItem objects with cluster results."""
+        scale_factor = 4000
+        min_vals = np.min(embedded_features, axis=0)
+        max_vals = np.max(embedded_features, axis=0)
+        range_vals = max_vals - min_vals
 
         for i, item in enumerate(data_items):
-            # Normalize and scale
-            norm_x = (embedded_features[i, 0] - min_x) / (max_x - min_x) if max_x > min_x else 0
-            norm_y = (embedded_features[i, 1] - min_y) / (max_y - min_y) if max_y > min_y else 0
+            norm_x = (embedded_features[i, 0] - min_vals[0]) / range_vals[0] if range_vals[0] > 0 else 0.5
+            norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
             
-            item.cluster_x = norm_x * scale_factor - (scale_factor / 2)
-            item.cluster_y = norm_y * scale_factor - (scale_factor / 2)
+            item.cluster_x = (norm_x * scale_factor) - (scale_factor / 2)
+            item.cluster_y = (norm_y * scale_factor) - (scale_factor / 2)
             item.cluster_id = cluster_labels[i]
 
+    def run_clustering_on_items(self, data_items):
+        """Orchestrates the new, modular clustering pipeline."""
+        if not data_items:
+            print("No items to cluster.")
+            return
+
+        technique = self.cluster_settings_widget.cluster_technique_combo.currentText()
+        if np is None or KMeans is None or (technique == 'TSNE' and TSNE is None) or (technique == 'UMAP' and UMAP is None):
+            print(f"Warning: Required library for {technique} not installed.")
+            return
+
+        # 1. Extract Features (using the new dispatcher)
+        features, valid_data_items = self._extract_features(data_items)
+        if not valid_data_items:
+            print("No valid features could be extracted. Aborting clustering.")
+            # Clear cluster view if feature extraction fails
+            self.cluster_viewer.clear_points()
+            return
+
+        # 2. Dimensionality Reduction
+        n_clusters = self.cluster_settings_widget.n_clusters_spin.value()
+        random_state = self.cluster_settings_widget.random_state_spin.value()
+        embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
+        if embedded_features is None:
+            return
+
+        # 3. Clustering
+        cluster_labels = self._run_clustering(embedded_features, n_clusters, random_state)
+        
+        # 4. Update Data Items with Results
+        self._update_data_items(valid_data_items, embedded_features, cluster_labels)
+        
+        # Also update the items for which feature extraction failed
+        all_ids = {item.annotation.id for item in valid_data_items}
+        for item in data_items:
+            if item.annotation.id not in all_ids:
+                item.cluster_x, item.cluster_y, item.cluster_id = 0, 0, -1 # Assign to a null cluster
+                
     def refresh_filters(self):
         """Refresh display: filter -> cluster -> update viewers."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            single_image_path = self.annotation_settings_widget.get_single_selected_image_path()
-            if single_image_path:
-                self.main_window.image_window.load_image_by_path(single_image_path)
-            
-            # 1. Get filtered annotations as data items
             data_items = self.get_filtered_data_items()
-
-            # 2. Run clustering and update the data items in place
             self.run_clustering_on_items(data_items)
-
-            # 3. Update viewers with the single source of truth
             self.annotation_viewer.update_annotations(data_items)
             self.cluster_viewer.update_clusters(data_items)
             self.cluster_viewer.fit_view_to_points()
-
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -1658,7 +1680,7 @@ class ExplorerWindow(QMainWindow):
             print("Cleared all preview changes")
 
     def update_button_states(self):
-        """Update the state of Clear Preview and Apply buttons based on preview changes."""
+        """Update the state of Clear Preview and Apply buttons."""
         has_changes = (hasattr(self, 'annotation_viewer') and self.annotation_viewer.has_preview_changes())
         
         self.clear_preview_button.setEnabled(has_changes)
@@ -1669,7 +1691,7 @@ class ExplorerWindow(QMainWindow):
         self.apply_button.setToolTip(f"Apply changes - {summary}")
 
     def apply(self):
-        """Apply any modifications made in the Explorer to the actual annotations."""
+        """Apply any modifications to the actual annotations."""
         try:
             applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
             if applied_annotations:
