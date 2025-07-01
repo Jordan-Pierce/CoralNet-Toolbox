@@ -158,19 +158,24 @@ class AnnotationImageWidget(QWidget):
 
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
-        if self.is_selected() == selected:
-            return
-            
+        was_selected = self.is_selected()
+        
         # Update the shared data item
         self.data_item.set_selected(selected)
 
+        # Always update animation state, regardless of whether selection changed
         if self.is_selected():
-            self.animation_timer.start()
+            if not self.animation_timer.isActive():
+                self.animation_timer.start()
         else:
-            self.animation_timer.stop()
+            if self.animation_timer.isActive():
+                self.animation_timer.stop()
             self.animation_offset = 0
 
-        self.update()
+        # Only trigger repaint if state actually changed or if we're selected
+        # (to ensure animation continues)
+        if was_selected != selected or selected:
+            self.update()
 
     def is_selected(self):
         """Return whether this widget is selected via the data item."""
@@ -727,13 +732,21 @@ class AnnotationViewer(QScrollArea):
     
     def render_selection_from_ids(self, selected_ids):
         """Update the visual selection of widgets based on a set of IDs from the controller."""
-        for ann_id, widget in self.annotation_widgets_by_id.items():
-            is_selected = ann_id in selected_ids
-            # Update the widget's visuals without triggering new signals
-            widget.set_selected(is_selected)
+        # Block signals temporarily to prevent cascade updates
+        self.setUpdatesEnabled(False)
         
-        # Resync internal list of selected widgets
-        self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+        try:
+            for ann_id, widget in self.annotation_widgets_by_id.items():
+                is_selected = ann_id in selected_ids
+                widget.set_selected(is_selected)
+            
+            # Resync internal list of selected widgets
+            self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+            
+        finally:
+            self.setUpdatesEnabled(True)
+        
+        # Update label window once at the end
         self.update_label_window_selection()
     
     def apply_preview_label_to_selected(self, preview_label):
