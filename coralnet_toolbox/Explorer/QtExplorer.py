@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, p
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
-                             QMainWindow, QSplitter, QGroupBox, QFormLayout,
+                             QMainWindow, QSplitter, QGroupBox, QFormLayout, QTabWidget,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
                              QListWidget, QDoubleSpinBox, QApplication, QStyle)
 
@@ -556,19 +556,19 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         else:
             # If no points, reset to default view
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
-            
+          
 
 class AnnotationViewer(QScrollArea):
-    """Scrollable grid widget for displaying annotation image crops with selection support."""
+    """Scrollable and tabbed widget for displaying annotation image crops with selection support."""
     
-    # Define signals to report changes to the ExplorerWindow
-    selection_changed = pyqtSignal(list)  # list of changed annotation IDs
-    preview_changed = pyqtSignal(list)   # list of annotation IDs with new previews
+    selection_changed = pyqtSignal(list)
+    preview_changed = pyqtSignal(list)
     
     def __init__(self, parent=None):
         super(AnnotationViewer, self).__init__(parent)
         self.annotation_widgets_by_id = {}
-        self.selected_widgets = []
+        self.selected_widgets = []          # Holds the LIVE selection, updated instantly.
+        self.selected_tab_working_set = []  # A STATIC "working set" for the Selected tab's view.
         self.last_selected_index = -1
         self.current_widget_size = 96
         
@@ -606,24 +606,39 @@ class AnnotationViewer(QScrollArea):
         self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
         header_layout.addWidget(self.size_value_label)
-        
         main_layout.addLayout(header_layout)
         
-        self.content_widget = QWidget()
-        self.grid_layout = QGridLayout(self.content_widget)
-        self.grid_layout.setSpacing(5)
+        self.tab_widget = QTabWidget()
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        main_layout.addWidget(self.tab_widget)
 
-        content_scroll = QScrollArea()
-        content_scroll.setWidgetResizable(True)
-        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        content_scroll.setWidget(self.content_widget)
+        all_tab_page = QWidget()
+        all_tab_page_layout = QVBoxLayout(all_tab_page)
+        all_tab_page_layout.setContentsMargins(0, 0, 0, 0)
+        self.all_tab_scroll = QScrollArea()
+        self.all_tab_scroll.setWidgetResizable(True)
+        all_content_widget = QWidget()
+        self.all_grid_layout = QGridLayout(all_content_widget)
+        self.all_grid_layout.setSpacing(5)
+        self.all_tab_scroll.setWidget(all_content_widget)
+        all_tab_page_layout.addWidget(self.all_tab_scroll)
+        self.tab_widget.addTab(all_tab_page, "All")
+
+        selected_tab_page = QWidget()
+        selected_tab_page_layout = QVBoxLayout(selected_tab_page)
+        selected_tab_page_layout.setContentsMargins(0, 0, 0, 0)
+        self.selected_tab_scroll = QScrollArea()
+        self.selected_tab_scroll.setWidgetResizable(True)
+        selected_content_widget = QWidget()
+        self.selected_grid_layout = QGridLayout(selected_content_widget)
+        self.selected_grid_layout.setSpacing(5)
+        self.selected_tab_scroll.setWidget(selected_content_widget)
+        selected_tab_page_layout.addWidget(self.selected_tab_scroll)
+        self.tab_widget.addTab(selected_tab_page, "Selected (0)")
         
-        main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
 
     def resizeEvent(self, event):
-        """Handle resize events to recalculate grid layout."""
         super().resizeEvent(event)
         if hasattr(self, 'annotation_widgets_by_id') and self.annotation_widgets_by_id:
             self.recalculate_grid_layout()
@@ -708,9 +723,8 @@ class AnnotationViewer(QScrollArea):
             self.mouse_pressed_on_widget = False
             return
         super().mouseReleaseEvent(event)
-            
+        
     def on_size_changed(self, value):
-        """Handle slider value change to resize annotation widgets."""
         if value % 2 != 0:
             value -= 1
         self.current_widget_size = value
@@ -721,32 +735,73 @@ class AnnotationViewer(QScrollArea):
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
-        """Recalculate the grid layout based on current widget width."""
+        """
+        The "Selected" tab now populates its grid from the static working set,
+        not the live selection list. This prevents items from disappearing.
+        """
+        current_index = self.tab_widget.currentIndex()
+        
+        if current_index == 0:  # "All" tab is active
+            grid_layout = self.all_grid_layout
+            scroll_area = self.all_tab_scroll
+            widgets_to_display = list(self.annotation_widgets_by_id.values())
+        else:  # "Selected" tab is active
+            grid_layout = self.selected_grid_layout
+            scroll_area = self.selected_tab_scroll
+            # Use the static working set for display!
+            widgets_to_display = self.selected_tab_working_set
+
+        while grid_layout.count():
+            child = grid_layout.takeAt(0)
+            if child.widget():
+                child.widget().setParent(None)
+
         if not self.annotation_widgets_by_id:
             return
-            
-        available_width = self.viewport().width() - 20
-        widget_width = self.current_widget_size + self.grid_layout.spacing()
+
+        available_width = scroll_area.viewport().width() - 20
+        widget_width = self.current_widget_size + grid_layout.spacing()
         cols = max(1, available_width // widget_width)
         
-        for i, widget in enumerate(self.annotation_widgets_by_id.values()):
-            self.grid_layout.addWidget(widget, i // cols, i % cols)
+        for i, widget in enumerate(widgets_to_display):
+            grid_layout.addWidget(widget, i // cols, i % cols)
 
     def update_annotations(self, data_items):
-        """Update the displayed annotations from a list of AnnotationDataItems."""
+        """Update displayed annotations, clearing old state including the working set."""
         for widget in self.annotation_widgets_by_id.values():
+            widget.setParent(None)
             widget.deleteLater()
         self.annotation_widgets_by_id.clear()
         self.selected_widgets.clear()
+        self.selected_tab_working_set = [] # Clear the working set.
         self.last_selected_index = -1
 
         for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
-                data_item, self.current_widget_size, 
-                annotation_viewer=self)
+                data_item, self.current_widget_size, annotation_viewer=self)
             self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
         
         self.recalculate_grid_layout()
+        self.update_selected_tab_title()
+        
+    @pyqtSlot(int)
+    def on_tab_changed(self, index):
+        """
+        When the tab changes, this logic creates the static "working set" for the Selected tab.
+        """
+        if index == 1:  # User switched TO the "Selected" tab.
+            # Freeze the current selection into the working set.
+            self.selected_tab_working_set = list(self.selected_widgets)
+        else:  # User switched AWAY from the "Selected" tab.
+            # Clear the working set so it's fresh next time.
+            self.selected_tab_working_set = []
+
+        # Repopulate the grid of the newly visible tab.
+        self.recalculate_grid_layout()
+
+    def update_selected_tab_title(self):
+        count = len(self.selected_widgets)
+        self.tab_widget.setTabText(1, f"Selected ({count})")
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
@@ -804,23 +859,28 @@ class AnnotationViewer(QScrollArea):
             self.selection_changed.emit(changed_ids)
 
     def select_widget(self, widget):
-        """Select a widget, update the data_item, and return True if state changed."""
+        """
+        Selection logic no longer triggers a grid refresh. It only updates the
+        model and the selected count, allowing for stable sub-selection.
+        """
         if not widget.is_selected():
-            widget.set_selected(True) # This updates visuals
-            widget.data_item.set_selected(True) # This updates the model
+            widget.set_selected(True)
+            widget.data_item.set_selected(True)
             self.selected_widgets.append(widget)
             self.update_label_window_selection()
+            self.update_selected_tab_title() # Still update the count.
             return True
         return False
 
     def deselect_widget(self, widget):
-        """Deselect a widget, update the data_item, and return True if state changed."""
+        """Selection logic no longer triggers a grid refresh."""
         if widget.is_selected():
             widget.set_selected(False)
             widget.data_item.set_selected(False)
             if widget in self.selected_widgets:
                 self.selected_widgets.remove(widget)
             self.update_label_window_selection()
+            self.update_selected_tab_title() # Still update the count.
             return True
         return False
 
@@ -868,22 +928,22 @@ class AnnotationViewer(QScrollArea):
         return [widget.annotation for widget in self.selected_widgets]
     
     def render_selection_from_ids(self, selected_ids):
-        """Update the visual selection of widgets based on a set of IDs from the controller."""
-        # Block signals temporarily to prevent cascade updates
+        """Handles selection from external sources like the EmbeddingViewer."""
         self.setUpdatesEnabled(False)
-        
         try:
             for ann_id, widget in self.annotation_widgets_by_id.items():
-                is_selected = ann_id in selected_ids
-                widget.set_selected(is_selected)
+                widget.set_selected(ann_id in selected_ids)
             
-            # Resync internal list of selected widgets
             self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+            self.update_selected_tab_title()
             
+            # If the selection change happens while the user is on the "Selected" tab,
+            # we must update the working set and refresh the view.
+            if self.tab_widget.currentIndex() == 1:
+                self.selected_tab_working_set = list(self.selected_widgets)
+                self.recalculate_grid_layout()
         finally:
             self.setUpdatesEnabled(True)
-        
-        # Update label window once at the end
         self.update_label_window_selection()
     
     def apply_preview_label_to_selected(self, preview_label):
