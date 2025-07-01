@@ -1,7 +1,8 @@
 
 from coralnet_toolbox.Icons import get_icon
 from PyQt5.QtGui import QIcon, QBrush, QPen, QColor, QPainter
-from PyQt5.QtCore import Qt, QTimer, QSize, QRect
+from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, pyqtSlot
+
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
@@ -225,12 +226,18 @@ class AnnotationImageWidget(QWidget):
 class ClusterPointItem(QGraphicsEllipseItem):
     """
     A custom QGraphicsEllipseItem that prevents the default selection
-    rectangle from being drawn, allowing for custom selection visuals.
+    rectangle from being drawn, and dynamically gets its color from the
+    shared AnnotationDataItem.
     """
     def paint(self, painter, option, widget):
-        # By removing the 'State_Selected' flag from the style option,
-        # we prevent the default paint method from drawing the dotted
-        # selection rectangle around the item.
+        # Get the shared data item, which holds the current state
+        data_item = self.data(0)
+        if data_item:
+            # Set the brush color based on the item's effective color
+            # This ensures preview colors are reflected instantly.
+            self.setBrush(data_item.effective_color)
+
+        # Remove the 'State_Selected' flag to prevent the default box
         option.state &= ~QStyle.State_Selected
         super(ClusterPointItem, self).paint(painter, option, widget)
         
@@ -239,9 +246,13 @@ class ClusterPointItem(QGraphicsEllipseItem):
 # Viewers
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class ClusterViewer(QGraphicsView):
     """Custom QGraphicsView for interactive cluster visualization with zooming, panning, and selection."""
-
+    
+    # Define signal to report selection changes
+    selection_changed = pyqtSignal(list)  # list of all currently selected annotation IDs
+    
     def __init__(self, parent=None):
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
@@ -253,9 +264,11 @@ class ClusterViewer(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         self.explorer_window = parent
-        self.points_by_id = {} # Map annotation ID to cluster point
+        self.points_by_id = {}  # Map annotation ID to cluster point
         self.animation_offset = 0
         
+        self.previous_selection_ids = set()  # Track previous selection to detect changes
+    
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.animate_selection)
         self.animation_timer.setInterval(100)
@@ -347,22 +360,42 @@ class ClusterViewer(QGraphicsView):
         self.points_by_id.clear()
 
     def on_selection_changed(self):
-        """Handle point selection changes."""
+        """Handle point selection changes and emit a signal to the controller."""
         selected_items = self.graphics_scene.selectedItems()
-        
-        # Stop any running animation
+        current_selection_ids = {item.data(0).annotation.id for item in selected_items}
+
+        # If the selection has actually changed, update the model and emit
+        if current_selection_ids != self.previous_selection_ids:
+            # Update the central model (the AnnotationDataItem) for all points
+            for point_id, point in self.points_by_id.items():
+                is_selected = point_id in current_selection_ids
+                point.data(0).set_selected(is_selected)
+
+            # Emit the complete list of currently selected IDs
+            self.selection_changed.emit(list(current_selection_ids))
+            self.previous_selection_ids = current_selection_ids
+
+        # Handle local animation
         self.animation_timer.stop()
-        
-        # Reset the pen for all points that are no longer selected
         for point in self.points_by_id.values():
             if not point.isSelected():
                 point.setPen(QPen(QColor("black"), 0.5))
         
         if selected_items:
-            print(f"{len(selected_items)} cluster points selected.")
             self.animation_timer.start()
-        else:
-            print("Cluster selection cleared.")
+            
+    def render_selection_from_ids(self, selected_ids):
+        """Update the visual selection of points based on a set of IDs from the controller."""
+        # Block this scene's own selectionChanged signal to prevent an infinite loop
+        blocker = QSignalBlocker(self.graphics_scene)
+        
+        for ann_id, point in self.points_by_id.items():
+            point.setSelected(ann_id in selected_ids)
+            
+        self.previous_selection_ids = selected_ids
+        
+        # Trigger animation update
+        self.on_selection_changed()
 
     def animate_selection(self):
         """Animate selected points with marching ants effect using darker versions of point colors."""
@@ -389,6 +422,10 @@ class ClusterViewer(QGraphicsView):
 
 class AnnotationViewer(QScrollArea):
     """Scrollable grid widget for displaying annotation image crops with selection support."""
+    
+    # Define signals to report changes to the ExplorerWindow
+    selection_changed = pyqtSignal(list)  # list of changed annotation IDs
+    preview_changed = pyqtSignal(list)   # list of annotation IDs with new previews
     
     def __init__(self, parent=None):
         super(AnnotationViewer, self).__init__(parent)
@@ -578,41 +615,72 @@ class AnnotationViewer(QScrollArea):
             return
 
         modifiers = event.modifiers()
+        changed_ids = []
 
+        # --- The selection logic now identifies which items to change   ---
+        # --- but the core state change happens in select/deselect       ---
+        
         if modifiers == Qt.ShiftModifier or modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
+            # Range selection
             if self.last_selected_index != -1:
                 start = min(self.last_selected_index, widget_index)
                 end = max(self.last_selected_index, widget_index)
                 for i in range(start, end + 1):
-                    if not widget_list[i].is_selected():
-                        self.select_widget(widget_list[i])
+                    # select_widget will return True if a change occurred
+                    if self.select_widget(widget_list[i]):
+                        changed_ids.append(widget_list[i].data_item.annotation.id)
             else:
-                self.select_widget(widget)
+                if self.select_widget(widget):
+                    changed_ids.append(widget.data_item.annotation.id)
                 self.last_selected_index = widget_index
+        
         elif modifiers == Qt.ControlModifier:
+            # Toggle selection
             if widget.is_selected():
-                self.deselect_widget(widget)
+                if self.deselect_widget(widget):
+                    changed_ids.append(widget.data_item.annotation.id)
             else:
-                self.select_widget(widget)
+                if self.select_widget(widget):
+                    changed_ids.append(widget.data_item.annotation.id)
             self.last_selected_index = widget_index
+                
         else:
-            self.clear_selection()
-            self.select_widget(widget)
+            # Normal click: clear all others and select this one
+            newly_selected_id = widget.data_item.annotation.id
+            # Deselect all widgets that are not the clicked one
+            for w in list(self.selected_widgets):
+                if w.data_item.annotation.id != newly_selected_id:
+                    if self.deselect_widget(w):
+                        changed_ids.append(w.data_item.annotation.id)
+            # Select the clicked widget
+            if self.select_widget(widget):
+                changed_ids.append(newly_selected_id)
             self.last_selected_index = widget_index
+        
+        # If any selections were changed, emit the signal
+        if changed_ids:
+            self.selection_changed.emit(changed_ids)
 
     def select_widget(self, widget):
-        """Select a widget and add it to the selection."""
-        if widget not in self.selected_widgets:
-            widget.set_selected(True)
+        """Select a widget, update the data_item, and return True if state changed."""
+        if not widget.is_selected():
+            widget.set_selected(True) # This updates visuals
+            widget.data_item.set_selected(True) # This updates the model
             self.selected_widgets.append(widget)
-        self.update_label_window_selection()
+            self.update_label_window_selection()
+            return True
+        return False
 
     def deselect_widget(self, widget):
-        """Deselect a widget and remove it from the selection."""
-        if widget in self.selected_widgets:
+        """Deselect a widget, update the data_item, and return True if state changed."""
+        if widget.is_selected():
             widget.set_selected(False)
-            self.selected_widgets.remove(widget)
-        self.update_label_window_selection()
+            widget.data_item.set_selected(False)
+            if widget in self.selected_widgets:
+                self.selected_widgets.remove(widget)
+            self.update_label_window_selection()
+            return True
+        return False
 
     def clear_selection(self):
         """Clear all selected widgets."""
@@ -656,16 +724,31 @@ class AnnotationViewer(QScrollArea):
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
         return [widget.annotation for widget in self.selected_widgets]
-
+    
+    def render_selection_from_ids(self, selected_ids):
+        """Update the visual selection of widgets based on a set of IDs from the controller."""
+        for ann_id, widget in self.annotation_widgets_by_id.items():
+            is_selected = ann_id in selected_ids
+            # Update the widget's visuals without triggering new signals
+            widget.set_selected(is_selected)
+        
+        # Resync internal list of selected widgets
+        self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+        self.update_label_window_selection()
+    
     def apply_preview_label_to_selected(self, preview_label):
-        """Apply a preview label to selected annotations (visual only)."""
+        """Apply a preview label and emit a signal for the cluster view to update."""
         if not self.selected_widgets or not preview_label:
             return
-            
+
+        changed_ids = []
         for widget in self.selected_widgets:
-            # The data item is the shared source of truth now
             widget.data_item.set_preview_label(preview_label)
-            widget.update()
+            widget.update() # Force repaint with new color
+            changed_ids.append(widget.data_item.annotation.id)
+
+        if changed_ids:
+            self.preview_changed.emit(changed_ids)
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
@@ -1242,7 +1325,40 @@ class ExplorerWindow(QMainWindow):
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
         except TypeError:
             pass  # Signal wasn't connected yet
+        
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
+        self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
+        self.annotation_viewer.preview_changed.connect(self.on_preview_changed)
+        self.cluster_viewer.selection_changed.connect(self.on_cluster_view_selection_changed)
+        
+    @pyqtSlot(list)
+    def on_annotation_view_selection_changed(self, changed_ann_ids):
+        """A selection was made in the AnnotationViewer, so update the ClusterViewer."""
+        print(f"Syncing selection from Annotation View to Cluster View for {len(changed_ann_ids)} items.")
+        all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
+        self.cluster_viewer.render_selection_from_ids(all_selected_ids)
+        self.update_label_window_selection() # Keep label window in sync
+
+    @pyqtSlot(list)
+    def on_cluster_view_selection_changed(self, all_selected_ann_ids):
+        """A selection was made in the ClusterViewer, so update the AnnotationViewer."""
+        print(f"Syncing selection from Cluster View to Annotation View for {len(all_selected_ann_ids)} items.")
+        self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
+        self.update_label_window_selection() # Keep label window in sync
+
+    @pyqtSlot(list)
+    def on_preview_changed(self, changed_ann_ids):
+        """A preview color was changed in the AnnotationViewer, so update the ClusterViewer points."""
+        print(f"Syncing preview color change for {len(changed_ann_ids)} items.")
+        for ann_id in changed_ann_ids:
+            point = self.cluster_viewer.points_by_id.get(ann_id)
+            if point:
+                point.update() # Force the point to repaint itself
+
+    def update_label_window_selection(self):
+        """Update the label window based on the selection in the annotation viewer."""
+        # This logic can now be simpler as it just reads the state from the annotation_viewer
+        self.annotation_viewer.update_label_window_selection()
 
     def get_filtered_data_items(self):
         """Get annotations that match all conditions, returned as AnnotationDataItem objects."""
