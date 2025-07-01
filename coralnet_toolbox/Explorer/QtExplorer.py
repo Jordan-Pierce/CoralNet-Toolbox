@@ -69,7 +69,7 @@ class AnnotationDataItem:
         """Get the effective color for this annotation."""
         # Special case for Review label (id == "-1")
         if self.effective_label.id == "-1":
-            return QColor("black")
+            return QColor("white")
         return self.effective_label.color
 
     @property
@@ -600,7 +600,8 @@ class AnnotationViewer(QScrollArea):
         self.size_slider.setValue(96)
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
-        self.size_slider.valueChanged.connect(self.on_size_changed)
+        self.size_slider.valueChanged.connect(self.on_size_value_changed) # Updates the label
+        self.size_slider.sliderReleased.connect(self.on_size_slider_released) # Rebuilds the grid
         header_layout.addWidget(self.size_slider)
 
         self.size_value_label = QLabel("96")
@@ -724,14 +725,23 @@ class AnnotationViewer(QScrollArea):
             return
         super().mouseReleaseEvent(event)
         
-    def on_size_changed(self, value):
+    def on_size_value_changed(self, value):
+        """Updates the size label text as the slider moves."""
         if value % 2 != 0:
             value -= 1
-        self.current_widget_size = value
         self.size_value_label.setText(str(value))
+
+    def on_size_slider_released(self):
+        """
+        Performs the expensive grid rebuild only ONCE, after the user is done.
+        """
+        new_size = self.size_slider.value()
+        if new_size % 2 != 0:
+            new_size -= 1
         
+        self.current_widget_size = new_size
         for widget in self.annotation_widgets_by_id.values():
-            widget.update_size(value)
+            widget.update_size(new_size)
         self.recalculate_grid_layout()
 
     def recalculate_grid_layout(self):
@@ -787,17 +797,18 @@ class AnnotationViewer(QScrollArea):
     @pyqtSlot(int)
     def on_tab_changed(self, index):
         """
-        When the tab changes, this logic creates the static "working set" for the Selected tab.
+        When the tab changes, we now wrap the logic in setUpdatesEnabled
+        to reduce flicker.
         """
-        if index == 1:  # User switched TO the "Selected" tab.
-            # Freeze the current selection into the working set.
+        self.tab_widget.setUpdatesEnabled(False)
+        
+        if index == 1:
             self.selected_tab_working_set = list(self.selected_widgets)
-        else:  # User switched AWAY from the "Selected" tab.
-            # Clear the working set so it's fresh next time.
+        else:
             self.selected_tab_working_set = []
 
-        # Repopulate the grid of the newly visible tab.
         self.recalculate_grid_layout()
+        self.tab_widget.setUpdatesEnabled(True)
 
     def update_selected_tab_title(self):
         count = len(self.selected_widgets)
@@ -1316,8 +1327,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
         
-        # Model selection dropdown (editable) - at the top
-       # Model selection dropdown updated for feature selection
+        # Model selection dropdown updated for feature selection
         self.model_combo = QComboBox()
         self.model_combo.setEditable(False) # Prevent custom text
         self.model_combo.addItems([
@@ -1506,7 +1516,6 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
         """A selection was made in the AnnotationViewer, so update the EmbeddingViewer."""
-        print(f"Syncing selection from Annotation View to Embedding View for {len(changed_ann_ids)} items.")
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
         self.embedding_viewer.render_selection_from_ids(all_selected_ids)
         self.update_label_window_selection() # Keep label window in sync
@@ -1514,14 +1523,12 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """A selection was made in the EmbeddingViewer, so update the AnnotationViewer."""
-        print(f"Syncing selection from Embedding View to Annotation View for {len(all_selected_ann_ids)} items.")
         self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
         self.update_label_window_selection() # Keep label window in sync
 
     @pyqtSlot(list)
     def on_preview_changed(self, changed_ann_ids):
         """A preview color was changed in the AnnotationViewer, so update the EmbeddingViewer points."""
-        print(f"Syncing preview color change for {len(changed_ann_ids)} items.")
         for ann_id in changed_ann_ids:
             point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
@@ -1740,7 +1747,7 @@ class ExplorerWindow(QMainWindow):
                 scaler = StandardScaler()
                 features_scaled = scaler.fit_transform(features)
                 print(f"Features scaled - original range: [{features.min():.3f}, {features.max():.3f}], "
-                    f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
+                      f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
             else:
                 features_scaled = features
                 print("StandardScaler not available, using unscaled features")
