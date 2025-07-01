@@ -298,10 +298,14 @@ class ClusterViewer(QGraphicsView):
     def mousePressEvent(self, event):
         """Handle mouse press for selection mode with Ctrl key and right-click panning."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # Enable rubber band selection
             self.setDragMode(QGraphicsView.RubberBandDrag)
+            super().mousePressEvent(event)
+            return
         elif event.button() == Qt.RightButton:
             # Right-click is for panning only - don't allow selection
             self.setDragMode(QGraphicsView.ScrollHandDrag)
+            # Convert right-click to left-click for panning
             left_event = event.__class__(event.type(), 
                                          event.localPos(), 
                                          Qt.LeftButton, 
@@ -311,15 +315,17 @@ class ClusterViewer(QGraphicsView):
             return
         elif event.button() == Qt.LeftButton:
             # Regular left-click without Ctrl - allow single selection
+            self.setDragMode(QGraphicsView.NoDrag)
             super().mousePressEvent(event)
+            return
         else:
             # For any other button, ignore
             event.ignore()
-            return
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release to revert to no drag mode."""
         if event.button() == Qt.RightButton:
+            # Handle right-click panning release
             left_event = event.__class__(event.type(), 
                                          event.localPos(), 
                                          Qt.LeftButton, 
@@ -328,12 +334,18 @@ class ClusterViewer(QGraphicsView):
             super().mouseReleaseEvent(left_event)
             self.setDragMode(QGraphicsView.NoDrag)
             return
-        super().mouseReleaseEvent(event)
-        self.setDragMode(QGraphicsView.NoDrag)
+        elif event.button() == Qt.LeftButton:
+            # Handle left-click release
+            super().mouseReleaseEvent(event)
+            self.setDragMode(QGraphicsView.NoDrag)
+            return
+        else:
+            event.ignore()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for right-click panning."""
         if event.buttons() == Qt.RightButton:
+            # Convert right-click drag to left-click for panning
             left_event = event.__class__(event.type(), 
                                          event.localPos(), 
                                          Qt.LeftButton, 
@@ -341,7 +353,9 @@ class ClusterViewer(QGraphicsView):
                                          event.modifiers())
             super().mouseMoveEvent(left_event)
             return
-        super().mouseMoveEvent(event)
+        else:
+            # Let the base class handle other mouse moves (including rubber band)
+            super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming."""
@@ -1660,7 +1674,7 @@ class ExplorerWindow(QMainWindow):
         try:
             data_items = self.get_filtered_data_items()
             self.run_clustering_on_items(data_items)
-            self.annotation_viewer.update_annotations(data_items)
+            self.annotation_viewer.update_annotations(data_items)   
             self.cluster_viewer.update_clusters(data_items)
             self.cluster_viewer.fit_view_to_points()
         finally:
