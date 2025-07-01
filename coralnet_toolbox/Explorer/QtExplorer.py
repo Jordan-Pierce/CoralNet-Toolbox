@@ -124,7 +124,7 @@ class AnnotationDataItem:
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, data_item, widget_size=128, annotation_viewer=None, parent=None):
+    def __init__(self, data_item, widget_size=96, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.data_item = data_item
         self.annotation = data_item.annotation  # For convenience
@@ -567,7 +567,7 @@ class AnnotationViewer(QScrollArea):
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
         self.last_selected_index = -1
-        self.current_widget_size = 128
+        self.current_widget_size = 96
         
         self.rubber_band = None
         self.rubber_band_origin = None
@@ -594,13 +594,13 @@ class AnnotationViewer(QScrollArea):
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
         self.size_slider.setMaximum(256)
-        self.size_slider.setValue(128)
+        self.size_slider.setValue(96)
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
         self.size_slider.valueChanged.connect(self.on_size_changed)
         header_layout.addWidget(self.size_slider)
 
-        self.size_value_label = QLabel("128")
+        self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
         header_layout.addWidget(self.size_value_label)
         
