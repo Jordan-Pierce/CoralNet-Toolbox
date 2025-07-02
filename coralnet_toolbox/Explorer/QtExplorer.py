@@ -1529,6 +1529,11 @@ class EmbeddingSettingsWidget(QGroupBox):
         self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
         self.embedding_technique_combo.currentTextChanged.connect(self._update_parameter_sliders)
         common_settings_layout.addRow("Technique:", self.embedding_technique_combo)
+        
+        self.random_state_spin = QSpinBox()
+        self.random_state_spin.setRange(0, 1000)
+        self.random_state_spin.setValue(42)
+        common_settings_layout.addRow("Random State:", self.random_state_spin)
 
         # Slider 1
         self.param1_label = QLabel("Parameter 1:")
@@ -1552,11 +1557,6 @@ class EmbeddingSettingsWidget(QGroupBox):
         param2_layout.addWidget(self.param2_slider)
         param2_layout.addWidget(self.param2_value_label)
         common_settings_layout.addRow(self.param2_label, param2_layout)
-        
-        self.random_state_spin = QSpinBox()
-        self.random_state_spin.setRange(0, 1000)
-        self.random_state_spin.setValue(42)
-        common_settings_layout.addRow("Random State:", self.random_state_spin)
 
         self.apply_embedding_button = QPushButton("Apply Embedding")
         self.apply_embedding_button.clicked.connect(self.apply_embedding)
@@ -1662,6 +1662,12 @@ class EmbeddingSettingsWidget(QGroupBox):
 
     def apply_embedding(self):
         if self.explorer_window and hasattr(self.explorer_window, 'run_embedding_pipeline'):
+            # Clear all selections before running embedding pipeline
+            if hasattr(self.explorer_window, 'annotation_viewer'):
+                self.explorer_window.annotation_viewer.clear_selection()
+            if hasattr(self.explorer_window, 'embedding_viewer'):
+                self.explorer_window.embedding_viewer.render_selection_from_ids(set())
+            
             self.explorer_window.run_embedding_pipeline()
     
 
