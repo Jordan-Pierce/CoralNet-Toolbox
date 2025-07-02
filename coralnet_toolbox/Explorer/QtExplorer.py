@@ -721,6 +721,17 @@ class AnnotationViewer(QScrollArea):
         self.show_all_button.clicked.connect(self.show_all_annotations)
         toolbar_layout.addWidget(self.show_all_button)
 
+        # Add a separator
+        toolbar_layout.addWidget(self._create_separator())
+
+        # Sort controls
+        sort_label = QLabel("Sort By:")
+        toolbar_layout.addWidget(sort_label)
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["None", "Label", "Image"])
+        self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
+        toolbar_layout.addWidget(self.sort_combo)
+
         # Add a spacer to push the size controls to the right
         toolbar_layout.addStretch()
 
@@ -755,7 +766,7 @@ class AnnotationViewer(QScrollArea):
 
         # Set the initial state of the toolbar buttons
         self._update_toolbar_state()
-        
+            
     @pyqtSlot()
     def isolate_selection(self):
         """Hides all annotation widgets that are not currently selected."""
@@ -808,6 +819,98 @@ class AnnotationViewer(QScrollArea):
             self.isolate_button.show()
             self.show_all_button.hide()
             self.isolate_button.setEnabled(selection_exists)
+            
+    def _create_separator(self):
+        """Create a vertical separator line for the toolbar."""
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; margin: 0 5px;")
+        return separator
+
+    def on_sort_changed(self, sort_type):
+        """Handle sort type change."""
+        self.recalculate_widget_positions()
+
+    def _get_sorted_widgets(self):
+        """Get widgets sorted according to the current sort setting."""
+        sort_type = self.sort_combo.currentText()
+        
+        if sort_type == "None":
+            return list(self.annotation_widgets_by_id.values())
+        
+        widgets = list(self.annotation_widgets_by_id.values())
+        
+        if sort_type == "Label":
+            widgets.sort(key=lambda w: w.data_item.effective_label.short_label_code)
+        elif sort_type == "Image":
+            widgets.sort(key=lambda w: os.path.basename(w.data_item.annotation.image_path))
+        
+        return widgets
+
+    def _group_widgets_by_sort_key(self, widgets):
+        """Group widgets by the current sort key and return groups with headers."""
+        sort_type = self.sort_combo.currentText()
+        
+        if sort_type == "None":
+            return [("", widgets)]
+        
+        groups = []
+        current_group = []
+        current_key = None
+        
+        for widget in widgets:
+            if sort_type == "Label":
+                key = widget.data_item.effective_label.short_label_code
+            elif sort_type == "Image":
+                key = os.path.basename(widget.data_item.annotation.image_path)
+            else:
+                key = ""
+            
+            if current_key != key:
+                if current_group:
+                    groups.append((current_key, current_group))
+                current_group = [widget]
+                current_key = key
+            else:
+                current_group.append(widget)
+        
+        if current_group:
+            groups.append((current_key, current_group))
+        
+        return groups
+    
+    def _clear_separator_labels(self):
+        """Remove any existing group header labels."""
+        if hasattr(self, '_group_headers'):
+            for header in self._group_headers:
+                header.setParent(None)
+                header.deleteLater()
+        self._group_headers = []
+
+    def _create_group_header(self, text):
+        """Create a group header label."""
+        if not hasattr(self, '_group_headers'):
+            self._group_headers = []
+        
+        header = QLabel(text)
+        header.setParent(self.content_widget)
+        header.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 12px;
+                color: #555;
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 4px 8px;
+                margin: 2px 0px;
+            }
+        """)
+        header.setFixedHeight(25)
+        header.setMinimumWidth(self.viewport().width() - 20)
+        header.show()
+        
+        self._group_headers.append(header)
+        return header
 
     def on_size_changed(self, value):
         """Handle slider value change to resize annotation widgets."""
@@ -838,50 +941,69 @@ class AnnotationViewer(QScrollArea):
             self.grid_layout.addWidget(widget, i // cols, i % cols)
             
     def recalculate_widget_positions(self):
-        """Manually positions widgets in a flow layout, using dynamic spacing
-        proportional to widget size to ensure a consistent look and feel.
-        """
+        """Manually positions widgets in a flow layout with sorting and group headers."""
         if not self.annotation_widgets_by_id:
             self.content_widget.setMinimumSize(1, 1)
             return
 
-        # --- MODIFIED: Make spacing proportional to the widget size ---
-        # This creates a more consistent visual gap at all sizes.
-        # We'll use 8% of the widget height, with a minimum of 5 pixels.
-        spacing = max(5, int(self.current_widget_size * 0.08))
+        # Clear any existing separator labels
+        self._clear_separator_labels()
 
-        # Use the viewport width for calculations
-        available_width = self.viewport().width()
-        x, y = spacing, spacing  # Use the new spacing for margins as well
-        max_height_in_row = 0
+        # Get sorted widgets
+        all_widgets = self._get_sorted_widgets()
         
-        # Only calculate positions for widgets that are currently visible
-        widgets_to_place = [w for w in self.annotation_widgets_by_id.values() if not w.isHidden()]
+        # Filter to only visible widgets
+        visible_widgets = [w for w in all_widgets if not w.isHidden()]
+        
+        if not visible_widgets:
+            self.content_widget.setMinimumSize(1, 1)
+            return
 
-        for widget in widgets_to_place:
-            # Use size() for existing widgets that have a fixed size
-            widget_size = widget.size()
-            
-            # Check if the widget fits on the current line. If not, wrap to the next line.
-            # The first widget on a line (when x == spacing) always fits.
-            if x > spacing and x + widget_size.width() > available_width:
+        # Group widgets by sort key
+        groups = self._group_widgets_by_sort_key(visible_widgets)
+
+        # Calculate spacing
+        spacing = max(5, int(self.current_widget_size * 0.08))
+        available_width = self.viewport().width()
+        
+        x, y = spacing, spacing
+        max_height_in_row = 0
+
+        for group_name, group_widgets in groups:
+            # Add group header if sorting is enabled and group has a name
+            if group_name and self.sort_combo.currentText() != "None":
+                # Ensure we're at the start of a new line for headers
+                if x > spacing:
+                    x = spacing
+                    y += max_height_in_row + spacing
+                    max_height_in_row = 0
+                
+                # Create and position header label
+                header_label = self._create_group_header(group_name)
+                header_label.move(x, y)
+                
+                # Move to next line after header
+                y += header_label.height() + spacing
                 x = spacing
-                y += max_height_in_row + spacing
                 max_height_in_row = 0
 
-            widget.move(x, y)
-            
-            x += widget_size.width() + spacing
-            max_height_in_row = max(max_height_in_row, widget_size.height())
+            # Position widgets in this group
+            for widget in group_widgets:
+                widget_size = widget.size()
+                
+                # Check if widget fits on current line
+                if x > spacing and x + widget_size.width() > available_width:
+                    x = spacing
+                    y += max_height_in_row + spacing
+                    max_height_in_row = 0
 
-        # After positioning all widgets, update the total size of the content widget
-        # so the scroll area's scrollbars become active if needed.
-        if widgets_to_place:
-            total_height = y + max_height_in_row + spacing
-            # The content width should match the viewport to prevent horizontal scrollbars
-            self.content_widget.setMinimumSize(available_width, total_height)
-        else:
-            self.content_widget.setMinimumSize(1, 1)
+                widget.move(x, y)
+                x += widget_size.width() + spacing
+                max_height_in_row = max(max_height_in_row, widget_size.height())
+
+        # Update content widget size
+        total_height = y + max_height_in_row + spacing
+        self.content_widget.setMinimumSize(available_width, total_height)
             
     def update_annotations(self, data_items):
         """Update displayed annotations, creating new widgets. This will also
@@ -1276,6 +1398,10 @@ class AnnotationViewer(QScrollArea):
             widget.data_item.set_preview_label(preview_label)
             widget.update() # Force repaint with new color
             changed_ids.append(widget.data_item.annotation.id)
+            
+        # Recalculate positions to update sorting based on new effective labels
+        if self.sort_combo.currentText() == "Label":
+            self.recalculate_widget_positions()
 
         if changed_ids:
             self.preview_changed.emit(changed_ids)
@@ -1291,6 +1417,9 @@ class AnnotationViewer(QScrollArea):
                 something_cleared = True
         
         if something_cleared:
+            # Recalculate positions to update sorting based on reverted labels
+            if self.sort_combo.currentText() == "Label":
+                self.recalculate_widget_positions()
             self.update_label_window_selection()
 
     def has_preview_changes(self):
@@ -2380,6 +2509,10 @@ class ExplorerWindow(QMainWindow):
                         point = self.embedding_viewer.points_by_id.get(item.annotation.id)
                         if point:
                             point.update() # Repaint to show new permanent color
+
+                # Update sorting if currently sorting by label
+                if self.annotation_viewer.sort_combo.currentText() == "Label":
+                    self.annotation_viewer.recalculate_widget_positions()
 
                 # Update the main application's data
                 affected_images = {ann.image_path for ann in applied_annotations}
