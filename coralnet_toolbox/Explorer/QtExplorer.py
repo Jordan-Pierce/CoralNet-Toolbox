@@ -1199,6 +1199,8 @@ class AnnotationViewer(QScrollArea):
         
         # Update label window once at the end
         self.update_label_window_selection()
+        # Update toolbar state to enable/disable Isolate button
+        self._update_toolbar_state()
     
     def apply_preview_label_to_selected(self, preview_label):
         """Apply a preview label and emit a signal for the embedding view to update."""
