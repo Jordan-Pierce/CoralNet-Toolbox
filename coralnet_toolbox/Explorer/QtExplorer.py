@@ -1373,7 +1373,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         # --- Tabbed Interface for Model Selection ---
         self.tabs = QTabWidget()
 
-        # Tab 1: Pre-defined Models
+        # Tab 1: Select Model
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
         model_select_layout.setContentsMargins(5, 10, 5, 5) # Add some top margin
@@ -1411,7 +1411,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         self.model_combo.setCurrentIndex(standard_models.index('yolov8n-cls.pt'))
         
         model_select_layout.addRow("Model:", self.model_combo)
-        self.tabs.addTab(model_select_tab, "Pre-defined Models")
+        self.tabs.addTab(model_select_tab, "Select Model")
 
         # Tab 2: Existing Model from File
         model_existing_tab = QWidget()
@@ -1427,7 +1427,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         path_layout.addWidget(self.model_path_edit)
         path_layout.addWidget(browse_button)
         model_existing_layout.addRow("Model Path:", path_layout)
-        self.tabs.addTab(model_existing_tab, "Existing Model")
+        self.tabs.addTab(model_existing_tab, "Use Existing Model")
         
         main_layout.addWidget(self.tabs)
 
@@ -1496,6 +1496,10 @@ class ExplorerWindow(QMainWindow):
 
         # Store current filtered data items for embedding
         self.current_data_items = []
+        
+        # Cache for extracted features and the model that generated them ---
+        self.current_features = None
+        self.current_feature_generating_model = ""
 
         self.setWindowTitle("Explorer")
         # Set the window icon
@@ -1808,34 +1812,42 @@ class ExplorerWindow(QMainWindow):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-    def _extract_rgb_features(self, data_items):
+    def _extract_rgb_features(self, data_items, progress_bar=None):
         """Extracts mean RGB color features from annotation crops."""
-        print("Extracting features (mean RGB)...")
+        # --- MODIFIED: Progress bar integration ---
+        if progress_bar:
+            progress_bar.set_title("Extracting Mean RGB Features...")
+            progress_bar.start_progress(len(data_items))
+
         features = []
         valid_data_items = []
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
-                # Convert QPixmap to numpy array
                 arr = pixmap_to_numpy(pixmap)
-                
                 mean_color = np.mean(arr, axis=(0, 1))
                 features.append(mean_color)
                 valid_data_items.append(item)
             else:
                 print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
+            
+            if progress_bar:
+                progress_bar.update_progress()
 
         return np.array(features), valid_data_items
 
-    def _extract_yolo_features(self, data_items, model_name):
+    def _extract_yolo_features(self, data_items, model_name, progress_bar=None):
         """
         Extracts features from annotation crops using a specified YOLO model.
-        This method is adapted from the standalone 'calculate_embeddings_exp_8' function.
+        This version processes images as a stream for better memory efficiency.
         """
-        print(f"Attempting to extract features with YOLO model: {model_name}")
+        # --- MODIFIED: Progress bar integration ---
+        if progress_bar:
+            progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
+            # Initialize progress bar for the total number of items to be processed
+            progress_bar.start_progress(len(data_items))
 
-        # --- 1. Model Caching and Loading ---
-        # Avoid reloading the model if it's already in memory.
+        # Load or retrieve the cached model
         if model_name != self.model_path or self.loaded_model is None:
             try:
                 print(f"Loading new model: {model_name}")
@@ -1852,38 +1864,55 @@ class ExplorerWindow(QMainWindow):
         except:
             imgsz = 256
         
-        # --- 2. Device Selection ---
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"NOTE: Using device '{device}' for feature extraction.")
 
-        embeddings_list = []
-        valid_data_items = []
+        # --- MODIFIED: Stream-based processing ---
         
-        try:
-            # --- 3. Main Loop for Feature Extraction ---
-            # Instead of iterating over a dataframe, we iterate through our data items.
-            for item in data_items:
-                pixmap = item.annotation.get_cropped_image()
-                
-                if not pixmap or pixmap.isNull():
-                    print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
-                    continue
-
-                # Convert QPixmap to a numpy array for the model
+        # 1. Prepare a list of valid images and corresponding data items first.
+        image_list = []
+        valid_data_items = []
+        for item in data_items:
+            pixmap = item.annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull():
                 image_np = pixmap_to_numpy(pixmap)
-
-                # The core embedding calculation
-                embedding = model.embed(image_np, imgsz=imgsz, half=True, stream=False, device=device, verbose=False)
-                
-                # Append successful results
-                embeddings_list.append(embedding[0].cpu().numpy())
+                image_list.append(image_np)
                 valid_data_items.append(item)
+            else:
+                print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
+                # If an item is skipped, update the progress bar for it immediately.
+                if progress_bar:
+                    progress_bar.update_progress()
+
+        # If after checking all items, none are valid, we can stop.
+        if not valid_data_items:
+            print("Warning: No valid images to process for feature extraction.")
+            return np.array([]), []
+
+        embeddings_list = []
+        try:
+            # 2. Pass the entire list of images to the model with stream=True.
+            # This returns a generator that yields results one by one.
+            results_generator = model.embed(
+                image_list, 
+                stream=True, 
+                imgsz=imgsz, 
+                half=True, 
+                device=device, 
+                verbose=False
+            )
+            
+            # 3. Process the results from the generator.
+            for embedding_result in results_generator:
+                embeddings_list.append(embedding_result.cpu().numpy())
+                # Update progress for each item as it's processed from the stream.
+                if progress_bar:
+                    progress_bar.update_progress()
 
             if not embeddings_list:
-                print("Warning: No features were extracted. The model may have failed or no valid images were found.")
+                print("Warning: No features were extracted. The model may have failed.")
                 return np.array([]), []
 
-            # Convert the list of embeddings to a final numpy array
             embeddings = np.array(embeddings_list)
             
         except Exception as e:
@@ -1891,31 +1920,30 @@ class ExplorerWindow(QMainWindow):
             return np.array([]), []
             
         finally:
-            # --- 4. Cleanup ---
-            # Clear CUDA cache to free up memory after the operation
+            # Clean up CUDA memory after the operation
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
         print(f"Successfully extracted {len(embeddings)} features.")
+        # Return the embeddings and the list of items that were actually processed
         return embeddings, valid_data_items
 
-    def _extract_features(self, data_items):
+    def _extract_features(self, data_items, progress_bar=None):
         """
-        Dispatcher method to call the appropriate feature extraction function
-        based on the user's selection in the UI.
+        Dispatcher method to call the appropriate feature extraction function.
+        It now passes the progress_bar object to the sub-methods.
         """
-        # --- THIS IS THE CHANGE ---
-        # Use the new method to get the model from the active tab.
         model_name = self.embedding_settings_widget.get_selected_model()
 
         if not model_name:
             print("No model selected or path provided.")
             return np.array([]), []
 
+        # --- MODIFIED: Pass the progress_bar object ---
         if model_name == "Simple Color (Mean RGB)":
-            return self._extract_rgb_features(data_items)
-        elif ".pt" in model_name:  # Check for a YOLO model by name or path
-            return self._extract_yolo_features(data_items, model_name)
+            return self._extract_rgb_features(data_items, progress_bar=progress_bar)
+        elif ".pt" in model_name:
+            return self._extract_yolo_features(data_items, model_name, progress_bar=progress_bar)
         else:
             print(f"Unknown or invalid feature model selected: {model_name}")
             return np.array([]), []
@@ -1976,40 +2004,46 @@ class ExplorerWindow(QMainWindow):
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
 
     def run_embedding_pipeline(self):
-        """Orchestrates the feature extraction and dimensionality reduction pipeline with progress bar."""
+        """
+        Orchestrates the feature extraction and dimensionality reduction pipeline.
+        The progress bar is now passed to the feature extraction methods.
+        """
         if not self.current_data_items:
-            print("No items to process.")
+            print("No items to process for embedding.")
             return
 
         technique = self.embedding_settings_widget.embedding_technique_combo.currentText()
-        if (technique == 'TSNE' and TSNE is None) or (technique == 'UMAP' and UMAP is None):
-            print(f"Warning: Required library for {technique} not installed.")
-            return
+        selected_model = self.embedding_settings_widget.get_selected_model()
 
-        # Create and show progress bar
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Generating Embedding Visualization")
         progress_bar.show()
         
         try:
-            # Start progress with 3 main steps: feature extraction, dimensionality reduction, visualization
-            
-            # Step 1: Extract Features
-            progress_bar.set_title("Extracting features from annotations...")
-            progress_bar.start_progress(1)
-            features, valid_data_items = self._extract_features(self.current_data_items)
-            progress_bar.update_progress()
-            
-            if not valid_data_items:
-                print("No valid features could be extracted. Aborting embedding.")
+            # Check if we need to re-extract features (slow path)
+            if self.current_features is None or selected_model != self.current_feature_generating_model:
+                # --- MODIFIED: Pass the progress_bar to the dispatcher ---
+                # The sub-method will now control the progress bar's title and value.
+                features, valid_data_items = self._extract_features(self.current_data_items, progress_bar=progress_bar)
+                
+                self.current_features = features
+                self.current_feature_generating_model = selected_model
+                self.current_data_items = valid_data_items
+                self.annotation_viewer.update_annotations(self.current_data_items)
+            else:
+                # Fast path: use cached features
+                print("Using cached features. Skipping feature extraction.")
+                features = self.current_features
+
+            if features is None or len(features) == 0:
+                print("No valid features could be extracted or found in cache. Aborting embedding.")
                 self.embedding_viewer.clear_points()
                 self.embedding_viewer.show_placeholder()
-                QApplication.restoreOverrideCursor()
                 return
 
-            # Step 2: Dimensionality Reduction
+            # Dimensionality Reduction
             progress_bar.set_title(f"Running {technique} dimensionality reduction...")
-            progress_bar.start_progress(1)
+            progress_bar.start_progress(1) # This is a single, fast step
             random_state = self.embedding_settings_widget.random_state_spin.value()
             embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
             progress_bar.update_progress()
@@ -2017,22 +2051,19 @@ class ExplorerWindow(QMainWindow):
             if embedded_features is None:
                 self.embedding_viewer.clear_points()
                 self.embedding_viewer.show_placeholder()
-                QApplication.restoreOverrideCursor()
                 return
 
-            # Step 3: Update visualization
+            # Update Visualization
             progress_bar.set_title("Updating visualization...")
-            progress_bar.start_progress(1)
-            self._update_data_items_with_embedding(valid_data_items, embedded_features)
+            progress_bar.start_progress(1) # Also a single, fast step
+            self._update_data_items_with_embedding(self.current_data_items, embedded_features)
             
-            # Update the viewers only with items that were successfully processed
-            self.annotation_viewer.update_annotations(valid_data_items)            
-            self.embedding_viewer.update_embeddings(valid_data_items)
+            self.embedding_viewer.update_embeddings(self.current_data_items)
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
             progress_bar.update_progress()
             
-            print(f"Successfully generated embedding for {len(valid_data_items)} annotations using {technique}")
+            print(f"Successfully generated embedding for {len(self.current_data_items)} annotations using {technique}")
             
         except Exception as e:
             print(f"Error during embedding pipeline: {e}")
@@ -2046,16 +2077,20 @@ class ExplorerWindow(QMainWindow):
             progress_bar.close()
 
     def refresh_filters(self):
-        """Refresh display: filter data and update annotation viewer only."""
+        """Refresh display: filter data and update annotation viewer."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # Get filtered data and store for potential embedding
             self.current_data_items = self.get_filtered_data_items()
             
+            # --- MODIFIED: Invalidate the feature cache ---
+            # Since the filtered items have changed, the old features are no longer valid.
+            self.current_features = None
+            
             # Update annotation viewer with filtered data
             self.annotation_viewer.update_annotations(self.current_data_items)
             
-            # Clear embedding viewer and show placeholder
+            # Clear embedding viewer and show placeholder, as it is now out of sync
             self.embedding_viewer.clear_points()
             self.embedding_viewer.show_placeholder()
             
@@ -2088,18 +2123,39 @@ class ExplorerWindow(QMainWindow):
 
     def apply(self):
         """Apply any modifications to the actual annotations."""
+        # --- MODIFIED: This method no longer calls refresh_filters() ---
         try:
             applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
+            
             if applied_annotations:
+                # Find which data items were affected and tell their visual components to update
+                changed_ids = {ann.id for ann in applied_annotations}
+                for item in self.current_data_items:
+                    if item.annotation.id in changed_ids:
+                        # Update annotation widget in the grid
+                        widget = self.annotation_viewer.annotation_widgets_by_id.get(item.annotation.id)
+                        if widget:
+                            widget.update() # Repaint to show new permanent color
+
+                        # Update point in the embedding viewer
+                        point = self.embedding_viewer.points_by_id.get(item.annotation.id)
+                        if point:
+                            point.update() # Repaint to show new permanent color
+
+                # Update the main application's data
                 affected_images = {ann.image_path for ann in applied_annotations}
                 for image_path in affected_images:
                     self.image_window.update_image_annotations(image_path)
                 self.annotation_window.load_annotations()
-                self.refresh_filters()
+                
+                # Clear selection and button states
                 self.annotation_viewer.clear_selection()
+                self.embedding_viewer.render_selection_from_ids(set()) # Clear embedding selection
                 self.update_button_states()
+                
                 print(f"Applied changes to {len(applied_annotations)} annotation(s)")
             else:
                 print("No preview changes to apply")
+
         except Exception as e:
             print(f"Error applying modifications: {e}")
