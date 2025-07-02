@@ -1851,12 +1851,6 @@ class ExplorerWindow(QMainWindow):
         Extracts features from annotation crops using a specified YOLO model.
         This version processes images as a stream for better memory efficiency.
         """
-        # --- MODIFIED: Progress bar integration ---
-        if progress_bar:
-            progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
-            # Initialize progress bar for the total number of items to be processed
-            progress_bar.start_progress(len(data_items))
-
         # Load or retrieve the cached model
         if model_name != self.model_path or self.loaded_model is None:
             try:
@@ -1878,6 +1872,11 @@ class ExplorerWindow(QMainWindow):
 
         # --- MODIFIED: Stream-based processing ---
         
+        if progress_bar:
+            progress_bar.set_title(f"Preparing images...")
+            # Initialize progress bar for the total number of items to be processed
+            progress_bar.start_progress(len(data_items))
+        
         # 1. Prepare a list of valid images and corresponding data items first.
         image_list = []
         valid_data_items = []
@@ -1889,14 +1888,19 @@ class ExplorerWindow(QMainWindow):
                 valid_data_items.append(item)
             else:
                 print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
-                # If an item is skipped, update the progress bar for it immediately.
-                if progress_bar:
-                    progress_bar.update_progress()
+                
+            if progress_bar:
+                progress_bar.update_progress()
 
         # If after checking all items, none are valid, we can stop.
         if not valid_data_items:
             print("Warning: No valid images to process for feature extraction.")
             return np.array([]), []
+        
+        if progress_bar:
+            progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
+            # Initialize progress bar for the total number of items to be processed
+            progress_bar.start_progress(len(data_items))
 
         embeddings_list = []
         try:
