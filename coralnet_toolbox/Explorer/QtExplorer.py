@@ -1,6 +1,7 @@
 import warnings
 
 import os
+import gc
 
 import numpy as np
 
@@ -1491,6 +1492,7 @@ class ExplorerWindow(QMainWindow):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
+        self.device = main_window.device  # Use the same device as the main window
         self.model_path = ""
         self.loaded_model = None
 
@@ -1540,14 +1542,21 @@ class ExplorerWindow(QMainWindow):
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
-        # Stop any running timers to prevent errors during cleanup
+        """
+        Handles the window close event.
+        This now calls the resource cleanup method.
+        """
+        # Stop any running timers to prevent errors
         if hasattr(self, 'embedding_viewer') and self.embedding_viewer:
             if hasattr(self.embedding_viewer, 'animation_timer') and self.embedding_viewer.animation_timer:
                 self.embedding_viewer.animation_timer.stop()
 
-        # Clear any preview states before closing
+        # Clear any unsaved preview states
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
+
+        # --- NEW: Call the dedicated cleanup method ---
+        self._cleanup_resources()
 
         # Re-enable the main window before closing
         if self.main_window:
@@ -1557,8 +1566,9 @@ class ExplorerWindow(QMainWindow):
         if hasattr(self.main_window, 'explorer_closed'):
             self.main_window.explorer_closed()
 
-        # Clear the reference in the main_window
+        # Clear the reference in the main_window to allow garbage collection
         self.main_window.explorer_window = None
+        
         event.accept()
 
     def setup_ui(self):
@@ -1864,8 +1874,7 @@ class ExplorerWindow(QMainWindow):
         except:
             imgsz = 256
         
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"NOTE: Using device '{device}' for feature extraction.")
+        print(f"NOTE: Using device '{self.device}' for feature extraction.")
 
         # --- MODIFIED: Stream-based processing ---
         
@@ -1898,7 +1907,7 @@ class ExplorerWindow(QMainWindow):
                 stream=True, 
                 imgsz=imgsz, 
                 half=True, 
-                device=device, 
+                device=self.device,
                 verbose=False
             )
             
@@ -2159,3 +2168,23 @@ class ExplorerWindow(QMainWindow):
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
+            
+    def _cleanup_resources(self):
+        """
+        Clean up heavy resources like the loaded model and clear GPU cache.
+        This is called when the window is closed to free up memory.
+        """
+        print("Cleaning up Explorer resources...")
+        
+        # Reset model and feature caches
+        self.loaded_model = None
+        self.model_path = ""
+        self.current_features = None
+        self.current_feature_generating_model = ""
+        
+        # Clear CUDA cache if available to free up GPU memory
+        if torch.cuda.is_available():
+            print("Clearing CUDA cache.")
+            torch.cuda.empty_cache()
+            
+        print("Cleanup complete.")

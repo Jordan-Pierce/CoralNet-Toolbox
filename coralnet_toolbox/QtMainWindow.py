@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
         
-        self.explorer_window = ExplorerWindow(self)
+        self.explorer_window = None  # Initialized in open_explorer_window
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
