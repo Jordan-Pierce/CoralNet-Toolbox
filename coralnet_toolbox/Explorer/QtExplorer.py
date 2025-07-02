@@ -657,7 +657,9 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             
 
 class AnnotationViewer(QScrollArea):
-    """Scrollable grid widget for displaying annotation image crops with selection support."""
+    """Scrollable grid widget for displaying annotation image crops with selection,
+    filtering, and isolation support.
+    """
     
     # Define signals to report changes to the ExplorerWindow
     selection_changed = pyqtSignal(list)  # list of changed annotation IDs
@@ -679,20 +681,52 @@ class AnnotationViewer(QScrollArea):
         self.preview_label_assignments = {}
         self.original_label_assignments = {}
         
+        # New state variables for Isolate/Focus mode
+        self.isolated_mode = False
+        self.isolated_widgets = set()
+
         self.setup_ui()
 
     def setup_ui(self):
+        """Set up the UI with a toolbar and a scrollable content area."""
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
+
+        # Main container and layout
         main_container = QWidget()
         main_layout = QVBoxLayout(main_container)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        header_layout = QHBoxLayout()
+        main_layout.setSpacing(4)  # Add a little space between toolbar and content
+
+        # --- New Toolbar ---
+        toolbar_widget = QWidget()
+        toolbar_layout = QHBoxLayout(toolbar_widget)
+        toolbar_layout.setContentsMargins(4, 2, 4, 2)
+
+        # Isolate/Focus controls
+        self.isolate_button = QPushButton("Isolate Selection")
+        isolate_icon = get_icon("focus.png")
+        if not isolate_icon.isNull():
+            self.isolate_button.setIcon(isolate_icon)
+        self.isolate_button.setToolTip("Hide all non-selected annotations")
+        self.isolate_button.clicked.connect(self.isolate_selection)
+        toolbar_layout.addWidget(self.isolate_button)
+
+        self.show_all_button = QPushButton("Show All")
+        show_all_icon = get_icon("show_all.png")
+        if not show_all_icon.isNull():
+            self.show_all_button.setIcon(show_all_icon)
+        self.show_all_button.setToolTip("Show all filtered annotations")
+        self.show_all_button.clicked.connect(self.show_all_annotations)
+        toolbar_layout.addWidget(self.show_all_button)
+
+        # Add a spacer to push the size controls to the right
+        toolbar_layout.addStretch()
+
+        # Size controls
         size_label = QLabel("Size:")
-        header_layout.addWidget(size_label)
+        toolbar_layout.addWidget(size_label)
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(32)
         self.size_slider.setMaximum(256)
@@ -700,16 +734,16 @@ class AnnotationViewer(QScrollArea):
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setTickInterval(32)
         self.size_slider.valueChanged.connect(self.on_size_changed)
-        header_layout.addWidget(self.size_slider)
+        toolbar_layout.addWidget(self.size_slider)
 
         self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
-        header_layout.addWidget(self.size_value_label)
-        
-        main_layout.addLayout(header_layout)
-        
-        self.content_widget = QWidget()
+        toolbar_layout.addWidget(self.size_value_label)
 
+        main_layout.addWidget(toolbar_widget)
+        
+        # --- Content Area ---
+        self.content_widget = QWidget()
         content_scroll = QScrollArea()
         content_scroll.setWidgetResizable(True)
         content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -718,6 +752,168 @@ class AnnotationViewer(QScrollArea):
         
         main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
+
+        # Set the initial state of the toolbar buttons
+        self._update_toolbar_state()
+        
+    @pyqtSlot()
+    def isolate_selection(self):
+        """Hides all annotation widgets that are not currently selected."""
+        if not self.selected_widgets or self.isolated_mode:
+            return
+
+        self.isolated_widgets = set(self.selected_widgets)
+        self.content_widget.setUpdatesEnabled(False)
+        try:
+            for widget in self.annotation_widgets_by_id.values():
+                if widget not in self.isolated_widgets:
+                    widget.hide()
+            self.isolated_mode = True
+            self.recalculate_widget_positions()
+        finally:
+            self.content_widget.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+
+    @pyqtSlot()
+    def show_all_annotations(self):
+        """Shows all annotation widgets, exiting the isolated mode."""
+        if not self.isolated_mode:
+            return
+            
+        self.isolated_mode = False
+        self.isolated_widgets.clear()
+        
+        self.content_widget.setUpdatesEnabled(False)
+        try:
+            for widget in self.annotation_widgets_by_id.values():
+                widget.show()
+            self.recalculate_widget_positions()
+        finally:
+            self.content_widget.setUpdatesEnabled(True)
+            
+        self._update_toolbar_state()
+        
+    def _update_toolbar_state(self):
+        """Updates the visibility and enabled state of the toolbar buttons
+        based on the current selection and isolation mode.
+        """
+        selection_exists = bool(self.selected_widgets)
+        
+        if self.isolated_mode:
+            self.isolate_button.hide()
+            self.show_all_button.show()
+            self.show_all_button.setEnabled(True)
+        else:
+            self.isolate_button.show()
+            self.show_all_button.hide()
+            self.isolate_button.setEnabled(selection_exists)
+
+    def on_size_changed(self, value):
+        """Handle slider value change to resize annotation widgets."""
+        if value % 2 != 0:
+            value -= 1
+        self.current_widget_size = value
+        self.size_value_label.setText(str(value))
+        
+        # Disable updates for performance while resizing many items
+        self.content_widget.setUpdatesEnabled(False)
+        for widget in self.annotation_widgets_by_id.values():
+            widget.update_height(value)  # Call the new, more descriptive method
+        self.content_widget.setUpdatesEnabled(True)
+
+        # After resizing, reflow the layout
+        self.recalculate_widget_positions()
+
+    def recalculate_grid_layout(self):
+        """Recalculate the grid layout based on current widget width."""
+        if not self.annotation_widgets_by_id:
+            return
+            
+        available_width = self.viewport().width() - 20
+        widget_width = self.current_widget_size + self.grid_layout.spacing()
+        cols = max(1, available_width // widget_width)
+        
+        for i, widget in enumerate(self.annotation_widgets_by_id.values()):
+            self.grid_layout.addWidget(widget, i // cols, i % cols)
+            
+    def recalculate_widget_positions(self):
+        """Manually positions widgets in a flow layout, using dynamic spacing
+        proportional to widget size to ensure a consistent look and feel.
+        """
+        if not self.annotation_widgets_by_id:
+            self.content_widget.setMinimumSize(1, 1)
+            return
+
+        # --- MODIFIED: Make spacing proportional to the widget size ---
+        # This creates a more consistent visual gap at all sizes.
+        # We'll use 8% of the widget height, with a minimum of 5 pixels.
+        spacing = max(5, int(self.current_widget_size * 0.08))
+
+        # Use the viewport width for calculations
+        available_width = self.viewport().width()
+        x, y = spacing, spacing  # Use the new spacing for margins as well
+        max_height_in_row = 0
+        
+        # Only calculate positions for widgets that are currently visible
+        widgets_to_place = [w for w in self.annotation_widgets_by_id.values() if not w.isHidden()]
+
+        for widget in widgets_to_place:
+            # Use size() for existing widgets that have a fixed size
+            widget_size = widget.size()
+            
+            # Check if the widget fits on the current line. If not, wrap to the next line.
+            # The first widget on a line (when x == spacing) always fits.
+            if x > spacing and x + widget_size.width() > available_width:
+                x = spacing
+                y += max_height_in_row + spacing
+                max_height_in_row = 0
+
+            widget.move(x, y)
+            
+            x += widget_size.width() + spacing
+            max_height_in_row = max(max_height_in_row, widget_size.height())
+
+        # After positioning all widgets, update the total size of the content widget
+        # so the scroll area's scrollbars become active if needed.
+        if widgets_to_place:
+            total_height = y + max_height_in_row + spacing
+            # The content width should match the viewport to prevent horizontal scrollbars
+            self.content_widget.setMinimumSize(available_width, total_height)
+        else:
+            self.content_widget.setMinimumSize(1, 1)
+            
+    def update_annotations(self, data_items):
+        """Update displayed annotations, creating new widgets. This will also
+        reset any active isolation view.
+        """
+        # Reset isolation state before updating to avoid confusion
+        if self.isolated_mode:
+            self.show_all_annotations()
+            
+        # Clear any existing widgets and ensure they are deleted
+        for widget in self.annotation_widgets_by_id.values():
+            widget.setParent(None)
+            widget.deleteLater()
+            
+        self.annotation_widgets_by_id.clear()
+        self.selected_widgets.clear()
+        self.last_selected_index = -1
+
+        # Create new widgets, parenting them to the content_widget
+        for data_item in data_items:
+            annotation_widget = AnnotationImageWidget(
+                data_item, 
+                self.current_widget_size,
+                annotation_viewer=self,
+                parent=self.content_widget
+            )
+            annotation_widget.show() 
+            self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
+        
+        self.recalculate_widget_positions()
+        # Ensure toolbar is in the correct state after a refresh
+        self._update_toolbar_state()
 
     def resizeEvent(self, event):
         """On window resize, reflow the annotation widgets."""
@@ -858,96 +1054,6 @@ class AnnotationViewer(QScrollArea):
             return
             
         super().mouseReleaseEvent(event)
-            
-    def on_size_changed(self, value):
-        """Handle slider value change to resize annotation widgets."""
-        if value % 2 != 0:
-            value -= 1
-        self.current_widget_size = value
-        self.size_value_label.setText(str(value))
-        
-        # Disable updates for performance while resizing many items
-        self.content_widget.setUpdatesEnabled(False)
-        for widget in self.annotation_widgets_by_id.values():
-            widget.update_height(value)  # Call the new, more descriptive method
-        self.content_widget.setUpdatesEnabled(True)
-
-        # After resizing, reflow the layout
-        self.recalculate_widget_positions()
-
-    def recalculate_grid_layout(self):
-        """Recalculate the grid layout based on current widget width."""
-        if not self.annotation_widgets_by_id:
-            return
-            
-        available_width = self.viewport().width() - 20
-        widget_width = self.current_widget_size + self.grid_layout.spacing()
-        cols = max(1, available_width // widget_width)
-        
-        for i, widget in enumerate(self.annotation_widgets_by_id.values()):
-            self.grid_layout.addWidget(widget, i // cols, i % cols)
-            
-    def recalculate_widget_positions(self):
-        """Replaces recalculate_grid_layout. Manually positions widgets in a flow."""
-        if not self.annotation_widgets_by_id:
-            self.content_widget.setMinimumSize(1, 1)
-            return
-
-        # Use the viewport width for calculations
-        available_width = self.viewport().width()
-        spacing = 5
-        x, y = spacing, spacing
-        max_height_in_row = 0
-        
-        # To ensure shift-selection works predictably, you might want to sort the widgets
-        # For now, we rely on the dictionary's insertion order.
-        widgets_to_place = list(self.annotation_widgets_by_id.values())
-
-        for widget in widgets_to_place:
-            widget_size = widget.sizeHint() # Or just widget.size()
-            
-            # Check if the widget fits on the current line. If not, wrap to the next line.
-            if x > spacing and x + widget_size.width() > available_width:
-                x = spacing
-                y += max_height_in_row + spacing
-                max_height_in_row = 0
-
-            widget.move(x, y)
-            
-            x += widget_size.width() + spacing
-            max_height_in_row = max(max_height_in_row, widget_size.height())
-
-        # After positioning all widgets, update the total size of the content widget
-        # so the scroll area's scrollbars become active if needed.
-        if widgets_to_place:
-            total_height = y + max_height_in_row + spacing
-            self.content_widget.setMinimumSize(available_width, total_height)
-
-    def update_annotations(self, data_items):
-        """Update displayed annotations, creating new widgets."""
-        # Clear any existing widgets and ensure they are deleted
-        for widget in self.annotation_widgets_by_id.values():
-            widget.setParent(None)
-            widget.deleteLater()
-            
-        self.annotation_widgets_by_id.clear()
-        self.selected_widgets.clear()
-        self.last_selected_index = -1
-
-        # Create new widgets, parenting them to the content_widget
-        for data_item in data_items:
-            annotation_widget = AnnotationImageWidget(
-                data_item, 
-                self.current_widget_size,
-                annotation_viewer=self,
-                parent=self.content_widget  # Parent to the scrollable area
-            )
-            # When not using a layout, widgets are hidden by default
-            annotation_widget.show() 
-            self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
-        
-        # After creating all widgets, calculate their positions
-        self.recalculate_widget_positions()
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
@@ -1007,10 +1113,11 @@ class AnnotationViewer(QScrollArea):
     def select_widget(self, widget):
         """Select a widget, update the data_item, and return True if state changed."""
         if not widget.is_selected():
-            widget.set_selected(True) # This updates visuals
-            widget.data_item.set_selected(True) # This updates the model
+            widget.set_selected(True)
+            widget.data_item.set_selected(True)
             self.selected_widgets.append(widget)
             self.update_label_window_selection()
+            self._update_toolbar_state()  # Update button states
             return True
         return False
 
@@ -1022,15 +1129,17 @@ class AnnotationViewer(QScrollArea):
             if widget in self.selected_widgets:
                 self.selected_widgets.remove(widget)
             self.update_label_window_selection()
+            self._update_toolbar_state()  # Update button states
             return True
         return False
 
     def clear_selection(self):
-        """Clear all selected widgets."""
+        """Clear all selected widgets and update toolbar state."""
         for widget in list(self.selected_widgets):
             widget.set_selected(False)
         self.selected_widgets.clear()
         self.update_label_window_selection()
+        self._update_toolbar_state()  # Update button states
 
     def update_label_window_selection(self):
         """Update the label window selection based on currently selected annotations."""
