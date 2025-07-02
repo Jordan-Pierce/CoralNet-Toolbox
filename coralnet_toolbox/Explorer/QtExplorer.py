@@ -2136,7 +2136,9 @@ class ExplorerWindow(QMainWindow):
 
     def apply(self):
         """Apply any modifications to the actual annotations."""
-        # --- MODIFIED: This method no longer calls refresh_filters() ---
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         try:
             applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
             
@@ -2172,6 +2174,9 @@ class ExplorerWindow(QMainWindow):
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
             
     def _cleanup_resources(self):
         """
