@@ -901,11 +901,11 @@ class AnnotationViewer(QScrollArea):
                 background-color: #f0f0f0;
                 border: 1px solid #ccc;
                 border-radius: 3px;
-                padding: 4px 8px;
+                padding: 5px 8px;
                 margin: 2px 0px;
             }
         """)
-        header.setFixedHeight(25)
+        header.setFixedHeight(30)  # Increased from 25 to 30
         header.setMinimumWidth(self.viewport().width() - 20)
         header.show()
         
