@@ -1085,7 +1085,8 @@ class AnnotationViewer(QScrollArea):
                     if w in widget_list:
                         try:
                             last_index_in_current_list = widget_list.index(w)
-                            if last_selected_widget is None or last_index_in_current_list > widget_list.index(last_selected_widget):
+                            if last_selected_widget is None or \
+                               last_index_in_current_list > widget_list.index(last_selected_widget):
                                 last_selected_widget = w
                         except ValueError:
                             continue
