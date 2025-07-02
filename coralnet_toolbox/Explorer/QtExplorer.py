@@ -1146,7 +1146,7 @@ class AnnotationViewer(QScrollArea):
 
 
 class AnnotationSettingsWidget(QGroupBox):
-    """Widget containing all filter annotation conditions in a multi-column layout."""
+    """Widget for filtering annotations by image, type, and label in a multi-column layout."""
 
     def __init__(self, main_window, parent=None):
         super(AnnotationSettingsWidget, self).__init__("Annotation Settings", parent)
@@ -1155,9 +1155,10 @@ class AnnotationSettingsWidget(QGroupBox):
         self.setup_ui()
 
     def setup_ui(self):
+        # The main layout is vertical, to hold the top columns, the stretch, and the bottom buttons
         layout = QVBoxLayout(self)
 
-        # Main conditions layout - horizontal with vertical columns
+        # A horizontal layout to contain the filter columns
         conditions_layout = QHBoxLayout()
 
         # Images column
@@ -1165,29 +1166,27 @@ class AnnotationSettingsWidget(QGroupBox):
         images_label = QLabel("Images:")
         images_label.setStyleSheet("font-weight: bold;")
         images_column.addWidget(images_label)
-        
+
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.MultiSelection)
         self.images_list.setMaximumHeight(100)
-        
-        # Add available images (no "All" item)
+
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
                 self.images_list.addItem(os.path.basename(path))
-        
+
         images_column.addWidget(self.images_list)
-        
-        # Images selection buttons at bottom
+
         images_buttons_layout = QHBoxLayout()
         self.images_select_all_btn = QPushButton("Select All")
         self.images_select_all_btn.clicked.connect(self.select_all_images)
         images_buttons_layout.addWidget(self.images_select_all_btn)
-        
+
         self.images_deselect_all_btn = QPushButton("Deselect All")
         self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
         images_buttons_layout.addWidget(self.images_deselect_all_btn)
         images_column.addLayout(images_buttons_layout)
-        
+
         conditions_layout.addLayout(images_column)
 
         # Annotation Type column
@@ -1195,28 +1194,27 @@ class AnnotationSettingsWidget(QGroupBox):
         type_label = QLabel("Annotation Type:")
         type_label.setStyleSheet("font-weight: bold;")
         type_column.addWidget(type_label)
-        
+
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
         self.annotation_type_list.setMaximumHeight(100)
-        self.annotation_type_list.addItems(["PatchAnnotation", 
-                                            "RectangleAnnotation", 
-                                            "PolygonAnnotation", 
+        self.annotation_type_list.addItems(["PatchAnnotation",
+                                            "RectangleAnnotation",
+                                            "PolygonAnnotation",
                                             "MultiPolygonAnnotation"])
-        
+
         type_column.addWidget(self.annotation_type_list)
-        
-        # Annotation type selection buttons at bottom
+
         type_buttons_layout = QHBoxLayout()
         self.type_select_all_btn = QPushButton("Select All")
         self.type_select_all_btn.clicked.connect(self.select_all_annotation_types)
         type_buttons_layout.addWidget(self.type_select_all_btn)
-        
+
         self.type_deselect_all_btn = QPushButton("Deselect All")
         self.type_deselect_all_btn.clicked.connect(self.deselect_all_annotation_types)
         type_buttons_layout.addWidget(self.type_deselect_all_btn)
         type_column.addLayout(type_buttons_layout)
-        
+
         conditions_layout.addLayout(type_column)
 
         # Label column
@@ -1224,45 +1222,48 @@ class AnnotationSettingsWidget(QGroupBox):
         label_label = QLabel("Label:")
         label_label.setStyleSheet("font-weight: bold;")
         label_column.addWidget(label_label)
-        
+
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.MultiSelection)
         self.label_list.setMaximumHeight(100)
-        
-        # Add available labels (no "All" item)
+
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
                 self.label_list.addItem(label.short_label_code)
-        
+
         label_column.addWidget(self.label_list)
-        
-        # Label selection buttons at bottom
+
         label_buttons_layout = QHBoxLayout()
         self.label_select_all_btn = QPushButton("Select All")
         self.label_select_all_btn.clicked.connect(self.select_all_labels)
         label_buttons_layout.addWidget(self.label_select_all_btn)
-        
+
         self.label_deselect_all_btn = QPushButton("Deselect All")
         self.label_deselect_all_btn.clicked.connect(self.deselect_all_labels)
         label_buttons_layout.addWidget(self.label_deselect_all_btn)
         label_column.addLayout(label_buttons_layout)
-        
+
         conditions_layout.addLayout(label_column)
-        
+
+        # Add the horizontal layout of columns to the main vertical layout
         layout.addLayout(conditions_layout)
+
+        # Add a stretch item to push the columns to the top
+        layout.addStretch(1)
 
         # Bottom buttons layout with Apply and Clear buttons on the right
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()  # Push buttons to the right
-        
+
         self.apply_button = QPushButton("Apply")
         self.apply_button.clicked.connect(self.apply_conditions)
         bottom_layout.addWidget(self.apply_button)
-        
+
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_all_conditions)
         bottom_layout.addWidget(self.clear_button)
 
+        # Add the bottom buttons layout to the main layout, keeping it at the bottom
         layout.addLayout(bottom_layout)
 
         # Set defaults
@@ -1270,8 +1271,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
     def select_all_images(self):
         """Select all items in the images list."""
-        for i in range(self.images_list.count()):
-            self.images_list.item(i).setSelected(True)
+        self.images_list.selectAll()
 
     def deselect_all_images(self):
         """Deselect all items in the images list."""
@@ -1279,8 +1279,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
     def select_all_annotation_types(self):
         """Select all items in the annotation types list."""
-        for i in range(self.annotation_type_list.count()):
-            self.annotation_type_list.item(i).setSelected(True)
+        self.annotation_type_list.selectAll()
 
     def deselect_all_annotation_types(self):
         """Deselect all items in the annotation types list."""
@@ -1288,8 +1287,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
     def select_all_labels(self):
         """Select all items in the labels list."""
-        for i in range(self.label_list.count()):
-            self.label_list.item(i).setSelected(True)
+        self.label_list.selectAll()
 
     def deselect_all_labels(self):
         """Deselect all items in the labels list."""
@@ -1297,13 +1295,8 @@ class AnnotationSettingsWidget(QGroupBox):
 
     def set_defaults(self):
         """Set default selections."""
-        # Set current image as default (not all images)
         self.set_default_to_current_image()
-        
-        # Set all annotation types as default
         self.select_all_annotation_types()
-        
-        # Set all labels as default
         self.select_all_labels()
 
     def set_default_to_current_image(self):
@@ -1312,27 +1305,18 @@ class AnnotationSettingsWidget(QGroupBox):
             current_image_path = self.main_window.annotation_window.current_image_path
             if current_image_path:
                 current_image_name = os.path.basename(current_image_path)
-                # Find and select the current image
-                for i in range(self.images_list.count()):
-                    item = self.images_list.item(i)
-                    if item.text() == current_image_name:
-                        item.setSelected(True)
-                        return
-        
-        # Fallback to selecting all images if current image not found
+                items = self.images_list.findItems(current_image_name, Qt.MatchExactly)
+                if items:
+                    items[0].setSelected(True)
+                    return
         self.select_all_images()
 
     def clear_all_conditions(self):
         """Reset all conditions to their defaults."""
-        # Clear all selections
         self.images_list.clearSelection()
         self.annotation_type_list.clearSelection()
         self.label_list.clearSelection()
-        
-        # Reset to defaults
         self.set_defaults()
-
-        # Auto-refresh on clear to show default results
         if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
             self.explorer_window.refresh_filters()
 
@@ -1345,54 +1329,21 @@ class AnnotationSettingsWidget(QGroupBox):
         """Get selected image names."""
         selected_items = self.images_list.selectedItems()
         if not selected_items:
-            # If nothing selected, return empty list (no filtering)
             return []
-        
         return [item.text() for item in selected_items]
-
-    def get_single_selected_image_path(self):
-        """Get the full path of the single selected image, or None if multiple/none selected."""
-        selected_images = self.get_selected_images()
-        if len(selected_images) == 1:
-            # Find the full path for this image name
-            image_name = selected_images[0]
-            if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
-                for path in self.main_window.image_window.raster_manager.image_paths:
-                    if os.path.basename(path) == image_name:
-                        return path
-        return None
-
-    def refresh_filters(self):
-        """Refresh the display based on current filter conditions."""
-        # Check if only one image is selected and load it in annotation window
-        single_image_path = self.get_single_selected_image_path()
-        if single_image_path and hasattr(self.main_window, 'image_window'):
-            # Load the single selected image in the annotation window
-            self.main_window.image_window.load_image_by_path(single_image_path)
-        
-        # Get filtered annotations
-        filtered_annotations = self.get_filtered_annotations()
-
-        # Update annotation viewer
-        if hasattr(self, 'annotation_viewer'):
-            self.annotation_viewer.update_annotations(filtered_annotations)
 
     def get_selected_annotation_types(self):
         """Get selected annotation types."""
         selected_items = self.annotation_type_list.selectedItems()
         if not selected_items:
-            # If nothing selected, return empty list (no filtering)
             return []
-        
         return [item.text() for item in selected_items]
 
     def get_selected_labels(self):
         """Get selected labels."""
         selected_items = self.label_list.selectedItems()
         if not selected_items:
-            # If nothing selected, return empty list (no filtering)
             return []
-        
         return [item.text() for item in selected_items]
     
     
