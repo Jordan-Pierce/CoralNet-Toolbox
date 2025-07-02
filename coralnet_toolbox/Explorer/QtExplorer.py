@@ -1365,7 +1365,11 @@ class EmbeddingSettingsWidget(QGroupBox):
         super(EmbeddingSettingsWidget, self).__init__("Embedding Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
+        
         self.setup_ui()
+        
+        # Initial call to set the sliders correctly for the default technique
+        self._update_parameter_sliders()
 
     def setup_ui(self):
         """Set up the UI with a tabbed interface for model selection."""
@@ -1399,17 +1403,14 @@ class EmbeddingSettingsWidget(QGroupBox):
                            'yolo12l-cls.pt',
                            'yolo12x-cls.pt']
         
-        # Add standard models to the combo box
         self.model_combo.addItems(standard_models)
         
-        # Add community models
         community_configs = get_available_configs(task='classify')
         if community_configs:
-            self.model_combo.insertSeparator(len(standard_models))
+            self.model_combo.insertSeparator(len(standard_models) + 2)
             self.model_combo.addItems(list(community_configs.keys()))
             
-        # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolov8n-cls.pt'))
+        self.model_combo.setCurrentText('Simple Color (Mean RGB)')
         
         model_select_layout.addRow("Model:", self.model_combo)
         self.tabs.addTab(model_select_tab, "Select Model")
@@ -1434,12 +1435,36 @@ class EmbeddingSettingsWidget(QGroupBox):
 
         # --- Common Settings Below Tabs ---
         common_settings_layout = QFormLayout()
-        common_settings_layout.setContentsMargins(5, 15, 5, 5) # Add space between tabs and settings
+        common_settings_layout.setContentsMargins(5, 15, 5, 5)
 
         self.embedding_technique_combo = QComboBox()
         self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
+        self.embedding_technique_combo.currentTextChanged.connect(self._update_parameter_sliders)
         common_settings_layout.addRow("Technique:", self.embedding_technique_combo)
 
+        # Slider 1
+        self.param1_label = QLabel("Parameter 1:")
+        param1_layout = QHBoxLayout()
+        self.param1_slider = QSlider(Qt.Horizontal)
+        self.param1_value_label = QLabel("0")
+        self.param1_value_label.setMinimumWidth(25)
+        param1_layout.addWidget(self.param1_slider)
+        param1_layout.addWidget(self.param1_value_label)
+        common_settings_layout.addRow(self.param1_label, param1_layout)
+        self.param1_slider.valueChanged.connect(
+            lambda v: self.param1_value_label.setText(str(v))
+        )
+
+        # Slider 2
+        self.param2_label = QLabel("Parameter 2:")
+        param2_layout = QHBoxLayout()
+        self.param2_slider = QSlider(Qt.Horizontal)
+        self.param2_value_label = QLabel("0.0")
+        self.param2_value_label.setMinimumWidth(35) # Increased width for larger numbers
+        param2_layout.addWidget(self.param2_slider)
+        param2_layout.addWidget(self.param2_value_label)
+        common_settings_layout.addRow(self.param2_label, param2_layout)
+        
         self.random_state_spin = QSpinBox()
         self.random_state_spin.setRange(0, 1000)
         self.random_state_spin.setValue(42)
@@ -1450,31 +1475,104 @@ class EmbeddingSettingsWidget(QGroupBox):
         common_settings_layout.addRow("", self.apply_embedding_button)
 
         main_layout.addLayout(common_settings_layout)
+        
+    def _update_parameter_sliders(self):
+        """Enable, disable, and configure sliders based on the selected technique."""
+        technique = self.embedding_technique_combo.currentText()
+
+        # Disconnect any existing connections to prevent conflicts
+        try:
+            self.param2_slider.valueChanged.disconnect()
+        except TypeError:
+            pass # No connection existed
+
+        if technique == "UMAP":
+            # Enable Row 1 for n_neighbors
+            self.param1_label.setEnabled(True)
+            self.param1_slider.setEnabled(True)
+            self.param1_value_label.setEnabled(True)
+            self.param1_label.setText("n_neighbors:")
+            self.param1_slider.setRange(2, 150)
+            self.param1_slider.setValue(15)
+
+            # Enable Row 2 for min_dist
+            self.param2_label.setEnabled(True)
+            self.param2_slider.setEnabled(True)
+            self.param2_value_label.setEnabled(True)
+            self.param2_label.setText("min_dist:")
+            self.param2_slider.setRange(0, 99)
+            self.param2_slider.setValue(10)
+            self.param2_slider.valueChanged.connect(
+                lambda v: self.param2_value_label.setText(f"{v/100.0:.2f}")
+            )
+
+        elif technique == "TSNE":
+            # Enable Row 1 for Perplexity
+            self.param1_label.setEnabled(True)
+            self.param1_slider.setEnabled(True)
+            self.param1_value_label.setEnabled(True)
+            self.param1_label.setText("Perplexity:")
+            self.param1_slider.setRange(5, 50)
+            self.param1_slider.setValue(30)
+            
+            # --- MODIFIED: Enable Row 2 for Early Exaggeration ---
+            self.param2_label.setEnabled(True)
+            self.param2_slider.setEnabled(True)
+            self.param2_value_label.setEnabled(True)
+            self.param2_label.setText("Exaggeration:")
+            self.param2_slider.setRange(50, 600)  # Represents 5.0 to 60.0
+            self.param2_slider.setValue(120)      # Represents 12.0
+            self.param2_slider.valueChanged.connect(
+                lambda v: self.param2_value_label.setText(f"{v/10.0:.1f}")
+            )
+
+        elif technique == "PCA":
+            # Disable both rows for PCA
+            self.param1_label.setEnabled(False)
+            self.param1_slider.setEnabled(False)
+            self.param1_value_label.setEnabled(False)
+            self.param1_label.setText(" ")
+
+            self.param2_label.setEnabled(False)
+            self.param2_slider.setEnabled(False)
+            self.param2_value_label.setEnabled(False)
+            self.param2_label.setText(" ")
+
+    def get_embedding_parameters(self):
+        """Returns a dictionary of the current embedding parameters."""
+        params = {
+            'technique': self.embedding_technique_combo.currentText(),
+            'random_state': self.random_state_spin.value()
+        }
+        if params['technique'] == 'UMAP':
+            params['n_neighbors'] = self.param1_slider.value()
+            params['min_dist'] = self.param2_slider.value() / 100.0
+        elif params['technique'] == 'TSNE':
+            params['perplexity'] = self.param1_slider.value()
+            params['early_exaggeration'] = self.param2_slider.value() / 10.0
+        return params
 
     def browse_for_model(self):
-        """Open a file dialog to select a existing model file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Select Model File", 
-            "", 
-            "PyTorch Models (*.pt);;All Files (*)", 
+            self,
+            "Select Model File",
+            "",
+            "PyTorch Models (*.pt);;All Files (*)",
             options=options
         )
         if file_path:
             self.model_path_edit.setText(file_path)
 
     def get_selected_model(self):
-        """Get the selected model name or path based on the active tab."""
         current_tab_index = self.tabs.currentIndex()
-        if current_tab_index == 0: # Pre-defined Models tab
+        if current_tab_index == 0:
             return self.model_combo.currentText()
-        elif current_tab_index == 1: # Existing Model tab
+        elif current_tab_index == 1:
             return self.model_path_edit.text()
-        return ""  # Should not happen
+        return ""
 
     def apply_embedding(self):
-        """Apply embedding with the current settings."""
         if self.explorer_window and hasattr(self.explorer_window, 'run_embedding_pipeline'):
             self.explorer_window.run_embedding_pipeline()
     
@@ -1857,27 +1955,31 @@ class ExplorerWindow(QMainWindow):
                 print(f"Loading new model: {model_name}")
                 self.loaded_model = YOLO(model_name)
                 self.model_path = model_name
+                
+                # Determine image size from model config if possible
+                try:
+                    self.imgsz = self.loaded_model.model.args['imgsz']
+                    if self.imgsz > 224:
+                        self.imgsz = 128
+                except (AttributeError, KeyError):
+                    self.imgsz = 128
+                
+                # Run a dummy inference to warm up the model
+                print(f"Warming up model on device '{self.device}'...")
+                dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
+                self.loaded_model.embed(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
+                    
             except Exception as e:
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
                 return np.array([]), []
-        
-        model = self.loaded_model
-        
-        try:
-            imgsz = self.loaded_model.__dict__['overrides']['imgsz']
-        except:
-            imgsz = 256
-        
-        print(f"NOTE: Using device '{self.device}' for feature extraction.")
-
-        # --- MODIFIED: Stream-based processing ---
-        
+                
         if progress_bar:
             progress_bar.set_title(f"Preparing images...")
-            # Initialize progress bar for the total number of items to be processed
             progress_bar.start_progress(len(data_items))
+
+        # --- RE-IMPLEMENTED: Two-stage process for streaming ---
         
-        # 1. Prepare a list of valid images and corresponding data items first.
+        # 1. Prepare a list of all valid images and their corresponding data items.
         image_list = []
         valid_data_items = []
         for item in data_items:
@@ -1888,32 +1990,34 @@ class ExplorerWindow(QMainWindow):
                 valid_data_items.append(item)
             else:
                 print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
-                
+
             if progress_bar:
                 progress_bar.update_progress()
 
-        # If after checking all items, none are valid, we can stop.
         if not valid_data_items:
-            print("Warning: No valid images to process for feature extraction.")
+            print("Warning: No valid images found to process.")
             return np.array([]), []
-        
-        if progress_bar:
-            progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
-            # Initialize progress bar for the total number of items to be processed
-            progress_bar.start_progress(len(data_items))
 
         embeddings_list = []
+        
         try:
-            # 2. Pass the entire list of images to the model with stream=True.
+            if progress_bar:
+                progress_bar.set_busy_mode(f"Extracting features with {os.path.basename(model_name)}...")
+            
+            # 2. Pass the entire list of valid images to the model with stream=True.
             # This returns a generator that yields results one by one.
-            results_generator = model.embed(
+            results_generator = self.loaded_model.embed(
                 image_list, 
                 stream=True, 
-                imgsz=imgsz, 
+                imgsz=self.imgsz, 
                 half=True, 
-                device=self.device,
+                device=self.device, 
                 verbose=False
             )
+            
+            if progress_bar:
+                progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
+                progress_bar.start_progress(len(data_items))
             
             # 3. Process the results from the generator.
             for embedding_result in results_generator:
@@ -1938,7 +2042,6 @@ class ExplorerWindow(QMainWindow):
                 torch.cuda.empty_cache()
         
         print(f"Successfully extracted {len(embeddings)} features.")
-        # Return the embeddings and the list of items that were actually processed
         return embeddings, valid_data_items
 
     def _extract_features(self, data_items, progress_bar=None):
@@ -1961,41 +2064,53 @@ class ExplorerWindow(QMainWindow):
             print(f"Unknown or invalid feature model selected: {model_name}")
             return np.array([]), []
 
-    def _run_dimensionality_reduction(self, features, technique, random_state):
-        """Runs PCA, UMAP or t-SNE on the feature matrix."""
-        print(f"Running {technique} on {len(features)} items...")
+    def _run_dimensionality_reduction(self, features, params):
+        """
+        Runs PCA, UMAP or t-SNE on the feature matrix using provided parameters.
+        """
+        technique = params.get('technique', 'PCA')
+        random_state = params.get('random_state', 42)
+        
+        print(f"Running {technique} on {len(features)} items with params: {params}")
         if len(features) <= 1:
             print("Not enough data points for dimensionality reduction.")
             return None
 
         try:
-            # Scale features before dimensionality reduction
             if StandardScaler is not None:
                 scaler = StandardScaler()
                 features_scaled = scaler.fit_transform(features)
-                print(f"Features scaled - original range: [{features.min():.3f}, {features.max():.3f}], "
-                      f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
             else:
                 features_scaled = features
-                print("StandardScaler not available, using unscaled features")
             
             if technique == "PCA":
                 reducer = PCA(n_components=2, random_state=random_state)
-                return reducer.fit_transform(features_scaled)
-                
+
             elif technique == "UMAP":
-                reducer = UMAP(n_components=2, 
-                               random_state=random_state, 
-                               n_neighbors=min(15, len(features_scaled) - 1))
-                
-                return reducer.fit_transform(features_scaled)
+                n_neighbors = params.get('n_neighbors', 15)
+                min_dist = params.get('min_dist', 0.1)
+                reducer = UMAP(
+                    n_components=2, 
+                    random_state=random_state, 
+                    n_neighbors=min(n_neighbors, len(features_scaled) - 1),
+                    min_dist=min_dist
+                )
             
-            else:  # Default to TSNE
-                reducer = TSNE(n_components=2, 
-                               random_state=random_state, 
-                               perplexity=min(30, len(features_scaled) - 1))
-                
-                return reducer.fit_transform(features_scaled)
+            elif technique == "TSNE":  
+                perplexity = params.get('perplexity', 30)
+                early_exaggeration = params.get('early_exaggeration', 12.0)
+                reducer = TSNE(
+                    n_components=2, 
+                    random_state=random_state, 
+                    perplexity=min(perplexity, len(features_scaled) - 1),
+                    early_exaggeration=early_exaggeration
+                )
+
+            else:
+                print(f"Unknown dimensionality reduction technique: {technique}")
+                return None
+            
+            return reducer.fit_transform(features_scaled)
             
         except Exception as e:
             print(f"Error during {technique} dimensionality reduction: {e}")
@@ -2019,24 +2134,26 @@ class ExplorerWindow(QMainWindow):
     def run_embedding_pipeline(self):
         """
         Orchestrates the feature extraction and dimensionality reduction pipeline.
-        The progress bar is now passed to the feature extraction methods.
+        This version correctly re-runs reduction on cached features when parameters change.
         """
         if not self.current_data_items:
             print("No items to process for embedding.")
             return
 
-        technique = self.embedding_settings_widget.embedding_technique_combo.currentText()
+        # 1. Get current parameters from the UI
+        embedding_params = self.embedding_settings_widget.get_embedding_parameters()
         selected_model = self.embedding_settings_widget.get_selected_model()
+        technique = embedding_params['technique']
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Generating Embedding Visualization")
         progress_bar.show()
         
         try:
-            # Check if we need to re-extract features (slow path)
+            # 2. Decide whether to use cached features or extract new ones
+            # This if/else block ONLY populates the 'features' variable.
             if self.current_features is None or selected_model != self.current_feature_generating_model:
-                # --- MODIFIED: Pass the progress_bar to the dispatcher ---
-                # The sub-method will now control the progress bar's title and value.
+                # SLOW PATH: Extract and cache new features
                 features, valid_data_items = self._extract_features(self.current_data_items, progress_bar=progress_bar)
                 
                 self.current_features = features
@@ -2044,31 +2161,24 @@ class ExplorerWindow(QMainWindow):
                 self.current_data_items = valid_data_items
                 self.annotation_viewer.update_annotations(self.current_data_items)
             else:
-                # Fast path: use cached features
+                # FAST PATH: Use existing features
                 print("Using cached features. Skipping feature extraction.")
                 features = self.current_features
 
             if features is None or len(features) == 0:
-                print("No valid features could be extracted or found in cache. Aborting embedding.")
-                self.embedding_viewer.clear_points()
-                self.embedding_viewer.show_placeholder()
+                print("No valid features available. Aborting embedding.")
                 return
 
-            # Dimensionality Reduction
-            progress_bar.set_title(f"Running {technique} dimensionality reduction...")
-            progress_bar.start_progress(1) # This is a single, fast step
-            random_state = self.embedding_settings_widget.random_state_spin.value()
-            embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
+            # 3. Run dimensionality reduction with the latest parameters
+            progress_bar.set_busy_mode(f"Running {technique} dimensionality reduction...")
+            embedded_features = self._run_dimensionality_reduction(features, embedding_params)
             progress_bar.update_progress()
             
             if embedded_features is None:
-                self.embedding_viewer.clear_points()
-                self.embedding_viewer.show_placeholder()
                 return
 
-            # Update Visualization
-            progress_bar.set_title("Updating visualization...")
-            progress_bar.start_progress(1) # Also a single, fast step
+            # 4. Update the visualization with the new 2D layout
+            progress_bar.set_busy_mode("Updating visualization...")
             self._update_data_items_with_embedding(self.current_data_items, embedded_features)
             
             self.embedding_viewer.update_embeddings(self.current_data_items)
@@ -2186,6 +2296,7 @@ class ExplorerWindow(QMainWindow):
         print("Cleaning up Explorer resources...")
         
         # Reset model and feature caches
+        self.imgsz = 128
         self.loaded_model = None
         self.model_path = ""
         self.current_features = None
