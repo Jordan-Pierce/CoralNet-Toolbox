@@ -1057,7 +1057,14 @@ class AnnotationViewer(QScrollArea):
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
-        widget_list = list(self.annotation_widgets_by_id.values())
+        # Get the list of widgets to work with based on isolation mode
+        if self.isolated_mode:
+            # Only work with visible widgets when in isolation mode
+            widget_list = [w for w in self.annotation_widgets_by_id.values() if not w.isHidden()]
+        else:
+            # Use all widgets when not in isolation mode
+            widget_list = list(self.annotation_widgets_by_id.values())
+        
         try:
             widget_index = widget_list.index(widget)
         except ValueError:
@@ -1072,8 +1079,26 @@ class AnnotationViewer(QScrollArea):
         if modifiers == Qt.ShiftModifier or modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
             # Range selection
             if self.last_selected_index != -1:
-                start = min(self.last_selected_index, widget_index)
-                end = max(self.last_selected_index, widget_index)
+                # Find the last selected widget in the current widget list
+                last_selected_widget = None
+                for w in self.selected_widgets:
+                    if w in widget_list:
+                        try:
+                            last_index_in_current_list = widget_list.index(w)
+                            if last_selected_widget is None or last_index_in_current_list > widget_list.index(last_selected_widget):
+                                last_selected_widget = w
+                        except ValueError:
+                            continue
+                
+                if last_selected_widget:
+                    last_selected_index_in_current_list = widget_list.index(last_selected_widget)
+                    start = min(last_selected_index_in_current_list, widget_index)
+                    end = max(last_selected_index_in_current_list, widget_index)
+                else:
+                    # Fallback if no previously selected widget is found in current list
+                    start = widget_index
+                    end = widget_index
+                
                 for i in range(start, end + 1):
                     # select_widget will return True if a change occurred
                     if self.select_widget(widget_list[i]):
