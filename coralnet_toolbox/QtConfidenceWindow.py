@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout
                              QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton)
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.utilities import scale_pixmap
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -253,28 +254,6 @@ class ConfidenceWindow(QWidget):
         if self.annotation and updated_annotation.id == self.annotation.id:
             self.refresh_display()
 
-    def scale_pixmap(self, pixmap):
-        """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
-        width = pixmap.width()
-        height = pixmap.height()
-        
-        # Check if scaling is needed
-        if width <= self.max_graphic_size and height <= self.max_graphic_size:
-            return pixmap
-            
-        # Calculate scale factor based on largest dimension
-        scale = self.max_graphic_size / max(width, height)
-        
-        # Scale pixmap
-        scaled_pixmap = pixmap.scaled(
-            int(width * scale), 
-            int(height * scale),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        
-        return scaled_pixmap
-
     def display_cropped_image(self, annotation):
         """Display the cropped image and update the bar chart."""
         try:
@@ -282,7 +261,7 @@ class ConfidenceWindow(QWidget):
             self.update_annotation(annotation)
             if self.annotation.cropped_image:
                 # Get the cropped image graphic
-                cropped_image_graphic = self.scale_pixmap(annotation.get_cropped_image_graphic())
+                cropped_image_graphic = scale_pixmap(annotation.get_cropped_image_graphic(), self.max_graphic_size)
                 # Add the scaled annotation graphic (as pixmap)
                 self.scene.addPixmap(cropped_image_graphic)
                 # Add the border color with increased width

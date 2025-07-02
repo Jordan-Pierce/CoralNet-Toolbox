@@ -11,6 +11,7 @@ from ultralytics import YOLO
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage, QBrush, QPainterPath, QPolygonF
@@ -166,7 +167,8 @@ class AnnotationImageWidget(QWidget):
     def load_annotation_image(self):
         """Load and display the actual annotation cropped image."""
         try:
-            cropped_image = self.annotation.get_cropped_image(max_size=self.widget_size - 8)
+            cropped_image = self.annotation.get_cropped_image_graphic()
+            cropped_image = scale_pixmap(cropped_image, self.widget_size - 8)
             if cropped_image and not cropped_image.isNull():
                 self.image_label.setPixmap(cropped_image)
             else:
