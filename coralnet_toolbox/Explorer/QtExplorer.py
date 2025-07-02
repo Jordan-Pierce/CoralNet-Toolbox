@@ -1473,7 +1473,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.MultiSelection)
-        self.images_list.setMaximumHeight(100)
+        self.images_list.setMaximumHeight(50)
 
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
@@ -1501,7 +1501,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
-        self.annotation_type_list.setMaximumHeight(100)
+        self.annotation_type_list.setMaximumHeight(50)
         self.annotation_type_list.addItems(["PatchAnnotation",
                                             "RectangleAnnotation",
                                             "PolygonAnnotation",
@@ -1529,7 +1529,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.MultiSelection)
-        self.label_list.setMaximumHeight(100)
+        self.label_list.setMaximumHeight(50)
 
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
@@ -1651,18 +1651,14 @@ class AnnotationSettingsWidget(QGroupBox):
         return [item.text() for item in selected_items]
     
     
-class EmbeddingSettingsWidget(QGroupBox):
-    """Widget containing settings with tabs for models and embedding."""
+class ModelSettingsWidget(QGroupBox):
+    """Widget containing model selection with tabs for different model sources."""
 
     def __init__(self, main_window, parent=None):
-        super(EmbeddingSettingsWidget, self).__init__("Embedding Settings", parent)
+        super(ModelSettingsWidget, self).__init__("Model Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
-        
         self.setup_ui()
-        
-        # Initial call to set the sliders correctly for the default technique
-        self._update_parameter_sliders()
 
     def setup_ui(self):
         """Set up the UI with a tabbed interface for model selection."""
@@ -1726,19 +1722,54 @@ class EmbeddingSettingsWidget(QGroupBox):
         
         main_layout.addWidget(self.tabs)
 
-        # --- Common Settings Below Tabs ---
-        common_settings_layout = QFormLayout()
-        common_settings_layout.setContentsMargins(5, 15, 5, 5)
+    def browse_for_model(self):
+        """Open a file dialog to browse for model files."""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model File",
+            "",
+            "PyTorch Models (*.pt);;All Files (*)",
+            options=options
+        )
+        if file_path:
+            self.model_path_edit.setText(file_path)
+
+    def get_selected_model(self):
+        """Get the currently selected model name or path."""
+        current_tab_index = self.tabs.currentIndex()
+        if current_tab_index == 0:
+            return self.model_combo.currentText()
+        elif current_tab_index == 1:
+            return self.model_path_edit.text()
+        return ""
+    
+    
+class EmbeddingSettingsWidget(QGroupBox):
+    """Widget containing settings with tabs for models and embedding."""
+
+    def __init__(self, main_window, parent=None):
+        super(EmbeddingSettingsWidget, self).__init__("Embedding Settings", parent)
+        self.main_window = main_window
+        self.explorer_window = parent
+        
+        self.setup_ui()
+        
+        # Initial call to set the sliders correctly for the default technique
+        self._update_parameter_sliders()
+
+    def setup_ui(self):
+        """Set up the UI with embedding technique parameters."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(5, 10, 5, 5)
+
+        # Form layout for embedding settings
+        settings_layout = QFormLayout()
 
         self.embedding_technique_combo = QComboBox()
         self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
         self.embedding_technique_combo.currentTextChanged.connect(self._update_parameter_sliders)
-        common_settings_layout.addRow("Technique:", self.embedding_technique_combo)
-        
-        self.random_state_spin = QSpinBox()
-        self.random_state_spin.setRange(0, 1000)
-        self.random_state_spin.setValue(42)
-        common_settings_layout.addRow("Random State:", self.random_state_spin)
+        settings_layout.addRow("Technique:", self.embedding_technique_combo)
 
         # Slider 1
         self.param1_label = QLabel("Parameter 1:")
@@ -1748,7 +1779,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         self.param1_value_label.setMinimumWidth(25)
         param1_layout.addWidget(self.param1_slider)
         param1_layout.addWidget(self.param1_value_label)
-        common_settings_layout.addRow(self.param1_label, param1_layout)
+        settings_layout.addRow(self.param1_label, param1_layout)
         self.param1_slider.valueChanged.connect(
             lambda v: self.param1_value_label.setText(str(v))
         )
@@ -1761,13 +1792,13 @@ class EmbeddingSettingsWidget(QGroupBox):
         self.param2_value_label.setMinimumWidth(35) # Increased width for larger numbers
         param2_layout.addWidget(self.param2_slider)
         param2_layout.addWidget(self.param2_value_label)
-        common_settings_layout.addRow(self.param2_label, param2_layout)
+        settings_layout.addRow(self.param2_label, param2_layout)
 
         self.apply_embedding_button = QPushButton("Apply Embedding")
         self.apply_embedding_button.clicked.connect(self.apply_embedding)
-        common_settings_layout.addRow("", self.apply_embedding_button)
+        settings_layout.addRow("", self.apply_embedding_button)
 
-        main_layout.addLayout(common_settings_layout)
+        main_layout.addLayout(settings_layout)
         
     def _update_parameter_sliders(self):
         """Enable, disable, and configure sliders based on the selected technique."""
@@ -1835,7 +1866,6 @@ class EmbeddingSettingsWidget(QGroupBox):
         """Returns a dictionary of the current embedding parameters."""
         params = {
             'technique': self.embedding_technique_combo.currentText(),
-            'random_state': self.random_state_spin.value()
         }
         if params['technique'] == 'UMAP':
             params['n_neighbors'] = self.param1_slider.value()
@@ -1844,26 +1874,6 @@ class EmbeddingSettingsWidget(QGroupBox):
             params['perplexity'] = self.param1_slider.value()
             params['early_exaggeration'] = self.param2_slider.value() / 10.0
         return params
-
-    def browse_for_model(self):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Model File",
-            "",
-            "PyTorch Models (*.pt);;All Files (*)",
-            options=options
-        )
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-    def get_selected_model(self):
-        current_tab_index = self.tabs.currentIndex()
-        if current_tab_index == 0:
-            return self.model_combo.currentText()
-        elif current_tab_index == 1:
-            return self.model_path_edit.text()
-        return ""
 
     def apply_embedding(self):
         if self.explorer_window and hasattr(self.explorer_window, 'run_embedding_pipeline'):
@@ -1915,6 +1925,7 @@ class ExplorerWindow(QMainWindow):
 
         # Create widgets in __init__ so they're always available
         self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
+        self.model_settings_widget = ModelSettingsWidget(self.main_window, self)
         self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
         self.annotation_viewer = AnnotationViewer(self) 
         self.embedding_viewer = EmbeddingViewer(self)
@@ -1980,7 +1991,8 @@ class ExplorerWindow(QMainWindow):
 
         # Add existing widgets to layout
         top_layout.addWidget(self.annotation_settings_widget, 2)  # Give annotation settings more space
-        top_layout.addWidget(self.embedding_settings_widget, 1)   # Add embedding settings to the right
+        top_layout.addWidget(self.model_settings_widget, 1)      # Model settings in the middle
+        top_layout.addWidget(self.embedding_settings_widget, 1)  # Embedding settings on the right
 
         # Create container widget for top layout
         top_container = QWidget()
@@ -2292,7 +2304,7 @@ class ExplorerWindow(QMainWindow):
         Dispatcher method to call the appropriate feature extraction function.
         It now passes the progress_bar object to the sub-methods.
         """
-        model_name = self.embedding_settings_widget.get_selected_model()
+        model_name = self.model_settings_widget.get_selected_model()
 
         if not model_name:
             print("No model selected or path provided.")
@@ -2312,7 +2324,7 @@ class ExplorerWindow(QMainWindow):
         Runs PCA, UMAP or t-SNE on the feature matrix using provided parameters.
         """
         technique = params.get('technique', 'PCA')
-        random_state = params.get('random_state', 42)
+        random_state = 42
         
         print(f"Running {technique} on {len(features)} items with params: {params}")
         if len(features) <= 1:
@@ -2385,7 +2397,7 @@ class ExplorerWindow(QMainWindow):
 
         # 1. Get current parameters from the UI
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        selected_model = self.embedding_settings_widget.get_selected_model()
+        selected_model = self.model_settings_widget.get_selected_model()
         technique = embedding_params['technique']
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
