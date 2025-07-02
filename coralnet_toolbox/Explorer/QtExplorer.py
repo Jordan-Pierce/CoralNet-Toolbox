@@ -1560,7 +1560,12 @@ class ExplorerWindow(QMainWindow):
     def on_annotation_view_selection_changed(self, changed_ann_ids):
         """A selection was made in the AnnotationViewer, so update the EmbeddingViewer."""
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
-        self.embedding_viewer.render_selection_from_ids(all_selected_ids)
+        
+        # Only try to sync the selection with the EmbeddingViewer if it has points.
+        # This prevents the feedback loop that was clearing the selection.
+        if self.embedding_viewer.points_by_id:
+            self.embedding_viewer.render_selection_from_ids(all_selected_ids)
+            
         self.update_label_window_selection() # Keep label window in sync
 
     @pyqtSlot(list)
