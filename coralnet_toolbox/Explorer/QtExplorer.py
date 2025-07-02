@@ -1,5 +1,9 @@
 import numpy as np
 
+import warnings
+import os
+import numpy as np
+
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
@@ -310,8 +314,7 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         
         # Setup the UI with header
         self.setup_ui()
-        
-        # Connect mouse events to the graphics view - CORRECTED
+          # Connect mouse events to the graphics view - CORRECTED
         self.graphics_view.mousePressEvent = self.mousePressEvent
         self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
         self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
@@ -338,10 +341,30 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         
         # Add the graphics view
         layout.addWidget(self.graphics_view)
+          # Add a placeholder label when no embedding is available
+        self.placeholder_label = QLabel("No embedding data available.\nPress 'Apply Embedding' to generate visualization.")
+        self.placeholder_label.setAlignment(Qt.AlignCenter)
+        self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
+        layout.addWidget(self.placeholder_label)
         
+        # Initially show placeholder
+        self.show_placeholder()
+
     def reset_view(self):
         """Reset the view to fit all embedding points."""
         self.fit_view_to_points()
+
+    def show_placeholder(self):
+        """Show the placeholder message and hide the graphics view."""
+        self.graphics_view.setVisible(False)
+        self.placeholder_label.setVisible(True)
+        self.home_button.setEnabled(False)
+
+    def show_embedding(self):
+        """Show the graphics view and hide the placeholder message."""
+        self.graphics_view.setVisible(True)
+        self.placeholder_label.setVisible(False)
+        self.home_button.setEnabled(True)
 
     # Delegate graphics view methods
     def setRenderHint(self, hint):
@@ -1266,7 +1289,6 @@ class EmbeddingSettingsWidget(QGroupBox):
         form_layout = QFormLayout()
         
         # Model selection dropdown (editable) - at the top
-       # Model selection dropdown updated for feature selection
         self.model_combo = QComboBox()
         self.model_combo.setEditable(False) # Prevent custom text
         self.model_combo.addItems([
@@ -1299,10 +1321,8 @@ class EmbeddingSettingsWidget(QGroupBox):
 
     def apply_embedding(self):
         """Apply embedding with the current settings."""
-        # This button now just triggers a full refresh, which includes embedding.
-        # The main logic is in the ExplorerWindow.refresh_filters() method.
-        if self.explorer_window:
-            self.explorer_window.refresh_filters()
+        if self.explorer_window and hasattr(self.explorer_window, 'run_embedding_pipeline'):
+            self.explorer_window.run_embedding_pipeline()
     
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1320,6 +1340,9 @@ class ExplorerWindow(QMainWindow):
 
         self.model_path = ""
         self.loaded_model = None
+
+        # Store current filtered data items for embedding
+        self.current_data_items = []
 
         self.setWindowTitle("Explorer")
         # Set the window icon
@@ -1686,7 +1709,7 @@ class ExplorerWindow(QMainWindow):
                 scaler = StandardScaler()
                 features_scaled = scaler.fit_transform(features)
                 print(f"Features scaled - original range: [{features.min():.3f}, {features.max():.3f}], "
-                    f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
+                      f"scaled range: [{features_scaled.min():.3f}, {features_scaled.max():.3f}]")
             else:
                 features_scaled = features
                 print("StandardScaler not available, using unscaled features")
@@ -1724,14 +1747,13 @@ class ExplorerWindow(QMainWindow):
             # Normalize coordinates for consistent display
             norm_x = (embedded_features[i, 0] - min_vals[0]) / range_vals[0] if range_vals[0] > 0 else 0.5
             norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
-            
             # Scale and center the points in the view
             item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
 
-    def run_embedding_pipeline(self, data_items):
-        """Orchestrates the feature extraction and dimensionality reduction pipeline."""
-        if not data_items:
+    def run_embedding_pipeline(self):
+        """Orchestrates the feature extraction and dimensionality reduction pipeline with progress bar."""
+        if not self.current_data_items:
             print("No items to process.")
             return
 
@@ -1740,34 +1762,79 @@ class ExplorerWindow(QMainWindow):
             print(f"Warning: Required library for {technique} not installed.")
             return
 
-        # 1. Extract Features
-        features, valid_data_items = self._extract_features(data_items)
-        if not valid_data_items:
-            print("No valid features could be extracted. Aborting embedding.")
+        # Create and show progress bar
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, "Generating Embedding Visualization")
+        progress_bar.show()
+        
+        try:
+            # Start progress with 3 main steps: feature extraction, dimensionality reduction, visualization
+            
+            # Step 1: Extract Features
+            progress_bar.set_title("Extracting features from annotations...")
+            progress_bar.start_progress(1)
+            features, valid_data_items = self._extract_features(self.current_data_items)
+            progress_bar.update_progress()
+            
+            if not valid_data_items:
+                print("No valid features could be extracted. Aborting embedding.")
+                self.embedding_viewer.clear_points()
+                self.embedding_viewer.show_placeholder()
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Step 2: Dimensionality Reduction
+            progress_bar.set_title(f"Running {technique} dimensionality reduction...")
+            progress_bar.start_progress(1)
+            random_state = self.embedding_settings_widget.random_state_spin.value()
+            embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
+            progress_bar.update_progress()
+            
+            if embedded_features is None:
+                self.embedding_viewer.clear_points()
+                self.embedding_viewer.show_placeholder()
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Step 3: Update visualization
+            progress_bar.set_title("Updating visualization...")
+            progress_bar.start_progress(1)
+            self._update_data_items_with_embedding(valid_data_items, embedded_features)
+            
+            # Update the viewers only with items that were successfully processed
+            self.annotation_viewer.update_annotations(valid_data_items)            
+            self.embedding_viewer.update_embeddings(valid_data_items)
+            self.embedding_viewer.show_embedding()
+            self.embedding_viewer.fit_view_to_points()
+            progress_bar.update_progress()
+            
+            print(f"Successfully generated embedding for {len(valid_data_items)} annotations using {technique}")
+            
+        except Exception as e:
+            print(f"Error during embedding pipeline: {e}")
             self.embedding_viewer.clear_points()
-            return
-
-        # 2. Dimensionality Reduction
-        random_state = self.embedding_settings_widget.random_state_spin.value()
-        embedded_features = self._run_dimensionality_reduction(features, technique, random_state)
-        if embedded_features is None:
-            self.embedding_viewer.clear_points()
-            return
-
-        # 3. Update Data Items with 2D coordinates
-        self._update_data_items_with_embedding(valid_data_items, embedded_features)
-
-        # Update the viewers only with items that were successfully processed
-        self.annotation_viewer.update_annotations(valid_data_items)
-        self.embedding_viewer.update_embeddings(valid_data_items)
+            self.embedding_viewer.show_placeholder()
+            
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def refresh_filters(self):
-        """Refresh display: filter data, run embedding, and update viewers."""
+        """Refresh display: filter data and update annotation viewer only."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            data_items = self.get_filtered_data_items()
-            self.run_embedding_pipeline(data_items)
-            self.embedding_viewer.fit_view_to_points()
+            # Get filtered data and store for potential embedding
+            self.current_data_items = self.get_filtered_data_items()
+            
+            # Update annotation viewer with filtered data
+            self.annotation_viewer.update_annotations(self.current_data_items)
+            
+            # Clear embedding viewer and show placeholder
+            self.embedding_viewer.clear_points()
+            self.embedding_viewer.show_placeholder()
+            
         finally:
             QApplication.restoreOverrideCursor()
 
