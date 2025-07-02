@@ -1248,42 +1248,7 @@ class AnnotationSettingsWidget(QGroupBox):
         label_column.addLayout(label_buttons_layout)
         
         conditions_layout.addLayout(label_column)
-
-        # TopK column
-        topk_column = QVBoxLayout()
-        topk_label = QLabel("TopK:")
-        topk_label.setStyleSheet("font-weight: bold;")
-        topk_column.addWidget(topk_label)
         
-        self.topk_combo = QComboBox()
-        self.topk_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
-        self.topk_combo.setCurrentText("Top1")
-        
-        topk_column.addWidget(self.topk_combo)
-        topk_column.addStretch()  # Add stretch to align with other columns
-        conditions_layout.addLayout(topk_column)
-
-        # Confidence column
-        confidence_column = QVBoxLayout()
-        confidence_label = QLabel("Confidence:")
-        confidence_label.setStyleSheet("font-weight: bold;")
-        confidence_column.addWidget(confidence_label)
-        
-        self.confidence_operator_combo = QComboBox()
-        self.confidence_operator_combo.addItems([">", "<", ">=", "<=", "==", "!="])
-        self.confidence_operator_combo.setCurrentText(">=")
-        confidence_column.addWidget(self.confidence_operator_combo)
-        
-        self.confidence_value_spin = QDoubleSpinBox()
-        self.confidence_value_spin.setRange(0.0, 1.0)
-        self.confidence_value_spin.setSingleStep(0.1)
-        self.confidence_value_spin.setDecimals(2)
-        self.confidence_value_spin.setValue(0.5)
-        confidence_column.addWidget(self.confidence_value_spin)
-        
-        confidence_column.addStretch()  # Add stretch to align with other columns
-        conditions_layout.addLayout(confidence_column)
-
         layout.addLayout(conditions_layout)
 
         # Bottom buttons layout with Apply and Clear buttons on the right
@@ -1366,12 +1331,7 @@ class AnnotationSettingsWidget(QGroupBox):
         
         # Reset to defaults
         self.set_defaults()
-        
-        # Reset TopK and Confidence to defaults
-        self.topk_combo.setCurrentText("Top1")
-        self.confidence_operator_combo.setCurrentText(">=")
-        self.confidence_value_spin.setValue(0.5)
-        
+
         # Auto-refresh on clear to show default results
         if self.explorer_window and hasattr(self.explorer_window, 'refresh_filters'):
             self.explorer_window.refresh_filters()
@@ -1434,16 +1394,6 @@ class AnnotationSettingsWidget(QGroupBox):
             return []
         
         return [item.text() for item in selected_items]
-
-    def get_topk_selection(self):
-        """Get TopK selection."""
-        return self.topk_combo.currentText()
-
-    def get_confidence_condition(self):
-        """Get confidence operator and value."""
-        operator = self.confidence_operator_combo.currentText()
-        value = self.confidence_value_spin.value()
-        return operator, value
     
     
 class EmbeddingSettingsWidget(QGroupBox):
@@ -1874,8 +1824,6 @@ class ExplorerWindow(QMainWindow):
         selected_images = self.annotation_settings_widget.get_selected_images()
         selected_types = self.annotation_settings_widget.get_selected_annotation_types()
         selected_labels = self.annotation_settings_widget.get_selected_labels()
-        topk_selection = self.annotation_settings_widget.get_topk_selection()
-        confidence_operator, confidence_value = self.annotation_settings_widget.get_confidence_condition()
 
         annotations_to_process = []
         for annotation in self.main_window.annotation_window.annotations_dict.values():
@@ -1909,60 +1857,6 @@ class ExplorerWindow(QMainWindow):
                 else:
                     # No labels selected means no annotations should match
                     annotation_matches = False
-
-            # Check TopK condition using machine_confidence
-            if annotation_matches and hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
-                topk_num = int(topk_selection.replace("Top", ""))
-                # Get sorted confidence values (already sorted in descending order)
-                confidence_list = list(annotation.machine_confidence.values())
-                # Check if the current label is within the TopK predictions
-                if len(confidence_list) < topk_num:
-                    # If we don't have enough predictions for the requested TopK, exclude
-                    annotation_matches = False
-                else:
-                    # Check if current label is in the top K predictions
-                    sorted_labels = list(annotation.machine_confidence.keys())
-                    current_label_in_topk = False
-                    for i in range(min(topk_num, len(sorted_labels))):
-                        if sorted_labels[i].short_label_code == annotation.label.short_label_code:
-                            current_label_in_topk = True
-                            break
-                    if not current_label_in_topk:
-                        annotation_matches = False
-
-            # Check confidence condition
-            if annotation_matches:
-                conf_value = None
-                
-                # Get confidence value based on verification status
-                if annotation.verified and hasattr(annotation, 'user_confidence') and annotation.user_confidence:
-                    # For verified annotations, use user_confidence (Top1)
-                    conf_value = list(annotation.user_confidence.values())[0]
-                elif hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
-                    # For unverified annotations, use the top machine confidence (Top1)
-                    conf_value = list(annotation.machine_confidence.values())[0]
-                
-                # Apply confidence filter if we have a confidence value
-                if conf_value is not None:
-                    conf_value = float(conf_value)
-                    if confidence_operator == ">":
-                        if not (conf_value > confidence_value):
-                            annotation_matches = False
-                    elif confidence_operator == "<":
-                        if not (conf_value < confidence_value):
-                            annotation_matches = False
-                    elif confidence_operator == "==":
-                        if not (abs(conf_value - confidence_value) < 1e-6):
-                            annotation_matches = False
-                    elif confidence_operator == ">=":
-                        if not (conf_value >= confidence_value):
-                            annotation_matches = False
-                    elif confidence_operator == "<=":
-                        if not (conf_value <= confidence_value):
-                            annotation_matches = False
-                    elif confidence_operator == "!=":
-                        if not (abs(conf_value - confidence_value) >= 1e-6):
-                            annotation_matches = False
 
             if annotation_matches:
                 annotations_to_process.append(annotation)
