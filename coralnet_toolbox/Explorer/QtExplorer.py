@@ -7,14 +7,15 @@ import numpy as np
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
-from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage
-from PyQt5.QtCore import Qt, QTimer, QSize, QRect, pyqtSignal, QSignalBlocker, pyqtSlot
+from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage, QBrush, QPainterPath, QPolygonF
+from PyQt5.QtCore import Qt, QTimer, QSize, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
-                             QListWidget, QDoubleSpinBox, QApplication, QStyle)
+                             QListWidget, QDoubleSpinBox, QApplication, QStyle,
+                             QGraphicsRectItem, QRubberBand, QStyleOptionGraphicsItem)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -291,6 +292,7 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         
         # Initialize as a QWidget
         super(EmbeddingViewer, self).__init__(parent)
+        self.explorer_window = parent
         
         # Create the actual graphics view
         self.graphics_view = QGraphicsView(self.graphics_scene)
@@ -300,21 +302,26 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setMinimumHeight(200)
         
-        self.explorer_window = parent
-        self.points_by_id = {}  # Map annotation ID to embedding point
-        self.animation_offset = 0
+        # Custom rubber_band state variables
+        self.rubber_band = None
+        self.rubber_band_origin = QPointF()
+        self.selection_at_press = None
         
+        self.points_by_id = {}  # Map annotation ID to embedding point
         self.previous_selection_ids = set()  # Track previous selection to detect changes
     
+        self.animation_offset = 0
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.animate_selection)
         self.animation_timer.setInterval(100)
         
+        # Connect the scene's selection signal
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
         
         # Setup the UI with header
         self.setup_ui()
-          # Connect mouse events to the graphics view - CORRECTED
+        
+        # Connect mouse events to the graphics view - CORRECTED
         self.graphics_view.mousePressEvent = self.mousePressEvent
         self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
         self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
@@ -341,8 +348,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         
         # Add the graphics view
         layout.addWidget(self.graphics_view)
-          # Add a placeholder label when no embedding is available
-        self.placeholder_label = QLabel("No embedding data available.\nPress 'Apply Embedding' to generate visualization.")
+        # Add a placeholder label when no embedding is available
+        self.placeholder_label = QLabel(
+            "No embedding data available.\nPress 'Apply Embedding' to generate visualization."
+        )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
         layout.addWidget(self.placeholder_label)
@@ -392,37 +401,80 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_view.fitInView(rect, aspect_ratio)
 
     def mousePressEvent(self, event):
-        """Handle mouse press for selection mode with Ctrl key and right-click panning."""
+        """Handle mouse press for custom rubber band selection and panning."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Enable rubber band selection
-            self.graphics_view.setDragMode(QGraphicsView.RubberBandDrag)
-            # Call the original QGraphicsView method
-            QGraphicsView.mousePressEvent(self.graphics_view, event)
-            return
+            # Store the set of currently selected items.
+            self.selection_at_press = set(self.graphics_scene.selectedItems())
+            # Start of a custom rubber band selection
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
+            self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
+            self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
+            self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
+            self.graphics_scene.addItem(self.rubber_band)
         elif event.button() == Qt.RightButton:
-            # Right-click is for panning only - don't allow selection
+            # Start of a pan
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
-            # Convert right-click to left-click for panning
             left_event = event.__class__(event.type(), 
                                          event.localPos(), 
                                          Qt.LeftButton, 
                                          Qt.LeftButton, 
                                          event.modifiers())
             QGraphicsView.mousePressEvent(self.graphics_view, left_event)
-            return
-        elif event.button() == Qt.LeftButton:
-            # Regular left-click without Ctrl - allow single selection
+        else:
+            # Start of a single item selection
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             QGraphicsView.mousePressEvent(self.graphics_view, event)
-            return
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for dynamic selection and panning."""
+        if self.rubber_band:
+            # Update the rubber band geometry
+            current_pos = self.graphics_view.mapToScene(event.pos())
+            self.rubber_band.setRect(QRectF(self.rubber_band_origin, current_pos).normalized())
+            
+            path = QPainterPath()
+            path.addRect(self.rubber_band.rect())
+
+            # **NEEDED CHANGE**: Block signals to perform a compound selection operation
+            self.graphics_scene.blockSignals(True)
+
+            # 1. Perform the "fancy" dynamic selection, which replaces the current selection
+            #    with only the items inside the rubber band.
+            self.graphics_scene.setSelectionArea(path)
+            
+            # 2. Add back the items that were selected at the start of the drag.
+            if self.selection_at_press:
+                for item in self.selection_at_press:
+                    item.setSelected(True)
+            
+            # Unblock signals and manually trigger our handler to process the final result.
+            self.graphics_scene.blockSignals(False)
+            self.on_selection_changed()
+
+        elif event.buttons() == Qt.RightButton:
+            # Handle right-click panning
+            left_event = event.__class__(event.type(), 
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
+            QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
         else:
-            # For any other button, ignore
-            event.ignore()
+            QGraphicsView.mouseMoveEvent(self.graphics_view, event)
 
     def mouseReleaseEvent(self, event):
-        """Handle mouse release to revert to no drag mode."""
-        if event.button() == Qt.RightButton:
-            # Handle right-click panning release
+        """Handle mouse release to finalize the action and clean up."""
+        if self.rubber_band:
+            # Clean up the visual rectangle
+            self.graphics_scene.removeItem(self.rubber_band)
+            self.rubber_band = None
+
+            # **NEEDED CHANGE**: Clean up the stored selection state.
+            self.selection_at_press = None
+            
+        elif event.button() == Qt.RightButton:
+            # Finalize the pan
             left_event = event.__class__(event.type(), 
                                          event.localPos(), 
                                          Qt.LeftButton, 
@@ -430,30 +482,11 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
                                          event.modifiers())
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            return
-        elif event.button() == Qt.LeftButton:
-            # Handle left-click release
+        else:
+            # Finalize a single click
             QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            return
-        else:
-            event.ignore()
-
-    def mouseMoveEvent(self, event):
-        """Handle mouse move events for right-click panning."""
-        if event.buttons() == Qt.RightButton:
-            # Convert right-click drag to left-click for panning
-            left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
-            QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
-            return
-        else:
-            # Let the base class handle other mouse moves (including rubber band)
-            QGraphicsView.mouseMoveEvent(self.graphics_view, event)
-
+    
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming."""
         zoom_in_factor = 1.25
@@ -463,11 +496,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
 
         old_pos = self.graphics_view.mapToScene(event.pos())
-
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.graphics_view.scale(zoom_factor, zoom_factor)
-
         new_pos = self.graphics_view.mapToScene(event.pos())
+        
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
 
@@ -687,7 +719,6 @@ class AnnotationViewer(QScrollArea):
             
             if distance > self.drag_threshold and not self.mouse_pressed_on_widget:
                 if not self.rubber_band:
-                    from PyQt5.QtWidgets import QRubberBand
                     self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
                     self.rubber_band.setGeometry(QRect(self.rubber_band_origin, QSize()))
                     self.rubber_band.show()
