@@ -1009,7 +1009,7 @@ class AnnotationViewer(QScrollArea):
         self.rubber_band.setGeometry(rect)
         self.rubber_band.show()
 
-        # **NEEDED CHANGE**: Perform dynamic selection on every move
+        # Perform dynamic selection on every move
         selection_rect = self.rubber_band.geometry()
         content_widget = self.content_widget
         changed_ids = []
@@ -1105,10 +1105,37 @@ class AnnotationViewer(QScrollArea):
             if self.select_widget(widget):
                 changed_ids.append(newly_selected_id)
             self.last_selected_index = widget_index
+            
+        # Update isolation if in isolated mode
+        if self.isolated_mode:
+            self._update_isolation()
         
         # If any selections were changed, emit the signal
         if changed_ids:
             self.selection_changed.emit(changed_ids)
+            
+    def _update_isolation(self):
+        """Update the isolated view to show only currently selected widgets."""
+        if not self.isolated_mode:
+            return
+            
+        if self.selected_widgets:
+            # ADD TO isolation instead of replacing it
+            self.isolated_widgets.update(self.selected_widgets)  # Use update() to add, not replace
+            self.setUpdatesEnabled(False)
+            try:
+                for widget in self.annotation_widgets_by_id.values():
+                    if widget not in self.isolated_widgets:
+                        widget.hide()
+                    else:
+                        widget.show()
+                self.recalculate_widget_positions()
+            finally:
+                self.setUpdatesEnabled(True)
+        else:
+            # If no widgets are selected, keep the current isolation (don't exit)
+            # This prevents accidentally exiting isolation mode when clearing selection
+            pass
 
     def select_widget(self, widget):
         """Select a widget, update the data_item, and return True if state changed."""
@@ -1193,6 +1220,17 @@ class AnnotationViewer(QScrollArea):
             
             # Resync internal list of selected widgets
             self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+            
+            # If we're in isolated mode, ADD to the isolation instead of replacing it
+            if self.isolated_mode and self.selected_widgets:
+                self.isolated_widgets.update(self.selected_widgets)  # Add to existing isolation
+                # Hide all widgets except those in the isolated set
+                for widget in self.annotation_widgets_by_id.values():
+                    if widget not in self.isolated_widgets:
+                        widget.hide()
+                    else:
+                        widget.show()
+                self.recalculate_widget_positions()
             
         finally:
             self.setUpdatesEnabled(True)
