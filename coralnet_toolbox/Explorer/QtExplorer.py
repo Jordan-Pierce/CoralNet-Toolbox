@@ -1,8 +1,13 @@
+import warnings
+
+import os
+
 import numpy as np
 
-import warnings
-import os
-import numpy as np
+import torch
+from ultralytics import YOLO
+
+from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy
@@ -15,12 +20,10 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QMainWindow, QSplitter, QGroupBox, QFormLayout,
                              QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
                              QListWidget, QDoubleSpinBox, QApplication, QStyle,
-                             QGraphicsRectItem, QRubberBand, QStyleOptionGraphicsItem)
+                             QGraphicsRectItem, QRubberBand, QStyleOptionGraphicsItem,
+                             QTabWidget, QLineEdit, QFileDialog)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-import warnings
-import os
 
 try:
     from sklearn.preprocessing import StandardScaler
@@ -1361,44 +1364,113 @@ class EmbeddingSettingsWidget(QGroupBox):
         super(EmbeddingSettingsWidget, self).__init__("Embedding Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
-        self.loaded_model = None
-        self.model_path = ""
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-        
-        # Model selection dropdown (editable) - at the top
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(False) # Prevent custom text
-        self.model_combo.addItems([
-            "Simple Color (Mean RGB)",
-            "yolov8n.pt", 
-            "yolov8s.pt", 
-            "yolov8m.pt",
-            "yolov8l.pt", 
-            "yolov8x.pt"
-        ])
-        self.model_combo.setCurrentIndex(0)  # Default to simple color
-        form_layout.addRow("Feature Model:", self.model_combo)
+        """Set up the UI with a tabbed interface for model selection."""
+        main_layout = QVBoxLayout(self)
 
-        # Embedding technique dropdown
+        # --- Tabbed Interface for Model Selection ---
+        self.tabs = QTabWidget()
+
+        # Tab 1: Pre-defined Models
+        model_select_tab = QWidget()
+        model_select_layout = QFormLayout(model_select_tab)
+        model_select_layout.setContentsMargins(5, 10, 5, 5) # Add some top margin
+
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["Simple Color (Mean RGB)"])
+        self.model_combo.insertSeparator(1) # Add a separator
+        
+        standard_models = ['yolov8n-cls.pt',
+                           'yolov8s-cls.pt',
+                           'yolov8m-cls.pt',
+                           'yolov8l-cls.pt',
+                           'yolov8x-cls.pt',
+                           'yolo11n-cls.pt',
+                           'yolo11s-cls.pt',
+                           'yolo11m-cls.pt',
+                           'yolo11l-cls.pt',
+                           'yolo11x-cls.pt',
+                           'yolo12n-cls.pt',
+                           'yolo12s-cls.pt',
+                           'yolo12m-cls.pt',
+                           'yolo12l-cls.pt',
+                           'yolo12x-cls.pt']
+        
+        # Add standard models to the combo box
+        self.model_combo.addItems(standard_models)
+        
+        # Add community models
+        community_configs = get_available_configs(task='classify')
+        if community_configs:
+            self.model_combo.insertSeparator(len(standard_models))
+            self.model_combo.addItems(list(community_configs.keys()))
+            
+        # Set the default model
+        self.model_combo.setCurrentIndex(standard_models.index('yolov8n-cls.pt'))
+        
+        model_select_layout.addRow("Model:", self.model_combo)
+        self.tabs.addTab(model_select_tab, "Pre-defined Models")
+
+        # Tab 2: Existing Model from File
+        model_existing_tab = QWidget()
+        model_existing_layout = QFormLayout(model_existing_tab)
+        model_existing_layout.setContentsMargins(5, 10, 5, 5)
+
+        self.model_path_edit = QLineEdit()
+        self.model_path_edit.setPlaceholderText("Path to a existing .pt model file...")
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_for_model)
+        
+        path_layout = QHBoxLayout()
+        path_layout.addWidget(self.model_path_edit)
+        path_layout.addWidget(browse_button)
+        model_existing_layout.addRow("Model Path:", path_layout)
+        self.tabs.addTab(model_existing_tab, "Existing Model")
+        
+        main_layout.addWidget(self.tabs)
+
+        # --- Common Settings Below Tabs ---
+        common_settings_layout = QFormLayout()
+        common_settings_layout.setContentsMargins(5, 15, 5, 5) # Add space between tabs and settings
+
         self.embedding_technique_combo = QComboBox()
         self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
-        form_layout.addRow("Technique:", self.embedding_technique_combo)
+        common_settings_layout.addRow("Technique:", self.embedding_technique_combo)
 
         self.random_state_spin = QSpinBox()
         self.random_state_spin.setRange(0, 1000)
         self.random_state_spin.setValue(42)
-        form_layout.addRow("Random State:", self.random_state_spin)
+        common_settings_layout.addRow("Random State:", self.random_state_spin)
 
-        # Apply embedding button
         self.apply_embedding_button = QPushButton("Apply Embedding")
         self.apply_embedding_button.clicked.connect(self.apply_embedding)
-        form_layout.addRow("", self.apply_embedding_button)
+        common_settings_layout.addRow("", self.apply_embedding_button)
 
-        layout.addLayout(form_layout)
+        main_layout.addLayout(common_settings_layout)
+
+    def browse_for_model(self):
+        """Open a file dialog to select a existing model file."""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select Model File", 
+            "", 
+            "PyTorch Models (*.pt);;All Files (*)", 
+            options=options
+        )
+        if file_path:
+            self.model_path_edit.setText(file_path)
+
+    def get_selected_model(self):
+        """Get the selected model name or path based on the active tab."""
+        current_tab_index = self.tabs.currentIndex()
+        if current_tab_index == 0: # Pre-defined Models tab
+            return self.model_combo.currentText()
+        elif current_tab_index == 1: # Existing Model tab
+            return self.model_path_edit.text()
+        return ""  # Should not happen
 
     def apply_embedding(self):
         """Apply embedding with the current settings."""
@@ -1756,30 +1828,96 @@ class ExplorerWindow(QMainWindow):
         return np.array(features), valid_data_items
 
     def _extract_yolo_features(self, data_items, model_name):
-        """Placeholder for extracting features using a YOLO model."""
+        """
+        Extracts features from annotation crops using a specified YOLO model.
+        This method is adapted from the standalone 'calculate_embeddings_exp_8' function.
+        """
         print(f"Attempting to extract features with YOLO model: {model_name}")
-        print("NOTE: YOLO feature extraction is not yet implemented.")
-        # In a real implementation, you would:
-        # 1. Load the specified YOLO model.
-        # 2. Pre-process each cropped image into a tensor.
-        # 3. Pass the tensor through the model's backbone.
-        # 4. Get the resulting feature vector.
-        # For now, we return empty results to prevent the app from crashing.
-        return np.array([]), []
+
+        # --- 1. Model Caching and Loading ---
+        # Avoid reloading the model if it's already in memory.
+        if model_name != self.model_path or self.loaded_model is None:
+            try:
+                print(f"Loading new model: {model_name}")
+                self.loaded_model = YOLO(model_name)
+                self.model_path = model_name
+            except Exception as e:
+                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
+                return np.array([]), []
+        
+        model = self.loaded_model
+        
+        try:
+            imgsz = self.loaded_model.__dict__['overrides']['imgsz']
+        except:
+            imgsz = 256
+        
+        # --- 2. Device Selection ---
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"NOTE: Using device '{device}' for feature extraction.")
+
+        embeddings_list = []
+        valid_data_items = []
+        
+        try:
+            # --- 3. Main Loop for Feature Extraction ---
+            # Instead of iterating over a dataframe, we iterate through our data items.
+            for item in data_items:
+                pixmap = item.annotation.get_cropped_image()
+                
+                if not pixmap or pixmap.isNull():
+                    print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
+                    continue
+
+                # Convert QPixmap to a numpy array for the model
+                image_np = pixmap_to_numpy(pixmap)
+
+                # The core embedding calculation
+                embedding = model.embed(image_np, imgsz=imgsz, half=True, stream=False, device=device, verbose=False)
+                
+                # Append successful results
+                embeddings_list.append(embedding[0].cpu().numpy())
+                valid_data_items.append(item)
+
+            if not embeddings_list:
+                print("Warning: No features were extracted. The model may have failed or no valid images were found.")
+                return np.array([]), []
+
+            # Convert the list of embeddings to a final numpy array
+            embeddings = np.array(embeddings_list)
+            
+        except Exception as e:
+            print(f"ERROR: An error occurred during feature extraction: {e}")
+            return np.array([]), []
+            
+        finally:
+            # --- 4. Cleanup ---
+            # Clear CUDA cache to free up memory after the operation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        print(f"Successfully extracted {len(embeddings)} features.")
+        return embeddings, valid_data_items
 
     def _extract_features(self, data_items):
         """
         Dispatcher method to call the appropriate feature extraction function
         based on the user's selection in the UI.
         """
-        model_name = self.embedding_settings_widget.model_combo.currentText()
+        # --- THIS IS THE CHANGE ---
+        # Use the new method to get the model from the active tab.
+        model_name = self.embedding_settings_widget.get_selected_model()
+
+        if not model_name:
+            print("No model selected or path provided.")
+            return np.array([]), []
 
         if model_name == "Simple Color (Mean RGB)":
             return self._extract_rgb_features(data_items)
-        elif ".pt" in model_name:  # Simple check for a YOLO model
+        elif ".pt" in model_name:  # Check for a YOLO model by name or path
             return self._extract_yolo_features(data_items, model_name)
         else:
-            print(f"Unknown feature model selected: {model_name}")
+            print(f"Unknown or invalid feature model selected: {model_name}")
             return np.array([]), []
 
     def _run_dimensionality_reduction(self, features, technique, random_state):
