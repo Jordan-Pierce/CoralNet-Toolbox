@@ -134,23 +134,23 @@ class AnnotationDataItem:
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
-    def __init__(self, data_item, widget_size=96, annotation_viewer=None, parent=None):
+    def __init__(self, data_item, widget_height=96, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
         self.data_item = data_item
-        self.annotation = data_item.annotation  # For convenience
+        self.annotation = data_item.annotation
         self.annotation_viewer = annotation_viewer
-        self.widget_size = widget_size
+        
+        self.widget_height = widget_height
+        self.aspect_ratio = 1.0  # Default to a square aspect ratio
+        self.pixmap = None       # Cache the original, unscaled pixmap
+
         self.animation_offset = 0
-
-        self.setFixedSize(widget_size, widget_size)
-
-        # Timer for marching ants animation
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._update_animation_frame)
         self.animation_timer.setInterval(75)
 
         self.setup_ui()
-        self.load_annotation_image()
+        self.load_and_set_image() # Changed from load_annotation_image
 
     def setup_ui(self):
         """Set up the basic UI with a label for the image."""
@@ -164,18 +164,58 @@ class AnnotationImageWidget(QWidget):
 
         layout.addWidget(self.image_label)
 
-    def load_annotation_image(self):
-        """Load and display the actual annotation cropped image."""
+    def load_and_set_image(self):
+        """Load image, calculate its aspect ratio, and set the widget's initial size."""
         try:
-            cropped_image = self.annotation.get_cropped_image_graphic()
-            cropped_image = scale_pixmap(cropped_image, self.widget_size - 8)
-            if cropped_image and not cropped_image.isNull():
-                self.image_label.setPixmap(cropped_image)
+            # Use get_cropped_image_graphic() to get the QPixmap
+            cropped_pixmap = self.annotation.get_cropped_image_graphic()
+            if cropped_pixmap and not cropped_pixmap.isNull():
+                self.pixmap = cropped_pixmap
+                # Safely calculate aspect ratio
+                if self.pixmap.height() > 0:
+                    self.aspect_ratio = self.pixmap.width() / self.pixmap.height()
+                else:
+                    self.aspect_ratio = 1.0
             else:
                 self.image_label.setText("No Image\nAvailable")
+                self.pixmap = None
+                self.aspect_ratio = 1.0
         except Exception as e:
             print(f"Error loading annotation image: {e}")
             self.image_label.setText("Error\nLoading Image")
+            self.pixmap = None
+            self.aspect_ratio = 1.0
+        
+        # Trigger an initial size update
+        self.update_height(self.widget_height)
+
+    def update_height(self, new_height):
+        """Updates the widget's height and rescales its width and content accordingly."""
+        self.widget_height = new_height
+        
+        # Calculate the new width based on the stored aspect ratio
+        new_width = int(self.widget_height * self.aspect_ratio)
+
+        # Set the new fixed size for the entire widget
+        self.setFixedSize(new_width, new_height)
+
+        if self.pixmap:
+            # Scale the cached pixmap to fit the new widget size, leaving room for the border
+            # Note: We use the widget's new dimensions directly
+            scaled_pixmap = self.pixmap.scaled(
+                new_width - 8,  # Account for horizontal margins
+                new_height - 8, # Account for vertical margins
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+        
+        self.update() # Schedule a repaint if needed
+
+    # Replace update_size with update_height
+    def update_size(self, new_size):
+        """Kept for compatibility, redirects to update_height."""
+        self.update_height(new_size)
 
     def set_selected(self, selected):
         """Set the selection state and update visual appearance."""
@@ -240,14 +280,6 @@ class AnnotationImageWidget(QWidget):
         half_width = (width - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
-
-    def update_size(self, new_size):
-        """Updates the widget's size and reloads/rescales its content."""
-        self.widget_size = new_size
-        self.setFixedSize(new_size, new_size)
-        self.image_label.setFixedSize(new_size - 8, new_size - 8)
-        self.load_annotation_image()
-        self.update()
 
     def mousePressEvent(self, event):
         """Handle mouse press events for selection."""
@@ -677,8 +709,6 @@ class AnnotationViewer(QScrollArea):
         main_layout.addLayout(header_layout)
         
         self.content_widget = QWidget()
-        self.grid_layout = QGridLayout(self.content_widget)
-        self.grid_layout.setSpacing(5)
 
         content_scroll = QScrollArea()
         content_scroll.setWidgetResizable(True)
@@ -690,10 +720,15 @@ class AnnotationViewer(QScrollArea):
         self.setWidget(main_container)
 
     def resizeEvent(self, event):
-        """Handle resize events to recalculate grid layout."""
+        """On window resize, reflow the annotation widgets."""
         super().resizeEvent(event)
-        if hasattr(self, 'annotation_widgets_by_id') and self.annotation_widgets_by_id:
-            self.recalculate_grid_layout()
+        # Use a QTimer to avoid rapid, expensive reflows while dragging the resize handle
+        if not hasattr(self, '_resize_timer'):
+            self._resize_timer = QTimer(self)
+            self._resize_timer.setSingleShot(True)
+            self._resize_timer.timeout.connect(self.recalculate_widget_positions)
+        # Restart the timer on each resize event
+        self._resize_timer.start(100)  # 100ms delay
 
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection OR clearing selection."""
@@ -831,9 +866,14 @@ class AnnotationViewer(QScrollArea):
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         
+        # Disable updates for performance while resizing many items
+        self.content_widget.setUpdatesEnabled(False)
         for widget in self.annotation_widgets_by_id.values():
-            widget.update_size(value)
-        self.recalculate_grid_layout()
+            widget.update_height(value)  # Call the new, more descriptive method
+        self.content_widget.setUpdatesEnabled(True)
+
+        # After resizing, reflow the layout
+        self.recalculate_widget_positions()
 
     def recalculate_grid_layout(self):
         """Recalculate the grid layout based on current widget width."""
@@ -846,22 +886,68 @@ class AnnotationViewer(QScrollArea):
         
         for i, widget in enumerate(self.annotation_widgets_by_id.values()):
             self.grid_layout.addWidget(widget, i // cols, i % cols)
+            
+    def recalculate_widget_positions(self):
+        """Replaces recalculate_grid_layout. Manually positions widgets in a flow."""
+        if not self.annotation_widgets_by_id:
+            self.content_widget.setMinimumSize(1, 1)
+            return
+
+        # Use the viewport width for calculations
+        available_width = self.viewport().width()
+        spacing = 5
+        x, y = spacing, spacing
+        max_height_in_row = 0
+        
+        # To ensure shift-selection works predictably, you might want to sort the widgets
+        # For now, we rely on the dictionary's insertion order.
+        widgets_to_place = list(self.annotation_widgets_by_id.values())
+
+        for widget in widgets_to_place:
+            widget_size = widget.sizeHint() # Or just widget.size()
+            
+            # Check if the widget fits on the current line. If not, wrap to the next line.
+            if x > spacing and x + widget_size.width() > available_width:
+                x = spacing
+                y += max_height_in_row + spacing
+                max_height_in_row = 0
+
+            widget.move(x, y)
+            
+            x += widget_size.width() + spacing
+            max_height_in_row = max(max_height_in_row, widget_size.height())
+
+        # After positioning all widgets, update the total size of the content widget
+        # so the scroll area's scrollbars become active if needed.
+        if widgets_to_place:
+            total_height = y + max_height_in_row + spacing
+            self.content_widget.setMinimumSize(available_width, total_height)
 
     def update_annotations(self, data_items):
-        """Update the displayed annotations from a list of AnnotationDataItems."""
+        """Update displayed annotations, creating new widgets."""
+        # Clear any existing widgets and ensure they are deleted
         for widget in self.annotation_widgets_by_id.values():
+            widget.setParent(None)
             widget.deleteLater()
+            
         self.annotation_widgets_by_id.clear()
         self.selected_widgets.clear()
         self.last_selected_index = -1
 
+        # Create new widgets, parenting them to the content_widget
         for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
-                data_item, self.current_widget_size, 
-                annotation_viewer=self)
+                data_item, 
+                self.current_widget_size,
+                annotation_viewer=self,
+                parent=self.content_widget  # Parent to the scrollable area
+            )
+            # When not using a layout, widgets are hidden by default
+            annotation_widget.show() 
             self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
         
-        self.recalculate_grid_layout()
+        # After creating all widgets, calculate their positions
+        self.recalculate_widget_positions()
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
