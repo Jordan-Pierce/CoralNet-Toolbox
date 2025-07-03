@@ -2110,7 +2110,20 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """A selection was made in the EmbeddingViewer, so update the AnnotationViewer."""
+        # Check if this is a new selection being made when nothing was previously selected
+        was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
+        is_new_selection = len(all_selected_ann_ids) > 0
+        
+        # Update the annotation viewer with the new selection
         self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
+        
+        # Auto-switch to isolation mode if conditions are met
+        if (was_empty_selection and 
+            is_new_selection and 
+            not self.annotation_viewer.isolated_mode):
+            print("Auto-switching to isolation mode due to new selection in embedding viewer")
+            self.annotation_viewer.isolate_selection()
+        
         self.update_label_window_selection() # Keep label window in sync
 
     @pyqtSlot(list)
