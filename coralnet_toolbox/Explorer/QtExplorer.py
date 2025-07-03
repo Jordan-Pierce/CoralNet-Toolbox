@@ -2186,6 +2186,13 @@ class ExplorerWindow(QMainWindow):
             - Skewness (3rd moment)
             - Kurtosis (4th moment)
         2.  Color Histogram (per channel)
+        3.  Grayscale Statistics:
+            - Mean Brightness
+            - Contrast (Std Dev)
+            - Intensity Range
+        4.  Geometric Features:
+            - Area
+            - Perimeter
         """
         if progress_bar:
             progress_bar.set_title("Extracting Color Features...")
@@ -2209,15 +2216,9 @@ class ExplorerWindow(QMainWindow):
                 # Center the data (subtract the mean) for skew/kurtosis calculation
                 centered_pixels = pixels - mean_color
                 
-                # Skewness = E[((X - mu)/sigma)^3]
-                # The 3rd moment divided by the standard deviation cubed.
                 # A small value (epsilon) is added to the denominator to prevent division by zero
-                # for channels with zero standard deviation (e.g., a solid color image).
                 epsilon = 1e-8
                 skew_color = np.mean(centered_pixels**3, axis=0) / (std_color**3 + epsilon)
-                
-                # Excess Kurtosis = E[((X - mu)/sigma)^4] - 3
-                # The 4th moment divided by the standard deviation to the 4th, minus 3.
                 kurt_color = np.mean(centered_pixels**4, axis=0) / (std_color**4 + epsilon) - 3
                 
                 # --- 2. Calculate Color Histograms ---
@@ -2225,20 +2226,35 @@ class ExplorerWindow(QMainWindow):
                 for i in range(3): # For each channel (R, G, B)
                     hist, _ = np.histogram(pixels[:, i], bins=bins, range=(0, 255))
                     
-                    # Normalize histogram to make it a probability distribution
+                    # Normalize histogram
                     hist_sum = np.sum(hist)
                     if hist_sum > 0:
                         histograms.append(hist / hist_sum)
-                    else: # Avoid division by zero for an empty or invalid channel
+                    else: # Avoid division by zero
                         histograms.append(np.zeros(bins))
                 
-                # --- 3. Concatenate all features into a single vector ---
+                # --- 3. Calculate Grayscale Statistics ---
+                gray_arr = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+                grayscale_stats = np.array([
+                    np.mean(gray_arr),  # Overall brightness
+                    np.std(gray_arr),   # Overall contrast
+                    np.ptp(gray_arr)    # Peak-to-peak intensity range
+                ])
+                
+                # --- 4. Calculate Geometric Features ---
+                area = getattr(item.annotation, 'area', 0.0)
+                perimeter = getattr(item.annotation, 'perimeter', 0.0)
+                geometric_features = np.array([area, perimeter])
+                
+                # --- 5. Concatenate all features into a single vector ---
                 current_features = np.concatenate([
                     mean_color,
                     std_color,
                     skew_color,
                     kurt_color,
-                    *histograms
+                    *histograms,
+                    grayscale_stats,
+                    geometric_features
                 ])
                 
                 features.append(current_features)
