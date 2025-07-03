@@ -1673,7 +1673,7 @@ class ModelSettingsWidget(QGroupBox):
         model_select_layout.setContentsMargins(5, 10, 5, 5) # Add some top margin
 
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["Simple Color (Mean RGB)"])
+        self.model_combo.addItems(["Color Features"])
         self.model_combo.insertSeparator(1) # Add a separator
         
         standard_models = ['yolov8n-cls.pt',
@@ -1699,7 +1699,7 @@ class ModelSettingsWidget(QGroupBox):
             self.model_combo.insertSeparator(len(standard_models) + 2)
             self.model_combo.addItems(list(community_configs.keys()))
             
-        self.model_combo.setCurrentText('Simple Color (Mean RGB)')
+        self.model_combo.setCurrentText('Color Features')
         
         model_select_layout.addRow("Model:", self.model_combo)
         self.tabs.addTab(model_select_tab, "Select Model")
@@ -2175,11 +2175,20 @@ class ExplorerWindow(QMainWindow):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-    def _extract_rgb_features(self, data_items, progress_bar=None):
-        """Extracts mean RGB color features from annotation crops."""
-        # --- MODIFIED: Progress bar integration ---
+    def _extract_color_features(self, data_items, progress_bar=None, bins=32):
+        """
+        Extracts a comprehensive set of color features from annotation crops using only NumPy.
+        
+        For each image, it calculates:
+        1.  Color Moments (per channel):
+            - Mean (1st moment)
+            - Standard Deviation (2nd moment)
+            - Skewness (3rd moment)
+            - Kurtosis (4th moment)
+        2.  Color Histogram (per channel)
+        """
         if progress_bar:
-            progress_bar.set_title("Extracting Mean RGB Features...")
+            progress_bar.set_title("Extracting Color Features...")
             progress_bar.start_progress(len(data_items))
 
         features = []
@@ -2187,9 +2196,52 @@ class ExplorerWindow(QMainWindow):
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
+                # arr has shape (height, width, 3)
                 arr = pixmap_to_numpy(pixmap)
-                mean_color = np.mean(arr, axis=(0, 1))
-                features.append(mean_color)
+                
+                # Reshape for channel-wise statistics: (num_pixels, 3)
+                pixels = arr.reshape(-1, 3)
+
+                # --- 1. Calculate Color Moments using only NumPy ---
+                mean_color = np.mean(pixels, axis=0)
+                std_color = np.std(pixels, axis=0)
+                
+                # Center the data (subtract the mean) for skew/kurtosis calculation
+                centered_pixels = pixels - mean_color
+                
+                # Skewness = E[((X - mu)/sigma)^3]
+                # The 3rd moment divided by the standard deviation cubed.
+                # A small value (epsilon) is added to the denominator to prevent division by zero
+                # for channels with zero standard deviation (e.g., a solid color image).
+                epsilon = 1e-8
+                skew_color = np.mean(centered_pixels**3, axis=0) / (std_color**3 + epsilon)
+                
+                # Excess Kurtosis = E[((X - mu)/sigma)^4] - 3
+                # The 4th moment divided by the standard deviation to the 4th, minus 3.
+                kurt_color = np.mean(centered_pixels**4, axis=0) / (std_color**4 + epsilon) - 3
+                
+                # --- 2. Calculate Color Histograms ---
+                histograms = []
+                for i in range(3): # For each channel (R, G, B)
+                    hist, _ = np.histogram(pixels[:, i], bins=bins, range=(0, 255))
+                    
+                    # Normalize histogram to make it a probability distribution
+                    hist_sum = np.sum(hist)
+                    if hist_sum > 0:
+                        histograms.append(hist / hist_sum)
+                    else: # Avoid division by zero for an empty or invalid channel
+                        histograms.append(np.zeros(bins))
+                
+                # --- 3. Concatenate all features into a single vector ---
+                current_features = np.concatenate([
+                    mean_color,
+                    std_color,
+                    skew_color,
+                    kurt_color,
+                    *histograms
+                ])
+                
+                features.append(current_features)
                 valid_data_items.append(item)
             else:
                 print(f"Warning: Could not get cropped image for annotation ID {item.annotation.id}. Skipping.")
@@ -2311,8 +2363,8 @@ class ExplorerWindow(QMainWindow):
             return np.array([]), []
 
         # --- MODIFIED: Pass the progress_bar object ---
-        if model_name == "Simple Color (Mean RGB)":
-            return self._extract_rgb_features(data_items, progress_bar=progress_bar)
+        if model_name == "Color Features":
+            return self._extract_color_features(data_items, progress_bar=progress_bar)
         elif ".pt" in model_name:
             return self._extract_yolo_features(data_items, model_name, progress_bar=progress_bar)
         else:
