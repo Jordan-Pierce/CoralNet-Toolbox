@@ -14,7 +14,7 @@ from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
-from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage, QBrush, QPainterPath, QPolygonF
+from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QImage, QBrush, QPainterPath, QPolygonF, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QSize, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -322,6 +322,7 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
     
     # Define signal to report selection changes
     selection_changed = pyqtSignal(list)  # list of all currently selected annotation IDs
+    reset_view_requested = pyqtSignal()  # Signal to reset the view to fit all points
     
     def __init__(self, parent=None):
         # Create the graphics scene first
@@ -359,8 +360,9 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         # Setup the UI with header
         self.setup_ui()
         
-        # Connect mouse events to the graphics view - CORRECTED
+        # Connect mouse events to the graphics view
         self.graphics_view.mousePressEvent = self.mousePressEvent
+        self.graphics_view.mouseDoubleClickEvent = self.mouseDoubleClickEvent
         self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
         self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
         self.graphics_view.wheelEvent = self.wheelEvent
@@ -439,30 +441,48 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         self.graphics_view.fitInView(rect, aspect_ratio)
 
     def mousePressEvent(self, event):
-        """Handle mouse press for custom rubber band selection and panning."""
+        """Handle mouse press for selection (point or rubber band) and panning."""
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
-            # Store the set of currently selected items.
+            # Check if the click is on an existing point
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                # If so, toggle its selection state and do nothing else
+                self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                item_at_pos.setSelected(not item_at_pos.isSelected())
+                return  # Event handled
+
+            # If the click was on the background, proceed with rubber band selection
             self.selection_at_press = set(self.graphics_scene.selectedItems())
-            # Start of a custom rubber band selection
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
             self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
             self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
             self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
             self.graphics_scene.addItem(self.rubber_band)
+
         elif event.button() == Qt.RightButton:
-            # Start of a pan
+            # Handle panning
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
-            left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
-            QGraphicsView.mousePressEvent(self.graphics_view, left_event)
+            left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
+            super(QGraphicsView, self.graphics_view).mousePressEvent(left_event)
         else:
-            # Start of a single item selection
+            # Handle standard single-item selection
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            QGraphicsView.mousePressEvent(self.graphics_view, event)
+            super(QGraphicsView, self.graphics_view).mousePressEvent(event)
+            
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click to clear selection and reset the main view."""
+        if event.button() == Qt.LeftButton:
+            # Clear selection if any items are selected
+            if self.graphics_scene.selectedItems():
+                self.graphics_scene.clearSelection()  # This triggers on_selection_changed
+            
+            # Signal the main window to revert from isolation mode
+            self.reset_view_requested.emit()
+            event.accept()
+        else:
+            # Pass other double-clicks to the base class
+            super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move for dynamic selection and panning."""
@@ -474,7 +494,7 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             path = QPainterPath()
             path.addRect(self.rubber_band.rect())
 
-            # **NEEDED CHANGE**: Block signals to perform a compound selection operation
+            # Block signals to perform a compound selection operation
             self.graphics_scene.blockSignals(True)
 
             # 1. Perform the "fancy" dynamic selection, which replaces the current selection
@@ -508,7 +528,7 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             self.graphics_scene.removeItem(self.rubber_band)
             self.rubber_band = None
 
-            # **NEEDED CHANGE**: Clean up the stored selection state.
+            # Clean up the stored selection state.
             self.selection_at_press = None
             
         elif event.button() == Qt.RightButton:
@@ -664,7 +684,8 @@ class AnnotationViewer(QScrollArea):
     # Define signals to report changes to the ExplorerWindow
     selection_changed = pyqtSignal(list)  # list of changed annotation IDs
     preview_changed = pyqtSignal(list)   # list of annotation IDs with new previews
-    
+    reset_view_requested = pyqtSignal()  # Signal to reset the view to fit all points
+
     def __init__(self, parent=None):
         super(AnnotationViewer, self).__init__(parent)
         self.annotation_widgets_by_id = {}
@@ -1104,6 +1125,27 @@ class AnnotationViewer(QScrollArea):
         # For all other cases (e.g., a click on a widget that should be handled
         # by the widget itself), pass the event to the default handler.
         super().mousePressEvent(event)
+        
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click to clear selection and exit isolation mode."""
+        if event.button() == Qt.LeftButton:
+            changed_ids = []
+            
+            # If items are selected, clear the selection and record their IDs
+            if self.selected_widgets:
+                changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
+                self.clear_selection()
+                self.selection_changed.emit(changed_ids)
+
+            # If in isolation mode, revert to showing all annotations
+            if self.isolated_mode:
+                self.show_all_annotations()
+            
+            # Signal the main window to reset its view (e.g., switch tabs)
+            self.reset_view_requested.emit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
     
     def mouseMoveEvent(self, event):
         """Handle mouse move for DYNAMIC rubber band selection."""
@@ -2049,7 +2091,9 @@ class ExplorerWindow(QMainWindow):
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
         self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
         self.annotation_viewer.preview_changed.connect(self.on_preview_changed)
+        self.annotation_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
+        self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
 
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
@@ -2076,6 +2120,22 @@ class ExplorerWindow(QMainWindow):
             point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
                 point.update()  # Force the point to repaint itself
+                
+    @pyqtSlot()
+    def on_reset_view_requested(self):
+        """Handle reset view requests from double-click in either viewer."""
+        # Clear all selections in both viewers
+        self.annotation_viewer.clear_selection()
+        self.embedding_viewer.render_selection_from_ids(set())
+        
+        # Exit isolation mode if currently active
+        if self.annotation_viewer.isolated_mode:
+            self.annotation_viewer.show_all_annotations()
+        
+        # Update button states
+        self.update_button_states()
+        
+        print("Reset view: cleared selections and exited isolation mode")
 
     def update_label_window_selection(self):
         """Update the label window based on the selection in the annotation viewer."""
