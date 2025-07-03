@@ -2451,48 +2451,54 @@ class ExplorerWindow(QMainWindow):
         """
         Runs PCA, UMAP or t-SNE on the feature matrix using provided parameters.
         """
-        technique = params.get('technique', 'PCA')
+        technique = params.get('technique', 'UMAP') # Changed default to UMAP
         random_state = 42
         
         print(f"Running {technique} on {len(features)} items with params: {params}")
-        if len(features) <= 1:
+        if len(features) <= 2: # UMAP/t-SNE need at least a few points
             print("Not enough data points for dimensionality reduction.")
             return None
 
         try:
-            if StandardScaler is not None:
-                scaler = StandardScaler()
-                features_scaled = scaler.fit_transform(features)
-            else:
-                features_scaled = features
+            # Scaling is crucial, your implementation is already correct
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
             
-            if technique == "PCA":
-                reducer = PCA(n_components=2, random_state=random_state)
-
-            elif technique == "UMAP":
+            if technique == "UMAP":
+                # Get hyperparameters from params, with sensible defaults
                 n_neighbors = params.get('n_neighbors', 15)
                 min_dist = params.get('min_dist', 0.1)
+                metric = params.get('metric', 'cosine')  # Allow metric to be specified
+
                 reducer = UMAP(
                     n_components=2, 
                     random_state=random_state, 
                     n_neighbors=min(n_neighbors, len(features_scaled) - 1),
-                    min_dist=min_dist
+                    min_dist=min_dist,
+                    metric=metric  # Use the specified metric
                 )
             
-            elif technique == "TSNE":  
+            elif technique == "TSNE":
                 perplexity = params.get('perplexity', 30)
                 early_exaggeration = params.get('early_exaggeration', 12.0)
+                learning_rate = params.get('learning_rate', 'auto')
+
                 reducer = TSNE(
                     n_components=2, 
                     random_state=random_state, 
                     perplexity=min(perplexity, len(features_scaled) - 1),
-                    early_exaggeration=early_exaggeration
+                    early_exaggeration=early_exaggeration,
+                    learning_rate=learning_rate,
+                    init='pca'  # Improves stability and speed
                 )
+                
+            elif technique == "PCA":
+                reducer = PCA(n_components=2, random_state=random_state)
 
             else:
                 print(f"Unknown dimensionality reduction technique: {technique}")
                 return None
-            
+                
             return reducer.fit_transform(features_scaled)
             
         except Exception as e:
