@@ -68,6 +68,7 @@ class AnnotationDataItem:
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
+        self._marked_for_deletion = False  # Track deletion status
 
     @property
     def effective_label(self):
@@ -100,6 +101,18 @@ class AnnotationDataItem:
         """Check if this annotation has preview changes."""
         return self._preview_label is not None
 
+    def mark_for_deletion(self):
+        """Mark this annotation for deletion."""
+        self._marked_for_deletion = True
+
+    def unmark_for_deletion(self):
+        """Unmark this annotation for deletion."""
+        self._marked_for_deletion = False
+
+    def is_marked_for_deletion(self):
+        """Check if this annotation is marked for deletion."""
+        return self._marked_for_deletion
+
     def apply_preview_permanently(self):
         """Apply the preview label permanently to the annotation."""
         if self._preview_label:
@@ -129,7 +142,7 @@ class AnnotationDataItem:
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
             return list(self.annotation.machine_confidence.values())[0]
         return 0.0
-
+    
 
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
@@ -317,7 +330,7 @@ class EmbeddingPointItem(QGraphicsEllipseItem):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
+class EmbeddingViewer(QWidget):
     """Custom QGraphicsView for interactive embedding visualization with zooming, panning, and selection."""
     
     # Define signal to report selection changes
@@ -570,6 +583,10 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
         self.clear_points()
         
         for item in data_items:
+            # Skip items marked for deletion
+            if item.is_marked_for_deletion():
+                continue
+                
             point = EmbeddingPointItem(0, 0, POINT_SIZE, POINT_SIZE)
             point.setPos(item.embedding_x, item.embedding_y)
             
@@ -656,13 +673,27 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             
     def render_selection_from_ids(self, selected_ids):
         """Update the visual selection of points based on a set of IDs from the controller."""
+        # Filter out any IDs that are marked for deletion
+        visible_selected_ids = set()
+        for ann_id in selected_ids:
+            if ann_id in self.points_by_id:
+                point = self.points_by_id[ann_id]
+                data_item = point.data(0)
+                if data_item and not data_item.is_marked_for_deletion():
+                    visible_selected_ids.add(ann_id)
+        
         # Block this scene's own selectionChanged signal to prevent an infinite loop
         blocker = QSignalBlocker(self.graphics_scene)
         
         for ann_id, point in self.points_by_id.items():
-            point.setSelected(ann_id in selected_ids)
+            data_item = point.data(0)
+            # Only show selection for items not marked for deletion
+            if data_item and not data_item.is_marked_for_deletion():
+                point.setSelected(ann_id in visible_selected_ids)
+            else:
+                point.setSelected(False)
             
-        self.previous_selection_ids = selected_ids
+        self.previous_selection_ids = visible_selected_ids
         
         # Trigger animation update
         self.on_selection_changed()
@@ -852,13 +883,15 @@ class AnnotationViewer(QScrollArea):
         self.recalculate_widget_positions()
 
     def _get_sorted_widgets(self):
-        """Get widgets sorted according to the current sort setting."""
+        """Get widgets sorted according to the current sort setting, excluding deleted ones."""
         sort_type = self.sort_combo.currentText()
         
-        if sort_type == "None":
-            return list(self.annotation_widgets_by_id.values())
+        # Only include widgets not marked for deletion
+        widgets = [w for w in self.annotation_widgets_by_id.values() 
+                  if not w.data_item.is_marked_for_deletion()]
         
-        widgets = list(self.annotation_widgets_by_id.values())
+        if sort_type == "None":
+            return widgets
         
         if sort_type == "Label":
             widgets.sort(key=lambda w: w.data_item.effective_label.short_label_code)
@@ -970,11 +1003,11 @@ class AnnotationViewer(QScrollArea):
         # Clear any existing separator labels
         self._clear_separator_labels()
 
-        # Get sorted widgets
+        # Get sorted widgets that are not marked for deletion
         all_widgets = self._get_sorted_widgets()
         
-        # Filter to only visible widgets
-        visible_widgets = [w for w in all_widgets if not w.isHidden()]
+        # Filter to only visible widgets (not hidden and not marked for deletion)
+        visible_widgets = [w for w in all_widgets if not w.isHidden() and not w.data_item.is_marked_for_deletion()]
         
         if not visible_widgets:
             self.content_widget.setMinimumSize(1, 1)
@@ -1068,7 +1101,7 @@ class AnnotationViewer(QScrollArea):
             self._resize_timer.timeout.connect(self.recalculate_widget_positions)
         # Restart the timer on each resize event
         self._resize_timer.start(100)  # 100ms delay
-
+        
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection OR clearing selection."""
         
@@ -1218,6 +1251,55 @@ class AnnotationViewer(QScrollArea):
             return
             
         super().mouseReleaseEvent(event)
+        
+    def keyPressEvent(self, event):
+        """Handle keyboard press events including deletion of selected annotations."""
+        if event.key() == Qt.Key_Delete and event.modifiers() == Qt.ControlModifier:
+            # Ctrl+Delete pressed - mark selected annotations for deletion
+            if self.selected_widgets:
+                self.mark_selected_for_deletion()
+                event.accept()
+                return
+        
+        super().keyPressEvent(event)
+
+    def mark_selected_for_deletion(self):
+        """Mark currently selected annotations for deletion and hide them from view."""
+        if not self.selected_widgets:
+            return
+
+        changed_ids = []
+        widgets_to_hide = []
+        
+        for widget in self.selected_widgets:
+            if not widget.data_item.is_marked_for_deletion():
+                widget.data_item.mark_for_deletion()
+                widgets_to_hide.append(widget)
+                changed_ids.append(widget.data_item.annotation.id)
+
+        # Hide the marked widgets from view
+        self.content_widget.setUpdatesEnabled(False)
+        try:
+            for widget in widgets_to_hide:
+                widget.hide()
+            
+            # Recalculate layout after hiding widgets
+            self.recalculate_widget_positions()
+        finally:
+            self.content_widget.setUpdatesEnabled(True)
+
+        # Clear selection after marking for deletion
+        self.clear_selection()
+
+        if changed_ids:
+            self.preview_changed.emit(changed_ids)
+
+        print(f"Marked {len(changed_ids)} annotation(s) for deletion and hid them from view")
+        
+    def get_visible_widgets(self):
+        """Get widgets that should be visible (not marked for deletion)."""
+        return [w for w in self.annotation_widgets_by_id.values() 
+                if not w.data_item.is_marked_for_deletion()]
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
@@ -1450,13 +1532,31 @@ class AnnotationViewer(QScrollArea):
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
-        # We just need to iterate through all widgets and tell their data_items to clear
         something_cleared = False
+        widgets_to_show = []
+        
         for widget in self.annotation_widgets_by_id.values():
             if widget.data_item.has_preview_changes():
                 widget.data_item.clear_preview_label()
                 widget.update() # Repaint to show original color
                 something_cleared = True
+                
+            # Also clear deletion marks and show previously hidden widgets
+            if widget.data_item.is_marked_for_deletion():
+                widget.data_item.unmark_for_deletion()
+                widgets_to_show.append(widget)
+                something_cleared = True
+        
+        # Show previously hidden widgets
+        if widgets_to_show:
+            self.content_widget.setUpdatesEnabled(False)
+            try:
+                for widget in widgets_to_show:
+                    if not self.isolated_mode or widget in self.isolated_widgets:
+                        widget.show()
+                self.recalculate_widget_positions()
+            finally:
+                self.content_widget.setUpdatesEnabled(True)
         
         if something_cleared:
             # Recalculate positions to update sorting based on reverted labels
@@ -1466,24 +1566,40 @@ class AnnotationViewer(QScrollArea):
 
     def has_preview_changes(self):
         """Check if there are any pending preview changes."""
-        return any(w.data_item.has_preview_changes() for w in self.annotation_widgets_by_id.values())
+        return any(w.data_item.has_preview_changes() or w.data_item.is_marked_for_deletion() 
+                  for w in self.annotation_widgets_by_id.values())
 
     def get_preview_changes_summary(self):
         """Get a summary of preview changes for user feedback."""
-        change_count = sum(1 for w in self.annotation_widgets_by_id.values() if w.data_item.has_preview_changes())
-        if not change_count:
+        label_changes = sum(1 for w in self.annotation_widgets_by_id.values() if w.data_item.has_preview_changes())
+        deletion_marks = sum(1 for w in self.annotation_widgets_by_id.values() if w.data_item.is_marked_for_deletion())
+        
+        if not label_changes and not deletion_marks:
             return "No preview changes"
-        return f"{change_count} annotation(s) with preview changes"
-
+        
+        parts = []
+        if label_changes:
+            parts.append(f"{label_changes} label change(s)")
+        if deletion_marks:
+            parts.append(f"{deletion_marks} deletion(s)")
+        
+        return " and ".join(parts)
+    
     def apply_preview_changes_permanently(self):
         """Apply all preview changes permanently to the annotation data."""
         applied_annotations = []
+        annotations_to_delete = []
+        
         for widget in self.annotation_widgets_by_id.values():
-            # Tell the data_item to apply its changes to the underlying annotation
+            # Handle label changes
             if widget.data_item.apply_preview_permanently():
                 applied_annotations.append(widget.annotation)
+            
+            # Handle deletion marks
+            if widget.data_item.is_marked_for_deletion():
+                annotations_to_delete.append(widget.annotation)
         
-        return applied_annotations
+        return applied_annotations, annotations_to_delete
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -2652,7 +2768,7 @@ class ExplorerWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
-            applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
+            applied_annotations, annotations_to_delete = self.annotation_viewer.apply_preview_changes_permanently()
             
             if applied_annotations:
                 # Find which data items were affected and tell their visual components to update
@@ -2679,12 +2795,45 @@ class ExplorerWindow(QMainWindow):
                     self.image_window.update_image_annotations(image_path)
                 self.annotation_window.load_annotations()
                 
-                # Clear selection and button states
-                self.annotation_viewer.clear_selection()
-                self.embedding_viewer.render_selection_from_ids(set()) # Clear embedding selection
-                self.update_button_states()
+                print(f"Applied label changes to {len(applied_annotations)} annotation(s)")
+
+            if annotations_to_delete:
+                # Actually delete the annotations using AnnotationWindow's method
+                self.annotation_window.delete_annotations(annotations_to_delete)
                 
-                print(f"Applied changes to {len(applied_annotations)} annotation(s)")
+                # Remove deleted annotations from our data structures
+                deleted_ids = {ann.id for ann in annotations_to_delete}
+                
+                # Remove from current_data_items
+                self.current_data_items = [item for item in self.current_data_items 
+                                         if item.annotation.id not in deleted_ids]
+                
+                # Remove widgets from annotation viewer
+                for ann_id in deleted_ids:
+                    widget = self.annotation_viewer.annotation_widgets_by_id.pop(ann_id, None)
+                    if widget:
+                        widget.setParent(None)
+                        widget.deleteLater()
+                
+                # Remove points from embedding viewer
+                for ann_id in deleted_ids:
+                    point = self.embedding_viewer.points_by_id.pop(ann_id, None)
+                    if point:
+                        self.embedding_viewer.graphics_scene.removeItem(point)
+                
+                # Update layouts
+                self.annotation_viewer.recalculate_widget_positions()
+                
+                print(f"Deleted {len(annotations_to_delete)} annotation(s)")
+                
+            # Clear selection and button states
+            self.annotation_viewer.clear_selection()
+            self.embedding_viewer.render_selection_from_ids(set()) # Clear embedding selection
+            self.update_button_states()
+            
+            if applied_annotations or annotations_to_delete:
+                total_changes = len(applied_annotations) + len(annotations_to_delete)
+                print(f"Applied {total_changes} total change(s)")
             else:
                 print("No preview changes to apply")
 

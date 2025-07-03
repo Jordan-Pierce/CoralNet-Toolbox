@@ -77,6 +77,10 @@ class GlobalEventFilter(QObject):
                     if self.main_window.select_tool_action.isChecked():
                         if self.annotation_window.selected_annotations:
                             self.annotation_window.delete_selected_annotations()
+                    elif self.main_window.explorer_window:
+                        # If the explorer window is open, delete selected items
+                        if self.main_window.explorer_window.annotation_viewer.selected_widgets:
+                            self.main_window.explorer_window.annotation_viewer.mark_selected_for_deletion()
                     return True
                 
             # Handle image cycling hotkeys
