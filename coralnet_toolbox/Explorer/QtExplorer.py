@@ -850,7 +850,9 @@ class AnnotationViewer(QScrollArea):
         self.content_widget.setUpdatesEnabled(False)
         try:
             for widget in self.annotation_widgets_by_id.values():
-                widget.show()
+                # Only show widgets that are not marked for deletion
+                if not widget.data_item.is_marked_for_deletion():
+                    widget.show()
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
@@ -1392,21 +1394,24 @@ class AnnotationViewer(QScrollArea):
             return
             
         if self.selected_widgets:
-            # ADD TO isolation instead of replacing it
-            self.isolated_widgets.update(self.selected_widgets)  # Use update() to add, not replace
+            self.isolated_widgets.update(self.selected_widgets)
             self.setUpdatesEnabled(False)
             try:
                 for widget in self.annotation_widgets_by_id.values():
-                    if widget not in self.isolated_widgets:
-                        widget.hide()
-                    else:
+                    # A widget must be in the isolated set AND not marked for deletion to be visible.
+                    is_in_isolated_set = widget in self.isolated_widgets
+                    is_marked_for_deletion = widget.data_item.is_marked_for_deletion()
+                    
+                    if is_in_isolated_set and not is_marked_for_deletion:
                         widget.show()
+                    else:
+                        widget.hide()
+                        
                 self.recalculate_widget_positions()
             finally:
                 self.setUpdatesEnabled(True)
         else:
             # If no widgets are selected, keep the current isolation (don't exit)
-            # This prevents accidentally exiting isolation mode when clearing selection
             pass
 
     def select_widget(self, widget):
@@ -1532,22 +1537,27 @@ class AnnotationViewer(QScrollArea):
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
-        something_cleared = False
+        changed_ids = []
         widgets_to_show = []
         
         for widget in self.annotation_widgets_by_id.values():
-            if widget.data_item.has_preview_changes():
+            # Check if this widget's state will be cleared
+            was_preview = widget.data_item.has_preview_changes()
+            was_deleted = widget.data_item.is_marked_for_deletion()
+
+            if was_preview:
                 widget.data_item.clear_preview_label()
                 widget.update() # Repaint to show original color
-                something_cleared = True
-                
-            # Also clear deletion marks and show previously hidden widgets
-            if widget.data_item.is_marked_for_deletion():
+            
+            if was_deleted:
                 widget.data_item.unmark_for_deletion()
                 widgets_to_show.append(widget)
-                something_cleared = True
-        
-        # Show previously hidden widgets
+            
+            # If the item's state was reverted, add its ID to the list
+            if was_preview or was_deleted:
+                changed_ids.append(widget.data_item.annotation.id)
+
+        # Show any widgets that were previously hidden due to deletion
         if widgets_to_show:
             self.content_widget.setUpdatesEnabled(False)
             try:
@@ -1558,11 +1568,12 @@ class AnnotationViewer(QScrollArea):
             finally:
                 self.content_widget.setUpdatesEnabled(True)
         
-        if something_cleared:
-            # Recalculate positions to update sorting based on reverted labels
+        # If any changes were made, update UI and notify listeners
+        if changed_ids:
             if self.sort_combo.currentText() == "Label":
                 self.recalculate_widget_positions()
             self.update_label_window_selection()
+            self.preview_changed.emit(changed_ids)
 
     def has_preview_changes(self):
         """Check if there are any pending preview changes."""
@@ -2244,11 +2255,16 @@ class ExplorerWindow(QMainWindow):
 
     @pyqtSlot(list)
     def on_preview_changed(self, changed_ann_ids):
-        """A preview color was changed in the AnnotationViewer, so update the EmbeddingViewer points."""
+        """A preview color OR deletion state was changed, so update the EmbeddingViewer points."""
         for ann_id in changed_ann_ids:
             point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
-                point.update()  # Force the point to repaint itself
+                data_item = point.data(0)
+                if data_item:
+                    # Set point visibility based on the data item's deletion status
+                    point.setVisible(not data_item.is_marked_for_deletion())
+                    # Force a repaint to apply visibility and any color changes
+                    point.update()
                 
     @pyqtSlot()
     def on_reset_view_requested(self):
