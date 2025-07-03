@@ -262,10 +262,8 @@ class ImportViscoreAnnotations(QDialog):
                     # Get the label information
                     short_code = str(label_code)
                     # Create the label if it does not exist
-                    label = self.label_window.add_label_if_not_exists(short_code,
-                                                                      long_code=None,
-                                                                      color=None,
-                                                                      label_id=None)
+                    label = self.label_window.add_label_if_not_exists(short_code)
+                    
                 progress_bar.update_progress()
 
             # Import annotations
