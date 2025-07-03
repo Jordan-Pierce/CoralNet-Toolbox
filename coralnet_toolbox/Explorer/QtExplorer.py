@@ -1266,38 +1266,45 @@ class AnnotationViewer(QScrollArea):
         super().keyPressEvent(event)
 
     def mark_selected_for_deletion(self):
-        """Mark currently selected annotations for deletion and hide them from view."""
-        if not self.selected_widgets:
-            return
+            """Mark currently selected annotations for deletion and hide them from view."""
+            if not self.selected_widgets:
+                return
 
-        changed_ids = []
-        widgets_to_hide = []
-        
-        for widget in self.selected_widgets:
-            if not widget.data_item.is_marked_for_deletion():
-                widget.data_item.mark_for_deletion()
-                widgets_to_hide.append(widget)
-                changed_ids.append(widget.data_item.annotation.id)
-
-        # Hide the marked widgets from view
-        self.content_widget.setUpdatesEnabled(False)
-        try:
-            for widget in widgets_to_hide:
-                widget.hide()
+            changed_ids = []
+            widgets_to_hide = []
             
-            # Recalculate layout after hiding widgets
-            self.recalculate_widget_positions()
-        finally:
-            self.content_widget.setUpdatesEnabled(True)
+            # If in isolation mode, remove the deleted widgets from the isolated set.
+            # This makes the deletion from the isolation view explicit and persistent.
+            if self.isolated_mode:
+                for widget in self.selected_widgets:
+                    if widget in self.isolated_widgets:
+                        self.isolated_widgets.remove(widget)
 
-        # Clear selection after marking for deletion
-        self.clear_selection()
+            for widget in self.selected_widgets:
+                if not widget.data_item.is_marked_for_deletion():
+                    widget.data_item.mark_for_deletion()
+                    widgets_to_hide.append(widget)
+                    changed_ids.append(widget.data_item.annotation.id)
 
-        if changed_ids:
-            self.preview_changed.emit(changed_ids)
+            # Hide the marked widgets from view
+            self.content_widget.setUpdatesEnabled(False)
+            try:
+                for widget in widgets_to_hide:
+                    widget.hide()
+                
+                # Recalculate layout after hiding widgets
+                self.recalculate_widget_positions()
+            finally:
+                self.content_widget.setUpdatesEnabled(True)
 
-        print(f"Marked {len(changed_ids)} annotation(s) for deletion and hid them from view")
-        
+            # Clear selection after marking for deletion
+            self.clear_selection()
+
+            if changed_ids:
+                self.preview_changed.emit(changed_ids)
+
+            print(f"Marked {len(changed_ids)} annotation(s) for deletion and hid them from view")
+            
     def get_visible_widgets(self):
         """Get widgets that should be visible (not marked for deletion)."""
         return [w for w in self.annotation_widgets_by_id.values() 
