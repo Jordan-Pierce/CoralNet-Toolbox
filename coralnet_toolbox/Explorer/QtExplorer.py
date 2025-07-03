@@ -464,11 +464,11 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             # Handle panning
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
-            super(QGraphicsView, self.graphics_view).mousePressEvent(left_event)
+            QGraphicsView.mousePressEvent(self.graphics_view, left_event)
         else:
             # Handle standard single-item selection
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            super(QGraphicsView, self.graphics_view).mousePressEvent(event)
+            QGraphicsView.mousePressEvent(self.graphics_view, event)
             
     def mouseDoubleClickEvent(self, event):
         """Handle double-click to clear selection and reset the main view."""
@@ -512,11 +512,11 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
 
         elif event.buttons() == Qt.RightButton:
             # Handle right-click panning
-            left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
+            left_event = QMouseEvent(event.type(), 
+                                     event.localPos(), 
+                                     Qt.LeftButton, 
+                                     Qt.LeftButton, 
+                                     event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
         else:
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
@@ -533,11 +533,11 @@ class EmbeddingViewer(QWidget):  # Change inheritance to QWidget
             
         elif event.button() == Qt.RightButton:
             # Finalize the pan
-            left_event = event.__class__(event.type(), 
-                                         event.localPos(), 
-                                         Qt.LeftButton, 
-                                         Qt.LeftButton, 
-                                         event.modifiers())
+            left_event = QMouseEvent(event.type(), 
+                                     event.localPos(), 
+                                     Qt.LeftButton, 
+                                     Qt.LeftButton, 
+                                     event.modifiers())
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
         else:
