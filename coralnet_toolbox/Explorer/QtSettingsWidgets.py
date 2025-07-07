@@ -457,16 +457,20 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param2_slider.valueChanged.connect(lambda v: self.param2_value_label.setText(f"{v/10.0:.1f}"))
 
         elif technique == "PCA":
-            # Disable both rows for PCA
+            # Disable both rows for PCA and reset to minimum values
             self.param1_label.setEnabled(False)
             self.param1_slider.setEnabled(False)
             self.param1_value_label.setEnabled(False)
             self.param1_label.setText(" ")
+            self.param1_slider.setValue(self.param1_slider.minimum())
+            self.param1_value_label.setText(str(self.param1_slider.minimum()))
 
             self.param2_label.setEnabled(False)
             self.param2_slider.setEnabled(False)
             self.param2_value_label.setEnabled(False)
             self.param2_label.setText(" ")
+            self.param2_slider.setValue(self.param2_slider.minimum())
+            self.param2_value_label.setText(str(self.param2_slider.minimum()))
 
     def get_embedding_parameters(self):
         """Returns a dictionary of the current embedding parameters."""
