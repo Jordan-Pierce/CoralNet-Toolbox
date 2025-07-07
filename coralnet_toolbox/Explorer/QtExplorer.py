@@ -1884,13 +1884,17 @@ class ExplorerWindow(QMainWindow):
 
         # 1. Get current parameters from the UI
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        model_info = self.model_settings_widget.get_selected_model()  # Now returns tuple (model_name, embed_layers)
+        model_info = self.model_settings_widget.get_selected_model()  # Now returns tuple (model_name, feature_mode)
         
-        # Unpack model info - model_name is the actual identifier we use for caching
+        # Unpack model info - both model_name and feature_mode are used for caching
         if isinstance(model_info, tuple):
-            selected_model, _ = model_info
+            selected_model, selected_feature_mode = model_info
+            # Create a unique cache key that includes both model and feature mode
+            cache_key = f"{selected_model}_{selected_feature_mode}"
         else:
             selected_model = model_info
+            selected_feature_mode = "default"
+            cache_key = f"{selected_model}_{selected_feature_mode}"
             
         technique = embedding_params['technique']
 
@@ -1900,13 +1904,13 @@ class ExplorerWindow(QMainWindow):
         
         try:
             # 2. Decide whether to use cached features or extract new ones
-            # This if/else block ONLY populates the 'features' variable.
-            if self.current_features is None or selected_model != self.current_feature_generating_model:
+            # Now checks both model name AND feature mode
+            if self.current_features is None or cache_key != self.current_feature_generating_model:
                 # SLOW PATH: Extract and cache new features
                 features, valid_data_items = self._extract_features(self.current_data_items, progress_bar=progress_bar)
                 
                 self.current_features = features
-                self.current_feature_generating_model = selected_model
+                self.current_feature_generating_model = cache_key  # Store the complete cache key
                 self.current_data_items = valid_data_items
                 self.annotation_viewer.update_annotations(self.current_data_items)
             else:
