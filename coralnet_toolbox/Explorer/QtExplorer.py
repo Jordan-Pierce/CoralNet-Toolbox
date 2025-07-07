@@ -1156,6 +1156,12 @@ class ExplorerWindow(QMainWindow):
             # but DON'T update the viewer that initiated the change.
             if sender_widget is not self.annotation_viewer:
                 self.annotation_viewer.render_selection_from_ids(self.current_selection_ids)
+                
+                # If selection came from embedding viewer and we have a non-empty selection,
+                # activate isolation mode in the annotation viewer if not already active
+                if (sender_widget is self.embedding_viewer and
+                    new_selection and not self.annotation_viewer.isolated_mode):
+                    self.annotation_viewer.isolate_selection()
 
             if sender_widget is not self.embedding_viewer:
                 self.embedding_viewer.render_selection_from_ids(self.current_selection_ids)
