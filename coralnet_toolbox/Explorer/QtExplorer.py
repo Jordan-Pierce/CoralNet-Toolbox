@@ -1,10 +1,8 @@
+import os
+import numpy as np
+import torch
 import warnings
 
-import os
-
-import numpy as np
-
-import torch
 from ultralytics import YOLO
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
@@ -1360,7 +1358,7 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
 
         # Set splitter proportions (annotation viewer wider)
-        middle_splitter.setSizes([700, 300])
+        middle_splitter.setSizes([500, 500])
 
         # Add middle section to main layout with stretch factor
         self.main_layout.addWidget(middle_splitter, 1)
@@ -1643,12 +1641,14 @@ class ExplorerWindow(QMainWindow):
 
         return np.array(features), valid_data_items
 
-    def _extract_yolo_features(self, data_items, model_name, progress_bar=None):
+    def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
         """
-        Extracts features from annotation crops using a specified YOLO model's `predict` method.
-        This approach is best suited for classification models (-cls.pt), where the output
-        probability vector is used as the feature embedding.
+        Extracts features from annotation crops using a specified YOLO model.
+        Uses model.embed() for embedding features or model.predict() for classification probabilities.
         """
+        # Unpack model information
+        model_name, feature_mode = model_info
+        
         # Load or retrieve the cached model
         if model_name != self.model_path or self.loaded_model is None:
             try:
@@ -1664,10 +1664,9 @@ class ExplorerWindow(QMainWindow):
                 except (AttributeError, KeyError):
                     self.imgsz = 128
                 
-                # Run a dummy inference to warm up the model using predict()
+                # Run a dummy inference to warm up the model
                 print(f"Warming up model on device '{self.device}'...")
                 dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
-                # Use predict() for the warm-up call as well
                 self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
                     
             except Exception as e:
@@ -1682,7 +1681,6 @@ class ExplorerWindow(QMainWindow):
         image_list = []
         valid_data_items = []
         for item in data_items:
-            # Assuming item.annotation.get_cropped_image() returns a QPixmap
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
                 image_np = pixmap_to_numpy(pixmap)
@@ -1704,36 +1702,56 @@ class ExplorerWindow(QMainWindow):
             if progress_bar:
                 progress_bar.set_busy_mode(f"Extracting features with {os.path.basename(model_name)}...")
             
-            # 2. Pass the entire list of valid images to model.predict() with stream=True.
-            # This returns a generator that yields results one by one.
-            results_generator = self.loaded_model.predict(
-                image_list, 
-                stream=True, 
-                imgsz=self.imgsz, 
-                half=True, 
-                device=self.device, 
-                verbose=False
-            )
+                kwargs = {
+                    'stream': True,
+                    'imgsz': self.imgsz,
+                    'half': True,
+                    'device': self.device,
+                    'verbose': False
+                }
+                            
+            # 2. Choose between embed() and predict() based on feature mode
+            using_embed_method = feature_mode == "Embed Features"
+            
+            if using_embed_method:
+                print("Using embed() method")
+                
+                # Use model.embed() method (uses the second to last layer)
+                results_generator = self.loaded_model.embed(image_list, **kwargs)
+                
+            else:
+                print("Using predict() method")
+                
+                # Use model.predict() method for classification probabilities
+                results_generator = self.loaded_model.predict(image_list, **kwargs)
             
             if progress_bar:
                 progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
-                # Reset progress for the extraction phase
                 progress_bar.start_progress(len(valid_data_items))
             
-            # 3. Process the results from the generator.
+            # 3. Process the results from the generator - different handling based on method
             for result in results_generator:
-                # For classification models, result.probs contains the probability vector.
-                # This is the "final result" we will treat as the embedding.
-                if result.probs is None:
-                    raise TypeError(
-                        f"Model '{os.path.basename(model_name)}' did not return probabilities. "
-                        "Using model.predict() for embeddings is only suitable for classification models (e.g., 'yolov8n-cls.pt'). "
-                        "For detection models, please use the original function with model.embed()."
-                    )
-                
-                # Squeeze to convert shape from (1, num_classes) to (num_classes,)
-                embedding = result.probs.data.cpu().numpy().squeeze()
-                embeddings_list.append(embedding)
+                if using_embed_method:
+                    try:
+                        # With embed(), result is directly a tensor
+                        embedding = result.cpu().numpy().flatten()
+                        embeddings_list.append(embedding)
+                    except Exception as e:
+                        print(f"Error processing embedding: {e}")
+                        raise TypeError(
+                            f"Model '{os.path.basename(model_name)}' did not return valid embeddings. "
+                            f"Error: {str(e)}"
+                        )
+                else:
+                    # Classification mode: We expect probability vectors
+                    if hasattr(result, 'probs') and result.probs is not None:
+                        embedding = result.probs.data.cpu().numpy().squeeze()
+                        embeddings_list.append(embedding)
+                    else:
+                        raise TypeError(
+                            f"Model '{os.path.basename(model_name)}' did not return probability vectors. "
+                            "Make sure this is a classification model."
+                        )
 
                 # Update progress for each item as it's processed from the stream.
                 if progress_bar:
@@ -1744,17 +1762,15 @@ class ExplorerWindow(QMainWindow):
                 return np.array([]), []
 
             embeddings = np.array(embeddings_list)
-            
         except Exception as e:
             print(f"ERROR: An error occurred during feature extraction: {e}")
             return np.array([]), []
-            
         finally:
             # Clean up CUDA memory after the operation
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
-        print(f"Successfully extracted {len(embeddings)} features using model.predict().")
+        print(f"Successfully extracted {len(embeddings)} features with shape {embeddings.shape}")
         return embeddings, valid_data_items
 
     def _extract_features(self, data_items, progress_bar=None):
@@ -1762,7 +1778,13 @@ class ExplorerWindow(QMainWindow):
         Dispatcher method to call the appropriate feature extraction function.
         It now passes the progress_bar object to the sub-methods.
         """
-        model_name = self.model_settings_widget.get_selected_model()
+        model_name, feature_mode = self.model_settings_widget.get_selected_model()
+        
+        # Handle tuple or string return value
+        if isinstance(model_name, tuple) and len(model_name) >= 3:
+            model_name = model_name[0]
+        else:
+            model_name = model_name
 
         if not model_name:
             print("No model selected or path provided.")
@@ -1772,7 +1794,8 @@ class ExplorerWindow(QMainWindow):
         if model_name == "Color Features":
             return self._extract_color_features(data_items, progress_bar=progress_bar)
         elif ".pt" in model_name:
-            return self._extract_yolo_features(data_items, model_name, progress_bar=progress_bar)
+            # Pass the full model_info which may include embed layers
+            return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
         else:
             print(f"Unknown or invalid feature model selected: {model_name}")
             return np.array([]), []
@@ -1781,11 +1804,11 @@ class ExplorerWindow(QMainWindow):
         """
         Runs PCA, UMAP or t-SNE on the feature matrix using provided parameters.
         """
-        technique = params.get('technique', 'UMAP') # Changed default to UMAP
+        technique = params.get('technique', 'UMAP')  # Changed default to UMAP
         random_state = 42
         
         print(f"Running {technique} on {len(features)} items with params: {params}")
-        if len(features) <= 2: # UMAP/t-SNE need at least a few points
+        if len(features) <= 2:  # UMAP/t-SNE need at least a few points
             print("Not enough data points for dimensionality reduction.")
             return None
 
@@ -1861,7 +1884,14 @@ class ExplorerWindow(QMainWindow):
 
         # 1. Get current parameters from the UI
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        selected_model = self.model_settings_widget.get_selected_model()
+        model_info = self.model_settings_widget.get_selected_model()  # Now returns tuple (model_name, embed_layers)
+        
+        # Unpack model info - model_name is the actual identifier we use for caching
+        if isinstance(model_info, tuple):
+            selected_model, _ = model_info
+        else:
+            selected_model = model_info
+            
         technique = embedding_params['technique']
 
         QApplication.setOverrideCursor(Qt.WaitCursor)

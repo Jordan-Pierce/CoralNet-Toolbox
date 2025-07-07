@@ -267,8 +267,11 @@ class ModelSettingsWidget(QGroupBox):
             self.model_combo.addItems(list(community_configs.keys()))
 
         self.model_combo.setCurrentText('Color Features')
-
+        # Connect selection change to update feature mode field state
+        self.model_combo.currentTextChanged.connect(self._update_feature_mode_state)
+        
         model_select_layout.addRow("Model:", self.model_combo)
+        
         self.tabs.addTab(model_select_tab, "Select Model")
 
         # Tab 2: Existing Model from File
@@ -285,9 +288,23 @@ class ModelSettingsWidget(QGroupBox):
         path_layout.addWidget(self.model_path_edit)
         path_layout.addWidget(browse_button)
         model_existing_layout.addRow("Model Path:", path_layout)
+        
         self.tabs.addTab(model_existing_tab, "Use Existing Model")
 
         main_layout.addWidget(self.tabs)
+        
+        # Connect tab change to update feature mode state
+        self.tabs.currentChanged.connect(self._update_feature_mode_state)
+        
+        # Add feature extraction mode selection outside of tabs
+        feature_mode_layout = QFormLayout()
+        self.feature_mode_combo = QComboBox()
+        self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
+        feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
+        main_layout.addLayout(feature_mode_layout)
+        
+        # Initialize the feature mode state based on current selection
+        self._update_feature_mode_state()
 
     def browse_for_model(self):
         """Open a file dialog to browse for model files."""
@@ -302,14 +319,42 @@ class ModelSettingsWidget(QGroupBox):
         if file_path:
             self.model_path_edit.setText(file_path)
 
-    def get_selected_model(self):
-        """Get the currently selected model name or path."""
+    def _update_feature_mode_state(self, *args):
+        """Update the enabled state of the feature mode field based on the current model selection."""
         current_tab_index = self.tabs.currentIndex()
+        is_color_features = False
+        
         if current_tab_index == 0:
-            return self.model_combo.currentText()
+            # Select Model tab - check if Color Features is selected
+            current_model = self.model_combo.currentText()
+            is_color_features = current_model == "Color Features"
         elif current_tab_index == 1:
-            return self.model_path_edit.text()
-        return ""
+            # Use Existing Model tab - feature mode should always be enabled
+            is_color_features = False
+        
+        # Enable feature mode only if not Color Features
+        self.feature_mode_combo.setEnabled(not is_color_features)
+        
+        # Update the tooltip based on state
+        if is_color_features:
+            self.feature_mode_combo.setToolTip("Feature Mode is not available for Color Features")
+        else:
+            self.feature_mode_combo.setToolTip("Select the feature extraction mode")
+    
+    def get_selected_model(self):
+        """Get the currently selected model name/path and feature mode."""
+        current_tab_index = self.tabs.currentIndex()
+        
+        # Get model name/path and feature mode based on the active tab
+        if current_tab_index == 0:
+            model_name = self.model_combo.currentText()
+        elif current_tab_index == 1:
+            model_name = self.model_path_edit.text()
+        else:
+            return "", None
+        
+        feature_mode = self.feature_mode_combo.currentText() if self.feature_mode_combo.isEnabled() else "N/A"
+        return model_name, feature_mode
 
 
 class EmbeddingSettingsWidget(QGroupBox):
