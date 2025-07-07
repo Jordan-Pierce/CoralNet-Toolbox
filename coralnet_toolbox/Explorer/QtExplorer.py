@@ -1524,7 +1524,7 @@ class ExplorerWindow(QMainWindow):
         
         # Only proceed if there are annotations that actually need cropping
         if annotations_by_image:
-            progress_bar = ProgressBar(self, "Cropping Image Annotations")
+            progress_bar = ProgressBar(self, "Cropping mage Annotations")
             progress_bar.show()
             progress_bar.start_progress(len(annotations_by_image))
             
@@ -1569,7 +1569,7 @@ class ExplorerWindow(QMainWindow):
             - Perimeter
         """
         if progress_bar:
-            progress_bar.set_title("Extracting Color Features...")
+            progress_bar.set_title("Extracting features...")
             progress_bar.start_progress(len(data_items))
 
         features = []
@@ -1674,7 +1674,7 @@ class ExplorerWindow(QMainWindow):
                 return np.array([]), []
                 
         if progress_bar:
-            progress_bar.set_title(f"Preparing images...")
+            progress_bar.set_title("Preparing images...")
             progress_bar.start_progress(len(data_items))
 
         # 1. Prepare a list of all valid images and their corresponding data items.
@@ -1700,7 +1700,7 @@ class ExplorerWindow(QMainWindow):
         
         try:
             if progress_bar:
-                progress_bar.set_busy_mode(f"Extracting features with {os.path.basename(model_name)}...")
+                progress_bar.set_busy_mode("Extracting features...")
             
                 kwargs = {
                     'stream': True,
@@ -1726,7 +1726,7 @@ class ExplorerWindow(QMainWindow):
                 results_generator = self.loaded_model.predict(image_list, **kwargs)
             
             if progress_bar:
-                progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
+                progress_bar.set_title("Extracting features...")
                 progress_bar.start_progress(len(valid_data_items))
             
             # 3. Process the results from the generator - different handling based on method
@@ -1882,6 +1882,18 @@ class ExplorerWindow(QMainWindow):
             print("No items to process for embedding.")
             return
 
+        # Clear all selections and exit isolation mode before calculating embeddings
+        if hasattr(self, 'annotation_viewer'):
+            self.annotation_viewer.clear_selection()
+            if self.annotation_viewer.isolated_mode:
+                self.annotation_viewer.show_all_annotations()
+        
+        if hasattr(self, 'embedding_viewer'):
+            self.embedding_viewer.render_selection_from_ids(set())
+        
+        # Update button states after clearing selections
+        self.update_button_states()
+
         # 1. Get current parameters from the UI
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
         model_info = self.model_settings_widget.get_selected_model()  # Now returns tuple (model_name, feature_mode)
@@ -1923,7 +1935,7 @@ class ExplorerWindow(QMainWindow):
                 return
 
             # 3. Run dimensionality reduction with the latest parameters
-            progress_bar.set_busy_mode(f"Running {technique} dimensionality reduction...")
+            progress_bar.set_busy_mode("Running dimensionality reduction...")
             embedded_features = self._run_dimensionality_reduction(features, embedding_params)
             progress_bar.update_progress()
             
