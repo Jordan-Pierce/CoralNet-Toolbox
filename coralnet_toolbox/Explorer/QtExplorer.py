@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import torch
 
-from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
+from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
@@ -52,6 +52,7 @@ POINT_WIDTH = 3
 # Viewers
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class EmbeddingViewer(QWidget):
     """Custom QGraphicsView for interactive embedding visualization with zooming, panning, and selection."""
 
@@ -94,13 +95,9 @@ class EmbeddingViewer(QWidget):
 
         # Setup the UI with header
         self.setup_ui()
-
-        # Connect mouse events to the graphics view
-        self.graphics_view.mousePressEvent = self.mousePressEvent
-        self.graphics_view.mouseDoubleClickEvent = self.mouseDoubleClickEvent
-        self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
-        self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
-        self.graphics_view.wheelEvent = self.wheelEvent
+    
+        # Install this widget (self) as an event filter on the graphics_view
+        self.graphics_view.installEventFilter(self)
 
     def setup_ui(self):
         """Set up the UI with header layout and graphics view."""
@@ -145,92 +142,119 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.show()
         self.home_button.setEnabled(True)
 
-    def mousePressEvent(self, event):
-        """Handle mouse press for selection (point or rubber band) and panning."""
-        if event.button() == Qt.LeftButton and \
-            (event.modifiers() == Qt.ControlModifier or
-             event.modifiers() == Qt.ShiftModifier):
+    def eventFilter(self, source, event):
+        """
+        Intercepts and handles events from the graphics_view child widget.
+        """
+        # We only care about events coming from our graphics_view
+        if source is not self.graphics_view:
+            return super().eventFilter(source, event)
 
-            item_at_pos = self.graphics_view.itemAt(event.pos())
-            if isinstance(item_at_pos, EmbeddingPointItem):
+        # --- MOUSE PRESS ---
+        if event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton and \
+               (event.modifiers() == Qt.ControlModifier or \
+                event.modifiers() == Qt.ShiftModifier):
+                # If clicking on an item, let the view handle the selection natively
+                if self.graphics_view.itemAt(event.pos()):
+                    self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                    return False  # Let the event pass through to the view
+
+                # If clicking on the background, start a rubber band
+                self.selection_at_press = set(self.graphics_scene.selectedItems())
                 self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-                # Let the default QGraphicsView logic handle Ctrl/Shift clicks on items
-                QGraphicsView.mousePressEvent(self.graphics_view, event)
-                return
+                self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
+                self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
+                self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
+                self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
+                self.graphics_scene.addItem(self.rubber_band)
+                return True   # Event was handled
 
-            self.selection_at_press = set(self.graphics_scene.selectedItems())
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
-            self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
-            self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
-            self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
-            self.graphics_scene.addItem(self.rubber_band)
+            elif event.button() == Qt.RightButton:
+                # For right-click, enable panning and simulate a left-click to start it
+                self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+                left_event = QMouseEvent(event.type(), 
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
+                QApplication.sendEvent(self.graphics_view, left_event)
+                return True  # Event was handled
 
-        elif event.button() == Qt.RightButton:
-            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
-            left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
-            QGraphicsView.mousePressEvent(self.graphics_view, left_event)
-        else:
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            QGraphicsView.mousePressEvent(self.graphics_view, event)
+            else:
+                self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                return False  # Let other clicks pass through
 
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.reset_view_requested.emit()
-            event.accept()
-        else:
-            QGraphicsView.mouseDoubleClickEvent(self.graphics_view, event)
+        # --- MOUSE MOVE ---
+        elif event.type() == QEvent.MouseMove:
+            if self.rubber_band:
+                current_pos = self.graphics_view.mapToScene(event.pos())
+                self.rubber_band.setRect(QRectF(self.rubber_band_origin, current_pos).normalized())
+                # Update selection based on the rubber band's current geometry
+                path = QPainterPath()
+                path.addRect(self.rubber_band.rect())
+                blocker = QSignalBlocker(self.graphics_scene)
+                self.graphics_scene.setSelectionArea(path, Qt.ControlModifier)
+                blocker.unblock()
+                self._on_scene_selection_changed() # Manually trigger our handler
+                return True  # Event was handled
 
-    def mouseMoveEvent(self, event):
-        if self.rubber_band:
-            current_pos = self.graphics_view.mapToScene(event.pos())
-            self.rubber_band.setRect(QRectF(self.rubber_band_origin, current_pos).normalized())
+            elif event.buttons() == Qt.RightButton:
+                # Continue the pan by forwarding a simulated left-click move
+                left_event = QMouseEvent(event.type(), 
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
+                QApplication.sendEvent(self.graphics_view, left_event)
+                return True  # Event was handled
+            return False
 
-            path = QPainterPath()
-            path.addRect(self.rubber_band.rect())
+        # --- MOUSE RELEASE ---
+        elif event.type() == QEvent.MouseButtonRelease:
+            if self.rubber_band and event.button() == Qt.LeftButton:
+                # Finalize rubber band selection and clean up
+                self.graphics_scene.removeItem(self.rubber_band)
+                self.rubber_band = None
+                self.selection_at_press = None
+                return True  # Event was handled
 
-            blocker = QSignalBlocker(self.graphics_scene)
-            # Use modifier to add to selection
-            self.graphics_scene.setSelectionArea(path, Qt.ControlModifier)
-            blocker.unblock()
+            elif event.button() == Qt.RightButton:
+                # Finalize the pan and reset drag mode
+                left_event = QMouseEvent(event.type(), 
+                                         event.localPos(), 
+                                         Qt.LeftButton, 
+                                         Qt.LeftButton, 
+                                         event.modifiers())
+                QApplication.sendEvent(self.graphics_view, left_event)
+                self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                return True  # Event was handled
+            return False
 
-            # Manually trigger our handler to process the final result.
-            self._on_scene_selection_changed()
+        # --- MOUSE DOUBLE CLICK ---
+        elif event.type() == QEvent.MouseButtonDblClick:
+            if event.button() == Qt.LeftButton:
+                self.reset_view_requested.emit()
+                return True  # Event was handled
+            return False
 
-        elif event.buttons() == Qt.RightButton:
-            left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
-            QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
-        else:
-            QGraphicsView.mouseMoveEvent(self.graphics_view, event)
+        # --- WHEEL EVENT ---
+        elif event.type() == QEvent.Wheel:
+            # Handle zooming manually to center on the cursor
+            zoom_in_factor = 1.25
+            zoom_out_factor = 1 / zoom_in_factor
+            self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
+            self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
+            old_pos = self.graphics_view.mapToScene(event.pos())
+            zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
+            self.graphics_view.scale(zoom_factor, zoom_factor)
+            new_pos = self.graphics_view.mapToScene(event.pos())
+            delta = new_pos - old_pos
+            self.graphics_view.translate(delta.x(), delta.y())
+            return True  # Event was handled
 
-    def mouseReleaseEvent(self, event):
-        if self.rubber_band:
-            self.graphics_scene.removeItem(self.rubber_band)
-            self.rubber_band = None
-            self.selection_at_press = None
-
-        elif event.button() == Qt.RightButton:
-            left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
-            QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-        else:
-            QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-
-    def wheelEvent(self, event):
-        zoom_in_factor = 1.25
-        zoom_out_factor = 1 / zoom_in_factor
-
-        self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
-        self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
-
-        old_pos = self.graphics_view.mapToScene(event.pos())
-        zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
-        self.graphics_view.scale(zoom_factor, zoom_factor)
-        new_pos = self.graphics_view.mapToScene(event.pos())
-
-        delta = new_pos - old_pos
-        self.graphics_view.translate(delta.x(), delta.y())
+        # For all other events, let them pass through
+        return False
 
     def update_embeddings(self, data_items):
         self.clear_points()
@@ -430,27 +454,87 @@ class AnnotationViewer(QWidget):
 
         main_layout.addWidget(self.scroll_area)
         self._update_toolbar_state()
+        
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, '_resize_timer'):
+            self._resize_timer = QTimer(self)
+            self._resize_timer.setSingleShot(True)
+            self._resize_timer.timeout.connect(self.recalculate_widget_positions)
+        self._resize_timer.start(50)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete and event.modifiers() == Qt.ControlModifier:
+            if self.current_selection_ids:
+                self.deletion_requested.emit(list(self.current_selection_ids))
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def eventFilter(self, source, event):
         """
         Filters events from the scroll area's viewport to handle mouse-based
         selection and rubber banding on the background.
         """
+        # We only care about events from the scroll area's viewport
         if source is self.scroll_area.viewport():
-            if event.type() == QMouseEvent.MouseButtonPress:
-                self.mousePressEvent(event)
-                return True
-            elif event.type() == QMouseEvent.MouseButtonDblClick:
-                self.mouseDoubleClickEvent(event)
-                return True
-            elif event.type() == QMouseEvent.MouseMove:
-                self.mouseMoveEvent(event)
-                return True
-            elif event.type() == QMouseEvent.MouseButtonRelease:
-                self.mouseReleaseEvent(event)
-                return True
+            # --- MOUSE PRESS ---
+            if event.type() == QEvent.MouseButtonPress:
+                # Check if the click was on the background, NOT on a child widget
+                if self.content_widget.childAt(event.pos()) is None:
+                    if event.button() == Qt.LeftButton:
+                        # Clear selection if no modifier is pressed
+                        if event.modifiers() == Qt.NoModifier and self.current_selection_ids:
+                            self.selection_changed.emit([])
+                        # Start rubber band if Ctrl is pressed
+                        elif event.modifiers() == Qt.ControlModifier:
+                            self.rubber_band_origin = event.pos()
+                            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
+                            self.rubber_band.move(self.rubber_band_origin)
+                            self.rubber_band.show()
+                        return True  # We've handled this background click
 
-        return super(AnnotationViewer, self).eventFilter(source, event)
+                # If the click was on a child, let the event continue to that child
+                return False
+
+            # --- MOUSE MOVE ---
+            elif event.type() == QEvent.MouseMove:
+                if self.rubber_band and self.rubber_band.isVisible():
+                    # Resize the rubber band
+                    self.rubber_band.setGeometry(QRect(self.rubber_band_origin, event.pos()).normalized())
+
+                    # Update selection based on the widgets intersected by the band
+                    selection_rect = self.rubber_band.geometry()
+                    newly_selected_ids = {
+                        widget.data_item.annotation.id
+                        for widget in self.annotation_widgets_by_id.values()
+                        if widget.isVisible() and selection_rect.intersects(widget.geometry())
+                    }
+                    self.selection_changed.emit(list(newly_selected_ids))
+                    return True  # We've handled this rubber band move
+                return False
+
+            # --- MOUSE RELEASE ---
+            elif event.type() == QEvent.MouseButtonRelease:
+                if self.rubber_band and self.rubber_band.isVisible():
+                    self.rubber_band.hide()
+                    self.rubber_band.deleteLater()
+                    self.rubber_band = None
+                    self.rubber_band_origin = None
+                    return True  # We've handled the end of the rubber band action
+                return False
+
+            # --- MOUSE DOUBLE CLICK ---
+            elif event.type() == QEvent.MouseButtonDblClick:
+                # Check for a double click on the background
+                if self.content_widget.childAt(event.pos()) is None:
+                    if event.button() == Qt.LeftButton:
+                        self.reset_view_requested.emit()
+                        return True  # We've handled this background double click
+                return False
+
+        # For any other event source, pass it to the base class
+        return super().eventFilter(source, event)
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -637,79 +721,6 @@ class AnnotationViewer(QWidget):
         self.recalculate_widget_positions()
         self._update_toolbar_state()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if not hasattr(self, '_resize_timer'):
-            self._resize_timer = QTimer(self)
-            self._resize_timer.setSingleShot(True)
-            self._resize_timer.timeout.connect(self.recalculate_widget_positions)
-        self._resize_timer.start(50)
-
-    def mousePressEvent(self, event):
-        # This event is now called from the event filter
-        if event.button() == Qt.LeftButton:
-            # Check if click was on the background of the viewport
-            if self.content_widget.childAt(event.pos()) is None:
-                if event.modifiers() == Qt.NoModifier and self.current_selection_ids:
-                    # Signal to clear selection
-                    self.selection_changed.emit([])
-                elif event.modifiers() == Qt.ControlModifier:
-                    self.rubber_band_origin = event.pos()
-                    self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-                    self.rubber_band.move(self.rubber_band_origin)
-                    self.rubber_band.show()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        # This event is now called from the event filter
-        if event.button() == Qt.LeftButton and self.content_widget.childAt(event.pos()) is None:
-            self.reset_view_requested.emit()
-            event.accept()
-        else:
-            super().mouseDoubleClickEvent(event)
-
-    def mouseMoveEvent(self, event):
-        # This event is now called from the event filter
-        if self.rubber_band and self.rubber_band.isVisible():
-            self.rubber_band.setGeometry(
-                QRect(self.rubber_band_origin, event.pos()).normalized())
-
-            selection_rect = self.rubber_band.geometry()
-            newly_selected_ids = set()
-
-            for widget in self.annotation_widgets_by_id.values():
-                if widget.isVisible() and selection_rect.intersects(widget.geometry()):
-                    newly_selected_ids.add(widget.data_item.annotation.id)
-
-            # Combine with Ctrl-held items
-            if QApplication.keyboardModifiers() & Qt.ControlModifier:
-                # This part is complex; for now, we just update based on rubber band
-                pass
-
-            self.selection_changed.emit(list(newly_selected_ids))
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        # This event is now called from the event filter
-        if self.rubber_band and self.rubber_band.isVisible():
-            self.rubber_band.hide()
-            self.rubber_band.deleteLater()
-            self.rubber_band = None
-            self.rubber_band_origin = None
-            return
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Delete and event.modifiers() == Qt.ControlModifier:
-            if self.current_selection_ids:
-                self.deletion_requested.emit(list(self.current_selection_ids))
-                event.accept()
-                return
-        super().keyPressEvent(event)
-
     def handle_annotation_selection(self, widget, event):
         """INTERNAL: Handles a click on a widget and signals the controller."""
         target_id = widget.data_item.annotation.id
@@ -806,6 +817,8 @@ class ExplorerWindow(QMainWindow):
         self.current_selection_ids = set()
         self.current_features = None
         self.current_feature_generating_model = ""
+        
+        self.is_handling_selection = False
 
         self.setWindowTitle("Explorer")
         self.setWindowIcon(get_icon("magic.png"))
@@ -886,6 +899,7 @@ class ExplorerWindow(QMainWindow):
             self.main_window.setEnabled(True)
             if hasattr(self.main_window, 'explorer_closed'):
                 self.main_window.explorer_closed()
+                
         # This check is important for a clean shutdown
         if self.main_window:
             self.main_window.explorer_window = None
@@ -914,28 +928,49 @@ class ExplorerWindow(QMainWindow):
 
     @pyqtSlot(list)
     def handle_selection_change(self, selected_ids):
-        """Handles selection changes from ANY viewer, acting as the single point of truth."""
-        new_selection = set(selected_ids)
-        if new_selection == self.current_selection_ids:
-            return  # No change
+        """
+        Handles selection changes from ANY viewer, acting as the single point of truth.
+        This version includes a re-entrancy guard to prevent instability.
+        """
+        # Re-entrancy Guard: If the function is already running, ignore this new signal.
+        if self.is_handling_selection:
+            return
 
-        self.current_selection_ids = new_selection
+        self.is_handling_selection = True
+        try:
+            new_selection = set(selected_ids)
+            if new_selection == self.current_selection_ids:
+                return  # No change
 
-        # Update the central data model's selection state
-        for item in self.data_items_by_id.values():
-            item.set_selected(item.annotation.id in self.current_selection_ids)
+            self.current_selection_ids = new_selection
 
-        # Command both viewers to update their visual selection
-        self.annotation_viewer.render_selection_from_ids(self.current_selection_ids)
-        self.embedding_viewer.render_selection_from_ids(self.current_selection_ids)
+            # Update the central data model's selection state
+            for item in self.data_items_by_id.values():
+                item.set_selected(item.annotation.id in self.current_selection_ids)
 
-        # Update other UI elements that depend on selection
-        self._update_label_window_for_selection()
+            # Get the widget that sent the signal
+            sender_widget = self.sender()
+
+            # Command viewers to update their visual selection,
+            # but DON'T update the viewer that initiated the change.
+            if sender_widget is not self.annotation_viewer:
+                self.annotation_viewer.render_selection_from_ids(self.current_selection_ids)
+
+            if sender_widget is not self.embedding_viewer:
+                self.embedding_viewer.render_selection_from_ids(self.current_selection_ids)
+
+            # Update other UI elements that depend on selection
+            self._update_label_window_for_selection()
+
+        finally:
+            # Release the lock so the function can be called again.
+            self.is_handling_selection = False
 
     @pyqtSlot(list)
     def handle_deletion_request(self, ids_to_delete):
         """Marks items for deletion and refreshes all views."""
         for ann_id in ids_to_delete:
+            # --- ADD THIS CHECK ---
             if ann_id in self.data_items_by_id:
                 self.data_items_by_id[ann_id].mark_for_deletion()
 
@@ -964,6 +999,7 @@ class ExplorerWindow(QMainWindow):
             return
 
         for ann_id in self.current_selection_ids:
+            # --- ADD THIS CHECK ---
             if ann_id in self.data_items_by_id:
                 self.data_items_by_id[ann_id].set_preview_label(label)
 
@@ -1116,28 +1152,38 @@ class ExplorerWindow(QMainWindow):
 
     def _update_label_window_for_selection(self):
         """Updates the LabelWindow based on the current selection's labels."""
-        if not self.current_selection_ids:
-            self.label_window.deselect_active_label()
+        # Temporarily block signals from the label_window to prevent a feedback loop.
+        blocker = QSignalBlocker(self.label_window)
+        
+        try:
+            if not self.current_selection_ids:
+                self.label_window.deselect_active_label()
+                self.label_window.update_annotation_count()
+                return
+
+            selected_items = []
+            for ann_id in self.current_selection_ids:
+                if ann_id in self.data_items_by_id:
+                    selected_items.append(self.data_items_by_id[ann_id])
+
+            if not selected_items:
+                self.label_window.deselect_active_label()
+                self.label_window.update_annotation_count()
+                return
+
+            first_label = selected_items[0].effective_label
+            all_same = all(item.effective_label.id == first_label.id for item in selected_items)
+
+            if all_same:
+                self.label_window.set_active_label(first_label)
+            else:
+                self.label_window.deselect_active_label()
+
             self.label_window.update_annotation_count()
-            return
 
-        selected_items = []
-        for ann_id in self.current_selection_ids:
-            if ann_id in self.data_items_by_id:
-                selected_items.append(self.data_items_by_id[ann_id])
-
-        if not selected_items:
-            return
-
-        first_label = selected_items[0].effective_label
-        all_same = all(item.effective_label.id == first_label.id for item in selected_items)
-
-        if all_same:
-            self.label_window.set_active_label(first_label)
-        else:
-            self.label_window.deselect_active_label()
-
-        self.label_window.update_annotation_count()
+        finally:
+            # The blocker is automatically released here, or if an error occurs.
+            pass
 
     def update_button_states(self):
         """Enables/disables the 'Apply' and 'Clear' buttons based on pending changes."""

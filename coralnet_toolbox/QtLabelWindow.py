@@ -400,15 +400,17 @@ class LabelWindow(QWidget):
         if (hasattr(self.main_window, 'explorer_window') and 
             self.main_window.explorer_window and 
             hasattr(self.main_window.explorer_window, 'annotation_viewer')):
-            explorer_selected_count = len(self.main_window.explorer_window.annotation_viewer.selected_widgets)
+            
+            # Get explorer window selections
+            explorer_selected_count = len(self.main_window.explorer_window.annotation_viewer.current_selection_ids)
         
         # Get annotation window selections
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
         
-        # Prioritize Explorer selections if Explorer is open
+        # (The rest of your method remains the same)
         if explorer_selected_count > 0:
             if explorer_selected_count == 1:
-                text = f"Annotation: 1"
+                text = "Annotation: 1"
             else:
                 text = f"Annotations: {explorer_selected_count}"
         elif annotation_window_selected_count == 0:
