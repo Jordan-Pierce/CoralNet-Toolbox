@@ -598,8 +598,8 @@ class AnnotationViewer(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move for DYNAMIC rubber band selection."""
         if self.rubber_band_origin is None or \
-           event.buttons() != Qt.LeftButton or \
-           event.modifiers() != Qt.ControlModifier:
+        event.buttons() != Qt.LeftButton or \
+        event.modifiers() != Qt.ControlModifier:
             super().mouseMoveEvent(event)
             return
 
@@ -626,29 +626,51 @@ class AnnotationViewer(QWidget):
         content_widget = self.content_widget
         changed_ids = []
 
-        for widget in self.annotation_widgets_by_id.values():
+        # Get scrollbar positions
+        h_bar = self.scroll_area.horizontalScrollBar()
+        v_bar = self.scroll_area.verticalScrollBar()
+        
+        for ann_id, widget in self.annotation_widgets_by_id.items():
+            # Skip processing widgets that are hidden
+            if widget.isHidden():
+                continue
+                
+            # Get widget geometry in content coordinates
             widget_rect_in_content = widget.geometry()
-            # Map widget's geometry from the content area to the visible viewport
+            
+            # Map the widget position from content coordinates to viewport coordinates
+            widget_pos_in_viewport = QPoint(
+                widget_rect_in_content.x() - h_bar.value(),
+                widget_rect_in_content.y() - v_bar.value()
+            )
+            
+            # Create the widget rectangle in viewport coordinates
             widget_rect_in_viewport = QRect(
-                content_widget.mapTo(self.scroll_area.viewport(), widget_rect_in_content.topLeft()),
+                widget_pos_in_viewport,
                 widget_rect_in_content.size()
             )
-
+            
+            # Check if any part of the widget is visible in the viewport
+            viewport_rect = self.scroll_area.viewport().rect()
+            if not viewport_rect.intersects(widget_rect_in_viewport):
+                continue  # Skip widgets not visible in viewport
+                
+            # Check if widget intersects with rubber band
             is_in_band = selection_rect.intersects(widget_rect_in_viewport)
             
-            # A widget should be selected if it was selected at the start OR is in the band now.
-            should_be_selected = (widget.data_item.annotation.id in self.selection_at_press) or is_in_band
+            # A widget should be selected if it was selected at the start OR is in the band now
+            should_be_selected = (ann_id in self.selection_at_press) or is_in_band
 
             if should_be_selected and not widget.is_selected():
                 if self.select_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
+                    changed_ids.append(ann_id)
             elif not should_be_selected and widget.is_selected():
                 if self.deselect_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
+                    changed_ids.append(ann_id)
         
         if changed_ids:
-            self.selection_changed.emit(changed_ids)
-        
+            self.selection_changed.emit(list(self.current_selection_ids))
+            
     def mouseReleaseEvent(self, event):
         """Handle mouse release to complete rubber band selection."""
         # Check if a rubber band drag was in progress
