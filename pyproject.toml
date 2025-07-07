@@ -1,6 +1,7 @@
 [project]
 name = "coralnet-toolbox"
 version = "0.0.67"
+
 dynamic = [
     "dependencies",
 ]
