@@ -113,17 +113,18 @@ class AnnotationImageWidget(QWidget):
         # Update the shared data item
         self.data_item.set_selected(selected)
 
-        # Always update animation state, regardless of whether selection changed
-        if self.is_selected():
+        # Start or stop the animation timer based on the new selection state
+        if selected:
             if not self.animation_timer.isActive():
                 self.animation_timer.start()
         else:
             if self.animation_timer.isActive():
                 self.animation_timer.stop()
+            # Reset offset when deselected to ensure a consistent starting look
             self.animation_offset = 0
 
-        # Only trigger repaint if state actually changed or if we're selected
-        # (to ensure animation continues)
+        # A repaint is needed if the selection state changed OR if the item remains
+        # selected (to keep the animation running).
         if was_selected != selected or selected:
             self.update()
 

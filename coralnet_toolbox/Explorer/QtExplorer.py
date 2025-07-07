@@ -80,7 +80,7 @@ class EmbeddingViewer(QWidget):
         # Custom rubber_band state variables
         self.rubber_band = None
         self.rubber_band_origin = QPointF()
-        self.selection_at_press = None
+        self.selection_at_press = set()
 
         self.points_by_id = {}  # Map annotation ID to embedding point
         self.previous_selection_ids = set()
@@ -178,91 +178,62 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.fitInView(rect, aspect_ratio)
 
     def mousePressEvent(self, event):
-        """
-        Handles mouse presses on the viewport. This is the entry point for clearing
-        selection or initiating a rubber-band drag.
-        """
-        # --- Determine what was clicked ---
-        # Map the click position from viewport coordinates to the scrollable content_widget coordinates
-        h_bar = self.scroll_area.horizontalScrollBar()
-        v_bar = self.scroll_area.verticalScrollBar()
-        content_pos = event.pos() + QPoint(h_bar.value(), v_bar.value())
-        child_widget = self.content_widget.childAt(content_pos)
+        """Handle mouse press for selection (point or rubber band) and panning."""
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # Check if the click is on an existing point
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                # If so, toggle its selection state and do nothing else
+                self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                item_at_pos.setSelected(not item_at_pos.isSelected())
+                return  # Event handled
 
-        # Check if the click landed on a selectable AnnotationImageWidget
-        is_on_annotation_widget = False
-        if child_widget:
-            parent = child_widget
-            while parent and parent != self.content_widget:
-                if isinstance(parent, AnnotationImageWidget):
-                    is_on_annotation_widget = True
-                    break
-                parent = parent.parent()
+            # If the click was on the background, proceed with rubber band selection
+            self.selection_at_press = set(self.graphics_scene.selectedItems())
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
+            self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
+            self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
+            self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
+            self.graphics_scene.addItem(self.rubber_band)
 
-        if event.button() == Qt.LeftButton:
-            # --- Ctrl+Click anywhere starts a rubber band selection ---
-            if event.modifiers() == Qt.ControlModifier:
-                # Store the selection state at the start of the drag
-                self.selection_at_press = self.current_selection_ids.copy()
-                # The rubber_band_origin must be in viewport coordinates
-                self.rubber_band_origin = event.pos()
-                event.accept()
-                return
-
-            # --- Simple click on the background clears selection ---
-            if not is_on_annotation_widget and not event.modifiers():
-                if self.current_selection_ids:
-                    self.selection_changed.emit([])
-                event.accept()
-                return
-
-        # If the event wasn't for clearing or rubber-banding, ignore it.
-        # This allows the AnnotationImageWidget's own mousePressEvent to fire,
-        # which will then call our `handle_annotation_selection` method.
-        event.ignore()
+        elif event.button() == Qt.RightButton:
+            # Handle panning
+            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+            left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
+            QGraphicsView.mousePressEvent(self.graphics_view, left_event)
+        else:
+            # Handle standard single-item selection
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            QGraphicsView.mousePressEvent(self.graphics_view, event)
 
     def mouseMoveEvent(self, event):
         """
         Handles mouse movement, specifically for drawing and updating the selection
         during a rubber-band drag.
         """
-        # Ensure a rubber-band drag was initiated (Ctrl was held on press)
-        if self.rubber_band_origin is None or event.buttons() != Qt.LeftButton:
-            super().mouseMoveEvent(event)
+        if self.rubber_band is None or event.buttons() != Qt.LeftButton:
+            QGraphicsView.mouseMoveEvent(self.graphics_view, event)
             return
-
-        # To prevent tiny, accidental drags, only start the rubber band after a small threshold
-        if (event.pos() - self.rubber_band_origin).manhattanLength() < self.drag_threshold:
-            return
-
-        # Create the rubber band visually if it doesn't exist
-        if not self.rubber_band:
-            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-            self.rubber_band.show()
-
-        # Update the rubber band's geometry as the mouse moves
-        selection_rect = QRect(self.rubber_band_origin, event.pos()).normalized()
-        self.rubber_band.setGeometry(selection_rect)
-
-        # --- Determine selection based on the rubber band ---
-        ids_in_band = set()
-        for ann_id, widget in self.annotation_widgets_by_id.items():
-            if not widget.isVisible():
-                continue
-
-            # Map the widget's geometry into the viewport's coordinate system to check for intersection
-            widget_rect_in_viewport = self.scroll_area.viewport().mapFrom(self.content_widget, widget.geometry())
-            if selection_rect.intersects(widget_rect_in_viewport):
-                ids_in_band.add(ann_id)
-
-        # The new selection is the union of what was selected at the start and what's in the band
-        new_selection = self.selection_at_press.union(ids_in_band)
-
-        # Emit the signal only if the selection has actually changed
-        if new_selection != self.current_selection_ids:
-            self.selection_changed.emit(list(new_selection))
-
-        event.accept()
+    
+        # Update the rubber band rectangle
+        current_pos = self.graphics_view.mapToScene(event.pos())
+        rect = QRectF(self.rubber_band_origin, current_pos).normalized()
+        self.rubber_band.setRect(rect)
+    
+        # Find items within the rubber band
+        items_in_band = self.graphics_scene.items(rect)
+        embedding_points_in_band = [item for item in items_in_band if isinstance(item, EmbeddingPointItem)]
+        
+        # Clear current selection
+        self.graphics_scene.clearSelection()
+        
+        # Select items that were originally selected OR are now in the band
+        for item in self.selection_at_press:
+            item.setSelected(True)
+        
+        for item in embedding_points_in_band:
+            item.setSelected(True)
 
     def mouseReleaseEvent(self, event):
         """
@@ -273,7 +244,6 @@ class EmbeddingViewer(QWidget):
             # Hide and destroy the visual rubber band
             if self.rubber_band:
                 self.rubber_band.hide()
-                self.rubber_band.deleteLater()
                 self.rubber_band = None
 
             # Reset state variables for the next operation
@@ -667,7 +637,7 @@ class AnnotationViewer(QWidget):
             is_in_band = selection_rect.intersects(widget_rect_in_viewport)
             
             # A widget should be selected if it was selected at the start OR is in the band now.
-            should_be_selected = (widget in self.selection_at_press) or is_in_band
+            should_be_selected = (widget.data_item.annotation.id in self.selection_at_press) or is_in_band
 
             if should_be_selected and not widget.is_selected():
                 if self.select_widget(widget):
