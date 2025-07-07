@@ -938,9 +938,16 @@ class AnnotationViewer(QWidget):
         """PUBLIC: Updates the visual selection from a set of IDs."""
         self.current_selection_ids = set(selected_ids)
         self.content_widget.setUpdatesEnabled(False)
+        
+        # Update all widgets' selection state
         for ann_id, widget in self.annotation_widgets_by_id.items():
-            widget.set_selected(ann_id in self.current_selection_ids)
+            is_selected = ann_id in self.current_selection_ids
+            widget.set_selected(is_selected)
+            
         self.content_widget.setUpdatesEnabled(True)
+        
+        # Force a repaint to ensure visual changes are displayed
+        self.content_widget.update()
 
         if self.isolated_mode and not self.current_selection_ids.issubset(self.isolated_ids):
             self.isolated_ids.update(self.current_selection_ids)
