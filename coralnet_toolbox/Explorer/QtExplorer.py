@@ -930,8 +930,18 @@ class AnnotationViewer(QWidget):
         # Update the anchor point for the next shift-click
         self.last_selected_id = target_id
 
-        # Emit one signal with the final, complete list of selected IDs
+        # Update internal state BEFORE emitting signal
         if new_selection != self.current_selection_ids:
+            # Update the internal state directly
+            old_selection = self.current_selection_ids.copy()
+            self.current_selection_ids = new_selection
+            
+            # Update widget visual state
+            for ann_id, widget in self.annotation_widgets_by_id.items():
+                is_selected = ann_id in self.current_selection_ids
+                widget.set_selected(is_selected)
+            
+            # Then emit the signal
             self.selection_changed.emit(list(new_selection))
 
     def render_selection_from_ids(self, selected_ids):
