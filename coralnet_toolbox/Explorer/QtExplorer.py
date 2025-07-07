@@ -1560,11 +1560,7 @@ class ExplorerWindow(QMainWindow):
             - Skewness (3rd moment)
             - Kurtosis (4th moment)
         2.  Color Histogram (per channel)
-        3.  Grayscale Statistics:
-            - Mean Brightness
-            - Contrast (Std Dev)
-            - Intensity Range
-        4.  Geometric Features:
+        3.  Geometric Features:
             - Area
             - Perimeter
         """
@@ -1574,7 +1570,7 @@ class ExplorerWindow(QMainWindow):
 
         features = []
         valid_data_items = []
-        for item in data_items:
+        for i, item in enumerate(data_items):
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
                 # arr has shape (height, width, 3)
@@ -1597,8 +1593,8 @@ class ExplorerWindow(QMainWindow):
                 
                 # --- 2. Calculate Color Histograms ---
                 histograms = []
-                for i in range(3): # For each channel (R, G, B)
-                    hist, _ = np.histogram(pixels[:, i], bins=bins, range=(0, 255))
+                for j in range(3): # For each channel (R, G, B)
+                    hist, _ = np.histogram(pixels[:, j], bins=bins, range=(0, 255))
                     
                     # Normalize histogram
                     hist_sum = np.sum(hist)
@@ -1652,6 +1648,9 @@ class ExplorerWindow(QMainWindow):
         # Load or retrieve the cached model
         if model_name != self.model_path or self.loaded_model is None:
             try:
+                if progress_bar:
+                    progress_bar.set_busy_mode(f"Loading model: {os.path.basename(model_name)}...")
+                
                 print(f"Loading new model: {model_name}")
                 self.loaded_model = YOLO(model_name)
                 self.model_path = model_name
@@ -1665,6 +1664,9 @@ class ExplorerWindow(QMainWindow):
                     self.imgsz = 128
                 
                 # Run a dummy inference to warm up the model
+                if progress_bar:
+                    progress_bar.set_busy_mode(f"Warming up model on device '{self.device}'...")
+                    
                 print(f"Warming up model on device '{self.device}'...")
                 dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
                 self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
@@ -1800,12 +1802,15 @@ class ExplorerWindow(QMainWindow):
             print(f"Unknown or invalid feature model selected: {model_name}")
             return np.array([]), []
 
-    def _run_dimensionality_reduction(self, features, params):
+    def _run_dimensionality_reduction(self, features, params, progress_bar=None):
         """
         Runs PCA, UMAP or t-SNE on the feature matrix using provided parameters.
         """
         technique = params.get('technique', 'UMAP')  # Changed default to UMAP
         random_state = 42
+        
+        if progress_bar:
+            progress_bar.set_busy_mode(f"Running {technique} dimensionality reduction...")
         
         print(f"Running {technique} on {len(features)} items with params: {params}")
         if len(features) <= 2:  # UMAP/t-SNE need at least a few points
@@ -1858,8 +1863,12 @@ class ExplorerWindow(QMainWindow):
             print(f"Error during {technique} dimensionality reduction: {e}")
             return None
 
-    def _update_data_items_with_embedding(self, data_items, embedded_features):
+    def _update_data_items_with_embedding(self, data_items, embedded_features, progress_bar=None):
         """Updates AnnotationDataItem objects with embedding results."""
+        if progress_bar:
+            progress_bar.set_title("Updating visualization coordinates...")
+            progress_bar.start_progress(len(data_items))
+        
         scale_factor = 4000
         min_vals = np.min(embedded_features, axis=0)
         max_vals = np.max(embedded_features, axis=0)
@@ -1872,6 +1881,9 @@ class ExplorerWindow(QMainWindow):
             # Scale and center the points in the view
             item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
+            
+            if progress_bar:
+                progress_bar.update_progress()
 
     def run_embedding_pipeline(self):
         """
@@ -1923,21 +1935,22 @@ class ExplorerWindow(QMainWindow):
                 return
 
             # 3. Run dimensionality reduction with the latest parameters
-            progress_bar.set_busy_mode(f"Running {technique} dimensionality reduction...")
-            embedded_features = self._run_dimensionality_reduction(features, embedding_params)
-            progress_bar.update_progress()
+            embedded_features = self._run_dimensionality_reduction(features, 
+                                                                   embedding_params, 
+                                                                   progress_bar=progress_bar)
             
             if embedded_features is None:
                 return
 
             # 4. Update the visualization with the new 2D layout
-            progress_bar.set_busy_mode("Updating visualization...")
-            self._update_data_items_with_embedding(self.current_data_items, embedded_features)
+            self._update_data_items_with_embedding(self.current_data_items, 
+                                                   embedded_features, 
+                                                   progress_bar=progress_bar)
             
+            progress_bar.set_busy_mode("Finalizing visualization...")
             self.embedding_viewer.update_embeddings(self.current_data_items)
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
-            progress_bar.update_progress()
             
             print(f"Successfully generated embedding for {len(self.current_data_items)} annotations using {technique}")
             
@@ -1955,23 +1968,52 @@ class ExplorerWindow(QMainWindow):
     def refresh_filters(self):
         """Refresh display: filter data and update annotation viewer."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # Get filtered data and store for potential embedding
-            self.current_data_items = self.get_filtered_data_items()
+        
+        # Show progress bar for large datasets
+        if (hasattr(self.main_window.annotation_window, 'annotations_dict') and 
+            len(self.main_window.annotation_window.annotations_dict) > 100):
             
-            # --- MODIFIED: Invalidate the feature cache ---
-            # Since the filtered items have changed, the old features are no longer valid.
-            self.current_features = None
+            progress_bar = ProgressBar(self, "Filtering Annotations")
+            progress_bar.show()
+            progress_bar.set_busy_mode("Applying filters...")
             
-            # Update annotation viewer with filtered data
-            self.annotation_viewer.update_annotations(self.current_data_items)
-            
-            # Clear embedding viewer and show placeholder, as it is now out of sync
-            self.embedding_viewer.clear_points()
-            self.embedding_viewer.show_placeholder()
-            
-        finally:
-            QApplication.restoreOverrideCursor()
+            try:
+                # Get filtered data and store for potential embedding
+                self.current_data_items = self.get_filtered_data_items()
+                
+                # Invalidate the feature cache since the filtered items have changed
+                self.current_features = None
+                
+                # Update annotation viewer with filtered data
+                self.annotation_viewer.update_annotations(self.current_data_items)
+                
+                # Clear embedding viewer and show placeholder, as it is now out of sync
+                self.embedding_viewer.clear_points()
+                self.embedding_viewer.show_placeholder()
+                
+            finally:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+                QApplication.restoreOverrideCursor()
+        else:
+            # For small datasets, no progress bar needed
+            try:
+                # Get filtered data and store for potential embedding
+                self.current_data_items = self.get_filtered_data_items()
+                
+                # Invalidate the feature cache since the filtered items have changed
+                self.current_features = None
+                
+                # Update annotation viewer with filtered data
+                self.annotation_viewer.update_annotations(self.current_data_items)
+                
+                # Clear embedding viewer and show placeholder, as it is now out of sync
+                self.embedding_viewer.clear_points()
+                self.embedding_viewer.show_placeholder()
+                
+            finally:
+                QApplication.restoreOverrideCursor()
 
     def on_label_selected_for_preview(self, label):
         """Handle label selection to update preview state."""
@@ -2002,7 +2044,23 @@ class ExplorerWindow(QMainWindow):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        progress_bar = None
+        applied_annotations = []
+        
         try:
+            # Show progress bar if there are many preview changes
+            if (hasattr(self, 'annotation_viewer') and 
+                self.annotation_viewer.has_preview_changes()):
+                
+                # Count the number of changes to show progress
+                change_count = sum(1 for w in self.annotation_viewer.annotation_widgets_by_id.values() 
+                                 if w.data_item.has_preview_changes())
+                
+                if change_count > 10:  # Show progress for 10+ changes
+                    progress_bar = ProgressBar(self, "Applying Changes")
+                    progress_bar.show()
+                    progress_bar.set_busy_mode(f"Applying changes to {change_count} annotation(s)...")
+            
             applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
             
             if applied_annotations:
@@ -2042,9 +2100,13 @@ class ExplorerWindow(QMainWindow):
         except Exception as e:
             print(f"Error applying modifications: {e}")
         finally:
+            if progress_bar:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
             # Restore cursor
             QApplication.restoreOverrideCursor()
-            
+
     def _cleanup_resources(self):
         """
         Clean up heavy resources like the loaded model and clear GPU cache.
