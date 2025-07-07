@@ -394,12 +394,27 @@ class LabelWindow(QWidget):
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
-        selected_count = len(self.annotation_window.selected_annotations)
-
-        if selected_count == 0:
+        
+        # Check if we're in Explorer mode and get Explorer selections
+        explorer_selected_count = 0
+        if (hasattr(self.main_window, 'explorer_window') and 
+            self.main_window.explorer_window and 
+            hasattr(self.main_window.explorer_window, 'annotation_viewer')):
+            explorer_selected_count = len(self.main_window.explorer_window.annotation_viewer.selected_widgets)
+        
+        # Get annotation window selections
+        annotation_window_selected_count = len(self.annotation_window.selected_annotations)
+        
+        # Prioritize Explorer selections if Explorer is open
+        if explorer_selected_count > 0:
+            if explorer_selected_count == 1:
+                text = f"Annotation: 1"
+            else:
+                text = f"Annotations: {explorer_selected_count}"
+        elif annotation_window_selected_count == 0:
             text = f"Annotations: {len(annotations)}"
-        elif selected_count > 1:
-            text = f"Annotations: {selected_count}"
+        elif annotation_window_selected_count > 1:
+            text = f"Annotations: {annotation_window_selected_count}"
         else:
             try:
                 selected_annotation = self.annotation_window.selected_annotations[0]
@@ -808,6 +823,8 @@ class LabelWindow(QWidget):
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
             self.annotation_window.set_image(current_image_path)
+            # Update annotation count after merge
+            self.update_annotation_count()
             
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
@@ -1181,5 +1198,3 @@ class EditLabelDialog(QDialog):
                 new_color=new_color
             )
             self.accept()
-            
-        

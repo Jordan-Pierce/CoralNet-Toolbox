@@ -365,8 +365,9 @@ class OpenProject(QDialog):
                 # Update the image window's image annotations
                 self.image_window.update_image_annotations(image_path)
 
-            # Load the annotations for current image
+            # Load the annotations for current image and update counts
             self.annotation_window.load_annotations()
+            self.label_window.update_annotation_count()
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window,

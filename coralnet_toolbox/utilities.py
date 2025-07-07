@@ -18,6 +18,7 @@ from rasterio.windows import Window
 from shapely.validation import make_valid
 from shapely.geometry import Polygon, MultiPolygon, LineString, GeometryCollection
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
 
@@ -516,6 +517,29 @@ def pixmap_to_numpy(pixmap):
         numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)
 
     return numpy_array
+
+
+def scale_pixmap(pixmap, max_size):
+    """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
+    width = pixmap.width()
+    height = pixmap.height()
+    
+    # Check if scaling is needed
+    if width <= max_size and height <= max_size:
+        return pixmap
+        
+    # Calculate scale factor based on largest dimension
+    scale = max_size / max(width, height)
+    
+    # Scale pixmap
+    scaled_pixmap = pixmap.scaled(
+        int(width * scale), 
+        int(height * scale),
+        Qt.KeepAspectRatio,
+        Qt.SmoothTransformation
+    )
+    
+    return scaled_pixmap
 
 
 def attempt_download_asset(app, asset_name, asset_url):

@@ -69,6 +69,18 @@ class ProgressBar(QDialog):
         self.canceled = False
         self.progress_bar.setValue(0)
         QApplication.processEvents()
+        
+    def set_busy_mode(self, busy_text="Processing..."):
+        """
+        Sets the progress bar to an indeterminate "busy" state for tasks
+        of unknown duration.
+        """
+        # Update the title to reflect the current task
+        self.set_title(busy_text)
+        
+        # Setting the min and max to 0 enables the busy/indeterminate mode
+        self.progress_bar.setRange(0, 0)
+        QApplication.processEvents()
 
     def start_progress(self, max_value):
         """

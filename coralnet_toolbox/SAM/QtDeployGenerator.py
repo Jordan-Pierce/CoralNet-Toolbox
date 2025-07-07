@@ -564,6 +564,10 @@ class DeployGeneratorDialog(QDialog):
         self.update_sam_task_state()
         if self.task != 'segment':
             return results_list
+        
+        if not self.sam_dialog or self.use_sam_dropdown.currentText() == "False":
+            # If SAM is not deployed or not selected, return the results as is
+            return results_list
 
         if self.sam_dialog.loaded_model is None:
             # If SAM is not loaded, ensure we do not use it accidentally

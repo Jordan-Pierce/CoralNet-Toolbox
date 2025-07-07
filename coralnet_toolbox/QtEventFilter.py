@@ -30,7 +30,7 @@ class GlobalEventFilter(QObject):
             if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
                 
                 # Handle Tab key for switching between Select and Annotation tools
-                if event.key() == Qt.Key_Tab:
+                if event.key() == Qt.Key_Alt:
                     self.main_window.switch_back_to_tool()
                     return True
                 

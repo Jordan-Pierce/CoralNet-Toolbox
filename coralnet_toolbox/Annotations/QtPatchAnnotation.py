@@ -157,7 +157,7 @@ class PatchAnnotation(Annotation):
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
         # Draw the dotted line outline on top
-        pen = QPen(self.label.color)
+        pen = QPen(Qt.black)
         pen.setStyle(Qt.SolidLine)  # Solid line
         pen.setWidth(1)  # Line width
         result_painter.setPen(pen)

@@ -283,6 +283,10 @@ class Segment(Base):
         """Apply SAM to the results if needed."""
         # Check if SAM model is deployed and loaded
         self.update_sam_task_state()
+        
+        if not self.sam_dialog or self.use_sam_dropdown.currentText() == "False":
+            # If SAM is not deployed or not selected, return the results as is
+            return results_list
 
         if self.sam_dialog.loaded_model is None:
             # If SAM is not loaded, ensure we do not use it accidentally

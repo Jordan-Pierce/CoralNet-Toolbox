@@ -22,6 +22,8 @@ from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
+from coralnet_toolbox.Explorer import ExplorerWindow
+
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 
 from coralnet_toolbox.Tile import (
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
+        
+        self.explorer_window = None  # Initialized in open_explorer_window
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -438,11 +442,18 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
 
+        # Explorer menu
+        self.explorer_menu = self.menu_bar.addMenu("Explorer")
+        # Open Explorer
+        self.open_explorer_action = QAction("Open Explorer", self)
+        self.open_explorer_action.triggered.connect(self.open_explorer_window)
+        self.explorer_menu.addAction(self.open_explorer_action)
+        
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
-
+        
         # Tile menu
         self.tile_menu = self.menu_bar.addMenu("Tile")
 
@@ -471,6 +482,7 @@ class MainWindow(QMainWindow):
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        
         # CoralNet Authenticate
         self.coralnet_authenticate_action = QAction("Authenticate", self)
         self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
@@ -951,6 +963,15 @@ class MainWindow(QMainWindow):
         """Show the main window maximized."""
         super().showEvent(event)
         self.showMaximized()
+
+    def closeEvent(self, event):
+        """Ensure the explorer window is closed when the main window closes."""
+        if self.explorer_window:
+            # Setting parent to None prevents it from being deleted with main window
+            # before it can be properly handled.
+            self.explorer_window.setParent(None)
+            self.explorer_window.close()
+        super().closeEvent(event)
 
     def changeEvent(self, event):
         """Handle window state changes (minimize, maximize, restore)."""
@@ -1594,8 +1615,77 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_explorer_window(self):
+        """Open the Explorer window, moving the LabelWindow into it."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening Explorer.")
+            return
+
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Explorer",
+                                "No annotations are present in the project.")
+            return
+        
+        # Explain to user this is experimental, ask if they want to proceed
+        reply = QMessageBox.question(self, 
+                                     "Experimental Feature",
+                                     "The Explorer window is an experimental feature.\n"
+                                     "Do you want to proceed anyway?",
+                                     QMessageBox.Yes | QMessageBox.No,
+                                     QMessageBox.No)
+
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            self.untoggle_all_tools()
+            # Recreate the explorer window, passing the main window instance
+            self.explorer_window = ExplorerWindow(self)
+            
+            # Move the label_window from the main layout to the explorer
+            # The ExplorerWindow's __init__ will handle adding it to its own layout.
+            self.left_layout.removeWidget(self.label_window)
+            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+            self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+                
+            # Make the explorer window modal to block interaction with main window
+            self.explorer_window.setWindowModality(Qt.ApplicationModal)
+            # Disable the main window explicitly
+            self.setEnabled(False)
+            
+            self.explorer_window.showMaximized()
+            self.explorer_window.activateWindow()
+            self.explorer_window.raise_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            if self.explorer_window:
+                self.explorer_window.close()  # Ensure cleanup
+            self.explorer_window = None
+
+    def explorer_closed(self):
+        """Handle the explorer window being closed."""
+        if self.explorer_window:
+            # Move the label_window back to the main window's layout
+            self.label_window.setParent(self.central_widget)  # Re-parent back
+            self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
+            self.label_window.show()
+            self.label_window.resizeEvent(None)
+            self.resizeEvent(None)
+            
+            # Re-enable the main window
+            self.setEnabled(True)
+            
+            # Clean up reference
+            self.explorer_window = None
 
     def open_patch_annotation_sampling_dialog(self):
+        """Open the Patch Annotation Sampling dialog to sample annotations from images"""
         # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
