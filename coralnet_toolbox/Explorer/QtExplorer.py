@@ -1645,8 +1645,9 @@ class ExplorerWindow(QMainWindow):
 
     def _extract_yolo_features(self, data_items, model_name, progress_bar=None):
         """
-        Extracts features from annotation crops using a specified YOLO model.
-        This version processes images as a stream for better memory efficiency.
+        Extracts features from annotation crops using a specified YOLO model's `predict` method.
+        This approach is best suited for classification models (-cls.pt), where the output
+        probability vector is used as the feature embedding.
         """
         # Load or retrieve the cached model
         if model_name != self.model_path or self.loaded_model is None:
@@ -1663,10 +1664,11 @@ class ExplorerWindow(QMainWindow):
                 except (AttributeError, KeyError):
                     self.imgsz = 128
                 
-                # Run a dummy inference to warm up the model
+                # Run a dummy inference to warm up the model using predict()
                 print(f"Warming up model on device '{self.device}'...")
                 dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
-                self.loaded_model.embed(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
+                # Use predict() for the warm-up call as well
+                self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
                     
             except Exception as e:
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
@@ -1676,12 +1678,11 @@ class ExplorerWindow(QMainWindow):
             progress_bar.set_title(f"Preparing images...")
             progress_bar.start_progress(len(data_items))
 
-        # --- RE-IMPLEMENTED: Two-stage process for streaming ---
-        
         # 1. Prepare a list of all valid images and their corresponding data items.
         image_list = []
         valid_data_items = []
         for item in data_items:
+            # Assuming item.annotation.get_cropped_image() returns a QPixmap
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
                 image_np = pixmap_to_numpy(pixmap)
@@ -1703,9 +1704,9 @@ class ExplorerWindow(QMainWindow):
             if progress_bar:
                 progress_bar.set_busy_mode(f"Extracting features with {os.path.basename(model_name)}...")
             
-            # 2. Pass the entire list of valid images to the model with stream=True.
+            # 2. Pass the entire list of valid images to model.predict() with stream=True.
             # This returns a generator that yields results one by one.
-            results_generator = self.loaded_model.embed(
+            results_generator = self.loaded_model.predict(
                 image_list, 
                 stream=True, 
                 imgsz=self.imgsz, 
@@ -1716,11 +1717,24 @@ class ExplorerWindow(QMainWindow):
             
             if progress_bar:
                 progress_bar.set_title(f"Extracting features with {os.path.basename(model_name)}...")
-                progress_bar.start_progress(len(data_items))
+                # Reset progress for the extraction phase
+                progress_bar.start_progress(len(valid_data_items))
             
             # 3. Process the results from the generator.
-            for embedding_result in results_generator:
-                embeddings_list.append(embedding_result.cpu().numpy())
+            for result in results_generator:
+                # For classification models, result.probs contains the probability vector.
+                # This is the "final result" we will treat as the embedding.
+                if result.probs is None:
+                    raise TypeError(
+                        f"Model '{os.path.basename(model_name)}' did not return probabilities. "
+                        "Using model.predict() for embeddings is only suitable for classification models (e.g., 'yolov8n-cls.pt'). "
+                        "For detection models, please use the original function with model.embed()."
+                    )
+                
+                # Squeeze to convert shape from (1, num_classes) to (num_classes,)
+                embedding = result.probs.data.cpu().numpy().squeeze()
+                embeddings_list.append(embedding)
+
                 # Update progress for each item as it's processed from the stream.
                 if progress_bar:
                     progress_bar.update_progress()
@@ -1740,7 +1754,7 @@ class ExplorerWindow(QMainWindow):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
-        print(f"Successfully extracted {len(embeddings)} features.")
+        print(f"Successfully extracted {len(embeddings)} features using model.predict().")
         return embeddings, valid_data_items
 
     def _extract_features(self, data_items, progress_bar=None):
