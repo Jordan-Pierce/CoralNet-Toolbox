@@ -1618,13 +1618,14 @@ class MainWindow(QMainWindow):
             
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
-        # 1. Check preconditions
+        # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before opening Explorer.")
             return
 
+        # Check if there are any annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "Explorer",
@@ -1633,44 +1634,44 @@ class MainWindow(QMainWindow):
         
         try:
             self.untoggle_all_tools()
+            # Recreate the explorer window, passing the main window instance
+            self.explorer_window = ExplorerWindow(self)
             
-            # 2. Remove the label_window from the main window's layout FIRST
-            #    This makes it available to be re-parented by the ExplorerWindow.
+            # Move the label_window from the main layout to the explorer
+            # The ExplorerWindow's __init__ will handle adding it to its own layout.
             self.left_layout.removeWidget(self.label_window)
+            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+            self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+                
+            # Make the explorer window modal to block interaction with main window
+            self.explorer_window.setWindowModality(Qt.ApplicationModal)
+            # Disable the main window explicitly
+            self.setEnabled(False)
             
-            # 3. Create the ExplorerWindow instance, passing the label_window directly
-            #    This ensures the ExplorerWindow gets a proper reference to the widget
-            self.explorer_window = ExplorerWindow(self, self.label_window)
-
-            # 4. Show the ExplorerWindow and block the main window.
-            self.setEnabled(False) # Disable main window interaction
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
-            
         except Exception as e:
-            QMessageBox.critical(self, "Explorer Error", f"An error occurred while opening the Explorer:\n\n{e}")
-            # Ensure cleanup and re-enabling on failure
+            QMessageBox.critical(self, "Critical Error", f"{e}")
             if self.explorer_window:
-                self.explorer_window.close()
-            else:
-                self.explorer_closed() # Call cleanup even if window failed to show
+                self.explorer_window.close()  # Ensure cleanup
+            self.explorer_window = None
 
     def explorer_closed(self):
-        """
-        Handles the explorer window being closed by restoring the LabelWindow
-        to the main window's layout and re-enabling the UI.
-        """
-        # Add the label_window back to its original position and stretch factor.
-        self.left_layout.addWidget(self.label_window, 15)
-        self.label_window.show()
-
-        # Re-enable the main window for interaction and bring it to the front.
-        self.setEnabled(True)
-        self.activateWindow()
-        
-        # Clean up the reference to the now-closed explorer window.
-        self.explorer_window = None
+        """Handle the explorer window being closed."""
+        if self.explorer_window:
+            # Move the label_window back to the main window's layout
+            self.label_window.setParent(self.central_widget)  # Re-parent back
+            self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
+            self.label_window.show()
+            self.label_window.resizeEvent(None)
+            self.resizeEvent(None)
+            
+            # Re-enable the main window
+            self.setEnabled(True)
+            
+            # Clean up reference
+            self.explorer_window = None
 
     def open_patch_annotation_sampling_dialog(self):
         """Open the Patch Annotation Sampling dialog to sample annotations from images"""
