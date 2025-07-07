@@ -428,8 +428,11 @@ class AnnotationViewer(QWidget):
         self.last_selected_id = None
         self.current_widget_size = 96
 
+        self.selection_at_press = set()
         self.rubber_band = None
         self.rubber_band_origin = None
+        self.drag_threshold = 5
+        self.mouse_pressed_on_widget = False
 
         self.isolated_mode = False
         self.isolated_ids = set()
@@ -501,6 +504,28 @@ class AnnotationViewer(QWidget):
         main_layout.addWidget(self.scroll_area)
         self._update_toolbar_state()
         
+    def eventFilter(self, source, event):
+        """
+        This dispatcher catches events from the scroll area's viewport and
+        forwards them to the appropriate mouse event handlers.
+        """
+        if source is self.scroll_area.viewport():
+            if event.type() == QEvent.MouseButtonPress:
+                self.mousePressEvent(event)
+                return True  # Mark as handled
+            elif event.type() == QEvent.MouseMove:
+                self.mouseMoveEvent(event)
+                return True  # Mark as handled
+            elif event.type() == QEvent.MouseButtonRelease:
+                self.mouseReleaseEvent(event)
+                return True  # Mark as handled
+            elif event.type() == QEvent.MouseButtonDblClick:
+                self.mouseDoubleClickEvent(event)
+                return True  # Mark as handled
+
+        # For other events, use the default behavior
+        return super().eventFilter(source, event)
+        
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if not hasattr(self, '_resize_timer'):
@@ -517,70 +542,158 @@ class AnnotationViewer(QWidget):
                 return
         super().keyPressEvent(event)
 
-    def eventFilter(self, source, event):
-        """
-        Filters events from the scroll area's viewport to handle mouse-based
-        selection and rubber banding on the background.
-        """
-        # We only care about events from the scroll area's viewport
-        if source is self.scroll_area.viewport():
-            # --- MOUSE PRESS ---
-            if event.type() == QEvent.MouseButtonPress:
-                # Check if the click was on the background, NOT on a child widget
-                if self.content_widget.childAt(event.pos()) is None:
-                    if event.button() == Qt.LeftButton:
-                        # Clear selection if no modifier is pressed
-                        if event.modifiers() == Qt.NoModifier and self.current_selection_ids:
-                            self.selection_changed.emit([])
-                        # Start rubber band if Ctrl is pressed
-                        elif event.modifiers() == Qt.ControlModifier:
-                            self.rubber_band_origin = event.pos()
-                            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-                            self.rubber_band.move(self.rubber_band_origin)
-                            self.rubber_band.show()
-                        return True  # We've handled this background click
+    def mousePressEvent(self, event):
+        """Handle mouse press for starting rubber band selection OR clearing selection."""
+        
+        # Handle plain left-clicks
+        if event.button() == Qt.LeftButton:
+            
+            # This is the new logic for clearing selection on a background click.
+            if not event.modifiers():  # Check for NO modifiers (e.g., Ctrl, Shift)
+                
+                is_on_widget = False
+                child_at_pos = self.childAt(event.pos())
 
-                # If the click was on a child, let the event continue to that child
-                return False
+                # Determine if the click was on an actual annotation widget or empty space
+                if child_at_pos:
+                    widget = child_at_pos
+                    while widget and widget != self:
+                        if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
+                            is_on_widget = True
+                            break
+                        widget = widget.parent()
+                
+                # If click was on empty space AND something is currently selected...
+                if not is_on_widget and self.current_selection_ids:
+                    # CORRECTED: Get IDs directly from the authoritative set.
+                    changed_ids = list(self.current_selection_ids)
+                    self.clear_selection()
+                    self.selection_changed.emit(changed_ids)
+                    return
 
-            # --- MOUSE MOVE ---
-            elif event.type() == QEvent.MouseMove:
-                if self.rubber_band and self.rubber_band.isVisible():
-                    # Resize the rubber band
-                    self.rubber_band.setGeometry(QRect(self.rubber_band_origin, event.pos()).normalized())
+            # Handle Ctrl+Click for rubber band
+            elif event.modifiers() == Qt.ControlModifier:
+                # Store the set of currently selected items.
+                self.selection_at_press = {
+                    self.annotation_widgets_by_id[ann_id]
+                    for ann_id in self.current_selection_ids
+                    if ann_id in self.annotation_widgets_by_id
+                }
+                self.rubber_band_origin = event.pos()
+                # We determine mouse_pressed_on_widget here but use it in mouseMove
+                self.mouse_pressed_on_widget = False
+                child_widget = self.childAt(event.pos())
+                if child_widget:
+                    widget = child_widget
+                    while widget and widget != self:
+                        if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
+                            self.mouse_pressed_on_widget = True
+                            break
+                        widget = widget.parent()
+                return
+                
+        # Handle right-clicks
+        elif event.button() == Qt.RightButton:
+            event.ignore()
+            return
+            
+        # For all other cases (e.g., a click on a widget that should be handled
+        # by the widget itself), pass the event to the default handler.
+        super().mousePressEvent(event)
+        
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click to clear selection and exit isolation mode."""
+        if event.button() == Qt.LeftButton:
+            changed_ids = []
+            
+            # CORRECTED: Check for selected items using the set of IDs.
+            if self.current_selection_ids:
+                # CORRECTED: Get IDs directly from the set.
+                changed_ids = list(self.current_selection_ids)
+                self.clear_selection()
+                self.selection_changed.emit(changed_ids)
 
-                    # Update selection based on the widgets intersected by the band
-                    selection_rect = self.rubber_band.geometry()
-                    newly_selected_ids = {
-                        widget.data_item.annotation.id
-                        for widget in self.annotation_widgets_by_id.values()
-                        if widget.isVisible() and selection_rect.intersects(widget.geometry())
-                    }
-                    self.selection_changed.emit(list(newly_selected_ids))
-                    return True  # We've handled this rubber band move
-                return False
+            # If in isolation mode, revert to showing all annotations
+            if self.isolated_mode:
+                self.show_all_annotations()
+            
+            # Signal the main window to reset its view
+            self.reset_view_requested.emit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for DYNAMIC rubber band selection."""
+        if self.rubber_band_origin is None or \
+           event.buttons() != Qt.LeftButton or \
+           event.modifiers() != Qt.ControlModifier:
+            super().mouseMoveEvent(event)
+            return
 
-            # --- MOUSE RELEASE ---
-            elif event.type() == QEvent.MouseButtonRelease:
-                if self.rubber_band and self.rubber_band.isVisible():
-                    self.rubber_band.hide()
-                    self.rubber_band.deleteLater()
-                    self.rubber_band = None
-                    self.rubber_band_origin = None
-                    return True  # We've handled the end of the rubber band action
-                return False
+        # If the mouse was pressed on a widget, let that widget handle the event.
+        if self.mouse_pressed_on_widget:
+            super().mouseMoveEvent(event)
+            return
 
-            # --- MOUSE DOUBLE CLICK ---
-            elif event.type() == QEvent.MouseButtonDblClick:
-                # Check for a double click on the background
-                if self.content_widget.childAt(event.pos()) is None:
-                    if event.button() == Qt.LeftButton:
-                        self.reset_view_requested.emit()
-                        return True  # We've handled this background double click
-                return False
+        # Only start the rubber band after dragging a minimum distance
+        distance = (event.pos() - self.rubber_band_origin).manhattanLength()
+        if distance < self.drag_threshold:
+            return
 
-        # For any other event source, pass it to the base class
-        return super().eventFilter(source, event)
+        # Create and show the rubber band if it doesn't exist
+        if not self.rubber_band:
+            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
+        
+        rect = QRect(self.rubber_band_origin, event.pos()).normalized()
+        self.rubber_band.setGeometry(rect)
+        self.rubber_band.show()
+
+        # Perform dynamic selection on every move
+        selection_rect = self.rubber_band.geometry()
+        content_widget = self.content_widget
+        changed_ids = []
+
+        for widget in self.annotation_widgets_by_id.values():
+            widget_rect_in_content = widget.geometry()
+            # Map widget's geometry from the content area to the visible viewport
+            widget_rect_in_viewport = QRect(
+                content_widget.mapTo(self.scroll_area.viewport(), widget_rect_in_content.topLeft()),
+                widget_rect_in_content.size()
+            )
+
+            is_in_band = selection_rect.intersects(widget_rect_in_viewport)
+            
+            # A widget should be selected if it was selected at the start OR is in the band now.
+            should_be_selected = (widget in self.selection_at_press) or is_in_band
+
+            if should_be_selected and not widget.is_selected():
+                if self.select_widget(widget):
+                    changed_ids.append(widget.data_item.annotation.id)
+            elif not should_be_selected and widget.is_selected():
+                if self.deselect_widget(widget):
+                    changed_ids.append(widget.data_item.annotation.id)
+        
+        if changed_ids:
+            self.selection_changed.emit(changed_ids)
+        
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to complete rubber band selection."""
+        # Check if a rubber band drag was in progress
+        if self.rubber_band_origin is not None and event.button() == Qt.LeftButton:
+            if self.rubber_band and self.rubber_band.isVisible():
+                self.rubber_band.hide()
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+
+            # **NEEDED CHANGE**: Clean up the stored selection state.
+            self.selection_at_press = set()
+            self.rubber_band_origin = None
+            self.mouse_pressed_on_widget = False
+            event.accept()
+            return
+            
+        super().mouseReleaseEvent(event)
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -746,6 +859,41 @@ class AnnotationViewer(QWidget):
         finally:
             self.content_widget.setUpdatesEnabled(True)
             self.content_widget.update()
+            
+    def clear_selection(self):
+        """
+        Deselects all currently selected widgets and clears the ID set.
+        """
+        for ann_id in self.current_selection_ids:
+            if ann_id in self.annotation_widgets_by_id:
+                self.annotation_widgets_by_id[ann_id].set_selected(False)
+        self.current_selection_ids.clear()
+        self.last_selected_id = None
+
+    def select_widget(self, widget):
+        """
+        Selects a single widget, updating its visual state and our ID set.
+        Returns True if the selection state changed.
+        """
+        ann_id = widget.data_item.annotation.id
+        if ann_id not in self.current_selection_ids:
+            self.current_selection_ids.add(ann_id)
+            widget.set_selected(True)
+            self.last_selected_id = ann_id
+            return True
+        return False
+
+    def deselect_widget(self, widget):
+        """
+        Deselects a single widget, updating its visual state and our ID set.
+        Returns True if the selection state changed.
+        """
+        ann_id = widget.data_item.annotation.id
+        if ann_id in self.current_selection_ids:
+            self.current_selection_ids.remove(ann_id)
+            widget.set_selected(False)
+            return True
+        return False
 
     def update_annotations(self, data_items):
         """PUBLIC: Rebuilds the view from a fresh list of data items."""
