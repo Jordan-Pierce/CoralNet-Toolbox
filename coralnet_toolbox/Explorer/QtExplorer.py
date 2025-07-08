@@ -66,6 +66,7 @@ class EmbeddingViewer(QWidget):
     reset_view_requested = pyqtSignal()
 
     def __init__(self, parent=None):
+        """Initialize the EmbeddingViewer widget."""
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
 
@@ -136,28 +137,73 @@ class EmbeddingViewer(QWidget):
 
     # Delegate graphics view methods
     def setRenderHint(self, hint): 
+        """Set render hint for the graphics view."""
         self.graphics_view.setRenderHint(hint)
         
     def setDragMode(self, mode): 
+        """Set drag mode for the graphics view."""
         self.graphics_view.setDragMode(mode)
         
     def setTransformationAnchor(self, anchor): 
+        """Set transformation anchor for the graphics view."""
         self.graphics_view.setTransformationAnchor(anchor)
         
     def setResizeAnchor(self, anchor): 
+        """Set resize anchor for the graphics view."""
         self.graphics_view.setResizeAnchor(anchor)
         
     def mapToScene(self, point): 
+        """Map a point to the scene coordinates."""
         return self.graphics_view.mapToScene(point)
     
     def scale(self, sx, sy): 
+        """Scale the graphics view."""
         self.graphics_view.scale(sx, sy)
         
     def translate(self, dx, dy): 
+        """Translate the graphics view."""
         self.graphics_view.translate(dx, dy)
         
     def fitInView(self, rect, aspect_ratio): 
+        """Fit the view to a rectangle with aspect ratio."""
         self.graphics_view.fitInView(rect, aspect_ratio)
+        
+    def keyPressEvent(self, event):
+        """Handles key presses for deleting selected points."""
+        # Check if the pressed key is Delete/Backspace AND the Control key is held down
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
+            # Get the currently selected items from the graphics scene
+            selected_items = self.graphics_scene.selectedItems()
+
+            if not selected_items:
+                super().keyPressEvent(event)
+                return
+
+            print(f"Marking {len(selected_items)} points for deletion.")
+
+            # Mark each item for deletion and remove it from the scene
+            for item in selected_items:
+                if isinstance(item, EmbeddingPointItem):
+                    # Mark the central data item for deletion
+                    item.data_item.mark_for_deletion()
+
+                    # Remove the point from our internal lookup
+                    ann_id = item.data_item.annotation.id
+                    if ann_id in self.points_by_id:
+                        del self.points_by_id[ann_id]
+
+                    # Remove the point from the visual scene
+                    self.graphics_scene.removeItem(item)
+
+            # Trigger a selection change to clear the selection state
+            # and notify the ExplorerWindow.
+            self.on_selection_changed()
+
+            # Accept the event to prevent it from being processed further
+            event.accept()
+        else:
+            # Pass any other key presses to the default handler
+            super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection (point or rubber band) and panning."""
@@ -246,10 +292,7 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.translate(delta.x(), delta.y())
 
     def update_embeddings(self, data_items):
-        """
-        Update the embedding visualization. Creates an EmbeddingPointItem for each
-        AnnotationDataItem and links them.
-        """
+        """Update the embedding visualization. Creates an EmbeddingPointItem for each AnnotationDataItem and links them."""
         self.clear_points()
         for item in data_items:
             # Create the point item directly from the data_item.
@@ -257,6 +300,29 @@ class EmbeddingViewer(QWidget):
             point = EmbeddingPointItem(item)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
+            
+    def refresh_points(self):
+        """Refreshes the points in the view to match the current state of the master data list."""
+        if not self.explorer_window or not self.explorer_window.current_data_items:
+            return
+
+        # Get the set of IDs for points currently in the scene
+        current_point_ids = set(self.points_by_id.keys())
+        
+        # Get the master list of data items from the parent window
+        all_data_items = self.explorer_window.current_data_items
+
+        something_changed = False
+        for item in all_data_items:
+            # If a data item is NOT marked for deletion but is also NOT in the scene, add it back.
+            if not item.is_marked_for_deletion() and item.annotation.id not in current_point_ids:
+                point = EmbeddingPointItem(item)
+                self.graphics_scene.addItem(point)
+                self.points_by_id[item.annotation.id] = point
+                something_changed = True
+        
+        if something_changed:
+            print("Refreshed embedding points to show reverted items.")
             
     def clear_points(self):
         """Clear all embedding points from the scene."""
@@ -346,16 +412,17 @@ class EmbeddingViewer(QWidget):
             
 
 class AnnotationViewer(QScrollArea):
-    """
-    Scrollable grid widget for displaying annotation image crops with selection,
-    filtering, and isolation support. Acts as a controller for the widgets.
-    """
+    """Scrollable grid widget for displaying annotation image crops with selection, 
+    filtering, and isolation support. Acts as a controller for the widgets."""
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
 
     def __init__(self, parent=None):
+        """Initialize the AnnotationViewer widget."""
         super(AnnotationViewer, self).__init__(parent)
+        self.explorer_window = parent
+        
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
         self.last_selected_index = -1
@@ -444,6 +511,7 @@ class AnnotationViewer(QScrollArea):
         """Hides all annotation widgets that are not currently selected."""
         if not self.selected_widgets or self.isolated_mode:
             return
+
         self.isolated_widgets = set(self.selected_widgets)
         self.content_widget.setUpdatesEnabled(False)
         try:
@@ -454,15 +522,19 @@ class AnnotationViewer(QScrollArea):
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
+
         self._update_toolbar_state()
+        self.explorer_window.main_window.label_window.update_annotation_count()
 
     @pyqtSlot()
     def show_all_annotations(self):
         """Shows all annotation widgets, exiting the isolated mode."""
         if not self.isolated_mode:
             return
+            
         self.isolated_mode = False
         self.isolated_widgets.clear()
+        
         self.content_widget.setUpdatesEnabled(False)
         try:
             for widget in self.annotation_widgets_by_id.values():
@@ -470,7 +542,9 @@ class AnnotationViewer(QScrollArea):
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
+            
         self._update_toolbar_state()
+        self.explorer_window.main_window.label_window.update_annotation_count()
 
     def _update_toolbar_state(self):
         """Updates the toolbar buttons based on selection and isolation mode."""
@@ -631,6 +705,43 @@ class AnnotationViewer(QScrollArea):
             self._resize_timer.setSingleShot(True)
             self._resize_timer.timeout.connect(self.recalculate_widget_positions)
         self._resize_timer.start(100)
+        
+    def keyPressEvent(self, event):
+        """Handles key presses for deleting selected annotations."""
+        # Check if the pressed key is Delete/Backspace AND the Control key is held down
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
+            # Proceed only if there are selected widgets
+            if not self.selected_widgets:
+                super().keyPressEvent(event)
+                return
+
+            print(f"Marking {len(self.selected_widgets)} annotations for deletion.")
+            
+            # Keep track of which annotations were affected
+            changed_ids = []
+
+            # Mark each selected item for deletion and hide it
+            for widget in self.selected_widgets:
+                widget.data_item.mark_for_deletion()
+                widget.hide()
+                changed_ids.append(widget.data_item.annotation.id)
+
+            # Clear the list of selected widgets
+            self.selected_widgets.clear()
+
+            # Recalculate the layout to fill in the empty space
+            self.recalculate_widget_positions()
+
+            # Emit a signal to notify the ExplorerWindow that the selection is now empty
+            # This will also clear the selection in the EmbeddingViewer
+            if changed_ids:
+                self.selection_changed.emit(changed_ids)
+
+            # Accept the event to prevent it from being processed further
+            event.accept()
+        else:
+            # Pass any other key presses to the default handler
+            super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
         """Handle mouse press for starting rubber band selection OR clearing selection."""
@@ -889,29 +1000,40 @@ class AnnotationViewer(QScrollArea):
             self.preview_changed.emit(changed_ids)
 
     def clear_preview_states(self):
-        """Clear all preview states and revert to original labels."""
-        something_cleared = False
+        """
+        Clears all preview states, including label changes and items marked
+        for deletion, reverting them to their original state.
+        """
+        something_changed = False
         for widget in self.annotation_widgets_by_id.values():
+            # Check for and clear preview labels
             if widget.data_item.has_preview_changes():
                 widget.data_item.clear_preview_label()
                 widget.update()  # Repaint to show original color
-                something_cleared = True
-                
-        if something_cleared:
-            if self.sort_combo.currentText() == "Label": 
+                something_changed = True
+
+            # Check for and un-mark items for deletion
+            if widget.data_item.is_marked_for_deletion():
+                widget.data_item.unmark_for_deletion()
+                widget.show()  # Make the widget visible again
+                something_changed = True
+
+        if something_changed:
+            # Recalculate positions to update sorting and re-flow the layout
+            if self.sort_combo.currentText() in ("Label", "Image"):
                 self.recalculate_widget_positions()
 
     def has_preview_changes(self):
-        """Check if there are any pending preview changes."""
+        """Return True if there are preview changes."""
         return any(w.data_item.has_preview_changes() for w in self.annotation_widgets_by_id.values())
 
     def get_preview_changes_summary(self):
-        """Get a summary of preview changes for user feedback."""
+        """Get a summary of preview changes."""
         change_count = sum(1 for w in self.annotation_widgets_by_id.values() if w.data_item.has_preview_changes())
         return f"{change_count} annotation(s) with preview changes" if change_count else "No preview changes"
 
     def apply_preview_changes_permanently(self):
-        """Apply all preview changes permanently to the annotation data."""
+        """Apply preview changes permanently."""
         applied_annotations = []
         for widget in self.annotation_widgets_by_id.values():
             if widget.data_item.apply_preview_permanently():
@@ -926,6 +1048,7 @@ class AnnotationViewer(QScrollArea):
 
 class ExplorerWindow(QMainWindow):
     def __init__(self, main_window, parent=None):
+        """Initialize the ExplorerWindow."""
         super(ExplorerWindow, self).__init__(parent)
         self.main_window = main_window
         self.image_window = main_window.image_window
@@ -971,28 +1094,43 @@ class ExplorerWindow(QMainWindow):
         self.apply_button.setEnabled(False)
 
     def showEvent(self, event):
+        """Handle show event."""
         if not self._ui_initialized:
             self.setup_ui()
             self._ui_initialized = True
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
-        """Handles the window close event and cleans up resources."""
+        """Handle close event."""
+        # Stop any running timers to prevent errors
         if hasattr(self, 'embedding_viewer') and self.embedding_viewer:
             if hasattr(self.embedding_viewer, 'animation_timer') and self.embedding_viewer.animation_timer:
                 self.embedding_viewer.animation_timer.stop()
-        if hasattr(self, 'annotation_viewer'):
-            self.annotation_viewer.clear_preview_states()
+
+        # Call the main cancellation method to revert any pending changes
+        self.clear_preview_changes()
+
+        # --- NEW: Call the dedicated cleanup method ---
         self._cleanup_resources()
+
+        # Re-enable the main window before closing
         if self.main_window:
             self.main_window.setEnabled(True)
+
+        # Move the label_window back to the main_window
         if hasattr(self.main_window, 'explorer_closed'):
             self.main_window.explorer_closed()
+
+        # Clear the reference in the main_window to allow garbage collection
         self.main_window.explorer_window = None
+
+        # Set the ui_initialized flag to False so it can be re-initialized next time
         self._ui_initialized = False
+
         event.accept()
 
     def setup_ui(self):
+        """Set up the UI for the ExplorerWindow."""
         while self.main_layout.count():
             child = self.main_layout.takeAt(0)
             if child.widget():
@@ -1356,10 +1494,19 @@ class ExplorerWindow(QMainWindow):
             self.update_button_states()
 
     def clear_preview_changes(self):
-        """Clear all preview changes and revert to original labels."""
+        """
+        Clears all preview changes in both viewers, including label changes
+        and items marked for deletion.
+        """
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
-            self.update_button_states()
+
+        if hasattr(self, 'embedding_viewer'):
+            self.embedding_viewer.refresh_points()
+
+        # After reverting all changes, update the button states
+        self.update_button_states()
+        print("Cleared all pending changes.")
 
     def update_button_states(self):
         """Update the state of Clear Preview and Apply buttons."""
@@ -1371,33 +1518,61 @@ class ExplorerWindow(QMainWindow):
         self.apply_button.setToolTip(f"Apply changes - {summary}")
 
     def apply(self):
-        """Apply any modifications to the actual annotations."""
+        """
+        Apply all pending changes, including label modifications and deletions,
+        to the main application's data.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            applied_annotations = self.annotation_viewer.apply_preview_changes_permanently()
-            if applied_annotations:
-                changed_ids = {ann.id for ann in applied_annotations}
-                for item in self.current_data_items:
-                    if item.annotation.id in changed_ids:
-                        widget = self.annotation_viewer.annotation_widgets_by_id.get(item.annotation.id)
-                        if widget: widget.update()
-                        point = self.embedding_viewer.points_by_id.get(item.annotation.id)
-                        if point: point.update()
-                if self.annotation_viewer.sort_combo.currentText() == "Label":
-                    self.annotation_viewer.recalculate_widget_positions()
-                affected_images = {ann.image_path for ann in applied_annotations}
-                for image_path in affected_images:
-                    self.image_window.update_image_annotations(image_path)
-                self.annotation_window.load_annotations()
-                self.annotation_viewer.clear_selection()
-                self.embedding_viewer.render_selection_from_ids(set())
-                self.update_label_window_selection()
-                self.update_button_states()
+            # Separate items into those to be deleted and those to be kept
+            items_to_delete = [item for item in self.current_data_items if item.is_marked_for_deletion()]
+            items_to_keep = [item for item in self.current_data_items if not item.is_marked_for_deletion()]
+
+            # --- 1. Process Deletions ---
+            deleted_annotations = []
+            if items_to_delete:
+                deleted_annotations = [item.annotation for item in items_to_delete]
+                print(f"Permanently deleting {len(deleted_annotations)} annotation(s).")
+                self.annotation_window.delete_annotations(deleted_annotations)
+
+            # --- 2. Process Label Changes on remaining items ---
+            applied_label_changes = []
+            for item in items_to_keep:
+                if item.apply_preview_permanently():
+                    applied_label_changes.append(item.annotation)
+
+            # --- 3. Update UI if any changes were made ---
+            if not deleted_annotations and not applied_label_changes:
+                print("No pending changes to apply.")
+                return
+
+            # Update the Explorer's internal list of data items
+            self.current_data_items = items_to_keep
+
+            # Update the main application's data and UI
+            all_affected_annotations = deleted_annotations + applied_label_changes
+            affected_images = {ann.image_path for ann in all_affected_annotations}
+            for image_path in affected_images:
+                self.image_window.update_image_annotations(image_path)
+            self.annotation_window.load_annotations()
+
+            # Refresh the annotation viewer since its underlying data has changed
+            self.annotation_viewer.update_annotations(self.current_data_items)
+
+            # Reset selections and button states
+            self.embedding_viewer.render_selection_from_ids(set())
+            self.update_label_window_selection()
+            self.update_button_states()
+
+            print(f"Applied changes successfully.")
+
+        except Exception as e:
+            print(f"Error applying modifications: {e}")
         finally:
             QApplication.restoreOverrideCursor()
 
     def _cleanup_resources(self):
-        """Clean up heavy resources like the loaded model and clear GPU cache."""
+        """Clean up resources."""
         self.loaded_model = None
         self.model_path = ""
         self.current_features = None

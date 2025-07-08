@@ -72,11 +72,22 @@ class GlobalEventFilter(QObject):
                     self.annotation_window.cycle_annotations(1)
                     return True
                 
-                # Delete (backspace or delete key) selected annotations when select tool is active
-                if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
-                    if self.main_window.select_tool_action.isChecked():
-                        if self.annotation_window.selected_annotations:
-                            self.annotation_window.delete_selected_annotations()
+            # Delete (backspace or delete key) selected annotations when select tool is active
+            if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+
+                # First, check if the Explorer window exists and is the active window
+                if (self.main_window.explorer_window and 
+                    self.main_window.explorer_window.isActiveWindow()):
+                    
+                    # If it is, let the Explorer handle its own key press events.
+                    # Returning False passes the event along instead of consuming it.
+                    return False
+
+                # If Explorer is not active, proceed with the original logic for the main window
+                if self.main_window.select_tool_action.isChecked():
+                    if self.annotation_window.selected_annotations:
+                        self.annotation_window.delete_selected_annotations()
+                    # Consume the event so it doesn't do anything else
                     return True
                 
             # Handle image cycling hotkeys

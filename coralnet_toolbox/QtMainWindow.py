@@ -1632,17 +1632,6 @@ class MainWindow(QMainWindow):
                                 "No annotations are present in the project.")
             return
         
-        # Explain to user this is experimental, ask if they want to proceed
-        reply = QMessageBox.question(self, 
-                                     "Experimental Feature",
-                                     "The Explorer window is an experimental feature.\n"
-                                     "Do you want to proceed anyway?",
-                                     QMessageBox.Yes | QMessageBox.No,
-                                     QMessageBox.No)
-
-        if reply == QMessageBox.No:
-            return
-
         try:
             self.untoggle_all_tools()
             # Recreate the explorer window, passing the main window instance
