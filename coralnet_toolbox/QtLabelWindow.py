@@ -395,23 +395,35 @@ class LabelWindow(QWidget):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
         
-        # Check if we're in Explorer mode and get Explorer selections
-        explorer_selected_count = 0
+        # Check if we're in Explorer mode
         if (hasattr(self.main_window, 'explorer_window') and 
             self.main_window.explorer_window and 
             hasattr(self.main_window.explorer_window, 'annotation_viewer')):
-            explorer_selected_count = len(self.main_window.explorer_window.annotation_viewer.selected_widgets)
+            
+            annotation_viewer = self.main_window.explorer_window.annotation_viewer
+
+            # --- REORDERED LOGIC ---
+            # Priority 1: Always check for a selection in Explorer first.
+            explorer_selected_count = len(annotation_viewer.selected_widgets)
+            if explorer_selected_count > 0:
+                if explorer_selected_count == 1:
+                    text = "Annotation: 1"
+                else:
+                    text = f"Annotations: {explorer_selected_count}"
+                self.annotation_count_display.setText(text)
+                return  # Exit early, selection count is most important.
+
+            # Priority 2: If no selection, THEN check for isolation mode.
+            if annotation_viewer.isolated_mode:
+                count = len(annotation_viewer.isolated_widgets)
+                text = f"Annotations: {count}"
+                self.annotation_count_display.setText(text)
+                return  # Exit early
         
-        # Get annotation window selections
+        # --- ORIGINAL FALLBACK LOGIC (Unchanged) ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
         
-        # Prioritize Explorer selections if Explorer is open
-        if explorer_selected_count > 0:
-            if explorer_selected_count == 1:
-                text = f"Annotation: 1"
-            else:
-                text = f"Annotations: {explorer_selected_count}"
-        elif annotation_window_selected_count == 0:
+        if annotation_window_selected_count == 0:
             text = f"Annotations: {len(annotations)}"
         elif annotation_window_selected_count > 1:
             text = f"Annotations: {annotation_window_selected_count}"
