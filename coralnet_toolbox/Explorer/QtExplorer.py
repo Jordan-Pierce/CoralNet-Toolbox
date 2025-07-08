@@ -692,7 +692,8 @@ class AnnotationViewer(QScrollArea):
             super().mouseMoveEvent(event)
             return
         distance = (event.pos() - self.rubber_band_origin).manhattanLength()
-        if distance < self.drag_threshold: return
+        if distance < self.drag_threshold: 
+            return
         if not self.rubber_band:
             self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
         rect = QRect(self.rubber_band_origin, event.pos()).normalized()
@@ -755,7 +756,8 @@ class AnnotationViewer(QScrollArea):
                         except ValueError: continue
                 if last_selected_widget:
                     last_selected_index_in_current_list = widget_list.index(last_selected_widget)
-                    start, end = min(last_selected_index_in_current_list, widget_index), max(last_selected_index_in_current_list, widget_index)
+                    start = min(last_selected_index_in_current_list, widget_index)
+                    end = max(last_selected_index_in_current_list, widget_index)
                 else:
                     start, end = widget_index, widget_index
                 for i in range(start, end + 1):
@@ -767,43 +769,57 @@ class AnnotationViewer(QScrollArea):
                 self.last_selected_index = widget_index
         elif modifiers == Qt.ControlModifier:
             if widget.is_selected():
-                if self.deselect_widget(widget): changed_ids.append(widget.data_item.annotation.id)
+                if self.deselect_widget(widget): 
+                    changed_ids.append(widget.data_item.annotation.id)
             else:
-                if self.select_widget(widget): changed_ids.append(widget.data_item.annotation.id)
+                if self.select_widget(widget): 
+                    changed_ids.append(widget.data_item.annotation.id)
             self.last_selected_index = widget_index
         else:
             newly_selected_id = widget.data_item.annotation.id
             for w in list(self.selected_widgets):
                 if w.data_item.annotation.id != newly_selected_id:
-                    if self.deselect_widget(w): changed_ids.append(w.data_item.annotation.id)
-            if self.select_widget(widget): changed_ids.append(newly_selected_id)
+                    if self.deselect_widget(w): 
+                        changed_ids.append(w.data_item.annotation.id)
+                        
+            if self.select_widget(widget): 
+                changed_ids.append(newly_selected_id)
+                
             self.last_selected_index = widget_index
-        if self.isolated_mode: self._update_isolation()
-        if changed_ids: self.selection_changed.emit(changed_ids)
+            
+        if self.isolated_mode: 
+            self._update_isolation()
+            
+        if changed_ids: 
+            self.selection_changed.emit(changed_ids)
 
     def _update_isolation(self):
         """Update the isolated view to show only currently selected widgets."""
-        if not self.isolated_mode: return
+        if not self.isolated_mode: 
+            return
+        
         if self.selected_widgets:
             self.isolated_widgets.update(self.selected_widgets)
             self.setUpdatesEnabled(False)
             try:
                 for widget in self.annotation_widgets_by_id.values():
-                    if widget not in self.isolated_widgets: widget.hide()
-                    else: widget.show()
+                    if widget not in self.isolated_widgets: 
+                        widget.hide()
+                    else: 
+                        widget.show()
                 self.recalculate_widget_positions()
+                
             finally:
                 self.setUpdatesEnabled(True)
 
     def select_widget(self, widget):
         """Selects a widget, updates its data_item, and returns True if state changed."""
-        if not widget.is_selected(): # is_selected() checks the data_item
+        if not widget.is_selected():  # is_selected() checks the data_item
             # 1. Controller modifies the state on the data item
             widget.data_item.set_selected(True)
             # 2. Controller tells the view to update its appearance
             widget.update_selection_visuals()
             self.selected_widgets.append(widget)
-            self.update_label_window_selection()
             self._update_toolbar_state()
             return True
         return False
@@ -817,7 +833,6 @@ class AnnotationViewer(QScrollArea):
             widget.update_selection_visuals()
             if widget in self.selected_widgets:
                 self.selected_widgets.remove(widget)
-            self.update_label_window_selection()
             self._update_toolbar_state()
             return True
         return False
@@ -827,33 +842,9 @@ class AnnotationViewer(QScrollArea):
         for widget in list(self.selected_widgets):
             # This will internally call deselect_widget, which is fine
             self.deselect_widget(widget)
+            
         self.selected_widgets.clear()
-        self.update_label_window_selection()
         self._update_toolbar_state()
-
-    def update_label_window_selection(self):
-        """Update the label window selection based on currently selected annotations."""
-        explorer_window = self.parent()
-        while explorer_window and not hasattr(explorer_window, 'main_window'):
-            explorer_window = explorer_window.parent()
-        if not explorer_window or not hasattr(explorer_window, 'main_window'): return
-        main_window = explorer_window.main_window
-        label_window = main_window.label_window
-        annotation_window = main_window.annotation_window
-        if not self.selected_widgets:
-            label_window.deselect_active_label()
-            label_window.update_annotation_count()
-            return
-        selected_data_items = [widget.data_item for widget in self.selected_widgets]
-        first_effective_label = selected_data_items[0].effective_label
-        all_same_current_label = all(item.effective_label.id == first_effective_label.id for item in selected_data_items)
-        if all_same_current_label:
-            label_window.set_active_label(first_effective_label)
-            if not selected_data_items[0].has_preview_changes():
-                annotation_window.labelSelected.emit(first_effective_label.id)
-        else:
-            label_window.deselect_active_label()
-        label_window.update_annotation_count()
 
     def get_selected_annotations(self):
         """Get the annotations corresponding to selected widgets."""
@@ -880,19 +871,22 @@ class AnnotationViewer(QScrollArea):
                 self.recalculate_widget_positions()
         finally:
             self.setUpdatesEnabled(True)
-        self.update_label_window_selection()
         self._update_toolbar_state()
 
     def apply_preview_label_to_selected(self, preview_label):
         """Apply a preview label and emit a signal for the embedding view to update."""
-        if not self.selected_widgets or not preview_label: return
+        if not self.selected_widgets or not preview_label: 
+            return
         changed_ids = []
         for widget in self.selected_widgets:
             widget.data_item.set_preview_label(preview_label)
-            widget.update() # Force repaint with new color
+            widget.update()  # Force repaint with new color
             changed_ids.append(widget.data_item.annotation.id)
-        if self.sort_combo.currentText() == "Label": self.recalculate_widget_positions()
-        if changed_ids: self.preview_changed.emit(changed_ids)
+            
+        if self.sort_combo.currentText() == "Label": 
+            self.recalculate_widget_positions()
+        if changed_ids: 
+            self.preview_changed.emit(changed_ids)
 
     def clear_preview_states(self):
         """Clear all preview states and revert to original labels."""
@@ -900,11 +894,12 @@ class AnnotationViewer(QScrollArea):
         for widget in self.annotation_widgets_by_id.values():
             if widget.data_item.has_preview_changes():
                 widget.data_item.clear_preview_label()
-                widget.update() # Repaint to show original color
+                widget.update()  # Repaint to show original color
                 something_cleared = True
+                
         if something_cleared:
-            if self.sort_combo.currentText() == "Label": self.recalculate_widget_positions()
-            self.update_label_window_selection()
+            if self.sort_combo.currentText() == "Label": 
+                self.recalculate_widget_positions()
 
     def has_preview_changes(self):
         """Check if there are any pending preview changes."""
@@ -1058,16 +1053,24 @@ class ExplorerWindow(QMainWindow):
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
         if self.embedding_viewer.points_by_id:
             self.embedding_viewer.render_selection_from_ids(all_selected_ids)
+        
+        # Call the new centralized method
         self.update_label_window_selection()
 
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """Syncs selection from EmbeddingViewer to AnnotationViewer."""
-        was_empty_selection = not self.annotation_viewer.selected_widgets
-        is_new_selection = bool(all_selected_ann_ids)
         self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
-        if was_empty_selection and is_new_selection and not self.annotation_viewer.isolated_mode:
+        
+        # Auto-switch to isolation mode (this logic can stay)
+        was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
+        is_new_selection = len(all_selected_ann_ids) > 0
+        if (was_empty_selection and 
+            is_new_selection and 
+            not self.annotation_viewer.isolated_mode):
             self.annotation_viewer.isolate_selection()
+        
+        # Call the new centralized method
         self.update_label_window_selection()
 
     @pyqtSlot(list)
@@ -1088,8 +1091,34 @@ class ExplorerWindow(QMainWindow):
         self.update_button_states()
 
     def update_label_window_selection(self):
-        """Updates the label window based on the current selection."""
-        self.annotation_viewer.update_label_window_selection()
+        """
+        Updates the label window based on the selection state of the currently
+        loaded data items. This is the single, centralized point of logic.
+        """
+        # Get selected items directly from the master data list
+        selected_data_items = [
+            item for item in self.current_data_items if item.is_selected
+        ]
+
+        if not selected_data_items:
+            self.label_window.deselect_active_label()
+            self.label_window.update_annotation_count()
+            return
+
+        first_effective_label = selected_data_items[0].effective_label
+        all_same_current_label = all(
+            item.effective_label.id == first_effective_label.id 
+            for item in selected_data_items
+        )
+
+        if all_same_current_label:
+            self.label_window.set_active_label(first_effective_label)
+            # This emit is what updates other UI elements, like the annotation list
+            self.annotation_window.labelSelected.emit(first_effective_label.id)
+        else:
+            self.label_window.deselect_active_label()
+
+        self.label_window.update_annotation_count()
 
     def get_filtered_data_items(self):
         """Gets annotations matching all conditions as AnnotationDataItem objects."""
