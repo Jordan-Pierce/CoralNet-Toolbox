@@ -734,7 +734,8 @@ class AnnotationViewer(QScrollArea):
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes."""
-        widget_list = [w for w in self.annotation_widgets_by_id.values() if not w.isHidden()] if self.isolated_mode else list(self.annotation_widgets_by_id.values())
+        widget_list = [w for w in self._get_sorted_widgets() if not w.isHidden()]
+
         try:
             widget_index = widget_list.index(widget)
         except ValueError:
