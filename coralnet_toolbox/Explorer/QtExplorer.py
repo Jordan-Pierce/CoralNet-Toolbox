@@ -103,6 +103,7 @@ class EmbeddingViewer(QWidget):
         """Set up the UI with header layout and graphics view."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        
         header_layout = QHBoxLayout()
         self.home_button = QPushButton("Home")
         self.home_button.setToolTip("Reset view to fit all points")
@@ -116,6 +117,7 @@ class EmbeddingViewer(QWidget):
         )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
+        
         layout.addWidget(self.placeholder_label)
         self.show_placeholder()
 
@@ -215,7 +217,7 @@ class EmbeddingViewer(QWidget):
                 is_currently_selected = item_at_pos.data_item.is_selected
                 item_at_pos.data_item.set_selected(not is_currently_selected)
                 item_at_pos.setSelected(not is_currently_selected)  # Keep scene selection in sync
-                self.on_selection_changed() # Manually trigger update
+                self.on_selection_changed()  # Manually trigger update
                 return
 
             self.selection_at_press = set(self.graphics_scene.selectedItems())
@@ -247,21 +249,28 @@ class EmbeddingViewer(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move for dynamic selection and panning."""
         if self.rubber_band:
+            # Update the rubber band rectangle as the mouse moves
             current_pos = self.graphics_view.mapToScene(event.pos())
             self.rubber_band.setRect(QRectF(self.rubber_band_origin, current_pos).normalized())
+            # Create a selection path from the rubber band rectangle
             path = QPainterPath()
             path.addRect(self.rubber_band.rect())
+            # Block signals to avoid recursive selectionChanged events
             self.graphics_scene.blockSignals(True)
             self.graphics_scene.setSelectionArea(path)
+            # Restore selection for items that were already selected at press
             if self.selection_at_press:
                 for item in self.selection_at_press:
                     item.setSelected(True)
             self.graphics_scene.blockSignals(False)
+            # Manually trigger selection changed logic
             self.on_selection_changed()
         elif event.buttons() == Qt.RightButton:
+            # Forward right-drag as left-drag for panning
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
         else:
+            # Default mouse move handling
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
 
     def mouseReleaseEvent(self, event):
@@ -282,12 +291,24 @@ class EmbeddingViewer(QWidget):
         """Handle mouse wheel for zooming."""
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
+
+        # Set anchor points so zoom occurs at mouse position
         self.graphics_view.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.graphics_view.setResizeAnchor(QGraphicsView.NoAnchor)
+
+        # Get the scene position before zooming
         old_pos = self.graphics_view.mapToScene(event.pos())
+
+        # Determine zoom direction
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
+
+        # Apply zoom
         self.graphics_view.scale(zoom_factor, zoom_factor)
+
+        # Get the scene position after zooming
         new_pos = self.graphics_view.mapToScene(event.pos())
+
+        # Translate view to keep mouse position stable
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
 

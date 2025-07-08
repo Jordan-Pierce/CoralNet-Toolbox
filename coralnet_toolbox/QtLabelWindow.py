@@ -402,14 +402,8 @@ class LabelWindow(QWidget):
             
             annotation_viewer = self.main_window.explorer_window.annotation_viewer
 
-            # Prioritize the isolation mode count if it's active.
-            if annotation_viewer.isolated_mode:
-                count = len(annotation_viewer.isolated_widgets)
-                text = f"Annotations: {count}"
-                self.annotation_count_display.setText(text)
-                return  # Exit early, as this count takes precedence
-
-            # If not in isolation mode, use the selection count.
+            # --- REORDERED LOGIC ---
+            # Priority 1: Always check for a selection in Explorer first.
             explorer_selected_count = len(annotation_viewer.selected_widgets)
             if explorer_selected_count > 0:
                 if explorer_selected_count == 1:
@@ -417,9 +411,16 @@ class LabelWindow(QWidget):
                 else:
                     text = f"Annotations: {explorer_selected_count}"
                 self.annotation_count_display.setText(text)
+                return  # Exit early, selection count is most important.
+
+            # Priority 2: If no selection, THEN check for isolation mode.
+            if annotation_viewer.isolated_mode:
+                count = len(annotation_viewer.isolated_widgets)
+                text = f"Annotations: {count}"
+                self.annotation_count_display.setText(text)
                 return  # Exit early
         
-        # Get annotation window selections if Explorer isn't active or has no selection.
+        # --- ORIGINAL FALLBACK LOGIC (Unchanged) ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
         
         if annotation_window_selected_count == 0:
