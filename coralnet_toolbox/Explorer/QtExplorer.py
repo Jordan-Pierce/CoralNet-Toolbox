@@ -21,12 +21,12 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QGraphicsRectItem, QRubberBand, QStyleOptionGraphicsItem,
                              QTabWidget, QLineEdit, QFileDialog)
 
-from .QtAnnotationDataItem import AnnotationDataItem
-from .QtEmbeddingPointItem import EmbeddingPointItem
-from .QtAnnotationImageWidget import AnnotationImageWidget
-from .QtSettingsWidgets import ModelSettingsWidget
-from .QtSettingsWidgets import EmbeddingSettingsWidget
-from .QtSettingsWidgets import AnnotationSettingsWidget
+from coralnet_toolbox.Explorer.QtAnnotationDataItem import AnnotationDataItem
+from coralnet_toolbox.Explorer.QtEmbeddingPointItem import EmbeddingPointItem
+from coralnet_toolbox.Explorer.QtAnnotationImageWidget import AnnotationImageWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -1253,6 +1253,9 @@ class ExplorerWindow(QMainWindow):
         self.current_features = None
         self.current_feature_generating_model = ""
 
+        # Track if UI has been initialized
+        self._ui_initialized = False
+
         self.setWindowTitle("Explorer")
         # Set the window icon
         explorer_icon_path = get_icon("magic.png")
@@ -1266,12 +1269,12 @@ class ExplorerWindow(QMainWindow):
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
 
-        # Create widgets in __init__ so they're always available
-        self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
-        self.model_settings_widget = ModelSettingsWidget(self.main_window, self)
-        self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
-        self.annotation_viewer = AnnotationViewer(self) 
-        self.embedding_viewer = EmbeddingViewer(self)
+        # Initialize widget references to None - they'll be created in setup_ui()
+        self.annotation_settings_widget = None
+        self.model_settings_widget = None
+        self.embedding_settings_widget = None
+        self.annotation_viewer = None
+        self.embedding_viewer = None
 
         # Create buttons
         self.clear_preview_button = QPushButton('Clear Preview', self)
@@ -1289,7 +1292,10 @@ class ExplorerWindow(QMainWindow):
         self.apply_button.setEnabled(False)  # Initially disabled
 
     def showEvent(self, event):
-        self.setup_ui()
+        # Only setup UI on first show, not on every restore from minimize
+        if not self._ui_initialized:
+            self.setup_ui()
+            self._ui_initialized = True
         super(ExplorerWindow, self).showEvent(event)
 
     def closeEvent(self, event):
@@ -1320,6 +1326,9 @@ class ExplorerWindow(QMainWindow):
         # Clear the reference in the main_window to allow garbage collection
         self.main_window.explorer_window = None
         
+        # Set the ui_initialized flag to False so it can be re-initialized next time
+        self._ui_initialized = False
+        
         event.accept()
 
     def setup_ui(self):
@@ -1328,6 +1337,18 @@ class ExplorerWindow(QMainWindow):
             child = self.main_layout.takeAt(0)
             if child.widget():
                 child.widget().setParent(None)  # Remove from layout but don't delete
+
+        # Create widgets if they don't exist or have been deleted
+        if self.annotation_settings_widget is None or not self.annotation_settings_widget:
+            self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
+        if self.model_settings_widget is None or not self.model_settings_widget:
+            self.model_settings_widget = ModelSettingsWidget(self.main_window, self)
+        if self.embedding_settings_widget is None or not self.embedding_settings_widget:
+            self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
+        if self.annotation_viewer is None or not self.annotation_viewer:
+            self.annotation_viewer = AnnotationViewer(self)
+        if self.embedding_viewer is None or not self.embedding_viewer:
+            self.embedding_viewer = EmbeddingViewer(self)
 
         # Top section: Conditions and Settings side by side
         top_layout = QHBoxLayout()
