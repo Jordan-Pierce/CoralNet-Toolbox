@@ -1060,17 +1060,19 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """Syncs selection from EmbeddingViewer to AnnotationViewer."""
-        self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
-        
-        # Auto-switch to isolation mode (this logic can stay)
+        # Check the state BEFORE the selection is changed
         was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
+
+        # Now, update the selection in the annotation viewer
+        self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
+
+        # The rest of the logic now works correctly
         is_new_selection = len(all_selected_ann_ids) > 0
-        if (was_empty_selection and 
-            is_new_selection and 
+        if (was_empty_selection and
+            is_new_selection and
             not self.annotation_viewer.isolated_mode):
             self.annotation_viewer.isolate_selection()
-        
-        # Call the new centralized method
+
         self.update_label_window_selection()
 
     @pyqtSlot(list)
@@ -1083,12 +1085,19 @@ class ExplorerWindow(QMainWindow):
 
     @pyqtSlot()
     def on_reset_view_requested(self):
-        """Handles reset view requests from either viewer."""
+        """Handle reset view requests from double-click in either viewer."""
+        # Clear all selections in both viewers
         self.annotation_viewer.clear_selection()
         self.embedding_viewer.render_selection_from_ids(set())
+
+        # Exit isolation mode if currently active
         if self.annotation_viewer.isolated_mode:
             self.annotation_viewer.show_all_annotations()
+
+        self.update_label_window_selection() 
         self.update_button_states()
+
+        print("Reset view: cleared selections and exited isolation mode")
 
     def update_label_window_selection(self):
         """
@@ -1164,10 +1173,14 @@ class ExplorerWindow(QMainWindow):
                 progress_bar.update_progress()
         finally:
             progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def _extract_color_features(self, data_items, progress_bar=None, bins=32):
         """Extracts color-based features from annotation crops."""
-        if progress_bar: progress_bar.set_title("Extracting features..."); progress_bar.start_progress(len(data_items))
+        if progress_bar: 
+            progress_bar.set_title("Extracting features...") 
+            progress_bar.start_progress(len(data_items))
         features, valid_data_items = [], []
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
@@ -1187,7 +1200,8 @@ class ExplorerWindow(QMainWindow):
                 current_features = np.concatenate([mean_color, std_color, skew_color, kurt_color, *histograms, grayscale_stats, geometric_features])
                 features.append(current_features)
                 valid_data_items.append(item)
-            if progress_bar: progress_bar.update_progress()
+            if progress_bar: 
+                progress_bar.update_progress()
         return np.array(features), valid_data_items
 
     def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
@@ -1204,20 +1218,27 @@ class ExplorerWindow(QMainWindow):
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
                 return np.array([]), []
 
-        if progress_bar: progress_bar.set_title("Preparing images..."); progress_bar.start_progress(len(data_items))
+        if progress_bar: 
+            progress_bar.set_title("Preparing images...")
+            progress_bar.start_progress(len(data_items))
+            
         image_list, valid_data_items = [], []
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
                 image_list.append(pixmap_to_numpy(pixmap))
                 valid_data_items.append(item)
-            if progress_bar: progress_bar.update_progress()
-        if not valid_data_items: return np.array([]), []
+            if progress_bar: 
+                progress_bar.update_progress()
+        if not valid_data_items: 
+            return np.array([]), []
 
         kwargs = {'stream': True, 'imgsz': self.imgsz, 'half': True, 'device': self.device, 'verbose': False}
         results_generator = self.loaded_model.embed(image_list, **kwargs) if feature_mode == "Embed Features" else self.loaded_model.predict(image_list, **kwargs)
         embeddings_list = []
-        if progress_bar: progress_bar.set_title("Extracting features..."); progress_bar.start_progress(len(valid_data_items))
+        if progress_bar: 
+            progress_bar.set_title("Extracting features...")
+            progress_bar.start_progress(len(valid_data_items))
         try:
             for i, result in enumerate(results_generator):
                 if feature_mode == "Embed Features":
@@ -1226,7 +1247,8 @@ class ExplorerWindow(QMainWindow):
                     embeddings_list.append(result.probs.data.cpu().numpy().squeeze())
                 else:
                     raise TypeError(f"Model '{os.path.basename(model_name)}' did not return expected output for '{feature_mode}' mode.")
-                if progress_bar: progress_bar.update_progress()
+                if progress_bar: 
+                    progress_bar.update_progress()
         finally:
             if torch.cuda.is_available(): torch.cuda.empty_cache()
         return np.array(embeddings_list), valid_data_items
@@ -1312,6 +1334,8 @@ class ExplorerWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def refresh_filters(self):
         """Refresh display: filter data and update annotation viewer."""
@@ -1367,6 +1391,7 @@ class ExplorerWindow(QMainWindow):
                 self.annotation_window.load_annotations()
                 self.annotation_viewer.clear_selection()
                 self.embedding_viewer.render_selection_from_ids(set())
+                self.update_label_window_selection()
                 self.update_button_states()
         finally:
             QApplication.restoreOverrideCursor()
