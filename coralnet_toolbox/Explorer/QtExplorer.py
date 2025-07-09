@@ -1677,8 +1677,10 @@ class ExplorerWindow(QMainWindow):
                 
                 neighbor_labels = []
                 for n_idx in neighbor_faiss_indices:
+                    # THIS IS THE CORRECTED LOGIC
                     if n_idx in faiss_idx_to_ann_id:
                         neighbor_ann_id = faiss_idx_to_ann_id[n_idx]
+                        # ADD THIS CHECK to ensure the neighbor hasn't been deleted
                         if neighbor_ann_id in self.data_item_cache:
                             neighbor_labels.append(self.data_item_cache[neighbor_ann_id].effective_label.id)
 
