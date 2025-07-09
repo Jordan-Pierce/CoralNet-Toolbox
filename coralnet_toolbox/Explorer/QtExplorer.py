@@ -703,8 +703,11 @@ class AnnotationViewer(QScrollArea):
 
         self.content_widget.setUpdatesEnabled(False)
         try:
+            # Only show widgets that are NOT marked for deletion.
             for widget in self.annotation_widgets_by_id.values():
-                widget.show()
+                if not widget.data_item.is_marked_for_deletion():
+                    widget.show()
+            
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
