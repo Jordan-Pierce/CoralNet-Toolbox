@@ -1,5 +1,3 @@
-# In QtFeatureStore.py
-
 import os
 import glob
 import sqlite3
@@ -135,6 +133,14 @@ class FeatureStore:
                 not_found_items.append(item)
 
         return found_features, not_found_items
+
+    def get_faiss_index_to_annotation_id_map(self, model_key):
+        """
+        Retrieves a mapping from FAISS row index to annotation_id for a given model.
+        """
+        query = "SELECT faiss_index, annotation_id FROM features WHERE model_key = ?"
+        self.cursor.execute(query, (model_key,))
+        return {faiss_idx: ann_id for faiss_idx, ann_id in self.cursor.fetchall()}
 
     def save_faiss_index(self, model_key):
         """Saves a specific FAISS index to disk."""

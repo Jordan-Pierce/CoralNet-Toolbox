@@ -1,6 +1,7 @@
 import warnings
 
 import os
+import collections
 
 import numpy as np
 import torch
@@ -15,7 +16,7 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignal
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
-                             QMainWindow, QSplitter, QGroupBox, QSlider,
+                             QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
                              QApplication, QGraphicsRectItem, QRubberBand)
 
 from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
@@ -59,6 +60,7 @@ class EmbeddingViewer(QWidget):
     """Custom QGraphicsView for interactive embedding visualization with an isolate mode."""
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
+    find_mislabels_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -120,6 +122,14 @@ class EmbeddingViewer(QWidget):
         self.show_all_button.clicked.connect(self.show_all_points)
         header_layout.addWidget(self.show_all_button)
 
+        # Mislabel detection button
+        self.find_mislabels_button = QPushButton("Find Potential Mislabels")
+        self.find_mislabels_button.setToolTip(
+            "Find points whose label differs from the majority of its neighbors in feature space"
+        )
+        self.find_mislabels_button.clicked.connect(self.find_mislabels_requested.emit)
+        header_layout.addWidget(self.find_mislabels_button)
+
         header_layout.addStretch()
         layout.addLayout(header_layout)
         layout.addWidget(self.graphics_view)
@@ -173,6 +183,9 @@ class EmbeddingViewer(QWidget):
     def _update_toolbar_state(self):
         """Updates toolbar buttons based on selection and isolation mode."""
         selection_exists = bool(self.graphics_scene.selectedItems())
+        points_exist = bool(self.points_by_id)
+
+        self.find_mislabels_button.setEnabled(points_exist)
 
         if self.isolated_mode:
             self.isolate_button.hide()
@@ -191,7 +204,8 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
-        
+        self.find_mislabels_button.setEnabled(False)
+
         self.isolate_button.show()
         self.isolate_button.setEnabled(False)  # Keep it visible but disabled
         self.show_all_button.hide()
@@ -1380,6 +1394,7 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
         self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
+        self.embedding_viewer.find_mislabels_requested.connect(self.find_potential_mislabels)
 
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
@@ -1507,6 +1522,83 @@ class ExplorerWindow(QMainWindow):
         self._ensure_cropped_images(annotations_to_process)
         
         return [self.data_item_cache[ann.id] for ann in annotations_to_process if ann.id in self.data_item_cache]
+    
+    def find_potential_mislabels(self):
+        """
+        Identifies annotations whose label does not match the majority of its
+        k-nearest neighbors in the high-dimensional feature space.
+        """
+        K = 5  # Number of neighbors to check
+        if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < K:
+            QMessageBox.information(self, 
+                                    "Not Enough Data",
+                                    f"This feature requires at least {K} points in the embedding viewer.")
+            return
+
+        items_in_view = list(self.embedding_viewer.points_by_id.values())
+        data_items_in_view = [p.data_item for p in items_in_view]
+
+        # Get the model key used for the current embedding
+        model_info = self.model_settings_widget.get_selected_model()
+        model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        # FIX: Also replace the forward slash to handle "N/A"
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Get the FAISS index and the mapping from index to annotation ID
+            index = self.feature_store._get_or_load_index(model_key)
+            faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            if index is None or not faiss_idx_to_ann_id:
+                QMessageBox.warning(self, 
+                                    "Error", 
+                                    "Could not find a valid feature index for the current model.")
+                return
+
+            # Get the high-dimensional features for the points in the current view
+            features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
+            if not features_dict:
+                QMessageBox.warning(self, 
+                                    "Error", 
+                                    "Could not retrieve features for the items in view.")
+                return
+
+            query_ann_ids = list(features_dict.keys())
+            query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
+
+            # Perform k-NN search. We search for K+1 because the point itself will be the first result.
+            _, I = index.search(query_vectors, K + 1)
+
+            mislabeled_ann_ids = []
+            for i, ann_id in enumerate(query_ann_ids):
+                current_label = self.data_item_cache[ann_id].effective_label.id
+                
+                # Get neighbor labels, ignoring the first result (the point itself)
+                neighbor_faiss_indices = I[i][1:]
+                
+                neighbor_labels = []
+                for n_idx in neighbor_faiss_indices:
+                    if n_idx in faiss_idx_to_ann_id:
+                        neighbor_ann_id = faiss_idx_to_ann_id[n_idx]
+                        if neighbor_ann_id in self.data_item_cache:
+                            neighbor_labels.append(self.data_item_cache[neighbor_ann_id].effective_label.id)
+
+                if not neighbor_labels:
+                    continue
+
+                # Find the majority label among neighbors
+                majority_label = collections.Counter(neighbor_labels).most_common(1)[0][0]
+
+                if current_label != majority_label:
+                    mislabeled_ann_ids.append(ann_id)
+            
+            # Select the flagged points in the viewer
+            self.embedding_viewer.render_selection_from_ids(set(mislabeled_ann_ids))
+
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _ensure_cropped_images(self, annotations):
         """Ensures all provided annotations have a cropped image available."""
@@ -1805,7 +1897,6 @@ class ExplorerWindow(QMainWindow):
         model_info = self.model_settings_widget.get_selected_model()
         selected_model, selected_feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
 
-        # --- MODIFIED: Sanitize model_key for valid filenames ---
         # If the model name is a path, use only its base name.
         if os.path.sep in selected_model or '/' in selected_model:
             sanitized_model_name = os.path.basename(selected_model)
@@ -1814,10 +1905,10 @@ class ExplorerWindow(QMainWindow):
 
         # Replace characters that might be problematic in filenames
         sanitized_model_name = sanitized_model_name.replace(' ', '_')
-        sanitized_feature_mode = selected_feature_mode.replace(' ', '_')
+        # Also replace the forward slash to handle "N/A"
+        sanitized_feature_mode = selected_feature_mode.replace(' ', '_').replace('/', '_')
 
         model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
-        # --- END MODIFIED LOGIC ---
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Processing Annotations")

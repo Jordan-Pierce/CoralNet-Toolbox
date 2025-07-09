@@ -128,11 +128,12 @@ Enhance your CoralNet experience with these tools:
   - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
 - 📻 Tune: Tune hyperparameters to identify ideal training conditions
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
-- 🔮 Deploy: Use trained models for predictions
+- 🧙‍♂️ Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - 🎞️ Video Inference: Perform predictions on a video in real-time, record the output and analytics
+- 🔮 Explorer: Cluster, view, and re-label annotations using embeddings, mapped from feature-space
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
   - Export annotations as [GeoJSONs](https://datatracker.ietf.org/doc/html/rfc7946), segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
