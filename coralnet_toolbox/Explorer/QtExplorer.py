@@ -1,7 +1,6 @@
 import warnings
 
 import os
-import collections
 
 import numpy as np
 import torch
@@ -24,6 +23,7 @@ from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
@@ -63,6 +63,8 @@ class EmbeddingViewer(QWidget):
     reset_view_requested = pyqtSignal()
     find_mislabels_requested = pyqtSignal()
     mislabel_parameters_changed = pyqtSignal(dict) 
+    find_uncertain_requested = pyqtSignal()
+    uncertainty_parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -88,6 +90,8 @@ class EmbeddingViewer(QWidget):
         # State for isolate mode
         self.isolated_mode = False
         self.isolated_points = set()
+        
+        self.is_uncertainty_analysis_available = False
 
         self.animation_offset = 0
         self.animation_timer = QTimer()
@@ -152,8 +156,38 @@ class EmbeddingViewer(QWidget):
         
         # Connect the widget's signal to the viewer's signal
         mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
+        
+        # Create a QToolButton for uncertainty analysis
+        self.find_uncertain_button = QToolButton()
+        self.find_uncertain_button.setText("Review Uncertain")
+        self.find_uncertain_button.setToolTip(
+            "Find annotations where the model is least confident.\n"
+            "Requires a .pt classification model and 'Predictions' mode."
+        )
+        self.find_uncertain_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_uncertain_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_uncertain_button.setStyleSheet(
+            "QToolButton::menu-indicator { "
+            "subcontrol-position: right center; "
+            "subcontrol-origin: padding; "
+            "left: -4px; }"
+        )
+        
+        run_uncertainty_action = QAction("Review Uncertain", self)
+        run_uncertainty_action.triggered.connect(self.find_uncertain_requested.emit)
+        self.find_uncertain_button.setDefaultAction(run_uncertainty_action)
+
+        uncertainty_settings_widget = UncertaintySettingsWidget()
+        uncertainty_menu = QMenu(self)
+        uncertainty_widget_action = QWidgetAction(uncertainty_menu)
+        uncertainty_widget_action.setDefaultWidget(uncertainty_settings_widget)
+        uncertainty_menu.addAction(uncertainty_widget_action)
+        self.find_uncertain_button.setMenu(uncertainty_menu)
+        
+        uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
 
         header_layout.addWidget(self.find_mislabels_button)
+        header_layout.addWidget(self.find_uncertain_button)
 
         header_layout.addStretch()
         layout.addLayout(header_layout)
@@ -211,6 +245,7 @@ class EmbeddingViewer(QWidget):
         points_exist = bool(self.points_by_id)
 
         self.find_mislabels_button.setEnabled(points_exist)
+        self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
 
         if self.isolated_mode:
             self.isolate_button.hide()
@@ -230,9 +265,10 @@ class EmbeddingViewer(QWidget):
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
         self.find_mislabels_button.setEnabled(False)
+        self.find_uncertain_button.setEnabled(False)
 
         self.isolate_button.show()
-        self.isolate_button.setEnabled(False)  # Keep it visible but disabled
+        self.isolate_button.setEnabled(False)
         self.show_all_button.hide()
 
     def show_embedding(self):
@@ -1266,12 +1302,14 @@ class ExplorerWindow(QMainWindow):
         
         # Add a property to store the parameters with defaults
         self.mislabel_params = {'k': 5, 'threshold': 0.6}
+        self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
         self.current_data_items = []
         self.current_features = None
         self.current_feature_generating_model = ""
+        self.current_embedding_model_info = None
         self._ui_initialized = False
 
         self.setWindowTitle("Explorer")
@@ -1424,7 +1462,10 @@ class ExplorerWindow(QMainWindow):
         self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.find_mislabels_requested.connect(self.find_potential_mislabels)
         self.embedding_viewer.mislabel_parameters_changed.connect(self.on_mislabel_params_changed)
-
+        self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
+        self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
+        self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
+        
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
         """Syncs selection from AnnotationViewer to EmbeddingViewer."""
@@ -1487,6 +1528,26 @@ class ExplorerWindow(QMainWindow):
         """Updates the stored parameters for mislabel detection."""
         self.mislabel_params = params
         print(f"Mislabel detection parameters updated: {self.mislabel_params}")
+        
+    @pyqtSlot(dict)
+    def on_uncertainty_params_changed(self, params):
+        """Updates the stored parameters for uncertainty analysis."""
+        self.uncertainty_params = params
+        print(f"Uncertainty parameters updated: {self.uncertainty_params}")
+        
+    @pyqtSlot()
+    def on_model_selection_changed(self):
+        """
+        Handles changes in the model settings to enable/disable model-dependent features.
+        """
+        if not self._ui_initialized:
+            return
+
+        model_name, feature_mode = self.model_settings_widget.get_selected_model()
+        is_predict_mode = ".pt" in model_name and feature_mode == "Predictions"
+        
+        self.embedding_viewer.is_uncertainty_analysis_available = is_predict_mode
+        self.embedding_viewer._update_toolbar_state()
         
     def _initialize_data_item_cache(self):
         """
@@ -1632,6 +1693,131 @@ class ExplorerWindow(QMainWindow):
 
         finally:
             QApplication.restoreOverrideCursor()
+            
+    def find_uncertain_annotations(self):
+        """
+        Identifies annotations where the model's prediction is uncertain.
+        It reuses cached predictions if available, otherwise runs a temporary prediction.
+        """
+        if not self.embedding_viewer.points_by_id:
+            QMessageBox.information(self, "No Data", "Please generate an embedding first.")
+            return
+
+        if self.current_embedding_model_info is None:
+            QMessageBox.information(self, 
+                                    "No Embedding", 
+                                    "Could not determine the model used for the embedding. Please run it again.")
+            return
+
+        items_in_view = list(self.embedding_viewer.points_by_id.values())
+        data_items_in_view = [p.data_item for p in items_in_view]
+        
+        model_name_from_embedding, feature_mode_from_embedding = self.current_embedding_model_info
+        
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            probabilities_dict = {}
+
+            # Decide whether to reuse cached features or run a new prediction
+            if feature_mode_from_embedding == "Predictions":
+                print("Reusing cached prediction vectors from the FeatureStore.")
+                sanitized_model_name = os.path.basename(model_name_from_embedding).replace(' ', '_').replace('/', '_')
+                sanitized_feature_mode = feature_mode_from_embedding.replace(' ', '_').replace('/', '_')
+                model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+                
+                probabilities_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
+                if not probabilities_dict:
+                    QMessageBox.warning(self, 
+                                        "Cache Error", 
+                                        "Could not retrieve cached predictions.")
+                    return
+            else:
+                print("Embedding not based on 'Predictions' mode. Running a temporary prediction.")
+                model_info_for_predict = self.model_settings_widget.get_selected_model()
+                probabilities_dict = self._get_yolo_predictions_for_uncertainty(data_items_in_view, 
+                                                                                model_info_for_predict)
+
+            if not probabilities_dict:
+                # The helper function will show its own, more specific errors.
+                return
+
+            uncertain_ids = []
+            params = self.uncertainty_params
+            for ann_id, probs in probabilities_dict.items():
+                if len(probs) < 2:
+                    continue  # Cannot calculate margin
+
+                sorted_probs = np.sort(probs)[::-1]
+                top1_conf = sorted_probs[0]
+                top2_conf = sorted_probs[1]
+                margin = top1_conf - top2_conf
+
+                if top1_conf < params['confidence'] or margin < params['margin']:
+                    uncertain_ids.append(ann_id)
+            
+            self.embedding_viewer.render_selection_from_ids(set(uncertain_ids))
+            print(f"Found {len(uncertain_ids)} uncertain annotations.")
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    def _get_yolo_predictions_for_uncertainty(self, data_items, model_info):
+        """
+        Runs a YOLO classification model to get probabilities for uncertainty analysis.
+        This is a streamlined method that does NOT use the feature store.
+        """
+        model_name, feature_mode = model_info
+        
+        # Use the same model caching logic as the feature extractor
+        current_run_key = (model_name, feature_mode)
+        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
+            try:
+                self.loaded_model = YOLO(model_name)
+                self.current_feature_generating_model = current_run_key
+                self.imgsz = getattr(self.loaded_model.model.args, 'imgsz', 128)
+            except Exception as e:
+                print(f"ERROR: Could not load YOLO model for uncertainty check: {e}")
+                self.loaded_model = None
+                self.current_feature_generating_model = None
+                return None
+        
+        image_list, valid_data_items = [], []
+        for item in data_items:
+            pixmap = item.annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull():
+                image_list.append(pixmap_to_numpy(pixmap))
+                valid_data_items.append(item)
+        
+        if not image_list:
+            return None
+
+        try:
+            results = self.loaded_model.predict(image_list, 
+                                                stream=False, 
+                                                imgsz=self.imgsz, 
+                                                half=True, 
+                                                device=self.device, 
+                                                verbose=False)
+            
+            predictions = {}
+            for i, result in enumerate(results):
+                if hasattr(result, 'probs') and result.probs is not None:
+                    ann_id = valid_data_items[i].annotation.id
+                    predictions[ann_id] = result.probs.data.cpu().numpy().squeeze()
+                else:
+                    # Model is not a classification model, abort
+                    raise TypeError("Model did not return probabilities.")
+            return predictions
+
+        except TypeError:
+            QMessageBox.warning(self, 
+                                "Invalid Model",
+                                "The selected model is not compatible.")
+            return None
+        
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _ensure_cropped_images(self, annotations):
         """Ensures all provided annotations have a cropped image available."""
@@ -1926,9 +2112,10 @@ class ExplorerWindow(QMainWindow):
         self.embedding_viewer.render_selection_from_ids(set())
         self.update_button_states()
 
+        self.current_embedding_model_info = self.model_settings_widget.get_selected_model()
+
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        model_info = self.model_settings_widget.get_selected_model()
-        selected_model, selected_feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
+        selected_model, selected_feature_mode = self.current_embedding_model_info
 
         # If the model name is a path, use only its base name.
         if os.path.sep in selected_model or '/' in selected_model:
