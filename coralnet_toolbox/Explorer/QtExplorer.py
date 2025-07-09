@@ -13,17 +13,18 @@ from coralnet_toolbox.utilities import pixmap_to_numpy
 
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
-
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
-                             QApplication, QGraphicsRectItem, QRubberBand)
+                             QApplication, QGraphicsRectItem, QRubberBand, QMenu,
+                             QWidgetAction, QToolButton, QAction)
 
 from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
 
@@ -61,6 +62,7 @@ class EmbeddingViewer(QWidget):
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
     find_mislabels_requested = pyqtSignal()
+    mislabel_parameters_changed = pyqtSignal(dict) 
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -121,13 +123,36 @@ class EmbeddingViewer(QWidget):
         self.show_all_button.setToolTip("Show all embedding points")
         self.show_all_button.clicked.connect(self.show_all_points)
         header_layout.addWidget(self.show_all_button)
-
-        # Mislabel detection button
-        self.find_mislabels_button = QPushButton("Find Potential Mislabels")
-        self.find_mislabels_button.setToolTip(
-            "Find points whose label differs from the majority of its neighbors in feature space"
+        
+        # Create a QToolButton to have both a primary action and a dropdown menu
+        self.find_mislabels_button = QToolButton()
+        self.find_mislabels_button.setText("Find Potential Mislabels")
+        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup) # Key change for split-button style
+        self.find_mislabels_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_mislabels_button.setStyleSheet(
+            "QToolButton::menu-indicator {"
+            " subcontrol-position: right center;"
+            " subcontrol-origin: padding;"
+            " left: -4px;"
+            " }"
         )
-        self.find_mislabels_button.clicked.connect(self.find_mislabels_requested.emit)
+
+        # The primary action (clicking the button) triggers the analysis
+        run_analysis_action = QAction("Find Potential Mislabels", self)
+        run_analysis_action.triggered.connect(self.find_mislabels_requested.emit)
+        self.find_mislabels_button.setDefaultAction(run_analysis_action)
+
+        # The dropdown menu contains the settings
+        mislabel_settings_widget = MislabelSettingsWidget()
+        settings_menu = QMenu(self)
+        widget_action = QWidgetAction(settings_menu)
+        widget_action.setDefaultWidget(mislabel_settings_widget)
+        settings_menu.addAction(widget_action)
+        self.find_mislabels_button.setMenu(settings_menu)
+        
+        # Connect the widget's signal to the viewer's signal
+        mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
+
         header_layout.addWidget(self.find_mislabels_button)
 
         header_layout.addStretch()
@@ -1239,6 +1264,9 @@ class ExplorerWindow(QMainWindow):
 
         self.feature_store = FeatureStore()
         
+        # Add a property to store the parameters with defaults
+        self.mislabel_params = {'k': 5, 'threshold': 0.6}
+        
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
         self.current_data_items = []
@@ -1395,6 +1423,7 @@ class ExplorerWindow(QMainWindow):
         self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
         self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.find_mislabels_requested.connect(self.find_potential_mislabels)
+        self.embedding_viewer.mislabel_parameters_changed.connect(self.on_mislabel_params_changed)
 
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
@@ -1452,6 +1481,12 @@ class ExplorerWindow(QMainWindow):
         self.update_button_states()
 
         print("Reset view: cleared selections and exited isolation mode")
+        
+    @pyqtSlot(dict)
+    def on_mislabel_params_changed(self, params):
+        """Updates the stored parameters for mislabel detection."""
+        self.mislabel_params = params
+        print(f"Mislabel detection parameters updated: {self.mislabel_params}")
         
     def _initialize_data_item_cache(self):
         """
@@ -1528,10 +1563,12 @@ class ExplorerWindow(QMainWindow):
         Identifies annotations whose label does not match the majority of its
         k-nearest neighbors in the high-dimensional feature space.
         """
-        K = 5  # Number of neighbors to check
+        # Get parameters from the stored property instead of hardcoding
+        K = self.mislabel_params.get('k', 5)
+        agreement_threshold = self.mislabel_params.get('threshold', 0.6)
+
         if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < K:
-            QMessageBox.information(self, 
-                                    "Not Enough Data",
+            QMessageBox.information(self, "Not Enough Data",
                                     f"This feature requires at least {K} points in the embedding viewer.")
             return
 
@@ -1552,17 +1589,13 @@ class ExplorerWindow(QMainWindow):
             index = self.feature_store._get_or_load_index(model_key)
             faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
             if index is None or not faiss_idx_to_ann_id:
-                QMessageBox.warning(self, 
-                                    "Error", 
-                                    "Could not find a valid feature index for the current model.")
+                QMessageBox.warning(self, "Error", "Could not find a valid feature index for the current model.")
                 return
 
             # Get the high-dimensional features for the points in the current view
             features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
             if not features_dict:
-                QMessageBox.warning(self, 
-                                    "Error", 
-                                    "Could not retrieve features for the items in view.")
+                QMessageBox.warning(self, "Error", "Could not retrieve features for the items in view.")
                 return
 
             query_ann_ids = list(features_dict.keys())
@@ -1588,13 +1621,13 @@ class ExplorerWindow(QMainWindow):
                 if not neighbor_labels:
                     continue
 
-                # Find the majority label among neighbors
-                majority_label = collections.Counter(neighbor_labels).most_common(1)[0][0]
+                # Use the agreement threshold instead of strict majority
+                num_matching_neighbors = neighbor_labels.count(current_label)
+                agreement_ratio = num_matching_neighbors / len(neighbor_labels)
 
-                if current_label != majority_label:
+                if agreement_ratio < agreement_threshold:
                     mislabeled_ann_ids.append(ann_id)
-            
-            # Select the flagged points in the viewer
+
             self.embedding_viewer.render_selection_from_ids(set(mislabeled_ann_ids))
 
         finally:

@@ -1,10 +1,10 @@
 import os
 import warnings
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
-                             QLineEdit, QFileDialog, QFormLayout)
+                             QLineEdit, QFileDialog, QFormLayout, QSpinBox)
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
@@ -15,6 +15,70 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Widgets
 # ----------------------------------------------------------------------------------------------------------------------
 
+
+class MislabelSettingsWidget(QWidget):
+    """A widget for configuring mislabel detection parameters."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        # Set a default value to prevent the menu from closing on interaction
+        self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+        self.threshold_slider.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # 1. K (Number of Neighbors)
+        self.k_spinbox = QSpinBox()
+        self.k_spinbox.setMinimum(2)
+        self.k_spinbox.setMaximum(50)
+        self.k_spinbox.setValue(5)
+        self.k_spinbox.setToolTip("Number of neighbors to check for each point (K).")
+        main_layout.addRow("Neighbors (K):", self.k_spinbox)
+
+        # 2. Agreement Threshold
+        threshold_layout = QHBoxLayout()
+        self.threshold_slider = QSlider(Qt.Horizontal)
+        self.threshold_slider.setMinimum(0)
+        self.threshold_slider.setMaximum(100)
+        self.threshold_slider.setValue(60)
+        self.threshold_slider.setToolTip(
+            "A point is flagged if the percentage of neighbors\n"
+            "with the same label is BELOW this threshold."
+        )
+
+        self.threshold_label = QLabel("60%")
+        self.threshold_label.setMinimumWidth(40)
+
+        threshold_layout.addWidget(self.threshold_slider)
+        threshold_layout.addWidget(self.threshold_label)
+        main_layout.addRow("Agreement:", threshold_layout)
+        
+        # Connect signals
+        self.k_spinbox.valueChanged.connect(self._emit_parameters)
+        self.threshold_slider.valueChanged.connect(self._emit_parameters)
+        self.threshold_slider.valueChanged.connect(
+            lambda v: self.threshold_label.setText(f"{v}%")
+        )
+    
+    @pyqtSlot()
+    def _emit_parameters(self):
+        """Gathers current values and emits them in a dictionary."""
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        """Returns the current parameters as a dictionary."""
+        return {
+            'k': self.k_spinbox.value(),
+            'threshold': self.threshold_slider.value() / 100.0
+        }
+        
 
 class AnnotationSettingsWidget(QGroupBox):
     """Widget for filtering annotations by image, type, and label in a multi-column layout."""
