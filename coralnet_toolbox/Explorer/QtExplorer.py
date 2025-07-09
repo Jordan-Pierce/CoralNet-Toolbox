@@ -56,17 +56,17 @@ POINT_WIDTH = 3
 
 
 class EmbeddingViewer(QWidget):
-    """Custom QGraphicsView for interactive embedding visualization with zooming, panning, and selection."""
+    """Custom QGraphicsView for interactive embedding visualization with an isolate mode."""
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
-        self.graphics_scene = QGraphicsScene()
-        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
-
         super(EmbeddingViewer, self).__init__(parent)
         self.explorer_window = parent
+
+        self.graphics_scene = QGraphicsScene()
+        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
 
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
@@ -80,6 +80,10 @@ class EmbeddingViewer(QWidget):
         self.selection_at_press = None
         self.points_by_id = {}
         self.previous_selection_ids = set()
+
+        # State for isolate mode
+        self.isolated_mode = False
+        self.isolated_points = set()
 
         self.animation_offset = 0
         self.animation_timer = QTimer()
@@ -104,17 +108,79 @@ class EmbeddingViewer(QWidget):
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self.reset_view)
         header_layout.addWidget(self.home_button)
+
+        # Isolate/Show All buttons
+        self.isolate_button = QPushButton("Isolate Selection")
+        self.isolate_button.setToolTip("Hide all non-selected points")
+        self.isolate_button.clicked.connect(self.isolate_selection)
+        header_layout.addWidget(self.isolate_button)
+
+        self.show_all_button = QPushButton("Show All")
+        self.show_all_button.setToolTip("Show all embedding points")
+        self.show_all_button.clicked.connect(self.show_all_points)
+        header_layout.addWidget(self.show_all_button)
+
         header_layout.addStretch()
         layout.addLayout(header_layout)
         layout.addWidget(self.graphics_view)
+
         self.placeholder_label = QLabel(
             "No embedding data available.\nPress 'Apply Embedding' to generate visualization."
         )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
-
         layout.addWidget(self.placeholder_label)
+
         self.show_placeholder()
+        self._update_toolbar_state()
+        
+    @pyqtSlot()
+    def isolate_selection(self):
+        """Hides all points that are not currently selected."""
+        selected_items = self.graphics_scene.selectedItems()
+        if not selected_items or self.isolated_mode:
+            return
+
+        self.isolated_points = set(selected_items)
+        self.graphics_view.setUpdatesEnabled(False)
+        try:
+            for point in self.points_by_id.values():
+                if point not in self.isolated_points:
+                    point.hide()
+            self.isolated_mode = True
+        finally:
+            self.graphics_view.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+
+    @pyqtSlot()
+    def show_all_points(self):
+        """Shows all embedding points, exiting isolated mode."""
+        if not self.isolated_mode:
+            return
+
+        self.isolated_mode = False
+        self.isolated_points.clear()
+        self.graphics_view.setUpdatesEnabled(False)
+        try:
+            for point in self.points_by_id.values():
+                point.show()
+        finally:
+            self.graphics_view.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+
+    def _update_toolbar_state(self):
+        """Updates toolbar buttons based on selection and isolation mode."""
+        selection_exists = bool(self.graphics_scene.selectedItems())
+
+        if self.isolated_mode:
+            self.isolate_button.hide()
+            self.show_all_button.show()
+        else:
+            self.isolate_button.show()
+            self.show_all_button.hide()
+            self.isolate_button.setEnabled(selection_exists)
 
     def reset_view(self):
         """Reset the view to fit all embedding points."""
@@ -125,12 +191,17 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
+        
+        self.isolate_button.show()
+        self.isolate_button.setEnabled(False)  # Keep it visible but disabled
+        self.show_all_button.hide()
 
     def show_embedding(self):
         """Show the graphics view and hide the placeholder message."""
         self.graphics_view.setVisible(True)
         self.placeholder_label.setVisible(False)
         self.home_button.setEnabled(True)
+        self._update_toolbar_state()
 
     # Delegate graphics view methods
     def setRenderHint(self, hint):
@@ -310,13 +381,18 @@ class EmbeddingViewer(QWidget):
     def update_embeddings(self, data_items):
         """Update the embedding visualization. Creates an EmbeddingPointItem for
         each AnnotationDataItem and links them."""
+        # Reset isolation state when loading new points
+        if self.isolated_mode:
+            self.show_all_points()
+
         self.clear_points()
         for item in data_items:
-            # Create the point item directly from the data_item.
-            # The item's constructor now handles setting position, flags, etc.
             point = EmbeddingPointItem(item)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
+        
+        # Ensure buttons are in the correct initial state
+        self._update_toolbar_state()
 
     def refresh_points(self):
         """Refreshes the points in the view to match the current state of the master data list."""
@@ -343,9 +419,13 @@ class EmbeddingViewer(QWidget):
 
     def clear_points(self):
         """Clear all embedding points from the scene."""
+        if self.isolated_mode:
+            self.show_all_points()
+
         for point in self.points_by_id.values():
             self.graphics_scene.removeItem(point)
         self.points_by_id.clear()
+        self._update_toolbar_state()
 
     def on_selection_changed(self):
         """
@@ -362,16 +442,13 @@ class EmbeddingViewer(QWidget):
         current_selection_ids = {item.data_item.annotation.id for item in selected_items}
 
         if current_selection_ids != self.previous_selection_ids:
-            # Update the central model (AnnotationDataItem) for all points
             for point_id, point in self.points_by_id.items():
                 is_selected = point_id in current_selection_ids
-                # The data_item is the single source of truth
                 point.data_item.set_selected(is_selected)
 
             self.selection_changed.emit(list(current_selection_ids))
             self.previous_selection_ids = current_selection_ids
 
-        # Handle animation
         if hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.stop()
 
@@ -380,6 +457,9 @@ class EmbeddingViewer(QWidget):
                 point.setPen(QPen(QColor("black"), POINT_WIDTH))
         if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.start()
+
+        # Update button states based on new selection
+        self._update_toolbar_state()
 
     def animate_selection(self):
         """Animate selected points with a marching ants effect."""
@@ -1141,10 +1221,11 @@ class ExplorerWindow(QMainWindow):
         self.annotation_window = main_window.annotation_window
 
         self.device = main_window.device
-        self.model_path = ""
         self.loaded_model = None
 
         self.feature_store = FeatureStore()
+        
+        self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
         self.current_data_items = []
         self.current_features = None
@@ -1279,7 +1360,11 @@ class ExplorerWindow(QMainWindow):
         self.buttons_layout.addWidget(self.exit_button)
         self.buttons_layout.addWidget(self.apply_button)
         self.main_layout.addLayout(self.buttons_layout)
-
+        
+        self._initialize_data_item_cache()
+        self.annotation_settings_widget.set_default_to_current_image()
+        self.refresh_filters()
+        
         self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
 
@@ -1341,14 +1426,31 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.clear_selection()
         self.embedding_viewer.render_selection_from_ids(set())
 
-        # Exit isolation mode if currently active
+        # Exit isolation mode if currently active in AnnotationViewer
         if self.annotation_viewer.isolated_mode:
             self.annotation_viewer.show_all_annotations()
+
+        if self.embedding_viewer.isolated_mode:
+            self.embedding_viewer.show_all_points()
 
         self.update_label_window_selection()
         self.update_button_states()
 
         print("Reset view: cleared selections and exited isolation mode")
+        
+    def _initialize_data_item_cache(self):
+        """
+        Creates a persistent AnnotationDataItem for every annotation,
+        caching them for the duration of the session.
+        """
+        self.data_item_cache.clear()
+        if not hasattr(self.main_window.annotation_window, 'annotations_dict'):
+            return
+
+        all_annotations = self.main_window.annotation_window.annotations_dict.values()
+        for ann in all_annotations:
+            if ann.id not in self.data_item_cache:
+                self.data_item_cache[ann.id] = AnnotationDataItem(ann)
 
     def update_label_window_selection(self):
         """
@@ -1381,10 +1483,12 @@ class ExplorerWindow(QMainWindow):
         self.label_window.update_annotation_count()
 
     def get_filtered_data_items(self):
-        """Gets annotations matching all conditions as AnnotationDataItem objects."""
-        data_items = []
+        """
+        Gets annotations matching all conditions by retrieving their
+        persistent AnnotationDataItem objects from the cache.
+        """
         if not hasattr(self.main_window.annotation_window, 'annotations_dict'):
-            return data_items
+            return []
 
         selected_images = self.annotation_settings_widget.get_selected_images()
         selected_types = self.annotation_settings_widget.get_selected_annotation_types()
@@ -1401,7 +1505,8 @@ class ExplorerWindow(QMainWindow):
         ]
 
         self._ensure_cropped_images(annotations_to_process)
-        return [AnnotationDataItem(ann) for ann in annotations_to_process]
+        
+        return [self.data_item_cache[ann.id] for ann in annotations_to_process if ann.id in self.data_item_cache]
 
     def _ensure_cropped_images(self, annotations):
         """Ensures all provided annotations have a cropped image available."""
@@ -1514,19 +1619,25 @@ class ExplorerWindow(QMainWindow):
 
     def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
         """Extracts features from annotation crops using a YOLO model."""
-        # Extract model name and feature mode from the provided model_info tuple
         model_name, feature_mode = model_info
+        current_run_key = (model_name, feature_mode)
 
-        if model_name != self.model_path or self.loaded_model is None:
+        # Force a reload if the model path OR the feature mode has changed.
+        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
+            print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
             try:
                 self.loaded_model = YOLO(model_name)
-                self.model_path = model_name
+                # Update the cache key to the new successful combination
+                self.current_feature_generating_model = current_run_key
                 self.imgsz = getattr(self.loaded_model.model.args, 'imgsz', 128)
+                # Warm up the model
                 dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
                 self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
-
             except Exception as e:
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
+                # On failure, reset the model cache
+                self.loaded_model = None
+                self.current_feature_generating_model = None
                 return np.array([]), []
 
         if progress_bar:
@@ -1535,27 +1646,22 @@ class ExplorerWindow(QMainWindow):
 
         image_list, valid_data_items = [], []
         for item in data_items:
-            # Get the cropped image from the annotation
             pixmap = item.annotation.get_cropped_image()
-
             if pixmap and not pixmap.isNull():
                 image_list.append(pixmap_to_numpy(pixmap))
                 valid_data_items.append(item)
-
             if progress_bar:
                 progress_bar.update_progress()
 
         if not valid_data_items:
             return np.array([]), []
 
-        # Specify the kwargs for YOLO model prediction
         kwargs = {'stream': True,
                   'imgsz': self.imgsz,
                   'half': True,
                   'device': self.device,
                   'verbose': False}
 
-        # Run the model to extract features
         if feature_mode == "Embed Features":
             results_generator = self.loaded_model.embed(image_list, **kwargs)
         else:
@@ -1565,23 +1671,20 @@ class ExplorerWindow(QMainWindow):
             progress_bar.set_title("Extracting features...")
             progress_bar.start_progress(len(valid_data_items))
 
-        # Prepare a list to hold the extracted features
         embeddings_list = []
-
         try:
-            # Iterate through the results and extract features based on the mode
             for i, result in enumerate(results_generator):
                 if feature_mode == "Embed Features":
                     embeddings_list.append(result.cpu().numpy().flatten())
-
                 elif hasattr(result, 'probs') and result.probs is not None:
                     embeddings_list.append(result.probs.data.cpu().numpy().squeeze())
-
                 else:
-                    raise TypeError("Model did not return expected output")
-
-                if progress_bar:
-                    progress_bar.update_progress()
+                    raise TypeError(
+                        "The 'Predictions' feature mode requires a classification model "
+                        "(e.g., 'yolov8n-cls.pt') that returns class probabilities. "
+                        "The selected model did not provide this output. "
+                        "Please use 'Embed Features' mode for this model."
+                    )
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -1676,8 +1779,19 @@ class ExplorerWindow(QMainWindow):
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
 
     def run_embedding_pipeline(self):
-        """Orchestrates feature extraction and dimensionality reduction using the feature store."""
-        if not self.current_data_items:
+        """
+        Orchestrates feature extraction and dimensionality reduction.
+        If the EmbeddingViewer is in isolate mode, it will use only the visible
+        (isolated) points as input for the pipeline.
+        """
+        items_to_embed = []
+        if self.embedding_viewer.isolated_mode:
+            items_to_embed = [point.data_item for point in self.embedding_viewer.isolated_points]
+        else:
+            items_to_embed = self.current_data_items
+
+        if not items_to_embed:
+            print("No items to process for embedding.")
             return
 
         self.annotation_viewer.clear_selection()
@@ -1691,30 +1805,35 @@ class ExplorerWindow(QMainWindow):
         model_info = self.model_settings_widget.get_selected_model()
         selected_model, selected_feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
 
-        # Create a unique key for the model and its feature mode
-        model_key = f"{selected_model}_{selected_feature_mode}"
+        # --- MODIFIED: Sanitize model_key for valid filenames ---
+        # If the model name is a path, use only its base name.
+        if os.path.sep in selected_model or '/' in selected_model:
+            sanitized_model_name = os.path.basename(selected_model)
+        else:
+            sanitized_model_name = selected_model
+
+        # Replace characters that might be problematic in filenames
+        sanitized_model_name = sanitized_model_name.replace(' ', '_')
+        sanitized_feature_mode = selected_feature_mode.replace(' ', '_')
+
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        # --- END MODIFIED LOGIC ---
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Processing Annotations")
         progress_bar.show()
 
         try:
-            # 1. Check the cache first
             progress_bar.set_busy_mode("Checking feature cache...")
-            cached_features, items_to_process = self.feature_store.get_features(self.current_data_items, model_key)
+            cached_features, items_to_process = self.feature_store.get_features(items_to_embed, model_key)
             print(f"Found {len(cached_features)} features in cache. Need to compute {len(items_to_process)}.")
 
-            # 2. If there are items not in the cache, compute them
             if items_to_process:
                 newly_extracted_features, valid_items_processed = self._extract_features(items_to_process,
                                                                                          progress_bar=progress_bar)
-
                 if len(newly_extracted_features) > 0:
-                    # 3. Add the newly computed features to the store
                     progress_bar.set_busy_mode("Saving new features to cache...")
                     self.feature_store.add_features(valid_items_processed, newly_extracted_features, model_key)
-
-                    # Create a dictionary of the new features and merge with cached ones
                     new_features_dict = {item.annotation.id: vec for item, vec in zip(valid_items_processed,
                                                                                       newly_extracted_features)}
                     cached_features.update(new_features_dict)
@@ -1723,19 +1842,17 @@ class ExplorerWindow(QMainWindow):
                 print("No features found or computed. Aborting.")
                 return
 
-            # 4. Assemble the final feature matrix in the correct order
             final_feature_list = []
             final_data_items = []
-            for item in self.current_data_items:
+            for item in items_to_embed:
                 if item.annotation.id in cached_features:
                     final_feature_list.append(cached_features[item.annotation.id])
                     final_data_items.append(item)
 
             features = np.array(final_feature_list)
-            self.current_data_items = final_data_items  # Update data items to only include those with features
+            self.current_data_items = final_data_items
             self.annotation_viewer.update_annotations(self.current_data_items)
 
-            # 5. Run dimensionality reduction as before
             progress_bar.set_busy_mode("Running dimensionality reduction...")
             embedded_features = self._run_dimensionality_reduction(features, embedding_params)
 
@@ -1813,6 +1930,11 @@ class ExplorerWindow(QMainWindow):
                 deleted_annotations = [item.annotation for item in items_to_delete]
                 print(f"Permanently deleting {len(deleted_annotations)} annotation(s).")
                 self.annotation_window.delete_annotations(deleted_annotations)
+
+                # --- clean up the cache ---
+                for ann in deleted_annotations:
+                    if ann.id in self.data_item_cache:
+                        del self.data_item_cache[ann.id]
 
             # --- 2. Process Label Changes on remaining items ---
             applied_label_changes = []

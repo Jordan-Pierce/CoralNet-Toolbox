@@ -1,9 +1,11 @@
-import warnings
+# In QtFeatureStore.py
 
 import os
+import glob
+import sqlite3
+import warnings
 
 import faiss
-import sqlite3
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -15,18 +17,18 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class FeatureStore:
     """
-    Manages storing and retrieving annotation features using SQLite and FAISS.
+    Manages storing and retrieving annotation features for MULTIPLE models
+    using a single SQLite database and multiple, model-specific FAISS indexes.
     """
-    def __init__(self, db_path='feature_store.db', index_path='features.faiss'):
+    def __init__(self, db_path='feature_store.db', index_path_base='features'):
         self.db_path = db_path
-        self.index_path = index_path
+        self.index_path_base = index_path_base  # Base name for index files, e.g., 'features'
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
         self._create_table()
 
-        self.faiss_index = None
-        self.feature_dim = -1
-        self._load_faiss_index()
+        # A dictionary to hold multiple FAISS indexes, keyed by model_key
+        self.faiss_indexes = {}
 
     def _create_table(self):
         """Create the metadata table if it doesn't exist."""
@@ -40,38 +42,48 @@ class FeatureStore:
         ''')
         self.conn.commit()
 
-    def _load_faiss_index(self):
-        """Load the FAISS index from disk if it exists."""
-        if os.path.exists(self.index_path):
-            print(f"Loading existing FAISS index from {self.index_path}")
-            self.faiss_index = faiss.read_index(self.index_path)
-            self.feature_dim = self.faiss_index.d
-        else:
-            print("No FAISS index found. A new one will be created upon adding features.")
+    def _get_or_load_index(self, model_key):
+        """
+        Retrieves an index from memory or loads it from disk if it exists.
+        Returns the index object or None if not found in memory or on disk.
+        """
+        # 1. Check if the index is already loaded in memory
+        if model_key in self.faiss_indexes:
+            return self.faiss_indexes[model_key]
+
+        # 2. If not in memory, check for a corresponding file on disk
+        index_path = f"{self.index_path_base}_{model_key}.faiss"
+        if os.path.exists(index_path):
+            print(f"Loading existing FAISS index from {index_path}")
+            index = faiss.read_index(index_path)
+            self.faiss_indexes[model_key] = index  # Cache it in memory
+            return index
+
+        # 3. If not in memory or on disk, return None
+        return None
 
     def add_features(self, data_items, features, model_key):
         """
-        Adds new features to the store.
-
-        Args:
-            data_items (list[AnnotationDataItem]): The data items whose features were computed.
-            features (np.ndarray): The computed feature vectors.
-            model_key (str): A unique identifier for the model used (e.g., 'yolo_v8_embed').
+        Adds new features to the store for a specific model.
         """
         if not len(features):
             return
 
-        # Initialize FAISS index if it's the first time adding data
-        if self.faiss_index is None:
-            self.feature_dim = features.shape[1]
-            # Using IndexFlatL2, a simple baseline. It stores the full vectors.
-            self.faiss_index = faiss.IndexFlatL2(self.feature_dim)
+        # Get the specific index for this model, loading it if necessary
+        index = self._get_or_load_index(model_key)
 
-        # Add vectors to FAISS
-        start_index = self.faiss_index.ntotal
-        self.faiss_index.add(features.astype('float32'))
+        # If no index exists yet, create one
+        if index is None:
+            feature_dim = features.shape[1]
+            print(f"Creating new FAISS index for model '{model_key}' with dimension {feature_dim}.")
+            index = faiss.IndexFlatL2(feature_dim)
+            self.faiss_indexes[model_key] = index
 
-        # Add metadata to SQLite
+        # Add vectors to the specific FAISS index
+        start_index = index.ntotal
+        index.add(features.astype('float32'))
+
+        # Add metadata to SQLite. The table already supports multiple models.
         for i, item in enumerate(data_items):
             faiss_row_index = start_index + i
             self.cursor.execute(
@@ -79,51 +91,42 @@ class FeatureStore:
                 (item.annotation.id, model_key, faiss_row_index)
             )
         self.conn.commit()
-        self.save_faiss_index()  # Save after every addition for robustness
+        self.save_faiss_index(model_key)  # Save the specific index that was modified
 
     def get_features(self, data_items, model_key):
         """
-        Retrieves features for given data items and a model.
-
-        Returns:
-            A tuple: (found_features, not_found_items)
-            - found_features (dict): {annotation_id: feature_vector}
-            - not_found_items (list): List of AnnotationDataItems for which features were not found.
+        Retrieves features for given data items and a specific model.
         """
-        if self.faiss_index is None:
-            return {}, data_items  # Nothing is cached yet
+        # Get the specific index for this model
+        index = self._get_or_load_index(model_key)
+
+        if index is None:
+            # No features have ever been stored for this model
+            return {}, data_items
 
         found_features = {}
         not_found_items = []
-        
+
         ids_to_query = [item.annotation.id for item in data_items]
-        
-        # Query SQLite in a single batch
+
+        # Query SQLite for the given model_key
         placeholders = ','.join('?' for _ in ids_to_query)
-        query = (
-            "SELECT annotation_id, faiss_index "
-            "FROM features "
-            "WHERE model_key=? AND annotation_id IN ("
-            f"{placeholders}"
-            ")"
-        )
+        query = (f"SELECT annotation_id, faiss_index FROM features "
+                 f"WHERE model_key=? AND annotation_id IN ({placeholders})")
         params = [model_key] + ids_to_query
         self.cursor.execute(query, params)
-        
-        # Map faiss_index to annotation_id
+
         faiss_map = {ann_id: faiss_idx for ann_id, faiss_idx in self.cursor.fetchall()}
-        
+
         if not faiss_map:
             return {}, data_items
-        
-        # Reconstruct vectors from FAISS
-        faiss_indices = list(faiss_map.values())
-        retrieved_vectors = self.faiss_index.reconstruct_batch(faiss_indices)
 
-        # Create the final dictionary of found features
+        # Reconstruct vectors from the correct FAISS index
+        faiss_indices = list(faiss_map.values())
+        retrieved_vectors = index.reconstruct_batch(faiss_indices)
+
         id_to_vector = {ann_id: retrieved_vectors[i] for i, ann_id in enumerate(faiss_map.keys())}
-        
-        # Separate found from not found
+
         for item in data_items:
             ann_id = item.annotation.id
             if ann_id in id_to_vector:
@@ -133,11 +136,13 @@ class FeatureStore:
 
         return found_features, not_found_items
 
-    def save_faiss_index(self):
-        """Saves the current FAISS index to disk."""
-        if self.faiss_index:
-            print(f"Saving FAISS index to {self.index_path}")
-            faiss.write_index(self.faiss_index, self.index_path)
+    def save_faiss_index(self, model_key):
+        """Saves a specific FAISS index to disk."""
+        if model_key in self.faiss_indexes:
+            index_to_save = self.faiss_indexes[model_key]
+            index_path = f"{self.index_path_base}_{model_key}.faiss"
+            print(f"Saving FAISS index for '{model_key}' to {index_path}")
+            faiss.write_index(index_to_save, index_path)
 
     def close(self):
         """Closes the database connection."""
@@ -145,12 +150,10 @@ class FeatureStore:
 
     def delete_storage(self):
         """
-        Closes the connection and deletes the database and FAISS index files.
+        Closes connection and deletes the DB and ALL FAISS index files.
         """
-        # First, ensure the connection is closed to release any file locks
         self.close()
 
-        # Delete the SQLite database file
         if os.path.exists(self.db_path):
             try:
                 os.remove(self.db_path)
@@ -158,10 +161,10 @@ class FeatureStore:
             except OSError as e:
                 print(f"Error removing database file {self.db_path}: {e}")
 
-        # Delete the FAISS index file
-        if os.path.exists(self.index_path):
+        # Use glob to find and delete all matching index files
+        for index_file in glob.glob(f"{self.index_path_base}_*.faiss"):
             try:
-                os.remove(self.index_path)
-                print(f"Deleted FAISS index: {self.index_path}")
+                os.remove(index_file)
+                print(f"Deleted FAISS index: {index_file}")
             except OSError as e:
-                print(f"Error removing index file {self.index_path}: {e}")
+                print(f"Error removing index file {index_file}: {e}")
