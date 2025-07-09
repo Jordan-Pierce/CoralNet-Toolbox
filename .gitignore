@@ -130,3 +130,7 @@ launch.json
 
 # Local
 data/
+
+# Faiss index files
+*.faiss
+*.db
