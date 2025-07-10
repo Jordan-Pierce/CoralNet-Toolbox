@@ -153,6 +153,43 @@ class MislabelSettingsWidget(QWidget):
         }
         
 
+class SimilaritySettingsWidget(QWidget):
+    """A widget for configuring similarity search parameters (number of neighbors)."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # K (Number of Neighbors)
+        self.k_spinbox = QSpinBox()
+        self.k_spinbox.setMinimum(1)
+        self.k_spinbox.setMaximum(200)
+        self.k_spinbox.setValue(10)
+        self.k_spinbox.setToolTip("Number of similar items to find (K).")
+        main_layout.addRow("Neighbors (K):", self.k_spinbox)
+
+        # Connect signals
+        self.k_spinbox.valueChanged.connect(self._emit_parameters)
+
+    @pyqtSlot()
+    def _emit_parameters(self):
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        return {
+            'k': self.k_spinbox.value()
+        }
+        
+
 class AnnotationSettingsWidget(QGroupBox):
     """Widget for filtering annotations by image, type, and label in a multi-column layout."""
 
@@ -381,21 +418,23 @@ class ModelSettingsWidget(QGroupBox):
         self.model_combo.addItems(["Color Features"])
         self.model_combo.insertSeparator(1)  # Add a separator
 
-        standard_models = ['yolov8n-cls.pt',
-                           'yolov8s-cls.pt',
-                        'yolov8m-cls.pt',
-                        'yolov8l-cls.pt',
-                        'yolov8x-cls.pt',
-                        'yolo11n-cls.pt',
-                        'yolo11s-cls.pt',
-                        'yolo11m-cls.pt',
-                        'yolo11l-cls.pt',
-                        'yolo11x-cls.pt',
-                        'yolo12n-cls.pt',
-                        'yolo12s-cls.pt',
-                        'yolo12m-cls.pt',
-                        'yolo12l-cls.pt',
-                        'yolo12x-cls.pt']
+        standard_models = [
+            'yolov8n-cls.pt',
+            'yolov8s-cls.pt',
+            'yolov8m-cls.pt',
+            'yolov8l-cls.pt',
+            'yolov8x-cls.pt',
+            'yolo11n-cls.pt',
+            'yolo11s-cls.pt',
+            'yolo11m-cls.pt',
+            'yolo11l-cls.pt',
+            'yolo11x-cls.pt',
+            'yolo12n-cls.pt',
+            'yolo12s-cls.pt',
+            'yolo12m-cls.pt',
+            'yolo12l-cls.pt',
+            'yolo12x-cls.pt'
+        ]
 
         self.model_combo.addItems(standard_models)
 

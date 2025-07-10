@@ -23,6 +23,7 @@ from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import SimilaritySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
@@ -107,27 +108,25 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.wheelEvent = self.wheelEvent
 
     def setup_ui(self):
-        """Set up the UI with header layout and graphics view."""
+        """Set up the UI with toolbar layout and graphics view."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        header_layout = QHBoxLayout()
-        self.home_button = QPushButton("Home")
-        self.home_button.setToolTip("Reset view to fit all points")
-        self.home_button.clicked.connect(self.reset_view)
-        header_layout.addWidget(self.home_button)
+        toolbar_layout = QHBoxLayout()
 
         # Isolate/Show All buttons
         self.isolate_button = QPushButton("Isolate Selection")
         self.isolate_button.setToolTip("Hide all non-selected points")
         self.isolate_button.clicked.connect(self.isolate_selection)
-        header_layout.addWidget(self.isolate_button)
+        toolbar_layout.addWidget(self.isolate_button)
 
         self.show_all_button = QPushButton("Show All")
         self.show_all_button.setToolTip("Show all embedding points")
         self.show_all_button.clicked.connect(self.show_all_points)
-        header_layout.addWidget(self.show_all_button)
+        toolbar_layout.addWidget(self.show_all_button)
         
+        toolbar_layout.addWidget(self._create_separator())
+                
         # Create a QToolButton to have both a primary action and a dropdown menu
         self.find_mislabels_button = QToolButton()
         self.find_mislabels_button.setText("Find Potential Mislabels")
@@ -156,6 +155,7 @@ class EmbeddingViewer(QWidget):
         
         # Connect the widget's signal to the viewer's signal
         mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_mislabels_button)
         
         # Create a QToolButton for uncertainty analysis
         self.find_uncertain_button = QToolButton()
@@ -185,12 +185,18 @@ class EmbeddingViewer(QWidget):
         self.find_uncertain_button.setMenu(uncertainty_menu)
         
         uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_uncertain_button)
 
-        header_layout.addWidget(self.find_mislabels_button)
-        header_layout.addWidget(self.find_uncertain_button)
-
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
+        toolbar_layout.addStretch()
+        
+        # Home button to reset view
+        self.home_button = QPushButton()
+        self.home_button.setIcon(get_icon("home.png"))
+        self.home_button.setToolTip("Reset view to fit all points")
+        self.home_button.clicked.connect(self.reset_view)
+        toolbar_layout.addWidget(self.home_button)
+        
+        layout.addLayout(toolbar_layout)
         layout.addWidget(self.graphics_view)
 
         self.placeholder_label = QLabel(
@@ -202,6 +208,12 @@ class EmbeddingViewer(QWidget):
 
         self.show_placeholder()
         self._update_toolbar_state()
+        
+    def _create_separator(self):
+        """Creates a vertical separator for the toolbar."""
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; margin: 0 5px;")
+        return separator
         
     @pyqtSlot()
     def isolate_selection(self):
@@ -550,6 +562,7 @@ class AnnotationViewer(QScrollArea):
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
+    find_similar_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the AnnotationViewer widget."""
@@ -604,6 +617,30 @@ class AnnotationViewer(QScrollArea):
         self.sort_combo.addItems(["None", "Label", "Image"])
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
+        
+        toolbar_layout.addWidget(self._create_separator())
+        
+        self.find_similar_button = QToolButton()
+        self.find_similar_button.setText("Find Similar")
+        self.find_similar_button.setToolTip("Find annotations visually similar to the selection.")
+        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_similar_button.setStyleSheet(
+            "QToolButton::menu-indicator { subcontrol-position: right center; subcontrol-origin: padding; left: -4px; }"
+        )
+
+        run_similar_action = QAction("Find Similar", self)
+        run_similar_action.triggered.connect(self.find_similar_requested.emit)
+        self.find_similar_button.setDefaultAction(run_similar_action)
+        
+        self.similarity_settings_widget = SimilaritySettingsWidget()
+        settings_menu = QMenu(self)
+        widget_action = QWidgetAction(settings_menu)
+        widget_action.setDefaultWidget(self.similarity_settings_widget)
+        settings_menu.addAction(widget_action)
+        self.find_similar_button.setMenu(settings_menu)
+        toolbar_layout.addWidget(self.find_similar_button)
+        
         toolbar_layout.addStretch()
 
         size_label = QLabel("Size:")
@@ -632,6 +669,12 @@ class AnnotationViewer(QScrollArea):
         main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
         self._update_toolbar_state()
+        
+    def _create_separator(self):
+        """Creates a vertical separator for the toolbar."""
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; margin: 0 5px;")
+        return separator
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -686,12 +729,6 @@ class AnnotationViewer(QScrollArea):
             self.isolate_button.show()
             self.show_all_button.hide()
             self.isolate_button.setEnabled(selection_exists)
-
-    def _create_separator(self):
-        """Creates a vertical separator for the toolbar."""
-        separator = QLabel("|")
-        separator.setStyleSheet("color: gray; margin: 0 5px;")
-        return separator
 
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
@@ -1241,6 +1278,7 @@ class ExplorerWindow(QMainWindow):
         # Add a property to store the parameters with defaults
         self.mislabel_params = {'k': 5, 'threshold': 0.6}
         self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
+        self.similarity_params = {'k': 10}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
@@ -1403,6 +1441,8 @@ class ExplorerWindow(QMainWindow):
         self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
         self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
         self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
+        self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
+        self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
         
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
@@ -1472,6 +1512,12 @@ class ExplorerWindow(QMainWindow):
         """Updates the stored parameters for uncertainty analysis."""
         self.uncertainty_params = params
         print(f"Uncertainty parameters updated: {self.uncertainty_params}")
+        
+    @pyqtSlot(dict)
+    def on_similarity_params_changed(self, params):
+        """Updates the stored parameters for similarity search."""
+        self.similarity_params = params
+        print(f"Similarity search parameters updated: {self.similarity_params}")
         
     @pyqtSlot()
     def on_model_selection_changed(self):
@@ -1697,6 +1743,75 @@ class ExplorerWindow(QMainWindow):
             
             self.embedding_viewer.render_selection_from_ids(set(uncertain_ids))
             print(f"Found {len(uncertain_ids)} uncertain annotations.")
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    @pyqtSlot()
+    def find_similar_annotations(self):
+        """Finds k-nearest neighbors to the selected annotation(s) and updates the UI."""
+        # --- MODIFIED LINE ---
+        k = self.similarity_params.get('k', 10)
+
+        # The rest of the find_similar_annotations method is unchanged from the previous implementation
+        if not self.annotation_viewer.selected_widgets:
+            QMessageBox.information(self, "No Selection", "Please select one or more annotations first.")
+            return
+
+        if not self.current_embedding_model_info:
+            QMessageBox.warning(self, "No Embedding", "Please run an embedding before searching for similar items.")
+            return
+
+        selected_data_items = [widget.data_item for widget in self.annotation_viewer.selected_widgets]
+        model_name, feature_mode = self.current_embedding_model_info
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            features_dict, _ = self.feature_store.get_features(selected_data_items, model_key)
+            if not features_dict:
+                QMessageBox.warning(self, "Features Not Found", "Could not retrieve feature vectors for the selected items.")
+                return
+
+            source_vectors = np.array(list(features_dict.values()))
+            query_vector = np.mean(source_vectors, axis=0, keepdims=True).astype('float32')
+
+            index = self.feature_store._get_or_load_index(model_key)
+            faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            if index is None or not faiss_idx_to_ann_id:
+                QMessageBox.warning(self, "Index Error", "Could not find a valid feature index for the current model.")
+                return
+
+            num_to_find = k + 1 if len(selected_data_items) == 1 else k
+            if num_to_find > index.ntotal:
+                num_to_find = index.ntotal
+            
+            _, I = index.search(query_vector, num_to_find)
+
+            similar_ann_ids = []
+            selected_ids = {item.annotation.id for item in selected_data_items}
+            for faiss_idx in I[0]:
+                ann_id = faiss_idx_to_ann_id.get(faiss_idx)
+                if ann_id and ann_id in self.data_item_cache:
+                    if len(selected_data_items) == 1 and ann_id in selected_ids:
+                        continue
+                    similar_ann_ids.append(ann_id)
+            
+            if len(selected_data_items) == 1:
+                similar_ann_ids = similar_ann_ids[:k]
+            
+            final_selection_ids = set(similar_ann_ids) | selected_ids
+
+            self.annotation_viewer.clear_selection()
+            self.embedding_viewer.render_selection_from_ids(set())
+            
+            self.annotation_viewer.render_selection_from_ids(final_selection_ids)
+            self.embedding_viewer.render_selection_from_ids(final_selection_ids)
+            
+            self.annotation_viewer.isolate_selection()
+            self.update_button_states()
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2213,13 +2328,20 @@ class ExplorerWindow(QMainWindow):
         print("Cleared all pending changes.")
 
     def update_button_states(self):
-        """Update the state of Clear Preview and Apply buttons."""
+        """Update the state of Clear Preview, Apply, and Find Similar buttons."""
         has_changes = self.annotation_viewer.has_preview_changes()
         self.clear_preview_button.setEnabled(has_changes)
         self.apply_button.setEnabled(has_changes)
+        
+        # Update tooltips with a summary of changes
         summary = self.annotation_viewer.get_preview_changes_summary()
         self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
         self.apply_button.setToolTip(f"Apply changes - {summary}")
+
+        # Logic for the "Find Similar" button
+        selection_exists = bool(self.annotation_viewer.selected_widgets)
+        embedding_exists = bool(self.embedding_viewer.points_by_id) and self.current_embedding_model_info is not None
+        self.annotation_viewer.find_similar_button.setEnabled(selection_exists and embedding_exists)
 
     def apply(self):
         """
