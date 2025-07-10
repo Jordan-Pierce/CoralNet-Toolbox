@@ -1699,10 +1699,12 @@ class MainWindow(QMainWindow):
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
+            
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             if self.explorer_window:
                 self.explorer_window.close()  # Ensure cleanup
+                
             self.explorer_window = None
             # Re-enable everything if there was an error
             self.set_main_window_enabled_state()
