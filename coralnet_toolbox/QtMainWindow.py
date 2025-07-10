@@ -1616,6 +1616,49 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
+    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
+        """
+        Modular method to enable/disable widgets and actions in the main window.
+        - enable_list: list of widgets/actions to enable
+        - disable_list: list of widgets/actions to disable
+        If both are None, enables everything.
+        """
+        # All main widgets/actions to consider
+        all_widgets = [
+            self.toolbar,
+            self.menu_bar,
+            self.image_window,
+            self.label_window,
+            self.confidence_window,
+            self.annotation_window,
+            # Status bar widgets
+            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
+        ]
+        # Remove None entries (in case any status bar slot is empty)
+        all_widgets = [w for w in all_widgets if w is not None]
+
+        # If neither list is provided, enable everything
+        if enable_list is None and disable_list is None:
+            for w in all_widgets:
+                w.setEnabled(True)
+            return
+
+        # Disable everything by default
+        for w in all_widgets:
+            w.setEnabled(False)
+            
+        # Enable specified widgets/actions
+        if enable_list:
+            for w in enable_list:
+                if w is not None:
+                    w.setEnabled(True)
+                    
+        # Disable specified widgets/actions (overrides enable if both present)
+        if disable_list:
+            for w in disable_list:
+                if w is not None:
+                    w.setEnabled(False)
+
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
         # Check if there are any images in the project
@@ -1638,24 +1681,33 @@ class MainWindow(QMainWindow):
             self.explorer_window = ExplorerWindow(self)
             
             # Move the label_window from the main layout to the explorer
-            # The ExplorerWindow's __init__ will handle adding it to its own layout.
             self.left_layout.removeWidget(self.label_window)
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
             self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
                 
-            # Make the explorer window modal to block interaction with main window
-            self.explorer_window.setWindowModality(Qt.ApplicationModal)
-            # Disable the main window explicitly
-            self.setEnabled(False)
+            # Disable all main window widgets except select few
+            self.set_main_window_enabled_state(
+                enable_list=[self.annotation_window, 
+                             self.label_window,
+                             self.transparency_widget],
+                disable_list=[self.toolbar, 
+                              self.menu_bar, 
+                              self.image_window, 
+                              self.confidence_window]
+            )
             
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
+            
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             if self.explorer_window:
                 self.explorer_window.close()  # Ensure cleanup
+                
             self.explorer_window = None
+            # Re-enable everything if there was an error
+            self.set_main_window_enabled_state()
 
     def explorer_closed(self):
         """Handle the explorer window being closed."""
@@ -1667,8 +1719,8 @@ class MainWindow(QMainWindow):
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
             
-            # Re-enable the main window
-            self.setEnabled(True)
+            # Re-enable all main window widgets
+            self.set_main_window_enabled_state()
             
             # Clean up reference
             self.explorer_window = None

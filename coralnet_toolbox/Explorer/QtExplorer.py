@@ -1,7 +1,9 @@
+import warnings
+
 import os
+
 import numpy as np
 import torch
-import warnings
 
 from ultralytics import YOLO
 
@@ -10,19 +12,20 @@ from coralnet_toolbox.utilities import pixmap_to_numpy
 
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
-
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
-                             QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget, QGridLayout,
-                             QMainWindow, QSplitter, QGroupBox, QFormLayout,
-                             QSpinBox, QGraphicsEllipseItem, QGraphicsItem, QSlider,
-                             QListWidget, QDoubleSpinBox, QApplication, QStyle,
-                             QGraphicsRectItem, QRubberBand, QStyleOptionGraphicsItem,
-                             QTabWidget, QLineEdit, QFileDialog)
+                             QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
+                             QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
+                             QApplication, QGraphicsRectItem, QRubberBand, QMenu,
+                             QWidgetAction, QToolButton, QAction)
 
+from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import SimilaritySettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
 
@@ -32,13 +35,13 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
-    from umap import UMAP  
+    from umap import UMAP
 except ImportError:
     print("Warning: sklearn or umap not installed. Some features may be unavailable.")
     StandardScaler = None
     PCA = None
     TSNE = None
-    UMAP = None  
+    UMAP = None
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -56,17 +59,21 @@ POINT_WIDTH = 3
 
 
 class EmbeddingViewer(QWidget):
-    """Custom QGraphicsView for interactive embedding visualization with zooming, panning, and selection."""
+    """Custom QGraphicsView for interactive embedding visualization with an isolate mode."""
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
+    find_mislabels_requested = pyqtSignal()
+    mislabel_parameters_changed = pyqtSignal(dict) 
+    find_uncertain_requested = pyqtSignal()
+    uncertainty_parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
-        self.graphics_scene = QGraphicsScene()
-        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
-
         super(EmbeddingViewer, self).__init__(parent)
         self.explorer_window = parent
+
+        self.graphics_scene = QGraphicsScene()
+        self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
 
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
@@ -80,6 +87,12 @@ class EmbeddingViewer(QWidget):
         self.selection_at_press = None
         self.points_by_id = {}
         self.previous_selection_ids = set()
+
+        # State for isolate mode
+        self.isolated_mode = False
+        self.isolated_points = set()
+        
+        self.is_uncertainty_analysis_available = False
 
         self.animation_offset = 0
         self.animation_timer = QTimer()
@@ -95,26 +108,164 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.wheelEvent = self.wheelEvent
 
     def setup_ui(self):
-        """Set up the UI with header layout and graphics view."""
+        """Set up the UI with toolbar layout and graphics view."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        toolbar_layout = QHBoxLayout()
+
+        # Isolate/Show All buttons
+        self.isolate_button = QPushButton("Isolate Selection")
+        self.isolate_button.setToolTip("Hide all non-selected points")
+        self.isolate_button.clicked.connect(self.isolate_selection)
+        toolbar_layout.addWidget(self.isolate_button)
+
+        self.show_all_button = QPushButton("Show All")
+        self.show_all_button.setToolTip("Show all embedding points")
+        self.show_all_button.clicked.connect(self.show_all_points)
+        toolbar_layout.addWidget(self.show_all_button)
         
-        header_layout = QHBoxLayout()
-        self.home_button = QPushButton("Home")
+        toolbar_layout.addWidget(self._create_separator())
+                
+        # Create a QToolButton to have both a primary action and a dropdown menu
+        self.find_mislabels_button = QToolButton()
+        self.find_mislabels_button.setText("Find Potential Mislabels")
+        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup) # Key change for split-button style
+        self.find_mislabels_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_mislabels_button.setStyleSheet(
+            "QToolButton::menu-indicator {"
+            " subcontrol-position: right center;"
+            " subcontrol-origin: padding;"
+            " left: -4px;"
+            " }"
+        )
+
+        # The primary action (clicking the button) triggers the analysis
+        run_analysis_action = QAction("Find Potential Mislabels", self)
+        run_analysis_action.triggered.connect(self.find_mislabels_requested.emit)
+        self.find_mislabels_button.setDefaultAction(run_analysis_action)
+
+        # The dropdown menu contains the settings
+        mislabel_settings_widget = MislabelSettingsWidget()
+        settings_menu = QMenu(self)
+        widget_action = QWidgetAction(settings_menu)
+        widget_action.setDefaultWidget(mislabel_settings_widget)
+        settings_menu.addAction(widget_action)
+        self.find_mislabels_button.setMenu(settings_menu)
+        
+        # Connect the widget's signal to the viewer's signal
+        mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_mislabels_button)
+        
+        # Create a QToolButton for uncertainty analysis
+        self.find_uncertain_button = QToolButton()
+        self.find_uncertain_button.setText("Review Uncertain")
+        self.find_uncertain_button.setToolTip(
+            "Find annotations where the model is least confident.\n"
+            "Requires a .pt classification model and 'Predictions' mode."
+        )
+        self.find_uncertain_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_uncertain_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_uncertain_button.setStyleSheet(
+            "QToolButton::menu-indicator { "
+            "subcontrol-position: right center; "
+            "subcontrol-origin: padding; "
+            "left: -4px; }"
+        )
+        
+        run_uncertainty_action = QAction("Review Uncertain", self)
+        run_uncertainty_action.triggered.connect(self.find_uncertain_requested.emit)
+        self.find_uncertain_button.setDefaultAction(run_uncertainty_action)
+
+        uncertainty_settings_widget = UncertaintySettingsWidget()
+        uncertainty_menu = QMenu(self)
+        uncertainty_widget_action = QWidgetAction(uncertainty_menu)
+        uncertainty_widget_action.setDefaultWidget(uncertainty_settings_widget)
+        uncertainty_menu.addAction(uncertainty_widget_action)
+        self.find_uncertain_button.setMenu(uncertainty_menu)
+        
+        uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_uncertain_button)
+
+        toolbar_layout.addStretch()
+        
+        # Home button to reset view
+        self.home_button = QPushButton()
+        self.home_button.setIcon(get_icon("home.png"))
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self.reset_view)
-        header_layout.addWidget(self.home_button)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
+        toolbar_layout.addWidget(self.home_button)
+        
+        layout.addLayout(toolbar_layout)
         layout.addWidget(self.graphics_view)
+
         self.placeholder_label = QLabel(
             "No embedding data available.\nPress 'Apply Embedding' to generate visualization."
         )
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
-        
         layout.addWidget(self.placeholder_label)
+
         self.show_placeholder()
+        self._update_toolbar_state()
+        
+    def _create_separator(self):
+        """Creates a vertical separator for the toolbar."""
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; margin: 0 5px;")
+        return separator
+        
+    @pyqtSlot()
+    def isolate_selection(self):
+        """Hides all points that are not currently selected."""
+        selected_items = self.graphics_scene.selectedItems()
+        if not selected_items or self.isolated_mode:
+            return
+
+        self.isolated_points = set(selected_items)
+        self.graphics_view.setUpdatesEnabled(False)
+        try:
+            for point in self.points_by_id.values():
+                if point not in self.isolated_points:
+                    point.hide()
+            self.isolated_mode = True
+        finally:
+            self.graphics_view.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+
+    @pyqtSlot()
+    def show_all_points(self):
+        """Shows all embedding points, exiting isolated mode."""
+        if not self.isolated_mode:
+            return
+
+        self.isolated_mode = False
+        self.isolated_points.clear()
+        self.graphics_view.setUpdatesEnabled(False)
+        try:
+            for point in self.points_by_id.values():
+                point.show()
+        finally:
+            self.graphics_view.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+
+    def _update_toolbar_state(self):
+        """Updates toolbar buttons based on selection and isolation mode."""
+        selection_exists = bool(self.graphics_scene.selectedItems())
+        points_exist = bool(self.points_by_id)
+
+        self.find_mislabels_button.setEnabled(points_exist)
+        self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
+
+        if self.isolated_mode:
+            self.isolate_button.hide()
+            self.show_all_button.show()
+        else:
+            self.isolate_button.show()
+            self.show_all_button.hide()
+            self.isolate_button.setEnabled(selection_exists)
 
     def reset_view(self):
         """Reset the view to fit all embedding points."""
@@ -125,81 +276,72 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
+        self.find_mislabels_button.setEnabled(False)
+        self.find_uncertain_button.setEnabled(False)
+
+        self.isolate_button.show()
+        self.isolate_button.setEnabled(False)
+        self.show_all_button.hide()
 
     def show_embedding(self):
         """Show the graphics view and hide the placeholder message."""
         self.graphics_view.setVisible(True)
         self.placeholder_label.setVisible(False)
         self.home_button.setEnabled(True)
+        self._update_toolbar_state()
 
     # Delegate graphics view methods
-    def setRenderHint(self, hint): 
+    def setRenderHint(self, hint):
         """Set render hint for the graphics view."""
         self.graphics_view.setRenderHint(hint)
-        
-    def setDragMode(self, mode): 
+
+    def setDragMode(self, mode):
         """Set drag mode for the graphics view."""
         self.graphics_view.setDragMode(mode)
-        
-    def setTransformationAnchor(self, anchor): 
+
+    def setTransformationAnchor(self, anchor):
         """Set transformation anchor for the graphics view."""
         self.graphics_view.setTransformationAnchor(anchor)
-        
-    def setResizeAnchor(self, anchor): 
+
+    def setResizeAnchor(self, anchor):
         """Set resize anchor for the graphics view."""
         self.graphics_view.setResizeAnchor(anchor)
-        
-    def mapToScene(self, point): 
+
+    def mapToScene(self, point):
         """Map a point to the scene coordinates."""
         return self.graphics_view.mapToScene(point)
-    
-    def scale(self, sx, sy): 
+
+    def scale(self, sx, sy):
         """Scale the graphics view."""
         self.graphics_view.scale(sx, sy)
-        
-    def translate(self, dx, dy): 
+
+    def translate(self, dx, dy):
         """Translate the graphics view."""
         self.graphics_view.translate(dx, dy)
-        
-    def fitInView(self, rect, aspect_ratio): 
+
+    def fitInView(self, rect, aspect_ratio):
         """Fit the view to a rectangle with aspect ratio."""
         self.graphics_view.fitInView(rect, aspect_ratio)
-        
+
     def keyPressEvent(self, event):
         """Handles key presses for deleting selected points."""
-        # Check if the pressed key is Delete/Backspace AND the Control key is held down
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
-            # Get the currently selected items from the graphics scene
             selected_items = self.graphics_scene.selectedItems()
-
             if not selected_items:
                 super().keyPressEvent(event)
                 return
 
-            print(f"Marking {len(selected_items)} points for deletion.")
+            # Extract the central data items from the selected graphics points
+            data_items_to_delete = [
+                item.data_item for item in selected_items if isinstance(item, EmbeddingPointItem)
+            ]
 
-            # Mark each item for deletion and remove it from the scene
-            for item in selected_items:
-                if isinstance(item, EmbeddingPointItem):
-                    # Mark the central data item for deletion
-                    item.data_item.mark_for_deletion()
+            # Delegate the actual deletion to the main ExplorerWindow
+            if data_items_to_delete:
+                self.explorer_window.delete_data_items(data_items_to_delete)
 
-                    # Remove the point from our internal lookup
-                    ann_id = item.data_item.annotation.id
-                    if ann_id in self.points_by_id:
-                        del self.points_by_id[ann_id]
-
-                    # Remove the point from the visual scene
-                    self.graphics_scene.removeItem(item)
-
-            # Trigger a selection change to clear the selection state
-            # and notify the ExplorerWindow.
-            self.on_selection_changed()
-
-            # Accept the event to prevent it from being processed further
             event.accept()
         else:
-            # Pass any other key presses to the default handler
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -230,7 +372,7 @@ class EmbeddingViewer(QWidget):
         else:
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             QGraphicsView.mousePressEvent(self.graphics_view, event)
-            
+
     def mouseDoubleClickEvent(self, event):
         """Handle double-click to clear selection and reset the main view."""
         if event.button() == Qt.LeftButton:
@@ -281,7 +423,7 @@ class EmbeddingViewer(QWidget):
         else:
             QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-    
+
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming."""
         zoom_in_factor = 1.25
@@ -308,88 +450,74 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.translate(delta.x(), delta.y())
 
     def update_embeddings(self, data_items):
-        """Update the embedding visualization. Creates an EmbeddingPointItem for 
+        """Update the embedding visualization. Creates an EmbeddingPointItem for
         each AnnotationDataItem and links them."""
+        # Reset isolation state when loading new points
+        if self.isolated_mode:
+            self.show_all_points()
+
         self.clear_points()
         for item in data_items:
-            # Create the point item directly from the data_item.
-            # The item's constructor now handles setting position, flags, etc.
             point = EmbeddingPointItem(item)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
-            
-    def refresh_points(self):
-        """Refreshes the points in the view to match the current state of the master data list."""
-        if not self.explorer_window or not self.explorer_window.current_data_items:
-            return
-
-        # Get the set of IDs for points currently in the scene
-        current_point_ids = set(self.points_by_id.keys())
         
-        # Get the master list of data items from the parent window
-        all_data_items = self.explorer_window.current_data_items
+        # Ensure buttons are in the correct initial state
+        self._update_toolbar_state()
 
-        something_changed = False
-        for item in all_data_items:
-            # If a data item is NOT marked for deletion but is also NOT in the scene, add it back.
-            if not item.is_marked_for_deletion() and item.annotation.id not in current_point_ids:
-                point = EmbeddingPointItem(item)
-                self.graphics_scene.addItem(point)
-                self.points_by_id[item.annotation.id] = point
-                something_changed = True
-        
-        if something_changed:
-            print("Refreshed embedding points to show reverted items.")
-            
     def clear_points(self):
         """Clear all embedding points from the scene."""
+        if self.isolated_mode:
+            self.show_all_points()
+
         for point in self.points_by_id.values():
             self.graphics_scene.removeItem(point)
         self.points_by_id.clear()
+        self._update_toolbar_state()
 
     def on_selection_changed(self):
         """
         Handles selection changes in the scene. Updates the central data model
         and emits a signal to notify other parts of the application.
         """
-        if not self.graphics_scene: 
+        if not self.graphics_scene:
             return
         try:
             selected_items = self.graphics_scene.selectedItems()
         except RuntimeError:
             return
-            
+
         current_selection_ids = {item.data_item.annotation.id for item in selected_items}
 
         if current_selection_ids != self.previous_selection_ids:
-            # Update the central model (AnnotationDataItem) for all points
             for point_id, point in self.points_by_id.items():
                 is_selected = point_id in current_selection_ids
-                # The data_item is the single source of truth
                 point.data_item.set_selected(is_selected)
 
             self.selection_changed.emit(list(current_selection_ids))
             self.previous_selection_ids = current_selection_ids
 
-        # Handle animation
-        if hasattr(self, 'animation_timer') and self.animation_timer: 
+        if hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.stop()
-            
+
         for point in self.points_by_id.values():
             if not point.isSelected():
                 point.setPen(QPen(QColor("black"), POINT_WIDTH))
         if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.start()
 
+        # Update button states based on new selection
+        self._update_toolbar_state()
+
     def animate_selection(self):
         """Animate selected points with a marching ants effect."""
-        if not self.graphics_scene: 
+        if not self.graphics_scene:
             return
         try:
             selected_items = self.graphics_scene.selectedItems()
         except RuntimeError:
             return
-            
+
         self.animation_offset = (self.animation_offset + 1) % 20
         for item in selected_items:
             # Get the color directly from the source of truth
@@ -400,23 +528,23 @@ class EmbeddingViewer(QWidget):
             animated_pen.setDashPattern([1, 2])
             animated_pen.setDashOffset(self.animation_offset)
             item.setPen(animated_pen)
-            
+
     def render_selection_from_ids(self, selected_ids):
         """
         Updates the visual selection of points based on a set of annotation IDs
         provided by an external controller.
         """
         blocker = QSignalBlocker(self.graphics_scene)
-        
+
         for ann_id, point in self.points_by_id.items():
             is_selected = ann_id in selected_ids
             # 1. Update the state on the central data item
             point.data_item.set_selected(is_selected)
             # 2. Update the selection state of the graphics item itself
             point.setSelected(is_selected)
-            
+
         blocker.unblock()
-        
+
         # Manually trigger on_selection_changed to update animation and emit signals
         self.on_selection_changed()
 
@@ -426,20 +554,21 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
-            
+
 
 class AnnotationViewer(QScrollArea):
-    """Scrollable grid widget for displaying annotation image crops with selection, 
+    """Scrollable grid widget for displaying annotation image crops with selection,
     filtering, and isolation support. Acts as a controller for the widgets."""
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
+    find_similar_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the AnnotationViewer widget."""
         super(AnnotationViewer, self).__init__(parent)
         self.explorer_window = parent
-        
+
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
         self.last_selected_index = -1
@@ -453,6 +582,11 @@ class AnnotationViewer(QScrollArea):
         self.original_label_assignments = {}
         self.isolated_mode = False
         self.isolated_widgets = set()
+
+        # State for new sorting options
+        self.active_ordered_ids = []
+        self.is_confidence_sort_available = False
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -485,9 +619,35 @@ class AnnotationViewer(QScrollArea):
         sort_label = QLabel("Sort By:")
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image"])
+        # Remove "Similarity" as it's now an implicit action
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
+        self.sort_combo.insertSeparator(3)  # Add separator before "Confidence"
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
+        
+        toolbar_layout.addWidget(self._create_separator())
+        
+        self.find_similar_button = QToolButton()
+        self.find_similar_button.setText("Find Similar")
+        self.find_similar_button.setToolTip("Find annotations visually similar to the selection.")
+        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_similar_button.setStyleSheet(
+            "QToolButton::menu-indicator { subcontrol-position: right center; subcontrol-origin: padding; left: -4px; }"
+        )
+
+        run_similar_action = QAction("Find Similar", self)
+        run_similar_action.triggered.connect(self.find_similar_requested.emit)
+        self.find_similar_button.setDefaultAction(run_similar_action)
+        
+        self.similarity_settings_widget = SimilaritySettingsWidget()
+        settings_menu = QMenu(self)
+        widget_action = QWidgetAction(settings_menu)
+        widget_action.setDefaultWidget(self.similarity_settings_widget)
+        settings_menu.addAction(widget_action)
+        self.find_similar_button.setMenu(settings_menu)
+        toolbar_layout.addWidget(self.find_similar_button)
+        
         toolbar_layout.addStretch()
 
         size_label = QLabel("Size:")
@@ -515,7 +675,51 @@ class AnnotationViewer(QScrollArea):
 
         main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
+
+        # Set the initial state of the sort options
+        self._update_sort_options_state()
         self._update_toolbar_state()
+        
+    def _create_separator(self):
+        """Creates a vertical separator for the toolbar."""
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; margin: 0 5px;")
+        return separator
+    
+    def _update_sort_options_state(self):
+        """Enable/disable sort options based on available data."""
+        model = self.sort_combo.model()
+
+        # Enable/disable "Confidence" option
+        confidence_item_index = self.sort_combo.findText("Confidence")
+        if confidence_item_index != -1:
+            model.item(confidence_item_index).setEnabled(self.is_confidence_sort_available)
+
+    def handle_annotation_context_menu(self, widget, event):
+        """Handle context menu requests (e.g., right-click) on an annotation widget."""
+        if event.modifiers() == Qt.ControlModifier:
+            explorer = self.explorer_window
+            image_path = widget.annotation.image_path
+            annotation_to_select = widget.annotation
+
+            if hasattr(explorer, 'annotation_window'):
+                # Check if the image needs to be changed
+                if explorer.annotation_window.current_image_path != image_path:
+                    if hasattr(explorer.annotation_window, 'set_image'):
+                        explorer.annotation_window.set_image(image_path)
+
+                # Now, select the annotation in the annotation_window
+                if hasattr(explorer.annotation_window, 'select_annotation'):
+                    # This method by default unselects other annotations
+                    explorer.annotation_window.select_annotation(annotation_to_select)
+
+                # Also clear any existing selection in the explorer window itself
+                explorer.annotation_viewer.clear_selection()
+                explorer.embedding_viewer.render_selection_from_ids(set())
+                explorer.update_label_window_selection()
+                explorer.update_button_states()
+
+            event.accept()
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -537,23 +741,56 @@ class AnnotationViewer(QScrollArea):
         self._update_toolbar_state()
         self.explorer_window.main_window.label_window.update_annotation_count()
 
+    def display_and_isolate_ordered_results(self, ordered_ids):
+        """
+        Isolates the view to a specific set of ordered widgets, ensuring the 
+        grid is always updated. This is the new primary method for showing 
+        similarity results.
+        """
+        self.active_ordered_ids = ordered_ids
+        
+        # Render the selection based on the new order
+        self.render_selection_from_ids(set(ordered_ids)) 
+
+        # Now, perform the isolation logic directly to bypass the guard clause
+        self.isolated_widgets = set(self.selected_widgets)
+        self.content_widget.setUpdatesEnabled(False)
+        try:
+            for widget in self.annotation_widgets_by_id.values():
+                # Show widget if it's in our target set, hide otherwise
+                if widget in self.isolated_widgets:
+                    widget.show()
+                else:
+                    widget.hide()
+                    
+            self.isolated_mode = True
+            self.recalculate_widget_positions()  # Crucial grid update
+        finally:
+            self.content_widget.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+        self.explorer_window.main_window.label_window.update_annotation_count()
+
     @pyqtSlot()
     def show_all_annotations(self):
         """Shows all annotation widgets, exiting the isolated mode."""
         if not self.isolated_mode:
             return
-            
+
         self.isolated_mode = False
         self.isolated_widgets.clear()
-        
+        self.active_ordered_ids = []  # Clear similarity sort context
+
         self.content_widget.setUpdatesEnabled(False)
         try:
+            # Show all widgets that are managed by the viewer
             for widget in self.annotation_widgets_by_id.values():
                 widget.show()
+
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
-            
+
         self._update_toolbar_state()
         self.explorer_window.main_window.label_window.update_annotation_count()
 
@@ -569,31 +806,47 @@ class AnnotationViewer(QScrollArea):
             self.show_all_button.hide()
             self.isolate_button.setEnabled(selection_exists)
 
-    def _create_separator(self):
-        """Creates a vertical separator for the toolbar."""
-        separator = QLabel("|")
-        separator.setStyleSheet("color: gray; margin: 0 5px;")
-        return separator
-
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
+        self.active_ordered_ids = []  # Clear any special ordering
         self.recalculate_widget_positions()
+
+    def set_confidence_sort_availability(self, is_available):
+        """Sets the availability of the confidence sort option."""
+        self.is_confidence_sort_available = is_available
+        self._update_sort_options_state()
 
     def _get_sorted_widgets(self):
         """Get widgets sorted according to the current sort setting."""
+        # If a specific order is active (e.g., from similarity search), use it.
+        if self.active_ordered_ids:
+            widget_map = {w.data_item.annotation.id: w for w in self.annotation_widgets_by_id.values()}
+            ordered_widgets = [widget_map[ann_id] for ann_id in self.active_ordered_ids if ann_id in widget_map]
+            return ordered_widgets
+
+        # Otherwise, use the dropdown sort logic
         sort_type = self.sort_combo.currentText()
         widgets = list(self.annotation_widgets_by_id.values())
+
         if sort_type == "Label":
             widgets.sort(key=lambda w: w.data_item.effective_label.short_label_code)
         elif sort_type == "Image":
             widgets.sort(key=lambda w: os.path.basename(w.data_item.annotation.image_path))
+        elif sort_type == "Confidence":
+            # Sort by confidence, descending. Handles cases with no confidence gracefully.
+            widgets.sort(key=lambda w: w.data_item.get_effective_confidence(), reverse=True)
+        
         return widgets
 
     def _group_widgets_by_sort_key(self, widgets):
         """Group widgets by the current sort key."""
         sort_type = self.sort_combo.currentText()
-        if sort_type == "None":
+        if not self.active_ordered_ids and sort_type == "None":
             return [("", widgets)]
+        
+        if self.active_ordered_ids: # Don't show group headers for similarity results
+            return [("", widgets)]
+
         groups = []
         current_group = []
         current_key = None
@@ -603,8 +856,9 @@ class AnnotationViewer(QScrollArea):
             elif sort_type == "Image":
                 key = os.path.basename(widget.data_item.annotation.image_path)
             else:
-                key = ""
-            if current_key != key:
+                key = "" # No headers for Confidence or None
+            
+            if key and current_key != key:
                 if current_group:
                     groups.append((current_key, current_group))
                 current_group = [widget]
@@ -648,16 +902,16 @@ class AnnotationViewer(QScrollArea):
 
     def on_size_changed(self, value):
         """Handle slider value change to resize annotation widgets."""
-        if value % 2 != 0: 
+        if value % 2 != 0:
             value -= 1
-            
+
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         self.content_widget.setUpdatesEnabled(False)
-        
+
         for widget in self.annotation_widgets_by_id.values():
             widget.update_height(value)
-            
+
         self.content_widget.setUpdatesEnabled(True)
         self.recalculate_widget_positions()
 
@@ -692,7 +946,7 @@ class AnnotationViewer(QScrollArea):
                 y += header_label.height() + spacing
                 x = spacing
                 max_height_in_row = 0
-                
+
             for widget in group_widgets:
                 widget_size = widget.size()
                 if x > spacing and x + widget_size.width() > available_width:
@@ -710,22 +964,22 @@ class AnnotationViewer(QScrollArea):
         """Update displayed annotations, creating new widgets for them."""
         if self.isolated_mode:
             self.show_all_annotations()
-            
+
         for widget in self.annotation_widgets_by_id.values():
             widget.setParent(None)
             widget.deleteLater()
-            
+
         self.annotation_widgets_by_id.clear()
         self.selected_widgets.clear()
         self.last_selected_index = -1
-        
+
         for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
                 data_item, self.current_widget_size, self, self.content_widget)
-            
+
             annotation_widget.show()
             self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
-            
+
         self.recalculate_widget_positions()
         self._update_toolbar_state()
 
@@ -737,42 +991,23 @@ class AnnotationViewer(QScrollArea):
             self._resize_timer.setSingleShot(True)
             self._resize_timer.timeout.connect(self.recalculate_widget_positions)
         self._resize_timer.start(100)
-        
+
     def keyPressEvent(self, event):
         """Handles key presses for deleting selected annotations."""
-        # Check if the pressed key is Delete/Backspace AND the Control key is held down
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
-            # Proceed only if there are selected widgets
             if not self.selected_widgets:
                 super().keyPressEvent(event)
                 return
 
-            print(f"Marking {len(self.selected_widgets)} annotations for deletion.")
-            
-            # Keep track of which annotations were affected
-            changed_ids = []
+            # Extract the central data items from the selected widgets
+            data_items_to_delete = [widget.data_item for widget in self.selected_widgets]
 
-            # Mark each selected item for deletion and hide it
-            for widget in self.selected_widgets:
-                widget.data_item.mark_for_deletion()
-                widget.hide()
-                changed_ids.append(widget.data_item.annotation.id)
+            # Delegate the actual deletion to the main ExplorerWindow
+            if data_items_to_delete:
+                self.explorer_window.delete_data_items(data_items_to_delete)
 
-            # Clear the list of selected widgets
-            self.selected_widgets.clear()
-
-            # Recalculate the layout to fill in the empty space
-            self.recalculate_widget_positions()
-
-            # Emit a signal to notify the ExplorerWindow that the selection is now empty
-            # This will also clear the selection in the EmbeddingViewer
-            if changed_ids:
-                self.selection_changed.emit(changed_ids)
-
-            # Accept the event to prevent it from being processed further
             event.accept()
         else:
-            # Pass any other key presses to the default handler
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -782,7 +1017,7 @@ class AnnotationViewer(QScrollArea):
                 # If left click with no modifiers, check if click is outside widgets
                 is_on_widget = False
                 child_at_pos = self.childAt(event.pos())
-                
+
                 if child_at_pos:
                     widget = child_at_pos
                     # Traverse up the parent chain to see if click is on an annotation widget
@@ -791,14 +1026,14 @@ class AnnotationViewer(QScrollArea):
                             is_on_widget = True
                             break
                         widget = widget.parent()
-                        
+
                 # If click is outside widgets and there is a selection, clear it
                 if not is_on_widget and self.selected_widgets:
                     changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                     self.clear_selection()
                     self.selection_changed.emit(changed_ids)
                     return
-                
+
             elif event.modifiers() == Qt.ControlModifier:
                 # Start rubber band selection with Ctrl+Left click
                 self.selection_at_press = set(self.selected_widgets)
@@ -814,12 +1049,12 @@ class AnnotationViewer(QScrollArea):
                             break
                         widget = widget.parent()
                 return
-            
+
         elif event.button() == Qt.RightButton:
             # Ignore right clicks
             event.ignore()
             return
-        
+
         # Default handler for other cases
         super().mousePressEvent(event)
 
@@ -901,13 +1136,13 @@ class AnnotationViewer(QScrollArea):
                 self.rubber_band.hide()
                 self.rubber_band.deleteLater()
                 self.rubber_band = None
-                
+
             self.selection_at_press = set()
             self.rubber_band_origin = None
             self.mouse_pressed_on_widget = False
             event.accept()
             return
-        
+
         super().mouseReleaseEvent(event)
 
     def handle_annotation_selection(self, widget, event):
@@ -938,14 +1173,14 @@ class AnnotationViewer(QScrollArea):
                                 last_selected_widget = w
                         except ValueError:
                             continue
-                        
+
                 if last_selected_widget:
                     last_selected_index_in_current_list = widget_list.index(last_selected_widget)
                     start = min(last_selected_index_in_current_list, widget_index)
                     end = max(last_selected_index_in_current_list, widget_index)
                 else:
                     start, end = widget_index, widget_index
-                    
+
                 # Select all widgets in the range
                 for i in range(start, end + 1):
                     if self.select_widget(widget_list[i]):
@@ -969,13 +1204,13 @@ class AnnotationViewer(QScrollArea):
         # No modifier: single selection
         else:
             newly_selected_id = widget.data_item.annotation.id
-            
+
             # Deselect all others
             for w in list(self.selected_widgets):
                 if w.data_item.annotation.id != newly_selected_id:
                     if self.deselect_widget(w):
                         changed_ids.append(w.data_item.annotation.id)
-                        
+
             # Select the clicked widget
             if self.select_widget(widget):
                 changed_ids.append(newly_selected_id)
@@ -991,7 +1226,7 @@ class AnnotationViewer(QScrollArea):
 
     def _update_isolation(self):
         """Update the isolated view to show only currently selected widgets."""
-        if not self.isolated_mode: 
+        if not self.isolated_mode:
             return
         # If in isolated mode, only show selected widgets
         if self.selected_widgets:
@@ -999,12 +1234,12 @@ class AnnotationViewer(QScrollArea):
             self.setUpdatesEnabled(False)
             try:
                 for widget in self.annotation_widgets_by_id.values():
-                    if widget not in self.isolated_widgets: 
+                    if widget not in self.isolated_widgets:
                         widget.hide()
-                    else: 
+                    else:
                         widget.show()
                 self.recalculate_widget_positions()
-                
+
             finally:
                 self.setUpdatesEnabled(True)
 
@@ -1038,7 +1273,7 @@ class AnnotationViewer(QScrollArea):
         for widget in list(self.selected_widgets):
             # This will internally call deselect_widget, which is fine
             self.deselect_widget(widget)
-            
+
         self.selected_widgets.clear()
         self._update_toolbar_state()
 
@@ -1056,10 +1291,10 @@ class AnnotationViewer(QScrollArea):
                 widget.data_item.set_selected(is_selected)
                 # 2. Tell the widget to update its visuals based on the new state
                 widget.update_selection_visuals()
-            
+
             # Resync internal list of selected widgets from the source of truth
             self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
-            
+
             if self.isolated_mode and self.selected_widgets:
                 self.isolated_widgets.update(self.selected_widgets)
                 for widget in self.annotation_widgets_by_id.values():
@@ -1071,23 +1306,23 @@ class AnnotationViewer(QScrollArea):
 
     def apply_preview_label_to_selected(self, preview_label):
         """Apply a preview label and emit a signal for the embedding view to update."""
-        if not self.selected_widgets or not preview_label: 
+        if not self.selected_widgets or not preview_label:
             return
         changed_ids = []
         for widget in self.selected_widgets:
             widget.data_item.set_preview_label(preview_label)
             widget.update()  # Force repaint with new color
             changed_ids.append(widget.data_item.annotation.id)
-            
-        if self.sort_combo.currentText() == "Label": 
+
+        if self.sort_combo.currentText() == "Label":
             self.recalculate_widget_positions()
-        if changed_ids: 
+        if changed_ids:
             self.preview_changed.emit(changed_ids)
 
     def clear_preview_states(self):
         """
-        Clears all preview states, including label changes and items marked
-        for deletion, reverting them to their original state.
+        Clears all preview states, including label changes,
+        reverting them to their original state.
         """
         something_changed = False
         for widget in self.annotation_widgets_by_id.values():
@@ -1095,12 +1330,6 @@ class AnnotationViewer(QScrollArea):
             if widget.data_item.has_preview_changes():
                 widget.data_item.clear_preview_label()
                 widget.update()  # Repaint to show original color
-                something_changed = True
-
-            # Check for and un-mark items for deletion
-            if widget.data_item.is_marked_for_deletion():
-                widget.data_item.unmark_for_deletion()
-                widget.show()  # Make the widget visible again
                 something_changed = True
 
         if something_changed:
@@ -1141,11 +1370,21 @@ class ExplorerWindow(QMainWindow):
         self.annotation_window = main_window.annotation_window
 
         self.device = main_window.device
-        self.model_path = ""
         self.loaded_model = None
+
+        self.feature_store = FeatureStore()
+        
+        # Add a property to store the parameters with defaults
+        self.mislabel_params = {'k': 20, 'threshold': 0.6}
+        self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
+        self.similarity_params = {'k': 30}
+        
+        self.data_item_cache = {}  # Cache for AnnotationDataItem objects
+
         self.current_data_items = []
         self.current_features = None
         self.current_feature_generating_model = ""
+        self.current_embedding_model_info = None
         self._ui_initialized = False
 
         self.setWindowTitle("Explorer")
@@ -1195,6 +1434,10 @@ class ExplorerWindow(QMainWindow):
         # Call the main cancellation method to revert any pending changes
         self.clear_preview_changes()
 
+        # Clean up the feature store by deleting its files
+        if hasattr(self, 'feature_store') and self.feature_store:
+            self.feature_store.delete_storage()
+
         # Call the dedicated cleanup method
         self._cleanup_resources()
 
@@ -1225,23 +1468,23 @@ class ExplorerWindow(QMainWindow):
         # This ensures that the widgets are only created once per ExplorerWindow instance.
 
         # Annotation settings panel (filters by image, type, label)
-        if self.annotation_settings_widget is None: 
+        if self.annotation_settings_widget is None:
             self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
-            
+
         # Model selection panel (choose feature extraction model)
-        if self.model_settings_widget is None: 
+        if self.model_settings_widget is None:
             self.model_settings_widget = ModelSettingsWidget(self.main_window, self)
-            
+
         # Embedding settings panel (choose dimensionality reduction method)
-        if self.embedding_settings_widget is None: 
+        if self.embedding_settings_widget is None:
             self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
-            
+
         # Annotation viewer (shows annotation image crops in a grid)
-        if self.annotation_viewer is None: 
+        if self.annotation_viewer is None:
             self.annotation_viewer = AnnotationViewer(self)
-            
+
         # Embedding viewer (shows 2D embedding scatter plot)
-        if self.embedding_viewer is None: 
+        if self.embedding_viewer is None:
             self.embedding_viewer = EmbeddingViewer(self)
 
         top_layout = QHBoxLayout()
@@ -1272,7 +1515,11 @@ class ExplorerWindow(QMainWindow):
         self.buttons_layout.addWidget(self.exit_button)
         self.buttons_layout.addWidget(self.apply_button)
         self.main_layout.addLayout(self.buttons_layout)
-
+        
+        self._initialize_data_item_cache()
+        self.annotation_settings_widget.set_default_to_current_image()
+        self.refresh_filters()
+        
         self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
 
@@ -1280,7 +1527,7 @@ class ExplorerWindow(QMainWindow):
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
         except TypeError:
             pass
-        
+
         # Connect signals to slots
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
         self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
@@ -1288,20 +1535,35 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
         self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
-
+        self.embedding_viewer.find_mislabels_requested.connect(self.find_potential_mislabels)
+        self.embedding_viewer.mislabel_parameters_changed.connect(self.on_mislabel_params_changed)
+        self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
+        self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
+        self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
+        self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
+        self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
+        
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
         """Syncs selection from AnnotationViewer to EmbeddingViewer."""
+        # Per request, unselect any annotation in the main AnnotationWindow
+        if hasattr(self, 'annotation_window'):
+            self.annotation_window.unselect_annotations()
+
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
         if self.embedding_viewer.points_by_id:
             self.embedding_viewer.render_selection_from_ids(all_selected_ids)
-        
+
         # Call the new centralized method
         self.update_label_window_selection()
 
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """Syncs selection from EmbeddingViewer to AnnotationViewer."""
+        # Per request, unselect any annotation in the main AnnotationWindow
+        if hasattr(self, 'annotation_window'):
+            self.annotation_window.unselect_annotations()
+
         # Check the state BEFORE the selection is changed
         was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
 
@@ -1321,11 +1583,18 @@ class ExplorerWindow(QMainWindow):
 
     @pyqtSlot(list)
     def on_preview_changed(self, changed_ann_ids):
-        """Updates embedding point colors when a preview label is applied."""
+        """Updates embedding point colors and tooltips when a preview label is applied."""
         for ann_id in changed_ann_ids:
+            # Update embedding point color
             point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
                 point.update()
+                point.update_tooltip()  # Refresh tooltip to show new effective label
+
+            # Update annotation widget tooltip
+            widget = self.annotation_viewer.annotation_widgets_by_id.get(ann_id)
+            if widget:
+                widget.update_tooltip()
 
     @pyqtSlot()
     def on_reset_view_requested(self):
@@ -1334,14 +1603,66 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.clear_selection()
         self.embedding_viewer.render_selection_from_ids(set())
 
-        # Exit isolation mode if currently active
+        # Exit isolation mode if currently active in AnnotationViewer
         if self.annotation_viewer.isolated_mode:
             self.annotation_viewer.show_all_annotations()
 
-        self.update_label_window_selection() 
+        if self.embedding_viewer.isolated_mode:
+            self.embedding_viewer.show_all_points()
+
+        # Clear similarity sort context
+        self.annotation_viewer.active_ordered_ids = []
+
+        self.update_label_window_selection()
         self.update_button_states()
 
         print("Reset view: cleared selections and exited isolation mode")
+        
+    @pyqtSlot(dict)
+    def on_mislabel_params_changed(self, params):
+        """Updates the stored parameters for mislabel detection."""
+        self.mislabel_params = params
+        print(f"Mislabel detection parameters updated: {self.mislabel_params}")
+        
+    @pyqtSlot(dict)
+    def on_uncertainty_params_changed(self, params):
+        """Updates the stored parameters for uncertainty analysis."""
+        self.uncertainty_params = params
+        print(f"Uncertainty parameters updated: {self.uncertainty_params}")
+        
+    @pyqtSlot(dict)
+    def on_similarity_params_changed(self, params):
+        """Updates the stored parameters for similarity search."""
+        self.similarity_params = params
+        print(f"Similarity search parameters updated: {self.similarity_params}")
+        
+    @pyqtSlot()
+    def on_model_selection_changed(self):
+        """
+        Handles changes in the model settings to enable/disable model-dependent features.
+        """
+        if not self._ui_initialized:
+            return
+
+        model_name, feature_mode = self.model_settings_widget.get_selected_model()
+        is_predict_mode = ".pt" in model_name and feature_mode == "Predictions"
+        
+        self.embedding_viewer.is_uncertainty_analysis_available = is_predict_mode
+        self.embedding_viewer._update_toolbar_state()
+        
+    def _initialize_data_item_cache(self):
+        """
+        Creates a persistent AnnotationDataItem for every annotation,
+        caching them for the duration of the session.
+        """
+        self.data_item_cache.clear()
+        if not hasattr(self.main_window.annotation_window, 'annotations_dict'):
+            return
+
+        all_annotations = self.main_window.annotation_window.annotations_dict.values()
+        for ann in all_annotations:
+            if ann.id not in self.data_item_cache:
+                self.data_item_cache[ann.id] = AnnotationDataItem(ann)
 
     def update_label_window_selection(self):
         """
@@ -1360,7 +1681,7 @@ class ExplorerWindow(QMainWindow):
 
         first_effective_label = selected_data_items[0].effective_label
         all_same_current_label = all(
-            item.effective_label.id == first_effective_label.id 
+            item.effective_label.id == first_effective_label.id
             for item in selected_data_items
         )
 
@@ -1374,10 +1695,12 @@ class ExplorerWindow(QMainWindow):
         self.label_window.update_annotation_count()
 
     def get_filtered_data_items(self):
-        """Gets annotations matching all conditions as AnnotationDataItem objects."""
-        data_items = []
+        """
+        Gets annotations matching all conditions by retrieving their
+        persistent AnnotationDataItem objects from the cache.
+        """
         if not hasattr(self.main_window.annotation_window, 'annotations_dict'):
-            return data_items
+            return []
 
         selected_images = self.annotation_settings_widget.get_selected_images()
         selected_types = self.annotation_settings_widget.get_selected_annotation_types()
@@ -1394,37 +1717,436 @@ class ExplorerWindow(QMainWindow):
         ]
 
         self._ensure_cropped_images(annotations_to_process)
-        return [AnnotationDataItem(ann) for ann in annotations_to_process]
+        
+        return [self.data_item_cache[ann.id] for ann in annotations_to_process if ann.id in self.data_item_cache]
+    
+    def find_potential_mislabels(self):
+        """
+        Identifies annotations whose label does not match the majority of its
+        k-nearest neighbors in the high-dimensional feature space.
+        """
+        # Get parameters from the stored property instead of hardcoding
+        K = self.mislabel_params.get('k', 5)
+        agreement_threshold = self.mislabel_params.get('threshold', 0.6)
+
+        if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < K:
+            QMessageBox.information(self, "Not Enough Data",
+                                    f"This feature requires at least {K} points in the embedding viewer.")
+            return
+
+        items_in_view = list(self.embedding_viewer.points_by_id.values())
+        data_items_in_view = [p.data_item for p in items_in_view]
+
+        # Get the model key used for the current embedding
+        model_info = self.model_settings_widget.get_selected_model()
+        model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        # FIX: Also replace the forward slash to handle "N/A"
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Get the FAISS index and the mapping from index to annotation ID
+            index = self.feature_store._get_or_load_index(model_key)
+            faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            if index is None or not faiss_idx_to_ann_id:
+                QMessageBox.warning(self, "Error", "Could not find a valid feature index for the current model.")
+                return
+
+            # Get the high-dimensional features for the points in the current view
+            features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
+            if not features_dict:
+                QMessageBox.warning(self, "Error", "Could not retrieve features for the items in view.")
+                return
+
+            query_ann_ids = list(features_dict.keys())
+            query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
+
+            # Perform k-NN search. We search for K+1 because the point itself will be the first result.
+            _, I = index.search(query_vectors, K + 1)
+
+            mislabeled_ann_ids = []
+            for i, ann_id in enumerate(query_ann_ids):
+                current_label = self.data_item_cache[ann_id].effective_label.id
+                
+                # Get neighbor labels, ignoring the first result (the point itself)
+                neighbor_faiss_indices = I[i][1:]
+                
+                neighbor_labels = []
+                for n_idx in neighbor_faiss_indices:
+                    # THIS IS THE CORRECTED LOGIC
+                    if n_idx in faiss_idx_to_ann_id:
+                        neighbor_ann_id = faiss_idx_to_ann_id[n_idx]
+                        # ADD THIS CHECK to ensure the neighbor hasn't been deleted
+                        if neighbor_ann_id in self.data_item_cache:
+                            neighbor_labels.append(self.data_item_cache[neighbor_ann_id].effective_label.id)
+
+                if not neighbor_labels:
+                    continue
+
+                # Use the agreement threshold instead of strict majority
+                num_matching_neighbors = neighbor_labels.count(current_label)
+                agreement_ratio = num_matching_neighbors / len(neighbor_labels)
+
+                if agreement_ratio < agreement_threshold:
+                    mislabeled_ann_ids.append(ann_id)
+
+            self.embedding_viewer.render_selection_from_ids(set(mislabeled_ann_ids))
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    def find_uncertain_annotations(self):
+        """
+        Identifies annotations where the model's prediction is uncertain.
+        It reuses cached predictions if available, otherwise runs a temporary prediction.
+        """
+        if not self.embedding_viewer.points_by_id:
+            QMessageBox.information(self, "No Data", "Please generate an embedding first.")
+            return
+
+        if self.current_embedding_model_info is None:
+            QMessageBox.information(self, 
+                                    "No Embedding", 
+                                    "Could not determine the model used for the embedding. Please run it again.")
+            return
+
+        items_in_view = list(self.embedding_viewer.points_by_id.values())
+        data_items_in_view = [p.data_item for p in items_in_view]
+        
+        model_name_from_embedding, feature_mode_from_embedding = self.current_embedding_model_info
+        
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            probabilities_dict = {}
+
+            # Decide whether to reuse cached features or run a new prediction
+            if feature_mode_from_embedding == "Predictions":
+                print("Reusing cached prediction vectors from the FeatureStore.")
+                sanitized_model_name = os.path.basename(model_name_from_embedding).replace(' ', '_').replace('/', '_')
+                sanitized_feature_mode = feature_mode_from_embedding.replace(' ', '_').replace('/', '_')
+                model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+                
+                probabilities_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
+                if not probabilities_dict:
+                    QMessageBox.warning(self, 
+                                        "Cache Error", 
+                                        "Could not retrieve cached predictions.")
+                    return
+            else:
+                print("Embedding not based on 'Predictions' mode. Running a temporary prediction.")
+                model_info_for_predict = self.model_settings_widget.get_selected_model()
+                probabilities_dict = self._get_yolo_predictions_for_uncertainty(data_items_in_view, 
+                                                                                model_info_for_predict)
+
+            if not probabilities_dict:
+                # The helper function will show its own, more specific errors.
+                return
+
+            uncertain_ids = []
+            params = self.uncertainty_params
+            for ann_id, probs in probabilities_dict.items():
+                if len(probs) < 2:
+                    continue  # Cannot calculate margin
+
+                sorted_probs = np.sort(probs)[::-1]
+                top1_conf = sorted_probs[0]
+                top2_conf = sorted_probs[1]
+                margin = top1_conf - top2_conf
+
+                if top1_conf < params['confidence'] or margin < params['margin']:
+                    uncertain_ids.append(ann_id)
+            
+            self.embedding_viewer.render_selection_from_ids(set(uncertain_ids))
+            print(f"Found {len(uncertain_ids)} uncertain annotations.")
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    @pyqtSlot()
+    def find_similar_annotations(self):
+        """
+        Finds k-nearest neighbors to the selected annotation(s) and updates 
+        the UI to show the results in an isolated, ordered view. This method
+        now ensures the grid is always updated and resets the sort-by dropdown.
+        """
+        k = self.similarity_params.get('k', 10)
+
+        if not self.annotation_viewer.selected_widgets:
+            QMessageBox.information(self, "No Selection", "Please select one or more annotations first.")
+            return
+
+        if not self.current_embedding_model_info:
+            QMessageBox.warning(self, "No Embedding", "Please run an embedding before searching for similar items.")
+            return
+
+        selected_data_items = [widget.data_item for widget in self.annotation_viewer.selected_widgets]
+        model_name, feature_mode = self.current_embedding_model_info
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            features_dict, _ = self.feature_store.get_features(selected_data_items, model_key)
+            if not features_dict:
+                QMessageBox.warning(self, 
+                                    "Features Not Found", 
+                                    "Could not retrieve feature vectors for the selected items.")
+                return
+
+            source_vectors = np.array(list(features_dict.values()))
+            query_vector = np.mean(source_vectors, axis=0, keepdims=True).astype('float32')
+
+            index = self.feature_store._get_or_load_index(model_key)
+            faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            if index is None or not faiss_idx_to_ann_id:
+                QMessageBox.warning(self, 
+                                    "Index Error", 
+                                    "Could not find a valid feature index for the current model.")
+                return
+
+            # Find k results, plus more to account for the query items possibly being in the results
+            num_to_find = k + len(selected_data_items)
+            if num_to_find > index.ntotal:
+                num_to_find = index.ntotal
+            
+            _, I = index.search(query_vector, num_to_find)
+
+            source_ids = {item.annotation.id for item in selected_data_items}
+            similar_ann_ids = []
+            for faiss_idx in I[0]:
+                ann_id = faiss_idx_to_ann_id.get(faiss_idx)
+                if ann_id and ann_id in self.data_item_cache and ann_id not in source_ids:
+                    similar_ann_ids.append(ann_id)
+                if len(similar_ann_ids) == k:
+                    break
+
+            # Create the final ordered list: original selection first, then similar items.
+            ordered_ids_to_display = list(source_ids) + similar_ann_ids
+            
+            # --- FIX IMPLEMENTATION ---
+            # 1. Force sort combo to "None" to avoid user confusion.
+            self.annotation_viewer.sort_combo.setCurrentText("None")
+
+            # 2. Update the embedding viewer selection.
+            self.embedding_viewer.render_selection_from_ids(set(ordered_ids_to_display))
+            
+            # 3. Call the new robust method in AnnotationViewer to handle isolation and grid updates.
+            self.annotation_viewer.display_and_isolate_ordered_results(ordered_ids_to_display)
+
+            self.update_button_states()
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    def _get_yolo_predictions_for_uncertainty(self, data_items, model_info):
+        """
+        Runs a YOLO classification model to get probabilities for uncertainty analysis.
+        This is a streamlined method that does NOT use the feature store.
+        """
+        model_name, feature_mode = model_info
+        
+        # Load the model
+        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        if model is None:
+            QMessageBox.warning(self, 
+                                "Model Load Error",
+                                f"Could not load YOLO model '{model_name}'.")
+            return None
+        
+        # Prepare images from data items
+        image_list, valid_data_items = self._prepare_images_from_data_items(data_items)
+        if not image_list:
+            return None
+        
+        try:
+            # We need probabilities for uncertainty analysis, so we always use predict
+            results = model.predict(image_list, 
+                                    stream=False,  # Use batch processing for uncertainty
+                                    imgsz=imgsz, 
+                                    half=True, 
+                                    device=self.device, 
+                                    verbose=False)
+                
+            _, probabilities_dict = self._process_model_results(results, valid_data_items, "Predictions")
+            return probabilities_dict
+            
+        except TypeError:
+            QMessageBox.warning(self, 
+                                "Invalid Model",
+                                "The selected model is not compatible with uncertainty analysis.")
+            return None
+            
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _ensure_cropped_images(self, annotations):
         """Ensures all provided annotations have a cropped image available."""
         annotations_by_image = {}
-        
+
         for annotation in annotations:
             if not annotation.cropped_image:
                 image_path = annotation.image_path
                 if image_path not in annotations_by_image:
                     annotations_by_image[image_path] = []
                 annotations_by_image[image_path].append(annotation)
-                
-        if not annotations_by_image: 
+
+        if not annotations_by_image:
             return
 
         progress_bar = ProgressBar(self, "Cropping Image Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(annotations_by_image))
-        
+
         try:
             for image_path, image_annotations in annotations_by_image.items():
-                self.annotation_window.crop_annotations(image_path=image_path, 
-                                                        annotations=image_annotations, 
-                                                        return_annotations=False, 
+                self.annotation_window.crop_annotations(image_path=image_path,
+                                                        annotations=image_annotations,
+                                                        return_annotations=False,
                                                         verbose=False)
                 progress_bar.update_progress()
         finally:
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
+            
+    def _load_yolo_model(self, model_name, feature_mode):
+        """
+        Helper function to load a YOLO model and cache it.
+        
+        Args:
+            model_name (str): Path to the YOLO model file
+            feature_mode (str): Mode for feature extraction ("Embed Features" or "Predictions")
+        
+        Returns:
+            tuple: (model, image_size) or (None, None) if loading fails
+        """
+        current_run_key = (model_name, feature_mode)
+        
+        # Force a reload if the model path OR the feature mode has changed
+        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
+            print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
+            try:
+                model = YOLO(model_name)
+                # Update the cache key to the new successful combination
+                self.current_feature_generating_model = current_run_key
+                self.loaded_model = model
+                imgsz = getattr(model.model.args, 'imgsz', 128)
+                
+                # Warm up the model
+                dummy_image = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+                model.predict(dummy_image, imgsz=imgsz, half=True, device=self.device, verbose=False)
+                
+                return model, imgsz
+                
+            except Exception as e:
+                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
+                # On failure, reset the model cache
+                self.loaded_model = None
+                self.current_feature_generating_model = None
+                return None, None
+        
+        # Model already loaded and cached
+        return self.loaded_model, getattr(self.loaded_model.model.args, 'imgsz', 128)
+
+    def _prepare_images_from_data_items(self, data_items, progress_bar=None):
+        """
+        Prepare images from data items for model prediction.
+        
+        Args:
+            data_items (list): List of AnnotationDataItem objects
+            progress_bar (ProgressBar, optional): Progress bar for UI updates
+        
+        Returns:
+            tuple: (image_list, valid_data_items)
+        """
+        if progress_bar:
+            progress_bar.set_title("Preparing images...")
+            progress_bar.start_progress(len(data_items))
+        
+        image_list, valid_data_items = [], []
+        for item in data_items:
+            pixmap = item.annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull():
+                image_list.append(pixmap_to_numpy(pixmap))
+                valid_data_items.append(item)
+            
+            if progress_bar:
+                progress_bar.update_progress()
+        
+        return image_list, valid_data_items
+
+    def _process_model_results(self, results, valid_data_items, feature_mode, progress_bar=None):
+        """
+        Process model results and update data item tooltips.
+        
+        Args:
+            results: Model prediction results
+            valid_data_items (list): List of valid data items
+            feature_mode (str): Mode for feature extraction
+            progress_bar (ProgressBar, optional): Progress bar for UI updates
+        
+        Returns:
+            tuple: (features_list, probabilities_dict)
+        """
+        features_list = []
+        probabilities_dict = {}
+        
+        # Get class names from the model for better tooltips
+        model = self.loaded_model.model if hasattr(self.loaded_model, 'model') else None
+        class_names = model.names if model and hasattr(model, 'names') else {}
+        
+        for i, result in enumerate(results):
+            if i >= len(valid_data_items):
+                break
+                
+            item = valid_data_items[i]
+            ann_id = item.annotation.id
+            
+            if feature_mode == "Embed Features":
+                embedding = result.cpu().numpy().flatten()
+                features_list.append(embedding)
+                
+            elif hasattr(result, 'probs') and result.probs is not None:
+                probs = result.probs.data.cpu().numpy().squeeze()
+                features_list.append(probs)
+                probabilities_dict[ann_id] = probs
+                
+                # Store the probabilities directly on the data item for confidence sorting
+                item.prediction_probabilities = probs
+                
+                # Format and store prediction details for tooltips
+                if len(probs) > 0:
+                    # Get top 5 predictions
+                    top_indices = probs.argsort()[::-1][:5]
+                    top_probs = probs[top_indices]
+                    
+                    formatted_preds = ["<b>Top Predictions:</b>"]
+                    for idx, prob in zip(top_indices, top_probs):
+                        class_name = class_names.get(int(idx), f"Class {idx}")
+                        formatted_preds.append(f"{class_name}: {prob*100:.1f}%")
+                    
+                    item.prediction_details = "<br>".join(formatted_preds)
+            else:
+                raise TypeError(
+                    "The 'Predictions' feature mode requires a classification model "
+                    "(e.g., 'yolov8n-cls.pt') that returns class probabilities. "
+                    "The selected model did not provide this output. "
+                    "Please use 'Embed Features' mode for this model."
+                )
+                
+            if progress_bar:
+                progress_bar.update_progress()
+        
+        # After processing is complete, update tooltips
+        for item in valid_data_items:
+            if hasattr(item, 'update_tooltip'):
+                item.update_tooltip()
+                
+        return features_list, probabilities_dict
 
     def _extract_color_features(self, data_items, progress_bar=None, bins=32):
         """
@@ -1507,102 +2229,71 @@ class ExplorerWindow(QMainWindow):
 
     def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
         """Extracts features from annotation crops using a YOLO model."""
-        # Extract model name and feature mode from the provided model_info tuple
         model_name, feature_mode = model_info
         
-        if model_name != self.model_path or self.loaded_model is None:
-            try:
-                self.loaded_model = YOLO(model_name)
-                self.model_path = model_name
-                self.imgsz = getattr(self.loaded_model.model.args, 'imgsz', 128)
-                dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
-                self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
-                
-            except Exception as e:
-                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
-                return np.array([]), []
-
-        if progress_bar: 
-            progress_bar.set_title("Preparing images...")
-            progress_bar.start_progress(len(data_items))
-            
-        image_list, valid_data_items = [], []
-        for item in data_items:
-            # Get the cropped image from the annotation            
-            pixmap = item.annotation.get_cropped_image()
-            
-            if pixmap and not pixmap.isNull():
-                image_list.append(pixmap_to_numpy(pixmap))
-                valid_data_items.append(item)
-                
-            if progress_bar: 
-                progress_bar.update_progress()
-                
-        if not valid_data_items: 
+        # Load the model
+        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        if model is None:
             return np.array([]), []
         
-        # Specify the kwargs for YOLO model prediction
-        kwargs = {'stream': True, 
-                  'imgsz': self.imgsz, 
-                  'half': True, 
-                  'device': self.device, 
-                  'verbose': False}
+        # Prepare images from data items
+        image_list, valid_data_items = self._prepare_images_from_data_items(data_items, progress_bar)
+        if not valid_data_items:
+            return np.array([]), []
         
-        # Run the model to extract features
+        # Set up prediction parameters
+        kwargs = {
+            'stream': True,
+            'imgsz': imgsz,
+            'half': True,
+            'device': self.device,
+            'verbose': False
+        }
+        
+        # Get results based on feature mode
         if feature_mode == "Embed Features":
-            results_generator = self.loaded_model.embed(image_list, **kwargs)
+            results_generator = model.embed(image_list, **kwargs)
         else:
-            results_generator = self.loaded_model.predict(image_list, **kwargs)
-            
-        if progress_bar: 
+            results_generator = model.predict(image_list, **kwargs)
+        
+        if progress_bar:
             progress_bar.set_title("Extracting features...")
             progress_bar.start_progress(len(valid_data_items))
         
-        # Prepare a list to hold the extracted features    
-        embeddings_list = []
-
         try:
-            # Iterate through the results and extract features based on the mode
-            for i, result in enumerate(results_generator):
-                if feature_mode == "Embed Features":
-                    embeddings_list.append(result.cpu().numpy().flatten())
-                    
-                elif hasattr(result, 'probs') and result.probs is not None:
-                    embeddings_list.append(result.probs.data.cpu().numpy().squeeze())
-                    
-                else:
-                    raise TypeError("Model did not return expected output")
-                
-                if progress_bar: 
-                    progress_bar.update_progress()
+            features_list, _ = self._process_model_results(results_generator, 
+                                                           valid_data_items, 
+                                                           feature_mode,
+                                                           progress_bar=progress_bar)
+            
+            return np.array(features_list), valid_data_items
+            
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            
-        return np.array(embeddings_list), valid_data_items
 
     def _extract_features(self, data_items, progress_bar=None):
         """Dispatcher to call the appropriate feature extraction function."""
         # Get the selected model and feature mode from the model settings widget
         model_name, feature_mode = self.model_settings_widget.get_selected_model()
-        
-        if isinstance(model_name, tuple): 
+
+        if isinstance(model_name, tuple):
             model_name = model_name[0]
-            
-        if not model_name: 
+
+        if not model_name:
             return np.array([]), []
-        
+
         if model_name == "Color Features":
             return self._extract_color_features(data_items, progress_bar=progress_bar)
-        
+
         elif ".pt" in model_name:
             return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
-        
+
         return np.array([]), []
 
     def _run_dimensionality_reduction(self, features, params):
         """
-        Runs dimensionality reduction (PCA, UMAP, or t-SNE) on the feature matrix.
+        Runs dimensionality reduction with automatic PCA preprocessing for UMAP and t-SNE.
 
         Args:
             features (np.ndarray): Feature matrix of shape (N, D).
@@ -1612,7 +2303,9 @@ class ExplorerWindow(QMainWindow):
             np.ndarray or None: 2D embedded features of shape (N, 2), or None on failure.
         """
         technique = params.get('technique', 'UMAP')
-        
+        # Default number of components to use for PCA preprocessing
+        pca_components = params.get('pca_components', 50)
+
         if len(features) <= 2:
             # Not enough samples for dimensionality reduction
             return None
@@ -1620,11 +2313,21 @@ class ExplorerWindow(QMainWindow):
         try:
             # Standardize features before reduction
             features_scaled = StandardScaler().fit_transform(features)
+            
+            # Apply PCA preprocessing automatically for UMAP or TSNE
+            # (only if the feature dimension is larger than the target PCA components)
+            if technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
+                # Ensure pca_components doesn't exceed number of samples or features
+                pca_components = min(pca_components, features_scaled.shape[0] - 1, features_scaled.shape[1])
+                print(f"Applying PCA preprocessing to {pca_components} components before {technique}")
+                pca = PCA(n_components=pca_components, random_state=42)
+                features_scaled = pca.fit_transform(features_scaled)
+                variance_explained = sum(pca.explained_variance_ratio_) * 100
+                print(f"Variance explained by PCA: {variance_explained:.1f}%")
 
+            # Proceed with the selected dimensionality reduction technique
             if technique == "UMAP":
-                # UMAP: n_neighbors must be < n_samples
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
-                
                 reducer = UMAP(
                     n_components=2,
                     random_state=42,
@@ -1633,9 +2336,7 @@ class ExplorerWindow(QMainWindow):
                     metric=params.get('metric', 'cosine')
                 )
             elif technique == "TSNE":
-                # t-SNE: perplexity must be < n_samples
                 perplexity = min(params.get('perplexity', 30), len(features_scaled) - 1)
-                
                 reducer = TSNE(
                     n_components=2,
                     random_state=42,
@@ -1647,7 +2348,6 @@ class ExplorerWindow(QMainWindow):
             elif technique == "PCA":
                 reducer = PCA(n_components=2, random_state=42)
             else:
-                # Unknown technique
                 return None
 
             # Fit and transform the features
@@ -1669,43 +2369,84 @@ class ExplorerWindow(QMainWindow):
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
 
     def run_embedding_pipeline(self):
-        """Orchestrates the feature extraction and dimensionality reduction pipeline."""
-        if not self.current_data_items: 
+        """
+        Orchestrates feature extraction and dimensionality reduction.
+        If the EmbeddingViewer is in isolate mode, it will use only the visible
+        (isolated) points as input for the pipeline.
+        """
+        items_to_embed = []
+        if self.embedding_viewer.isolated_mode:
+            items_to_embed = [point.data_item for point in self.embedding_viewer.isolated_points]
+        else:
+            items_to_embed = self.current_data_items
+
+        if not items_to_embed:
+            print("No items to process for embedding.")
             return
-        
+
         self.annotation_viewer.clear_selection()
-        if self.annotation_viewer.isolated_mode: 
+        if self.annotation_viewer.isolated_mode:
             self.annotation_viewer.show_all_annotations()
-            
+
         self.embedding_viewer.render_selection_from_ids(set())
         self.update_button_states()
 
-        # Get embedding parameters and selected model; create a cache key to avoid re-computing features
+        self.current_embedding_model_info = self.model_settings_widget.get_selected_model()
+
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        model_info = self.model_settings_widget.get_selected_model()
-        selected_model, selected_feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
-        cache_key = f"{selected_model}_{selected_feature_mode}"
+        selected_model, selected_feature_mode = self.current_embedding_model_info
+
+        # If the model name is a path, use only its base name.
+        if os.path.sep in selected_model or '/' in selected_model:
+            sanitized_model_name = os.path.basename(selected_model)
+        else:
+            sanitized_model_name = selected_model
+
+        # Replace characters that might be problematic in filenames
+        sanitized_model_name = sanitized_model_name.replace(' ', '_')
+        # Also replace the forward slash to handle "N/A"
+        sanitized_feature_mode = selected_feature_mode.replace(' ', '_').replace('/', '_')
+
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, "Generating Embedding Visualization")
+        progress_bar = ProgressBar(self, "Processing Annotations")
         progress_bar.show()
+
         try:
-            if self.current_features is None or cache_key != self.current_feature_generating_model:
-                features, valid_data_items = self._extract_features(self.current_data_items, progress_bar=progress_bar)
-                self.current_features = features
-                self.current_feature_generating_model = cache_key
-                self.current_data_items = valid_data_items
-                self.annotation_viewer.update_annotations(self.current_data_items)
-            else:
-                features = self.current_features
-                
-            if features is None or len(features) == 0: 
+            progress_bar.set_busy_mode("Checking feature cache...")
+            cached_features, items_to_process = self.feature_store.get_features(items_to_embed, model_key)
+            print(f"Found {len(cached_features)} features in cache. Need to compute {len(items_to_process)}.")
+
+            if items_to_process:
+                newly_extracted_features, valid_items_processed = self._extract_features(items_to_process,
+                                                                                         progress_bar=progress_bar)
+                if len(newly_extracted_features) > 0:
+                    progress_bar.set_busy_mode("Saving new features to cache...")
+                    self.feature_store.add_features(valid_items_processed, newly_extracted_features, model_key)
+                    new_features_dict = {item.annotation.id: vec for item, vec in zip(valid_items_processed,
+                                                                                      newly_extracted_features)}
+                    cached_features.update(new_features_dict)
+
+            if not cached_features:
+                print("No features found or computed. Aborting.")
                 return
+
+            final_feature_list = []
+            final_data_items = []
+            for item in items_to_embed:
+                if item.annotation.id in cached_features:
+                    final_feature_list.append(cached_features[item.annotation.id])
+                    final_data_items.append(item)
+
+            features = np.array(final_feature_list)
+            self.current_data_items = final_data_items
+            self.annotation_viewer.update_annotations(self.current_data_items)
 
             progress_bar.set_busy_mode("Running dimensionality reduction...")
             embedded_features = self._run_dimensionality_reduction(features, embedding_params)
-            
-            if embedded_features is None: 
+
+            if embedded_features is None:
                 return
 
             progress_bar.set_busy_mode("Updating visualization...")
@@ -1713,6 +2454,21 @@ class ExplorerWindow(QMainWindow):
             self.embedding_viewer.update_embeddings(self.current_data_items)
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
+
+            # Check if confidence scores are available to enable sorting
+            _, feature_mode = self.current_embedding_model_info
+            is_predict_mode = feature_mode == "Predictions"
+            self.annotation_viewer.set_confidence_sort_availability(is_predict_mode)
+
+            # If using Predictions mode, update data items with probabilities for confidence sorting
+            if is_predict_mode:
+                for item in self.current_data_items:
+                    if item.annotation.id in cached_features:
+                        item.prediction_probabilities = cached_features[item.annotation.id]
+
+            # When a new embedding is run, any previous similarity sort becomes irrelevant
+            self.annotation_viewer.active_ordered_ids = []
+
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
@@ -1724,10 +2480,14 @@ class ExplorerWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.current_data_items = self.get_filtered_data_items()
-            self.current_features = None 
+            self.current_features = None
             self.annotation_viewer.update_annotations(self.current_data_items)
             self.embedding_viewer.clear_points()
             self.embedding_viewer.show_placeholder()
+
+            # Reset sort options when filters change
+            self.annotation_viewer.active_ordered_ids = []
+            self.annotation_viewer.set_confidence_sort_availability(False)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -1737,65 +2497,120 @@ class ExplorerWindow(QMainWindow):
             self.annotation_viewer.apply_preview_label_to_selected(label)
             self.update_button_states()
 
+    def delete_data_items(self, data_items_to_delete):
+        """
+        Permanently deletes a list of data items and their associated annotations
+        and visual components from the explorer and the main application.
+        """
+        if not data_items_to_delete:
+            return
+
+        print(f"Permanently deleting {len(data_items_to_delete)} item(s).")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            deleted_ann_ids = {item.annotation.id for item in data_items_to_delete}
+            annotations_to_delete_from_main_app = [item.annotation for item in data_items_to_delete]
+
+            # 1. Delete from the main application's data store
+            self.annotation_window.delete_annotations(annotations_to_delete_from_main_app)
+
+            # 2. Remove from Explorer's internal data structures
+            self.current_data_items = [
+                item for item in self.current_data_items if item.annotation.id not in deleted_ann_ids
+            ]
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.data_item_cache:
+                    del self.data_item_cache[ann_id]
+
+            # 3. Remove from AnnotationViewer
+            blocker = QSignalBlocker(self.annotation_viewer)  # Block signals during mass removal
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.annotation_viewer.annotation_widgets_by_id:
+                    widget = self.annotation_viewer.annotation_widgets_by_id.pop(ann_id)
+                    if widget in self.annotation_viewer.selected_widgets:
+                        self.annotation_viewer.selected_widgets.remove(widget)
+                    widget.setParent(None)
+                    widget.deleteLater()
+            blocker.unblock()
+            self.annotation_viewer.recalculate_widget_positions()
+
+            # 4. Remove from EmbeddingViewer
+            blocker = QSignalBlocker(self.embedding_viewer.graphics_scene)
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.embedding_viewer.points_by_id:
+                    point = self.embedding_viewer.points_by_id.pop(ann_id)
+                    self.embedding_viewer.graphics_scene.removeItem(point)
+            blocker.unblock()
+            self.embedding_viewer.on_selection_changed()  # Trigger update of selection state
+
+            # 5. Update UI
+            self.update_label_window_selection()
+            self.update_button_states()
+
+            # 6. Refresh main window annotations list
+            affected_images = {ann.image_path for ann in annotations_to_delete_from_main_app}
+            for image_path in affected_images:
+                self.image_window.update_image_annotations(image_path)
+            self.annotation_window.load_annotations()
+
+        except Exception as e:
+            print(f"Error during item deletion: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def clear_preview_changes(self):
         """
-        Clears all preview changes in both viewers, including label changes
-        and items marked for deletion.
+        Clears all preview changes in the annotation viewer and updates tooltips.
         """
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
 
-        if hasattr(self, 'embedding_viewer'):
-            self.embedding_viewer.refresh_points()
+            # After reverting, tooltips need to be updated to reflect original labels
+            for widget in self.annotation_viewer.annotation_widgets_by_id.values():
+                widget.update_tooltip()
+            for point in self.embedding_viewer.points_by_id.values():
+                point.update_tooltip()
 
         # After reverting all changes, update the button states
         self.update_button_states()
         print("Cleared all pending changes.")
 
     def update_button_states(self):
-        """Update the state of Clear Preview and Apply buttons."""
+        """Update the state of Clear Preview, Apply, and Find Similar buttons."""
         has_changes = self.annotation_viewer.has_preview_changes()
         self.clear_preview_button.setEnabled(has_changes)
         self.apply_button.setEnabled(has_changes)
+        
+        # Update tooltips with a summary of changes
         summary = self.annotation_viewer.get_preview_changes_summary()
         self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
         self.apply_button.setToolTip(f"Apply changes - {summary}")
 
+        # Logic for the "Find Similar" button
+        selection_exists = bool(self.annotation_viewer.selected_widgets)
+        embedding_exists = bool(self.embedding_viewer.points_by_id) and self.current_embedding_model_info is not None
+        self.annotation_viewer.find_similar_button.setEnabled(selection_exists and embedding_exists)
+
     def apply(self):
         """
-        Apply all pending changes, including label modifications and deletions,
-        to the main application's data.
+        Apply all pending label modifications to the main application's data.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # Separate items into those to be deleted and those to be kept
-            items_to_delete = [item for item in self.current_data_items if item.is_marked_for_deletion()]
-            items_to_keep = [item for item in self.current_data_items if not item.is_marked_for_deletion()]
-
-            # --- 1. Process Deletions ---
-            deleted_annotations = []
-            if items_to_delete:
-                deleted_annotations = [item.annotation for item in items_to_delete]
-                print(f"Permanently deleting {len(deleted_annotations)} annotation(s).")
-                self.annotation_window.delete_annotations(deleted_annotations)
-
-            # --- 2. Process Label Changes on remaining items ---
+            # --- 1. Process Label Changes ---
             applied_label_changes = []
-            for item in items_to_keep:
+            # Iterate over all current data items
+            for item in self.current_data_items:
                 if item.apply_preview_permanently():
                     applied_label_changes.append(item.annotation)
 
-            # --- 3. Update UI if any changes were made ---
-            if not deleted_annotations and not applied_label_changes:
+            # --- 2. Update UI if any changes were made ---
+            if not applied_label_changes:
                 print("No pending changes to apply.")
                 return
 
-            # Update the Explorer's internal list of data items
-            self.current_data_items = items_to_keep
-
             # Update the main application's data and UI
-            all_affected_annotations = deleted_annotations + applied_label_changes
-            affected_images = {ann.image_path for ann in all_affected_annotations}
+            affected_images = {ann.image_path for ann in applied_label_changes}
             for image_path in affected_images:
                 self.image_window.update_image_annotations(image_path)
             self.annotation_window.load_annotations()
@@ -1808,13 +2623,13 @@ class ExplorerWindow(QMainWindow):
             self.update_label_window_selection()
             self.update_button_states()
 
-            print(f"Applied changes successfully.")
+            print("Applied changes successfully.")
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
         finally:
             QApplication.restoreOverrideCursor()
-
+            
     def _cleanup_resources(self):
         """Clean up resources."""
         self.loaded_model = None

@@ -1,10 +1,10 @@
 import os
 import warnings
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
-                             QLineEdit, QFileDialog, QFormLayout)
+                             QLineEdit, QFileDialog, QFormLayout, QSpinBox)
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
@@ -15,6 +15,180 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Widgets
 # ----------------------------------------------------------------------------------------------------------------------
 
+
+class UncertaintySettingsWidget(QWidget):
+    """A widget for configuring uncertainty sampling parameters."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        # Set a strong focus policy to prevent the menu from closing on interaction
+        self.confidence_slider.setFocusPolicy(Qt.StrongFocus)
+        self.margin_slider.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # 1. Confidence Threshold
+        confidence_layout = QHBoxLayout()
+        self.confidence_slider = QSlider(Qt.Horizontal)
+        self.confidence_slider.setMinimum(0)
+        self.confidence_slider.setMaximum(100)
+        self.confidence_slider.setValue(60)
+        self.confidence_slider.setToolTip(
+            "Find annotations where the model's top guess\n"
+            "has a confidence BELOW this threshold."
+        )
+        self.confidence_label = QLabel("60%")
+        self.confidence_label.setMinimumWidth(40)
+        confidence_layout.addWidget(self.confidence_slider)
+        confidence_layout.addWidget(self.confidence_label)
+        main_layout.addRow("Max Confidence:", confidence_layout)
+
+        # 2. Margin Threshold
+        margin_layout = QHBoxLayout()
+        self.margin_slider = QSlider(Qt.Horizontal)
+        self.margin_slider.setMinimum(0)
+        self.margin_slider.setMaximum(50)
+        self.margin_slider.setValue(10)
+        self.margin_slider.setToolTip(
+            "Find annotations where the confidence difference\n"
+            "between the top two guesses is BELOW this threshold."
+        )
+        self.margin_label = QLabel("10%")
+        self.margin_label.setMinimumWidth(40)
+        margin_layout.addWidget(self.margin_slider)
+        margin_layout.addWidget(self.margin_label)
+        main_layout.addRow("Min Margin:", margin_layout)
+
+        # Connect signals
+        self.confidence_slider.valueChanged.connect(self._emit_parameters)
+        self.margin_slider.valueChanged.connect(self._emit_parameters)
+        self.confidence_slider.valueChanged.connect(
+            lambda v: self.confidence_label.setText(f"{v}%")
+        )
+        self.margin_slider.valueChanged.connect(
+            lambda v: self.margin_label.setText(f"{v}%")
+        )
+
+    @pyqtSlot()
+    def _emit_parameters(self):
+        """Gathers current values and emits them in a dictionary."""
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        """Returns the current parameters as a dictionary."""
+        return {
+            'confidence': self.confidence_slider.value() / 100.0,
+            'margin': self.margin_slider.value() / 100.0
+        }
+        
+
+class MislabelSettingsWidget(QWidget):
+    """A widget for configuring mislabel detection parameters."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        # Set a default value to prevent the menu from closing on interaction
+        self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+        self.threshold_slider.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # 1. K (Number of Neighbors)
+        self.k_spinbox = QSpinBox()
+        self.k_spinbox.setMinimum(2)
+        self.k_spinbox.setMaximum(50)
+        self.k_spinbox.setValue(5)
+        self.k_spinbox.setToolTip("Number of neighbors to check for each point (K).")
+        main_layout.addRow("Neighbors (K):", self.k_spinbox)
+
+        # 2. Agreement Threshold
+        threshold_layout = QHBoxLayout()
+        self.threshold_slider = QSlider(Qt.Horizontal)
+        self.threshold_slider.setMinimum(0)
+        self.threshold_slider.setMaximum(100)
+        self.threshold_slider.setValue(60)
+        self.threshold_slider.setToolTip(
+            "A point is flagged if the percentage of neighbors\n"
+            "with the same label is BELOW this threshold."
+        )
+
+        self.threshold_label = QLabel("60%")
+        self.threshold_label.setMinimumWidth(40)
+
+        threshold_layout.addWidget(self.threshold_slider)
+        threshold_layout.addWidget(self.threshold_label)
+        main_layout.addRow("Agreement:", threshold_layout)
+        
+        # Connect signals
+        self.k_spinbox.valueChanged.connect(self._emit_parameters)
+        self.threshold_slider.valueChanged.connect(self._emit_parameters)
+        self.threshold_slider.valueChanged.connect(
+            lambda v: self.threshold_label.setText(f"{v}%")
+        )
+    
+    @pyqtSlot()
+    def _emit_parameters(self):
+        """Gathers current values and emits them in a dictionary."""
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        """Returns the current parameters as a dictionary."""
+        return {
+            'k': self.k_spinbox.value(),
+            'threshold': self.threshold_slider.value() / 100.0
+        }
+        
+
+class SimilaritySettingsWidget(QWidget):
+    """A widget for configuring similarity search parameters (number of neighbors)."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # K (Number of Neighbors)
+        self.k_spinbox = QSpinBox()
+        self.k_spinbox.setMinimum(1)
+        self.k_spinbox.setMaximum(200)
+        self.k_spinbox.setValue(10)
+        self.k_spinbox.setToolTip("Number of similar items to find (K).")
+        main_layout.addRow("Neighbors (K):", self.k_spinbox)
+
+        # Connect signals
+        self.k_spinbox.valueChanged.connect(self._emit_parameters)
+
+    @pyqtSlot()
+    def _emit_parameters(self):
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        return {
+            'k': self.k_spinbox.value()
+        }
+        
 
 class AnnotationSettingsWidget(QGroupBox):
     """Widget for filtering annotations by image, type, and label in a multi-column layout."""
@@ -220,6 +394,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
 class ModelSettingsWidget(QGroupBox):
     """Widget containing model selection with tabs for different model sources."""
+    selection_changed = pyqtSignal()
 
     def __init__(self, main_window, parent=None):
         super(ModelSettingsWidget, self).__init__("Model Settings", parent)
@@ -243,21 +418,23 @@ class ModelSettingsWidget(QGroupBox):
         self.model_combo.addItems(["Color Features"])
         self.model_combo.insertSeparator(1)  # Add a separator
 
-        standard_models = ['yolov8n-cls.pt',
-                           'yolov8s-cls.pt',
-                           'yolov8m-cls.pt',
-                           'yolov8l-cls.pt',
-                           'yolov8x-cls.pt',
-                           'yolo11n-cls.pt',
-                           'yolo11s-cls.pt',
-                           'yolo11m-cls.pt',
-                           'yolo11l-cls.pt',
-                           'yolo11x-cls.pt',
-                           'yolo12n-cls.pt',
-                           'yolo12s-cls.pt',
-                           'yolo12m-cls.pt',
-                           'yolo12l-cls.pt',
-                           'yolo12x-cls.pt']
+        standard_models = [
+            'yolov8n-cls.pt',
+            'yolov8s-cls.pt',
+            'yolov8m-cls.pt',
+            'yolov8l-cls.pt',
+            'yolov8x-cls.pt',
+            'yolo11n-cls.pt',
+            'yolo11s-cls.pt',
+            'yolo11m-cls.pt',
+            'yolo11l-cls.pt',
+            'yolo11x-cls.pt',
+            'yolo12n-cls.pt',
+            'yolo12s-cls.pt',
+            'yolo12m-cls.pt',
+            'yolo12l-cls.pt',
+            'yolo12x-cls.pt'
+        ]
 
         self.model_combo.addItems(standard_models)
 
@@ -267,9 +444,6 @@ class ModelSettingsWidget(QGroupBox):
             self.model_combo.addItems(list(community_configs.keys()))
 
         self.model_combo.setCurrentText('Color Features')
-        # Connect selection change to update feature mode field state
-        self.model_combo.currentTextChanged.connect(self._update_feature_mode_state)
-        
         model_select_layout.addRow("Model:", self.model_combo)
         
         self.tabs.addTab(model_select_tab, "Select Model")
@@ -293,18 +467,21 @@ class ModelSettingsWidget(QGroupBox):
 
         main_layout.addWidget(self.tabs)
         
-        # Connect tab change to update feature mode state
-        self.tabs.currentChanged.connect(self._update_feature_mode_state)
+        # Connect all relevant widgets to a single slot that emits the new signal
+        self.model_combo.currentTextChanged.connect(self._on_selection_changed)
+        self.tabs.currentChanged.connect(self._on_selection_changed)
+        self.model_path_edit.textChanged.connect(self._on_selection_changed)
         
         # Add feature extraction mode selection outside of tabs
         feature_mode_layout = QFormLayout()
         self.feature_mode_combo = QComboBox()
         self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
+        self.feature_mode_combo.currentTextChanged.connect(self._on_selection_changed)
         feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
         main_layout.addLayout(feature_mode_layout)
         
-        # Initialize the feature mode state based on current selection
-        self._update_feature_mode_state()
+        # Initialize the feature mode state and emit the first signal
+        self._on_selection_changed()
 
     def browse_for_model(self):
         """Open a file dialog to browse for model files."""
@@ -318,6 +495,12 @@ class ModelSettingsWidget(QGroupBox):
         )
         if file_path:
             self.model_path_edit.setText(file_path)
+            
+    @pyqtSlot()
+    def _on_selection_changed(self):
+        """Central slot to handle any change in model selection and emit a single signal."""
+        self._update_feature_mode_state()
+        self.selection_changed.emit()
 
     def _update_feature_mode_state(self, *args):
         """Update the enabled state of the feature mode field based on the current model selection."""

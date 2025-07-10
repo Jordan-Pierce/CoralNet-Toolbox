@@ -2,6 +2,8 @@ import warnings
 
 import os
 
+import numpy as np
+
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPen, QColor, QPainter
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
@@ -54,6 +56,12 @@ class EmbeddingPointItem(QGraphicsEllipseItem):
 
         # Set the position of the point based on the data item's embedding coordinates
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
+        # Set the tooltip with detailed information
+        self.setToolTip(self.data_item.get_tooltip_text())
+        
+    def update_tooltip(self):
+        """Updates the tooltip by fetching the latest text from the data item."""
+        self.setToolTip(self.data_item.get_tooltip_text())
 
     def paint(self, painter, option, widget):
         """
@@ -104,6 +112,10 @@ class AnnotationImageWidget(QWidget):
         self.image_label.setScaledContents(True)
         self.image_label.setStyleSheet("border: none;")
         layout.addWidget(self.image_label)
+        
+    def update_tooltip(self):
+        """Updates the tooltip by fetching the latest text from the data item."""
+        self.setToolTip(self.data_item.get_tooltip_text())
 
     def load_and_set_image(self):
         """Load image, calculate its aspect ratio, and set the widget's initial size."""
@@ -124,7 +136,10 @@ class AnnotationImageWidget(QWidget):
             self.image_label.setText("Error\nLoading Image")
             self.pixmap = None
             self.aspect_ratio = 1.0
+            
         self.update_height(self.widget_height)
+        # Set the initial tooltip
+        self.update_tooltip()
 
     def update_height(self, new_height):
         """Updates the widget's height and rescales its width and content accordingly."""
@@ -204,8 +219,12 @@ class AnnotationImageWidget(QWidget):
                 # The viewer is the controller and will decide how to change the selection state
                 self.annotation_viewer.handle_annotation_selection(self, event)
         elif event.button() == Qt.RightButton:
-            event.ignore()
-            return
+            if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_context_menu'):
+                self.annotation_viewer.handle_annotation_context_menu(self, event)
+                event.accept()
+                return
+            else:
+                event.ignore()
         super().mousePressEvent(event)
 
 
@@ -218,14 +237,20 @@ class AnnotationDataItem:
 
     def __init__(self, annotation, embedding_x=None, embedding_y=None, embedding_id=None):
         self.annotation = annotation
+        
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
         self.embedding_id = embedding_id if embedding_id is not None else 0
+        
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
-        self._marked_for_deletion = False
-
+        
+        # To store pre-formatted top-k prediction details
+        self.prediction_details = None
+        # To store prediction probabilities for sorting
+        self.prediction_probabilities = None
+        
     @property
     def effective_label(self):
         """Get the current effective label (preview if it exists, otherwise original)."""
@@ -257,18 +282,6 @@ class AnnotationDataItem:
         """Check if this annotation has a temporary preview label assigned."""
         return self._preview_label is not None
 
-    def mark_for_deletion(self):
-        """Mark this annotation for deletion."""
-        self._marked_for_deletion = True
-
-    def unmark_for_deletion(self):
-        """Unmark this annotation for deletion."""
-        self._marked_for_deletion = False
-
-    def is_marked_for_deletion(self):
-        """Check if this annotation is marked for deletion."""
-        return self._marked_for_deletion
-
     def apply_preview_permanently(self):
         """Apply the preview label permanently to the underlying annotation object."""
         if self._preview_label:
@@ -290,9 +303,35 @@ class AnnotationDataItem:
             'embedding_id': self.embedding_id,
             'color': self.effective_color
         }
+    
+    def get_tooltip_text(self):
+        """
+        Generates a rich HTML-formatted tooltip with all relevant information.
+        """
+        info = self.get_display_info()
+        
+        tooltip_parts = [
+            f"<b>ID:</b> {info['id']}",
+            f"<b>Image:</b> {info['image']}",
+            f"<b>Label:</b> {info['label']}",
+            f"<b>Type:</b> {info['type']}"
+        ]
+
+        # Add prediction details if they exist
+        if self.prediction_details:
+            tooltip_parts.append(f"<hr>{self.prediction_details}")
+
+        return "<br>".join(tooltip_parts)
 
     def get_effective_confidence(self):
         """Get the effective confidence value."""
+        # First check if prediction probabilities are available from model predictions
+        if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
+            if len(self.prediction_probabilities) > 0:
+                # Use the maximum probability for confidence sorting
+                return float(np.max(self.prediction_probabilities))
+        
+        # Fallback to existing confidence values
         if self.annotation.verified and hasattr(self.annotation, 'user_confidence') and self.annotation.user_confidence:
             return list(self.annotation.user_confidence.values())[0]
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:

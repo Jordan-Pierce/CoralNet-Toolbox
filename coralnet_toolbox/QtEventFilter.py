@@ -26,17 +26,28 @@ class GlobalEventFilter(QObject):
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
         
     def eventFilter(self, obj, event):
+        # Check for explorer window first - this applies to all event types
+        if hasattr(self.main_window, 'explorer_window') and self.main_window.explorer_window:
+            # Special exception for WASD keys which should always work
+            if event.type() == QEvent.KeyPress and event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D] and \
+                event.modifiers() & Qt.ControlModifier:
+                self.label_window.handle_wasd_key(event.key())
+                return True
+            
+            # For all other events when explorer is visible, pass them through
+            return False
+            
+        # Now handle keyboard events
         if event.type() == QEvent.KeyPress:
             if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
-                
-                # Handle Tab key for switching between Select and Annotation tools
-                if event.key() == Qt.Key_Alt:
-                    self.main_window.switch_back_to_tool()
-                    return True
-                
                 # Handle WASD keys for selecting Label
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
                     self.label_window.handle_wasd_key(event.key())
+                    return True
+
+                # Handle Alt key for switching between Select and Annotation tools
+                if event.key() == Qt.Key_Alt:
+                    self.main_window.switch_back_to_tool()
                     return True
                 
                 # Handle hotkey for image classification prediction
@@ -74,22 +85,12 @@ class GlobalEventFilter(QObject):
                 
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
-
-                # First, check if the Explorer window exists and is the active window
-                if (self.main_window.explorer_window and 
-                    self.main_window.explorer_window.isActiveWindow()):
-                    
-                    # If it is, let the Explorer handle its own key press events.
-                    # Returning False passes the event along instead of consuming it.
-                    return False
-
-                # If Explorer is not active, proceed with the original logic for the main window
                 if self.main_window.select_tool_action.isChecked():
                     if self.annotation_window.selected_annotations:
                         self.annotation_window.delete_selected_annotations()
                     # Consume the event so it doesn't do anything else
                     return True
-                
+            
             # Handle image cycling hotkeys
             if event.key() == Qt.Key_Up and event.modifiers() == (Qt.AltModifier):
                 self.image_window.cycle_previous_image()
