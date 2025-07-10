@@ -2,6 +2,8 @@ import warnings
 
 import os
 
+import numpy as np
+
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPen, QColor, QPainter
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
@@ -246,7 +248,9 @@ class AnnotationDataItem:
         
         # To store pre-formatted top-k prediction details
         self.prediction_details = None
-
+        # To store prediction probabilities for sorting
+        self.prediction_probabilities = None
+        
     @property
     def effective_label(self):
         """Get the current effective label (preview if it exists, otherwise original)."""
@@ -321,6 +325,13 @@ class AnnotationDataItem:
 
     def get_effective_confidence(self):
         """Get the effective confidence value."""
+        # First check if prediction probabilities are available from model predictions
+        if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
+            if len(self.prediction_probabilities) > 0:
+                # Use the maximum probability for confidence sorting
+                return float(np.max(self.prediction_probabilities))
+        
+        # Fallback to existing confidence values
         if self.annotation.verified and hasattr(self.annotation, 'user_confidence') and self.annotation.user_confidence:
             return list(self.annotation.user_confidence.values())[0]
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:

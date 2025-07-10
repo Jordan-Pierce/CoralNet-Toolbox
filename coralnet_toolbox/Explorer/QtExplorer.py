@@ -582,6 +582,11 @@ class AnnotationViewer(QScrollArea):
         self.original_label_assignments = {}
         self.isolated_mode = False
         self.isolated_widgets = set()
+
+        # State for new sorting options
+        self.similarity_sort_order = []
+        self.is_confidence_sort_available = False
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -614,7 +619,10 @@ class AnnotationViewer(QScrollArea):
         sort_label = QLabel("Sort By:")
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image"])
+        # Add all items, including the new ones
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Similarity"])
+        # Insert a separator after "Image" (at index 3)
+        self.sort_combo.insertSeparator(3)
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
@@ -668,6 +676,9 @@ class AnnotationViewer(QScrollArea):
 
         main_layout.addWidget(content_scroll)
         self.setWidget(main_container)
+
+        # Set the initial state of the sort options
+        self._update_sort_options_state()
         self._update_toolbar_state()
         
     def _create_separator(self):
@@ -675,6 +686,20 @@ class AnnotationViewer(QScrollArea):
         separator = QLabel("|")
         separator.setStyleSheet("color: gray; margin: 0 5px;")
         return separator
+    
+    def _update_sort_options_state(self):
+        """Enable/disable sort options based on available data."""
+        model = self.sort_combo.model()
+
+        # Enable/disable "Confidence" option
+        confidence_item_index = self.sort_combo.findText("Confidence")
+        if confidence_item_index != -1:
+            model.item(confidence_item_index).setEnabled(self.is_confidence_sort_available)
+
+        # Enable/disable "Similarity" option
+        similarity_item_index = self.sort_combo.findText("Similarity")
+        if similarity_item_index != -1:
+            model.item(similarity_item_index).setEnabled(bool(self.similarity_sort_order))
     
     def handle_annotation_context_menu(self, widget, event):
         """Handle context menu requests (e.g., right-click) on an annotation widget."""
@@ -758,16 +783,41 @@ class AnnotationViewer(QScrollArea):
 
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
+        # If user selects something other than similarity, the context is lost
+        if sort_type != "Similarity":
+            self.set_similarity_sort_order([])
         self.recalculate_widget_positions()
+
+    def set_confidence_sort_availability(self, is_available):
+        """Sets the availability of the confidence sort option."""
+        self.is_confidence_sort_available = is_available
+        self._update_sort_options_state()
+
+    def set_similarity_sort_order(self, ordered_ids):
+        """Sets the annotation ID order for similarity sorting."""
+        self.similarity_sort_order = ordered_ids
+        self._update_sort_options_state()
 
     def _get_sorted_widgets(self):
         """Get widgets sorted according to the current sort setting."""
         sort_type = self.sort_combo.currentText()
         widgets = list(self.annotation_widgets_by_id.values())
+
         if sort_type == "Label":
             widgets.sort(key=lambda w: w.data_item.effective_label.short_label_code)
         elif sort_type == "Image":
             widgets.sort(key=lambda w: os.path.basename(w.data_item.annotation.image_path))
+        elif sort_type == "Confidence":
+            # Sort by confidence, descending. Handles cases with no confidence gracefully.
+            widgets.sort(key=lambda w: w.data_item.get_effective_confidence(), reverse=True)
+        elif sort_type == "Similarity" and self.similarity_sort_order:
+            # Reorder widgets based on the stored similarity order
+            widget_map = {w.data_item.annotation.id: w for w in widgets}
+            ordered_widgets = [widget_map[ann_id] for ann_id in self.similarity_sort_order if ann_id in widget_map]
+            # Append any remaining widgets that weren't in the similarity list but are visible
+            remaining_widgets = [w for w in widgets if w not in ordered_widgets]
+            widgets = ordered_widgets + remaining_widgets
+        
         return widgets
 
     def _group_widgets_by_sort_key(self, widgets):
@@ -1537,6 +1587,9 @@ class ExplorerWindow(QMainWindow):
         if self.embedding_viewer.isolated_mode:
             self.embedding_viewer.show_all_points()
 
+        # Clear similarity sort context
+        self.annotation_viewer.set_similarity_sort_order([])
+
         self.update_label_window_selection()
         self.update_button_states()
 
@@ -1791,10 +1844,8 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot()
     def find_similar_annotations(self):
         """Finds k-nearest neighbors to the selected annotation(s) and updates the UI."""
-        # --- MODIFIED LINE ---
         k = self.similarity_params.get('k', 10)
 
-        # The rest of the find_similar_annotations method is unchanged from the previous implementation
         if not self.annotation_viewer.selected_widgets:
             QMessageBox.information(self, "No Selection", "Please select one or more annotations first.")
             return
@@ -1847,6 +1898,9 @@ class ExplorerWindow(QMainWindow):
             if len(selected_data_items) == 1:
                 similar_ann_ids = similar_ann_ids[:k]
             
+            # Pass the ordered list of similar IDs to the annotation viewer for sorting
+            self.annotation_viewer.set_similarity_sort_order(similar_ann_ids)
+
             final_selection_ids = set(similar_ann_ids) | selected_ids
 
             self.annotation_viewer.clear_selection()
@@ -2034,6 +2088,9 @@ class ExplorerWindow(QMainWindow):
                 probs = result.probs.data.cpu().numpy().squeeze()
                 features_list.append(probs)
                 probabilities_dict[ann_id] = probs
+                
+                # Store the probabilities directly on the data item for confidence sorting
+                item.prediction_probabilities = probs
                 
                 # Format and store prediction details for tooltips
                 if len(probs) > 0:
@@ -2363,6 +2420,20 @@ class ExplorerWindow(QMainWindow):
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
 
+            # Check if confidence scores are available to enable sorting
+            _, feature_mode = self.current_embedding_model_info
+            is_predict_mode = feature_mode == "Predictions"
+            self.annotation_viewer.set_confidence_sort_availability(is_predict_mode)
+
+            # If using Predictions mode, update data items with probabilities for confidence sorting
+            if is_predict_mode:
+                for item in self.current_data_items:
+                    if item.annotation.id in cached_features:
+                        item.prediction_probabilities = cached_features[item.annotation.id]
+
+            # When a new embedding is run, any previous similarity sort becomes irrelevant
+            self.annotation_viewer.set_similarity_sort_order([])
+
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
@@ -2378,6 +2449,10 @@ class ExplorerWindow(QMainWindow):
             self.annotation_viewer.update_annotations(self.current_data_items)
             self.embedding_viewer.clear_points()
             self.embedding_viewer.show_placeholder()
+
+            # Reset sort options when filters change
+            self.annotation_viewer.set_similarity_sort_order([])
+            self.annotation_viewer.set_confidence_sort_availability(False)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -2413,7 +2488,7 @@ class ExplorerWindow(QMainWindow):
                     del self.data_item_cache[ann_id]
 
             # 3. Remove from AnnotationViewer
-            blocker = QSignalBlocker(self.annotation_viewer) # Block signals during mass removal
+            blocker = QSignalBlocker(self.annotation_viewer)  # Block signals during mass removal
             for ann_id in deleted_ann_ids:
                 if ann_id in self.annotation_viewer.annotation_widgets_by_id:
                     widget = self.annotation_viewer.annotation_widgets_by_id.pop(ann_id)
@@ -2431,7 +2506,7 @@ class ExplorerWindow(QMainWindow):
                     point = self.embedding_viewer.points_by_id.pop(ann_id)
                     self.embedding_viewer.graphics_scene.removeItem(point)
             blocker.unblock()
-            self.embedding_viewer.on_selection_changed() # Trigger update of selection state
+            self.embedding_viewer.on_selection_changed()  # Trigger update of selection state
 
             # 5. Update UI
             self.update_label_window_selection()
@@ -2513,7 +2588,7 @@ class ExplorerWindow(QMainWindow):
             self.update_label_window_selection()
             self.update_button_states()
 
-            print(f"Applied changes successfully.")
+            print("Applied changes successfully.")
 
         except Exception as e:
             print(f"Error applying modifications: {e}")
