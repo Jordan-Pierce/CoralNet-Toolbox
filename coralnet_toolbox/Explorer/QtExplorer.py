@@ -741,6 +741,36 @@ class AnnotationViewer(QScrollArea):
         self._update_toolbar_state()
         self.explorer_window.main_window.label_window.update_annotation_count()
 
+    def display_and_isolate_ordered_results(self, ordered_ids):
+        """
+        Isolates the view to a specific set of ordered widgets, ensuring the 
+        grid is always updated. This is the new primary method for showing 
+        similarity results.
+        """
+        self.active_ordered_ids = ordered_ids
+        
+        # Render the selection based on the new order
+        self.render_selection_from_ids(set(ordered_ids)) 
+
+        # Now, perform the isolation logic directly to bypass the guard clause
+        self.isolated_widgets = set(self.selected_widgets)
+        self.content_widget.setUpdatesEnabled(False)
+        try:
+            for widget in self.annotation_widgets_by_id.values():
+                # Show widget if it's in our target set, hide otherwise
+                if widget in self.isolated_widgets:
+                    widget.show()
+                else:
+                    widget.hide()
+                    
+            self.isolated_mode = True
+            self.recalculate_widget_positions()  # Crucial grid update
+        finally:
+            self.content_widget.setUpdatesEnabled(True)
+
+        self._update_toolbar_state()
+        self.explorer_window.main_window.label_window.update_annotation_count()
+
     @pyqtSlot()
     def show_all_annotations(self):
         """Shows all annotation widgets, exiting the isolated mode."""
@@ -1838,7 +1868,8 @@ class ExplorerWindow(QMainWindow):
     def find_similar_annotations(self):
         """
         Finds k-nearest neighbors to the selected annotation(s) and updates 
-        the UI to show the results in an isolated, ordered view.
+        the UI to show the results in an isolated, ordered view. This method
+        now ensures the grid is always updated and resets the sort-by dropdown.
         """
         k = self.similarity_params.get('k', 10)
 
@@ -1895,16 +1926,16 @@ class ExplorerWindow(QMainWindow):
             # Create the final ordered list: original selection first, then similar items.
             ordered_ids_to_display = list(source_ids) + similar_ann_ids
             
-            # Set this ordered list as the primary sorting method for the annotation viewer
-            self.annotation_viewer.active_ordered_ids = ordered_ids_to_display
+            # --- FIX IMPLEMENTATION ---
+            # 1. Force sort combo to "None" to avoid user confusion.
+            self.annotation_viewer.sort_combo.setCurrentText("None")
 
-            # Select all items that will be displayed
-            final_selection_ids = set(ordered_ids_to_display)
-            self.annotation_viewer.render_selection_from_ids(final_selection_ids)
-            self.embedding_viewer.render_selection_from_ids(final_selection_ids)
+            # 2. Update the embedding viewer selection.
+            self.embedding_viewer.render_selection_from_ids(set(ordered_ids_to_display))
             
-            # Isolate the view to show only these results, which will now be sorted
-            self.annotation_viewer.isolate_selection()
+            # 3. Call the new robust method in AnnotationViewer to handle isolation and grid updates.
+            self.annotation_viewer.display_and_isolate_ordered_results(ordered_ids_to_display)
+
             self.update_button_states()
 
         finally:
@@ -2262,7 +2293,7 @@ class ExplorerWindow(QMainWindow):
 
     def _run_dimensionality_reduction(self, features, params):
         """
-        Runs dimensionality reduction (PCA, UMAP, or t-SNE) on the feature matrix.
+        Runs dimensionality reduction with automatic PCA preprocessing for UMAP and t-SNE.
 
         Args:
             features (np.ndarray): Feature matrix of shape (N, D).
@@ -2272,6 +2303,8 @@ class ExplorerWindow(QMainWindow):
             np.ndarray or None: 2D embedded features of shape (N, 2), or None on failure.
         """
         technique = params.get('technique', 'UMAP')
+        # Default number of components to use for PCA preprocessing
+        pca_components = params.get('pca_components', 50)
 
         if len(features) <= 2:
             # Not enough samples for dimensionality reduction
@@ -2280,11 +2313,21 @@ class ExplorerWindow(QMainWindow):
         try:
             # Standardize features before reduction
             features_scaled = StandardScaler().fit_transform(features)
+            
+            # Apply PCA preprocessing automatically for UMAP or TSNE
+            # (only if the feature dimension is larger than the target PCA components)
+            if technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
+                # Ensure pca_components doesn't exceed number of samples or features
+                pca_components = min(pca_components, features_scaled.shape[0] - 1, features_scaled.shape[1])
+                print(f"Applying PCA preprocessing to {pca_components} components before {technique}")
+                pca = PCA(n_components=pca_components, random_state=42)
+                features_scaled = pca.fit_transform(features_scaled)
+                variance_explained = sum(pca.explained_variance_ratio_) * 100
+                print(f"Variance explained by PCA: {variance_explained:.1f}%")
 
+            # Proceed with the selected dimensionality reduction technique
             if technique == "UMAP":
-                # UMAP: n_neighbors must be < n_samples
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
-
                 reducer = UMAP(
                     n_components=2,
                     random_state=42,
@@ -2293,9 +2336,7 @@ class ExplorerWindow(QMainWindow):
                     metric=params.get('metric', 'cosine')
                 )
             elif technique == "TSNE":
-                # t-SNE: perplexity must be < n_samples
                 perplexity = min(params.get('perplexity', 30), len(features_scaled) - 1)
-
                 reducer = TSNE(
                     n_components=2,
                     random_state=42,
@@ -2307,7 +2348,6 @@ class ExplorerWindow(QMainWindow):
             elif technique == "PCA":
                 reducer = PCA(n_components=2, random_state=42)
             else:
-                # Unknown technique
                 return None
 
             # Fit and transform the features
