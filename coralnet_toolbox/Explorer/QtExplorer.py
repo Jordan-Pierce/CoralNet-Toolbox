@@ -313,39 +313,23 @@ class EmbeddingViewer(QWidget):
 
     def keyPressEvent(self, event):
         """Handles key presses for deleting selected points."""
-        # Check if the pressed key is Delete/Backspace AND the Control key is held down
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
-            # Get the currently selected items from the graphics scene
             selected_items = self.graphics_scene.selectedItems()
-
             if not selected_items:
                 super().keyPressEvent(event)
                 return
 
-            print(f"Marking {len(selected_items)} points for deletion.")
+            # Extract the central data items from the selected graphics points
+            data_items_to_delete = [
+                item.data_item for item in selected_items if isinstance(item, EmbeddingPointItem)
+            ]
 
-            # Mark each item for deletion and remove it from the scene
-            for item in selected_items:
-                if isinstance(item, EmbeddingPointItem):
-                    # Mark the central data item for deletion
-                    item.data_item.mark_for_deletion()
+            # Delegate the actual deletion to the main ExplorerWindow
+            if data_items_to_delete:
+                self.explorer_window.delete_data_items(data_items_to_delete)
 
-                    # Remove the point from our internal lookup
-                    ann_id = item.data_item.annotation.id
-                    if ann_id in self.points_by_id:
-                        del self.points_by_id[ann_id]
-
-                    # Remove the point from the visual scene
-                    self.graphics_scene.removeItem(item)
-
-            # Trigger a selection change to clear the selection state
-            # and notify the ExplorerWindow.
-            self.on_selection_changed()
-
-            # Accept the event to prevent it from being processed further
             event.accept()
         else:
-            # Pass any other key presses to the default handler
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -468,29 +452,6 @@ class EmbeddingViewer(QWidget):
         
         # Ensure buttons are in the correct initial state
         self._update_toolbar_state()
-
-    def refresh_points(self):
-        """Refreshes the points in the view to match the current state of the master data list."""
-        if not self.explorer_window or not self.explorer_window.current_data_items:
-            return
-
-        # Get the set of IDs for points currently in the scene
-        current_point_ids = set(self.points_by_id.keys())
-
-        # Get the master list of data items from the parent window
-        all_data_items = self.explorer_window.current_data_items
-
-        something_changed = False
-        for item in all_data_items:
-            # If a data item is NOT marked for deletion but is also NOT in the scene, add it back.
-            if not item.is_marked_for_deletion() and item.annotation.id not in current_point_ids:
-                point = EmbeddingPointItem(item)
-                self.graphics_scene.addItem(point)
-                self.points_by_id[item.annotation.id] = point
-                something_changed = True
-
-        if something_changed:
-            print("Refreshed embedding points to show reverted items.")
 
     def clear_points(self):
         """Clear all embedding points from the scene."""
@@ -703,11 +664,10 @@ class AnnotationViewer(QScrollArea):
 
         self.content_widget.setUpdatesEnabled(False)
         try:
-            # Only show widgets that are NOT marked for deletion.
+            # Show all widgets that are managed by the viewer
             for widget in self.annotation_widgets_by_id.values():
-                if not widget.data_item.is_marked_for_deletion():
-                    widget.show()
-            
+                widget.show()
+
             self.recalculate_widget_positions()
         finally:
             self.content_widget.setUpdatesEnabled(True)
@@ -898,39 +858,20 @@ class AnnotationViewer(QScrollArea):
 
     def keyPressEvent(self, event):
         """Handles key presses for deleting selected annotations."""
-        # Check if the pressed key is Delete/Backspace AND the Control key is held down
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and event.modifiers() == Qt.ControlModifier:
-            # Proceed only if there are selected widgets
             if not self.selected_widgets:
                 super().keyPressEvent(event)
                 return
 
-            print(f"Marking {len(self.selected_widgets)} annotations for deletion.")
+            # Extract the central data items from the selected widgets
+            data_items_to_delete = [widget.data_item for widget in self.selected_widgets]
 
-            # Keep track of which annotations were affected
-            changed_ids = []
+            # Delegate the actual deletion to the main ExplorerWindow
+            if data_items_to_delete:
+                self.explorer_window.delete_data_items(data_items_to_delete)
 
-            # Mark each selected item for deletion and hide it
-            for widget in self.selected_widgets:
-                widget.data_item.mark_for_deletion()
-                widget.hide()
-                changed_ids.append(widget.data_item.annotation.id)
-
-            # Clear the list of selected widgets
-            self.selected_widgets.clear()
-
-            # Recalculate the layout to fill in the empty space
-            self.recalculate_widget_positions()
-
-            # Emit a signal to notify the ExplorerWindow that the selection is now empty
-            # This will also clear the selection in the EmbeddingViewer
-            if changed_ids:
-                self.selection_changed.emit(changed_ids)
-
-            # Accept the event to prevent it from being processed further
             event.accept()
         else:
-            # Pass any other key presses to the default handler
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -1244,8 +1185,8 @@ class AnnotationViewer(QScrollArea):
 
     def clear_preview_states(self):
         """
-        Clears all preview states, including label changes and items marked
-        for deletion, reverting them to their original state.
+        Clears all preview states, including label changes,
+        reverting them to their original state.
         """
         something_changed = False
         for widget in self.annotation_widgets_by_id.values():
@@ -1253,12 +1194,6 @@ class AnnotationViewer(QScrollArea):
             if widget.data_item.has_preview_changes():
                 widget.data_item.clear_preview_label()
                 widget.update()  # Repaint to show original color
-                something_changed = True
-
-            # Check for and un-mark items for deletion
-            if widget.data_item.is_marked_for_deletion():
-                widget.data_item.unmark_for_deletion()
-                widget.show()  # Make the widget visible again
                 something_changed = True
 
         if something_changed:
@@ -2205,16 +2140,73 @@ class ExplorerWindow(QMainWindow):
             self.annotation_viewer.apply_preview_label_to_selected(label)
             self.update_button_states()
 
+    def delete_data_items(self, data_items_to_delete):
+        """
+        Permanently deletes a list of data items and their associated annotations
+        and visual components from the explorer and the main application.
+        """
+        if not data_items_to_delete:
+            return
+
+        print(f"Permanently deleting {len(data_items_to_delete)} item(s).")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            deleted_ann_ids = {item.annotation.id for item in data_items_to_delete}
+            annotations_to_delete_from_main_app = [item.annotation for item in data_items_to_delete]
+
+            # 1. Delete from the main application's data store
+            self.annotation_window.delete_annotations(annotations_to_delete_from_main_app)
+
+            # 2. Remove from Explorer's internal data structures
+            self.current_data_items = [
+                item for item in self.current_data_items if item.annotation.id not in deleted_ann_ids
+            ]
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.data_item_cache:
+                    del self.data_item_cache[ann_id]
+
+            # 3. Remove from AnnotationViewer
+            blocker = QSignalBlocker(self.annotation_viewer) # Block signals during mass removal
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.annotation_viewer.annotation_widgets_by_id:
+                    widget = self.annotation_viewer.annotation_widgets_by_id.pop(ann_id)
+                    if widget in self.annotation_viewer.selected_widgets:
+                        self.annotation_viewer.selected_widgets.remove(widget)
+                    widget.setParent(None)
+                    widget.deleteLater()
+            blocker.unblock()
+            self.annotation_viewer.recalculate_widget_positions()
+
+            # 4. Remove from EmbeddingViewer
+            blocker = QSignalBlocker(self.embedding_viewer.graphics_scene)
+            for ann_id in deleted_ann_ids:
+                if ann_id in self.embedding_viewer.points_by_id:
+                    point = self.embedding_viewer.points_by_id.pop(ann_id)
+                    self.embedding_viewer.graphics_scene.removeItem(point)
+            blocker.unblock()
+            self.embedding_viewer.on_selection_changed() # Trigger update of selection state
+
+            # 5. Update UI
+            self.update_label_window_selection()
+            self.update_button_states()
+
+            # 6. Refresh main window annotations list
+            affected_images = {ann.image_path for ann in annotations_to_delete_from_main_app}
+            for image_path in affected_images:
+                self.image_window.update_image_annotations(image_path)
+            self.annotation_window.load_annotations()
+
+        except Exception as e:
+            print(f"Error during item deletion: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def clear_preview_changes(self):
         """
-        Clears all preview changes in both viewers, including label changes
-        and items marked for deletion.
+        Clears all preview changes in the annotation viewer.
         """
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
-
-        if hasattr(self, 'embedding_viewer'):
-            self.embedding_viewer.refresh_points()
 
         # After reverting all changes, update the button states
         self.update_button_states()
@@ -2231,44 +2223,24 @@ class ExplorerWindow(QMainWindow):
 
     def apply(self):
         """
-        Apply all pending changes, including label modifications and deletions,
-        to the main application's data.
+        Apply all pending label modifications to the main application's data.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # Separate items into those to be deleted and those to be kept
-            items_to_delete = [item for item in self.current_data_items if item.is_marked_for_deletion()]
-            items_to_keep = [item for item in self.current_data_items if not item.is_marked_for_deletion()]
-
-            # --- 1. Process Deletions ---
-            deleted_annotations = []
-            if items_to_delete:
-                deleted_annotations = [item.annotation for item in items_to_delete]
-                print(f"Permanently deleting {len(deleted_annotations)} annotation(s).")
-                self.annotation_window.delete_annotations(deleted_annotations)
-
-                # --- clean up the cache ---
-                for ann in deleted_annotations:
-                    if ann.id in self.data_item_cache:
-                        del self.data_item_cache[ann.id]
-
-            # --- 2. Process Label Changes on remaining items ---
+            # --- 1. Process Label Changes ---
             applied_label_changes = []
-            for item in items_to_keep:
+            # Iterate over all current data items
+            for item in self.current_data_items:
                 if item.apply_preview_permanently():
                     applied_label_changes.append(item.annotation)
 
-            # --- 3. Update UI if any changes were made ---
-            if not deleted_annotations and not applied_label_changes:
+            # --- 2. Update UI if any changes were made ---
+            if not applied_label_changes:
                 print("No pending changes to apply.")
                 return
 
-            # Update the Explorer's internal list of data items
-            self.current_data_items = items_to_keep
-
             # Update the main application's data and UI
-            all_affected_annotations = deleted_annotations + applied_label_changes
-            affected_images = {ann.image_path for ann in all_affected_annotations}
+            affected_images = {ann.image_path for ann in applied_label_changes}
             for image_path in affected_images:
                 self.image_window.update_image_annotations(image_path)
             self.annotation_window.load_annotations()
@@ -2287,7 +2259,7 @@ class ExplorerWindow(QMainWindow):
             print(f"Error applying modifications: {e}")
         finally:
             QApplication.restoreOverrideCursor()
-
+            
     def _cleanup_resources(self):
         """Clean up resources."""
         self.loaded_model = None

@@ -224,7 +224,6 @@ class AnnotationDataItem:
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
-        self._marked_for_deletion = False
 
     @property
     def effective_label(self):
@@ -256,18 +255,6 @@ class AnnotationDataItem:
     def has_preview_changes(self):
         """Check if this annotation has a temporary preview label assigned."""
         return self._preview_label is not None
-
-    def mark_for_deletion(self):
-        """Mark this annotation for deletion."""
-        self._marked_for_deletion = True
-
-    def unmark_for_deletion(self):
-        """Unmark this annotation for deletion."""
-        self._marked_for_deletion = False
-
-    def is_marked_for_deletion(self):
-        """Check if this annotation is marked for deletion."""
-        return self._marked_for_deletion
 
     def apply_preview_permanently(self):
         """Apply the preview label permanently to the underlying annotation object."""
