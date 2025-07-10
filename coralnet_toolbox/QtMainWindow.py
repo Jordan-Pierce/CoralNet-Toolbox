@@ -1685,11 +1685,11 @@ class MainWindow(QMainWindow):
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
             self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
                 
-            # Make the explorer window modal to block interaction with main window
-            # self.explorer_window.setWindowModality(Qt.WindowModal)
-            # Disable all main window widgets except annotation_window
+            # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
-                enable_list=[self.annotation_window, self.label_window],
+                enable_list=[self.annotation_window, 
+                             self.label_window,
+                             self.transparency_widget],
                 disable_list=[self.toolbar, 
                               self.menu_bar, 
                               self.image_window, 

@@ -204,8 +204,12 @@ class AnnotationImageWidget(QWidget):
                 # The viewer is the controller and will decide how to change the selection state
                 self.annotation_viewer.handle_annotation_selection(self, event)
         elif event.button() == Qt.RightButton:
-            event.ignore()
-            return
+            if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_context_menu'):
+                self.annotation_viewer.handle_annotation_context_menu(self, event)
+                event.accept()
+                return
+            else:
+                event.ignore()
         super().mousePressEvent(event)
 
 

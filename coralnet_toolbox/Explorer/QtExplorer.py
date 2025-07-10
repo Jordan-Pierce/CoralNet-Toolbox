@@ -675,6 +675,32 @@ class AnnotationViewer(QScrollArea):
         separator = QLabel("|")
         separator.setStyleSheet("color: gray; margin: 0 5px;")
         return separator
+    
+    def handle_annotation_context_menu(self, widget, event):
+        """Handle context menu requests (e.g., right-click) on an annotation widget."""
+        if event.modifiers() == Qt.ControlModifier:
+            explorer = self.explorer_window
+            image_path = widget.annotation.image_path
+            annotation_to_select = widget.annotation
+
+            if hasattr(explorer, 'annotation_window'):
+                # Check if the image needs to be changed
+                if explorer.annotation_window.current_image_path != image_path:
+                    if hasattr(explorer.annotation_window, 'set_image'):
+                        explorer.annotation_window.set_image(image_path)
+
+                # Now, select the annotation in the annotation_window
+                if hasattr(explorer.annotation_window, 'select_annotation'):
+                    # This method by default unselects other annotations
+                    explorer.annotation_window.select_annotation(annotation_to_select)
+
+                # Also clear any existing selection in the explorer window itself
+                explorer.annotation_viewer.clear_selection()
+                explorer.embedding_viewer.render_selection_from_ids(set())
+                explorer.update_label_window_selection()
+                explorer.update_button_states()
+
+            event.accept()
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -1447,6 +1473,10 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
         """Syncs selection from AnnotationViewer to EmbeddingViewer."""
+        # Per request, unselect any annotation in the main AnnotationWindow
+        if hasattr(self, 'annotation_window'):
+            self.annotation_window.unselect_annotations()
+
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
         if self.embedding_viewer.points_by_id:
             self.embedding_viewer.render_selection_from_ids(all_selected_ids)
@@ -1457,6 +1487,10 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
         """Syncs selection from EmbeddingViewer to AnnotationViewer."""
+        # Per request, unselect any annotation in the main AnnotationWindow
+        if hasattr(self, 'annotation_window'):
+            self.annotation_window.unselect_annotations()
+
         # Check the state BEFORE the selection is changed
         was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
 
