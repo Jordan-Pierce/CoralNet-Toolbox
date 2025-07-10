@@ -1302,9 +1302,9 @@ class ExplorerWindow(QMainWindow):
         self.feature_store = FeatureStore()
         
         # Add a property to store the parameters with defaults
-        self.mislabel_params = {'k': 5, 'threshold': 0.6}
+        self.mislabel_params = {'k': 20, 'threshold': 0.6}
         self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
-        self.similarity_params = {'k': 10}
+        self.similarity_params = {'k': 30}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
