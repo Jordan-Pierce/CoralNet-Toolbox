@@ -1510,11 +1510,18 @@ class ExplorerWindow(QMainWindow):
 
     @pyqtSlot(list)
     def on_preview_changed(self, changed_ann_ids):
-        """Updates embedding point colors when a preview label is applied."""
+        """Updates embedding point colors and tooltips when a preview label is applied."""
         for ann_id in changed_ann_ids:
+            # Update embedding point color
             point = self.embedding_viewer.points_by_id.get(ann_id)
             if point:
                 point.update()
+                point.update_tooltip()  # Refresh tooltip to show new effective label
+
+            # Update annotation widget tooltip
+            widget = self.annotation_viewer.annotation_widgets_by_id.get(ann_id)
+            if widget:
+                widget.update_tooltip()
 
     @pyqtSlot()
     def on_reset_view_requested(self):
@@ -1806,7 +1813,9 @@ class ExplorerWindow(QMainWindow):
         try:
             features_dict, _ = self.feature_store.get_features(selected_data_items, model_key)
             if not features_dict:
-                QMessageBox.warning(self, "Features Not Found", "Could not retrieve feature vectors for the selected items.")
+                QMessageBox.warning(self, 
+                                    "Features Not Found", 
+                                    "Could not retrieve feature vectors for the selected items.")
                 return
 
             source_vectors = np.array(list(features_dict.values()))
@@ -1815,7 +1824,9 @@ class ExplorerWindow(QMainWindow):
             index = self.feature_store._get_or_load_index(model_key)
             faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
             if index is None or not faiss_idx_to_ann_id:
-                QMessageBox.warning(self, "Index Error", "Could not find a valid feature index for the current model.")
+                QMessageBox.warning(self, 
+                                    "Index Error", 
+                                    "Could not find a valid feature index for the current model.")
                 return
 
             num_to_find = k + 1 if len(selected_data_items) == 1 else k
@@ -1857,53 +1868,37 @@ class ExplorerWindow(QMainWindow):
         """
         model_name, feature_mode = model_info
         
-        # Use the same model caching logic as the feature extractor
-        current_run_key = (model_name, feature_mode)
-        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
-            try:
-                self.loaded_model = YOLO(model_name)
-                self.current_feature_generating_model = current_run_key
-                self.imgsz = getattr(self.loaded_model.model.args, 'imgsz', 128)
-            except Exception as e:
-                print(f"ERROR: Could not load YOLO model for uncertainty check: {e}")
-                self.loaded_model = None
-                self.current_feature_generating_model = None
-                return None
+        # Load the model
+        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        if model is None:
+            QMessageBox.warning(self, 
+                                "Model Load Error",
+                                f"Could not load YOLO model '{model_name}'.")
+            return None
         
-        image_list, valid_data_items = [], []
-        for item in data_items:
-            pixmap = item.annotation.get_cropped_image()
-            if pixmap and not pixmap.isNull():
-                image_list.append(pixmap_to_numpy(pixmap))
-                valid_data_items.append(item)
-        
+        # Prepare images from data items
+        image_list, valid_data_items = self._prepare_images_from_data_items(data_items)
         if not image_list:
             return None
-
+        
         try:
-            results = self.loaded_model.predict(image_list, 
-                                                stream=False, 
-                                                imgsz=self.imgsz, 
-                                                half=True, 
-                                                device=self.device, 
-                                                verbose=False)
+            # We need probabilities for uncertainty analysis, so we always use predict
+            results = model.predict(image_list, 
+                                    stream=False,  # Use batch processing for uncertainty
+                                    imgsz=imgsz, 
+                                    half=True, 
+                                    device=self.device, 
+                                    verbose=False)
+                
+            _, probabilities_dict = self._process_model_results(results, valid_data_items, "Predictions")
+            return probabilities_dict
             
-            predictions = {}
-            for i, result in enumerate(results):
-                if hasattr(result, 'probs') and result.probs is not None:
-                    ann_id = valid_data_items[i].annotation.id
-                    predictions[ann_id] = result.probs.data.cpu().numpy().squeeze()
-                else:
-                    # Model is not a classification model, abort
-                    raise TypeError("Model did not return probabilities.")
-            return predictions
-
         except TypeError:
             QMessageBox.warning(self, 
                                 "Invalid Model",
-                                "The selected model is not compatible.")
+                                "The selected model is not compatible with uncertainty analysis.")
             return None
-        
+            
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -1937,6 +1932,138 @@ class ExplorerWindow(QMainWindow):
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
+            
+    def _load_yolo_model(self, model_name, feature_mode):
+        """
+        Helper function to load a YOLO model and cache it.
+        
+        Args:
+            model_name (str): Path to the YOLO model file
+            feature_mode (str): Mode for feature extraction ("Embed Features" or "Predictions")
+        
+        Returns:
+            tuple: (model, image_size) or (None, None) if loading fails
+        """
+        current_run_key = (model_name, feature_mode)
+        
+        # Force a reload if the model path OR the feature mode has changed
+        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
+            print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
+            try:
+                model = YOLO(model_name)
+                # Update the cache key to the new successful combination
+                self.current_feature_generating_model = current_run_key
+                self.loaded_model = model
+                imgsz = getattr(model.model.args, 'imgsz', 128)
+                
+                # Warm up the model
+                dummy_image = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+                model.predict(dummy_image, imgsz=imgsz, half=True, device=self.device, verbose=False)
+                
+                return model, imgsz
+                
+            except Exception as e:
+                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
+                # On failure, reset the model cache
+                self.loaded_model = None
+                self.current_feature_generating_model = None
+                return None, None
+        
+        # Model already loaded and cached
+        return self.loaded_model, getattr(self.loaded_model.model.args, 'imgsz', 128)
+
+    def _prepare_images_from_data_items(self, data_items, progress_bar=None):
+        """
+        Prepare images from data items for model prediction.
+        
+        Args:
+            data_items (list): List of AnnotationDataItem objects
+            progress_bar (ProgressBar, optional): Progress bar for UI updates
+        
+        Returns:
+            tuple: (image_list, valid_data_items)
+        """
+        if progress_bar:
+            progress_bar.set_title("Preparing images...")
+            progress_bar.start_progress(len(data_items))
+        
+        image_list, valid_data_items = [], []
+        for item in data_items:
+            pixmap = item.annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull():
+                image_list.append(pixmap_to_numpy(pixmap))
+                valid_data_items.append(item)
+            
+            if progress_bar:
+                progress_bar.update_progress()
+        
+        return image_list, valid_data_items
+
+    def _process_model_results(self, results, valid_data_items, feature_mode, progress_bar=None):
+        """
+        Process model results and update data item tooltips.
+        
+        Args:
+            results: Model prediction results
+            valid_data_items (list): List of valid data items
+            feature_mode (str): Mode for feature extraction
+            progress_bar (ProgressBar, optional): Progress bar for UI updates
+        
+        Returns:
+            tuple: (features_list, probabilities_dict)
+        """
+        features_list = []
+        probabilities_dict = {}
+        
+        # Get class names from the model for better tooltips
+        model = self.loaded_model.model if hasattr(self.loaded_model, 'model') else None
+        class_names = model.names if model and hasattr(model, 'names') else {}
+        
+        for i, result in enumerate(results):
+            if i >= len(valid_data_items):
+                break
+                
+            item = valid_data_items[i]
+            ann_id = item.annotation.id
+            
+            if feature_mode == "Embed Features":
+                embedding = result.cpu().numpy().flatten()
+                features_list.append(embedding)
+                
+            elif hasattr(result, 'probs') and result.probs is not None:
+                probs = result.probs.data.cpu().numpy().squeeze()
+                features_list.append(probs)
+                probabilities_dict[ann_id] = probs
+                
+                # Format and store prediction details for tooltips
+                if len(probs) > 0:
+                    # Get top 5 predictions
+                    top_indices = probs.argsort()[::-1][:5]
+                    top_probs = probs[top_indices]
+                    
+                    formatted_preds = ["<b>Top Predictions:</b>"]
+                    for idx, prob in zip(top_indices, top_probs):
+                        class_name = class_names.get(int(idx), f"Class {idx}")
+                        formatted_preds.append(f"{class_name}: {prob*100:.1f}%")
+                    
+                    item.prediction_details = "<br>".join(formatted_preds)
+            else:
+                raise TypeError(
+                    "The 'Predictions' feature mode requires a classification model "
+                    "(e.g., 'yolov8n-cls.pt') that returns class probabilities. "
+                    "The selected model did not provide this output. "
+                    "Please use 'Embed Features' mode for this model."
+                )
+                
+            if progress_bar:
+                progress_bar.update_progress()
+        
+        # After processing is complete, update tooltips
+        for item in valid_data_items:
+            if hasattr(item, 'update_tooltip'):
+                item.update_tooltip()
+                
+        return features_list, probabilities_dict
 
     def _extract_color_features(self, data_items, progress_bar=None, bins=32):
         """
@@ -2020,76 +2147,47 @@ class ExplorerWindow(QMainWindow):
     def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
         """Extracts features from annotation crops using a YOLO model."""
         model_name, feature_mode = model_info
-        current_run_key = (model_name, feature_mode)
-
-        # Force a reload if the model path OR the feature mode has changed.
-        if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
-            print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
-            try:
-                self.loaded_model = YOLO(model_name)
-                # Update the cache key to the new successful combination
-                self.current_feature_generating_model = current_run_key
-                self.imgsz = getattr(self.loaded_model.model.args, 'imgsz', 128)
-                # Warm up the model
-                dummy_image = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
-                self.loaded_model.predict(dummy_image, imgsz=self.imgsz, half=True, device=self.device, verbose=False)
-            except Exception as e:
-                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
-                # On failure, reset the model cache
-                self.loaded_model = None
-                self.current_feature_generating_model = None
-                return np.array([]), []
-
-        if progress_bar:
-            progress_bar.set_title("Preparing images...")
-            progress_bar.start_progress(len(data_items))
-
-        image_list, valid_data_items = [], []
-        for item in data_items:
-            pixmap = item.annotation.get_cropped_image()
-            if pixmap and not pixmap.isNull():
-                image_list.append(pixmap_to_numpy(pixmap))
-                valid_data_items.append(item)
-            if progress_bar:
-                progress_bar.update_progress()
-
+        
+        # Load the model
+        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        if model is None:
+            return np.array([]), []
+        
+        # Prepare images from data items
+        image_list, valid_data_items = self._prepare_images_from_data_items(data_items, progress_bar)
         if not valid_data_items:
             return np.array([]), []
-
-        kwargs = {'stream': True,
-                  'imgsz': self.imgsz,
-                  'half': True,
-                  'device': self.device,
-                  'verbose': False}
-
+        
+        # Set up prediction parameters
+        kwargs = {
+            'stream': True,
+            'imgsz': imgsz,
+            'half': True,
+            'device': self.device,
+            'verbose': False
+        }
+        
+        # Get results based on feature mode
         if feature_mode == "Embed Features":
-            results_generator = self.loaded_model.embed(image_list, **kwargs)
+            results_generator = model.embed(image_list, **kwargs)
         else:
-            results_generator = self.loaded_model.predict(image_list, **kwargs)
-
+            results_generator = model.predict(image_list, **kwargs)
+        
         if progress_bar:
             progress_bar.set_title("Extracting features...")
             progress_bar.start_progress(len(valid_data_items))
-
-        embeddings_list = []
+        
         try:
-            for i, result in enumerate(results_generator):
-                if feature_mode == "Embed Features":
-                    embeddings_list.append(result.cpu().numpy().flatten())
-                elif hasattr(result, 'probs') and result.probs is not None:
-                    embeddings_list.append(result.probs.data.cpu().numpy().squeeze())
-                else:
-                    raise TypeError(
-                        "The 'Predictions' feature mode requires a classification model "
-                        "(e.g., 'yolov8n-cls.pt') that returns class probabilities. "
-                        "The selected model did not provide this output. "
-                        "Please use 'Embed Features' mode for this model."
-                    )
+            features_list, _ = self._process_model_results(results_generator, 
+                                                           valid_data_items, 
+                                                           feature_mode,
+                                                           progress_bar=progress_bar)
+            
+            return np.array(features_list), valid_data_items
+            
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-        return np.array(embeddings_list), valid_data_items
 
     def _extract_features(self, data_items, progress_bar=None):
         """Dispatcher to call the appropriate feature extraction function."""
@@ -2352,10 +2450,16 @@ class ExplorerWindow(QMainWindow):
 
     def clear_preview_changes(self):
         """
-        Clears all preview changes in the annotation viewer.
+        Clears all preview changes in the annotation viewer and updates tooltips.
         """
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
+
+            # After reverting, tooltips need to be updated to reflect original labels
+            for widget in self.annotation_viewer.annotation_widgets_by_id.values():
+                widget.update_tooltip()
+            for point in self.embedding_viewer.points_by_id.values():
+                point.update_tooltip()
 
         # After reverting all changes, update the button states
         self.update_button_states()
