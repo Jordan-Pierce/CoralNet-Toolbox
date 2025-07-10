@@ -584,7 +584,7 @@ class AnnotationViewer(QScrollArea):
         self.isolated_widgets = set()
 
         # State for new sorting options
-        self.similarity_sort_order = []
+        self.active_ordered_ids = []
         self.is_confidence_sort_available = False
 
         self.setup_ui()
@@ -619,10 +619,9 @@ class AnnotationViewer(QScrollArea):
         sort_label = QLabel("Sort By:")
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
-        # Add all items, including the new ones
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Similarity"])
-        # Insert a separator after "Image" (at index 3)
-        self.sort_combo.insertSeparator(3)
+        # Remove "Similarity" as it's now an implicit action
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
+        self.sort_combo.insertSeparator(3)  # Add separator before "Confidence"
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
@@ -696,11 +695,6 @@ class AnnotationViewer(QScrollArea):
         if confidence_item_index != -1:
             model.item(confidence_item_index).setEnabled(self.is_confidence_sort_available)
 
-        # Enable/disable "Similarity" option
-        similarity_item_index = self.sort_combo.findText("Similarity")
-        if similarity_item_index != -1:
-            model.item(similarity_item_index).setEnabled(bool(self.similarity_sort_order))
-    
     def handle_annotation_context_menu(self, widget, event):
         """Handle context menu requests (e.g., right-click) on an annotation widget."""
         if event.modifiers() == Qt.ControlModifier:
@@ -755,6 +749,7 @@ class AnnotationViewer(QScrollArea):
 
         self.isolated_mode = False
         self.isolated_widgets.clear()
+        self.active_ordered_ids = []  # Clear similarity sort context
 
         self.content_widget.setUpdatesEnabled(False)
         try:
@@ -783,9 +778,7 @@ class AnnotationViewer(QScrollArea):
 
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
-        # If user selects something other than similarity, the context is lost
-        if sort_type != "Similarity":
-            self.set_similarity_sort_order([])
+        self.active_ordered_ids = []  # Clear any special ordering
         self.recalculate_widget_positions()
 
     def set_confidence_sort_availability(self, is_available):
@@ -793,13 +786,15 @@ class AnnotationViewer(QScrollArea):
         self.is_confidence_sort_available = is_available
         self._update_sort_options_state()
 
-    def set_similarity_sort_order(self, ordered_ids):
-        """Sets the annotation ID order for similarity sorting."""
-        self.similarity_sort_order = ordered_ids
-        self._update_sort_options_state()
-
     def _get_sorted_widgets(self):
         """Get widgets sorted according to the current sort setting."""
+        # If a specific order is active (e.g., from similarity search), use it.
+        if self.active_ordered_ids:
+            widget_map = {w.data_item.annotation.id: w for w in self.annotation_widgets_by_id.values()}
+            ordered_widgets = [widget_map[ann_id] for ann_id in self.active_ordered_ids if ann_id in widget_map]
+            return ordered_widgets
+
+        # Otherwise, use the dropdown sort logic
         sort_type = self.sort_combo.currentText()
         widgets = list(self.annotation_widgets_by_id.values())
 
@@ -810,21 +805,18 @@ class AnnotationViewer(QScrollArea):
         elif sort_type == "Confidence":
             # Sort by confidence, descending. Handles cases with no confidence gracefully.
             widgets.sort(key=lambda w: w.data_item.get_effective_confidence(), reverse=True)
-        elif sort_type == "Similarity" and self.similarity_sort_order:
-            # Reorder widgets based on the stored similarity order
-            widget_map = {w.data_item.annotation.id: w for w in widgets}
-            ordered_widgets = [widget_map[ann_id] for ann_id in self.similarity_sort_order if ann_id in widget_map]
-            # Append any remaining widgets that weren't in the similarity list but are visible
-            remaining_widgets = [w for w in widgets if w not in ordered_widgets]
-            widgets = ordered_widgets + remaining_widgets
         
         return widgets
 
     def _group_widgets_by_sort_key(self, widgets):
         """Group widgets by the current sort key."""
         sort_type = self.sort_combo.currentText()
-        if sort_type == "None":
+        if not self.active_ordered_ids and sort_type == "None":
             return [("", widgets)]
+        
+        if self.active_ordered_ids: # Don't show group headers for similarity results
+            return [("", widgets)]
+
         groups = []
         current_group = []
         current_key = None
@@ -834,8 +826,9 @@ class AnnotationViewer(QScrollArea):
             elif sort_type == "Image":
                 key = os.path.basename(widget.data_item.annotation.image_path)
             else:
-                key = ""
-            if current_key != key:
+                key = "" # No headers for Confidence or None
+            
+            if key and current_key != key:
                 if current_group:
                     groups.append((current_key, current_group))
                 current_group = [widget]
@@ -1588,7 +1581,7 @@ class ExplorerWindow(QMainWindow):
             self.embedding_viewer.show_all_points()
 
         # Clear similarity sort context
-        self.annotation_viewer.set_similarity_sort_order([])
+        self.annotation_viewer.active_ordered_ids = []
 
         self.update_label_window_selection()
         self.update_button_states()
@@ -1843,7 +1836,10 @@ class ExplorerWindow(QMainWindow):
             
     @pyqtSlot()
     def find_similar_annotations(self):
-        """Finds k-nearest neighbors to the selected annotation(s) and updates the UI."""
+        """
+        Finds k-nearest neighbors to the selected annotation(s) and updates 
+        the UI to show the results in an isolated, ordered view.
+        """
         k = self.similarity_params.get('k', 10)
 
         if not self.annotation_viewer.selected_widgets:
@@ -1880,35 +1876,34 @@ class ExplorerWindow(QMainWindow):
                                     "Could not find a valid feature index for the current model.")
                 return
 
-            num_to_find = k + 1 if len(selected_data_items) == 1 else k
+            # Find k results, plus more to account for the query items possibly being in the results
+            num_to_find = k + len(selected_data_items)
             if num_to_find > index.ntotal:
                 num_to_find = index.ntotal
             
             _, I = index.search(query_vector, num_to_find)
 
+            source_ids = {item.annotation.id for item in selected_data_items}
             similar_ann_ids = []
-            selected_ids = {item.annotation.id for item in selected_data_items}
             for faiss_idx in I[0]:
                 ann_id = faiss_idx_to_ann_id.get(faiss_idx)
-                if ann_id and ann_id in self.data_item_cache:
-                    if len(selected_data_items) == 1 and ann_id in selected_ids:
-                        continue
+                if ann_id and ann_id in self.data_item_cache and ann_id not in source_ids:
                     similar_ann_ids.append(ann_id)
-            
-            if len(selected_data_items) == 1:
-                similar_ann_ids = similar_ann_ids[:k]
-            
-            # Pass the ordered list of similar IDs to the annotation viewer for sorting
-            self.annotation_viewer.set_similarity_sort_order(similar_ann_ids)
+                if len(similar_ann_ids) == k:
+                    break
 
-            final_selection_ids = set(similar_ann_ids) | selected_ids
-
-            self.annotation_viewer.clear_selection()
-            self.embedding_viewer.render_selection_from_ids(set())
+            # Create the final ordered list: original selection first, then similar items.
+            ordered_ids_to_display = list(source_ids) + similar_ann_ids
             
+            # Set this ordered list as the primary sorting method for the annotation viewer
+            self.annotation_viewer.active_ordered_ids = ordered_ids_to_display
+
+            # Select all items that will be displayed
+            final_selection_ids = set(ordered_ids_to_display)
             self.annotation_viewer.render_selection_from_ids(final_selection_ids)
             self.embedding_viewer.render_selection_from_ids(final_selection_ids)
             
+            # Isolate the view to show only these results, which will now be sorted
             self.annotation_viewer.isolate_selection()
             self.update_button_states()
 
@@ -2432,7 +2427,7 @@ class ExplorerWindow(QMainWindow):
                         item.prediction_probabilities = cached_features[item.annotation.id]
 
             # When a new embedding is run, any previous similarity sort becomes irrelevant
-            self.annotation_viewer.set_similarity_sort_order([])
+            self.annotation_viewer.active_ordered_ids = []
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2451,7 +2446,7 @@ class ExplorerWindow(QMainWindow):
             self.embedding_viewer.show_placeholder()
 
             # Reset sort options when filters change
-            self.annotation_viewer.set_similarity_sort_order([])
+            self.annotation_viewer.active_ordered_ids = []
             self.annotation_viewer.set_confidence_sort_availability(False)
         finally:
             QApplication.restoreOverrideCursor()
