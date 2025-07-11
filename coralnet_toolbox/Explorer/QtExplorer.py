@@ -986,6 +986,8 @@ class AnnotationViewer(QScrollArea):
 
         self.recalculate_widget_positions()
         self._update_toolbar_state()
+        # Update the label window with the new annotation count
+        self.explorer_window.main_window.label_window.update_annotation_count()
 
     def resizeEvent(self, event):
         """On window resize, reflow the annotation widgets."""
@@ -2492,6 +2494,10 @@ class ExplorerWindow(QMainWindow):
             # Reset sort options when filters change
             self.annotation_viewer.active_ordered_ids = []
             self.annotation_viewer.set_confidence_sort_availability(False)
+            
+            # Update the annotation count in the label window
+            self.label_window.update_annotation_count()
+
         finally:
             QApplication.restoreOverrideCursor()
 
