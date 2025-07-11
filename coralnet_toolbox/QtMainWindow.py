@@ -1688,13 +1688,18 @@ class MainWindow(QMainWindow):
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
                 enable_list=[self.annotation_window, 
-                             self.label_window,
-                             self.transparency_widget],
+                            self.label_window],
                 disable_list=[self.toolbar, 
-                              self.menu_bar, 
-                              self.image_window, 
-                              self.confidence_window]
+                            self.menu_bar, 
+                            self.image_window, 
+                            self.confidence_window]
             )
+            
+            # Block signals from LabelWindow to prevent transparency changes
+            self.label_window.blockSignals(True)
+            
+            # Set the transparency value ahead of time
+            self.update_label_transparency(0)
             
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
@@ -1708,7 +1713,9 @@ class MainWindow(QMainWindow):
             self.explorer_window = None
             # Re-enable everything if there was an error
             self.set_main_window_enabled_state()
-
+            # Unblock signals if there was an error
+            self.label_window.blockSignals(False)
+        
     def explorer_closed(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
@@ -1721,6 +1728,9 @@ class MainWindow(QMainWindow):
             
             # Re-enable all main window widgets
             self.set_main_window_enabled_state()
+            
+            # Unblock signals from LabelWindow
+            self.label_window.blockSignals(False)
             
             # Clean up reference
             self.explorer_window = None
