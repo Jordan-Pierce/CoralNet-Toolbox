@@ -106,7 +106,7 @@ The toolbox's training capabilities are powered by YOLOv8, the latest iteration 
 
 - **Decoupled Head:** The model uses separate neural network heads to perform the tasks of classification ("what is the object?") and regression ("what are the coordinates of its bounding box?"). This decoupling allows each head to specialize, which has become a mainstream best practice for achieving higher accuracy in modern object detectors.
 
-- **Advanced Loss Function:** YOLOv8 incorporates the Task-Aligned Assigner from the TOOD model, which uses a more sophisticated method for selecting the positive training examples for each ground-truth object. It also introduces the Distribution Focal Loss for the regression branch, which helps the model learn a more flexible and accurate representation of bounding box locations.
+- **Advanced Loss Function:** YOLOv8 incorporates the Task-Aligned Assigner, which uses a more sophisticated method for selecting the positive training examples for each ground-truth object. It also introduces the Distribution Focal Loss for the regression branch, which helps the model learn a more flexible and accurate representation of bounding box locations.
 
 YOLOv8 is offered in several sizes, typically denoted as n (nano), s (small), m (medium), l (large), and x (extra-large). Smaller models like YOLOv8n are extremely fast but less accurate, making them suitable for resource-constrained devices. Larger models like YOLOv8x are more accurate but slower and require more computational resources for training and inference. The toolbox allows users to select the model size that best fits their specific trade-off between speed and accuracy.
 

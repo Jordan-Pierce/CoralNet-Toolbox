@@ -86,7 +86,7 @@ The main window consists of several components:
       - **Scroll-wheel**: Zoom in and out of Embedding Viewer.
     - **Toolbar**:
       - **Isolate Selection**: Subset view;
-      - **Find Potentional Mislabels**: Select potentially incorrectly labeled annotations, based on location;
+      - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location;
       - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions);
       - **Home**: Resets the Embedding Viewer zoom level.
   **Tip**: 
