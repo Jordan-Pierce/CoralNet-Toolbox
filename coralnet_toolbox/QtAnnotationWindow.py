@@ -448,7 +448,7 @@ class AnnotationWindow(QGraphicsView):
         # Center the view on the work area's center
         self.centerOn(work_area_center)
 
-    def center_on_annotation(self, annotation):
+    def just_center_on_annotation(self, annotation):
         """Center the view on the specified annotation."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
@@ -460,6 +460,33 @@ class AnnotationWindow(QGraphicsView):
 
         # Center the view on the annotation's center
         self.centerOn(annotation_center)
+    
+    def center_on_annotation(self, annotation):
+        """Center and zoom in to focus on the specified annotation."""
+        # Create graphics item if it doesn't exist
+        if not annotation.graphics_item:
+            annotation.create_graphics_item(self.scene)
+
+        # Get the bounding rect of the annotation in scene coordinates
+        annotation_rect = annotation.graphics_item.boundingRect()
+        
+        # Add some padding around the annotation (20% on each side)
+        padding_x = annotation_rect.width() * 0.2
+        padding_y = annotation_rect.height() * 0.2
+        padded_rect = annotation_rect.adjusted(-padding_x, -padding_y, padding_x, padding_y)
+        
+        # Fit the padded annotation rect in the view
+        self.fitInView(padded_rect, Qt.KeepAspectRatio)
+        
+        # Update the zoom factor based on the new view transformation
+        # We can calculate this by comparing the viewport size to the scene rect size
+        view_rect = self.viewport().rect()
+        zoom_x = view_rect.width() / padded_rect.width() 
+        zoom_y = view_rect.height() / padded_rect.height()
+        self.zoom_factor = min(zoom_x, zoom_y)
+        
+        # Signal that the view has changed
+        self.viewChanged.emit(*self.get_image_dimensions())
 
     def cycle_annotations(self, direction):
         """Cycle through annotations in the specified direction."""

@@ -50,10 +50,12 @@ coralnet-toolbox
 
 ## 📚 Guides
 
-For further instructions please see the following guides:
+For further information and instructions, please see the following guides:
+- [Overview](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
 - [Installation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
 - [Usage](https://jordan-pierce.github.io/CoralNet-Toolbox/usage)
-- [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
+- Community Provided:
+  - [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
 
 <details open>
   <summary><h2><b>🎥 Watch the Video Demos</b></h2></summary>

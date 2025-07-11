@@ -712,13 +712,17 @@ class AnnotationViewer(QScrollArea):
                 if hasattr(explorer.annotation_window, 'select_annotation'):
                     # This method by default unselects other annotations
                     explorer.annotation_window.select_annotation(annotation_to_select)
+                    
+                # Center the annotation window view on the selected annotation
+                if hasattr(explorer.annotation_window, 'center_on_annotation'):
+                    explorer.annotation_window.center_on_annotation(annotation_to_select)
 
                 # Also clear any existing selection in the explorer window itself
                 explorer.annotation_viewer.clear_selection()
                 explorer.embedding_viewer.render_selection_from_ids(set())
                 explorer.update_label_window_selection()
                 explorer.update_button_states()
-
+            
             event.accept()
 
     @pyqtSlot()
@@ -982,6 +986,8 @@ class AnnotationViewer(QScrollArea):
 
         self.recalculate_widget_positions()
         self._update_toolbar_state()
+        # Update the label window with the new annotation count
+        self.explorer_window.main_window.label_window.update_annotation_count()
 
     def resizeEvent(self, event):
         """On window resize, reflow the annotation widgets."""
@@ -2488,6 +2494,10 @@ class ExplorerWindow(QMainWindow):
             # Reset sort options when filters change
             self.annotation_viewer.active_ordered_ids = []
             self.annotation_viewer.set_confidence_sort_availability(False)
+            
+            # Update the annotation count in the label window
+            self.label_window.update_annotation_count()
+
         finally:
             QApplication.restoreOverrideCursor()
 
