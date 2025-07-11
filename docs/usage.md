@@ -59,6 +59,39 @@ The main window consists of several components:
   - **Export Viscore Annotations**: Save annotation data to a Viscore CSV file.
   - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
 
+- **Explorer**:
+  - **Annotation Settings**: Select images, annotation types, and labels to include / filter; press apply.
+  - **Model Settings**: Use Color Features, a pre-trained, or existing classification model.
+    - **Feature Mode**: Embeddings (before classification), or Predictions (after classification).
+  - **Embedding Settings**: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.
+  - **Annotation Viewer**: View, select, modify labels of annotations.
+    - **Controls**:
+      - **Left-Click**: Select an annotation;
+      - **Ctrl + Left-Click**: Select multiple annotations;
+      - **Shift + Left-Click**: Select in-between annotations;
+      - **Double Left Click**: Unselect all annotations, exit from Isolation View;
+      - **Ctrl + Right-Click**: Update Annotation Window view, zoomed and centered on selected annotation.
+    - **Toolbar**:
+      - **Isolate Selection**: Subset view;
+      - **Sort By**: Sort annotations by image name, label, confidence;
+      - **Find Similar**: Selects and isolates N nearest annotations to currently selected;
+      - **Size**: Slider-bar to control annotation size in Annotation Viewer.
+  - **Embedding Viewer**: Selected, modify labels of annotations.
+    - **Controls**:
+      - **Left-Click**: Select an annotation;
+      - **Ctrl + Left-Click**: Select multiple annotations;
+      - **Ctrl + Left-Click + Drag**: Select multiple annotations within a draw rectangle;
+      - **Double Left Click**: Unselect all annotations, exit from Isolation View;
+      - **Right-Click + Drag**: Pan around Embedding Viewer;
+      - **Scroll-wheel**: Zoom in and out of Embedding Viewer.
+    - **Toolbar**:
+      - **Isolate Selection**: Subset view;
+      - **Find Potentional Mislabels**: Select potentially incorrectly labeled annotations, based on location;
+      - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions);
+      - **Home**: Resets the Embedding Viewer zoom level.
+  **Tip**: 
+    - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;
+
 - **Sample**:
   - **Sample Annotations**: Automatically generate Patch annotations.
     - **Sampling Method**: Choose between Random, Stratified Random, or Uniform distribution.
