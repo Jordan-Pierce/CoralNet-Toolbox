@@ -51,7 +51,7 @@ coralnet-toolbox
 ## 📚 Guides
 
 For further information and instructions, please see the following guides:
-- [Overview](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
+- [Overview](https://jordan-pierce.github.io/CoralNet-Toolbox/overview)
 - [Installation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
 - [Usage](https://jordan-pierce.github.io/CoralNet-Toolbox/usage)
 - Community Provided:
