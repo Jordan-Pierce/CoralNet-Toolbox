@@ -712,6 +712,10 @@ class AnnotationViewer(QScrollArea):
                 if hasattr(explorer.annotation_window, 'select_annotation'):
                     # This method by default unselects other annotations
                     explorer.annotation_window.select_annotation(annotation_to_select)
+                    
+                # Center the annotation window view on the selected annotation
+                if hasattr(explorer.annotation_window, 'center_on_annotation'):
+                    explorer.annotation_window.center_on_annotation(annotation_to_select)
 
                 # Also clear any existing selection in the explorer window itself
                 explorer.annotation_viewer.clear_selection()
