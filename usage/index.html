@@ -778,6 +778,48 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Export Dataset</strong>: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).</p>
 </li>
 <li>
+<p><strong>Explorer</strong>:</p>
+</li>
+<li><strong>Annotation Settings</strong>: Select images, annotation types, and labels to include / filter; press apply.</li>
+<li><strong>Model Settings</strong>: Use Color Features, a pre-trained, or existing classification model.<ul>
+<li><strong>Feature Mode</strong>: Embeddings (before classification), or Predictions (after classification).</li>
+</ul>
+</li>
+<li><strong>Embedding Settings</strong>: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.</li>
+<li><strong>Annotation Viewer</strong>: View, select, modify labels of annotations.<ul>
+<li><strong>Controls</strong>:</li>
+<li><strong>Left-Click</strong>: Select an annotation;</li>
+<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations;</li>
+<li><strong>Shift + Left-Click</strong>: Select in-between annotations;</li>
+<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View;</li>
+<li><strong>Ctrl + Right-Click</strong>: Update Annotation Window view, zoomed and centered on selected annotation.</li>
+<li><strong>Toolbar</strong>:</li>
+<li><strong>Isolate Selection</strong>: Subset view;</li>
+<li><strong>Sort By</strong>: Sort annotations by image name, label, confidence;</li>
+<li><strong>Find Similar</strong>: Selects and isolates N nearest annotations to currently selected;</li>
+<li><strong>Size</strong>: Slider-bar to control annotation size in Annotation Viewer.</li>
+</ul>
+</li>
+<li>
+<p><strong>Embedding Viewer</strong>: Selected, modify labels of annotations.</p>
+<ul>
+<li><strong>Controls</strong>:</li>
+<li><strong>Left-Click</strong>: Select an annotation;</li>
+<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations;</li>
+<li><strong>Ctrl + Left-Click + Drag</strong>: Select multiple annotations within a draw rectangle;</li>
+<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View;</li>
+<li><strong>Right-Click + Drag</strong>: Pan around Embedding Viewer;</li>
+<li><strong>Scroll-wheel</strong>: Zoom in and out of Embedding Viewer.</li>
+<li><strong>Toolbar</strong>:</li>
+<li><strong>Isolate Selection</strong>: Subset view;</li>
+<li><strong>Find Potential Mislabels</strong>: Select potentially incorrectly labeled annotations, based on location;</li>
+<li><strong>Review Uncertain</strong>: Select annotations with lower Top-1 confidence scores (requires Predictions);</li>
+<li><strong>Home</strong>: Resets the Embedding Viewer zoom level.
+  <strong>Tip</strong>: </li>
+<li>Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;</li>
+</ul>
+</li>
+<li>
 <p><strong>Sample</strong>:</p>
 </li>
 <li>
@@ -1072,7 +1114,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="July 2, 2025 12:44:00 UTC"><span class="timeago" datetime="2025-07-02T12:44:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="July 2, 2025 12:44:00 UTC">2025-07-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="July 11, 2025 18:49:21 UTC"><span class="timeago" datetime="2025-07-11T18:49:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="July 11, 2025 18:49:21 UTC">2025-07-11</span>
   </span>
 
     
