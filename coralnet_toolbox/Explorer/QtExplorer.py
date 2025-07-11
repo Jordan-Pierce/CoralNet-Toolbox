@@ -722,7 +722,7 @@ class AnnotationViewer(QScrollArea):
                 explorer.embedding_viewer.render_selection_from_ids(set())
                 explorer.update_label_window_selection()
                 explorer.update_button_states()
-
+            
             event.accept()
 
     @pyqtSlot()
