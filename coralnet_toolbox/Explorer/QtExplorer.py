@@ -1033,11 +1033,17 @@ class AnnotationViewer(QScrollArea):
                             break
                         widget = widget.parent()
 
-                # If click is outside widgets and there is a selection, clear it
-                if not is_on_widget and self.selected_widgets:
-                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                    self.clear_selection()
-                    self.selection_changed.emit(changed_ids)
+                # If click is outside widgets, clear annotation_window selection
+                if not is_on_widget:
+                    # Clear annotation selection in the annotation_window as well
+                    if hasattr(self.explorer_window, 'annotation_window') and self.explorer_window.annotation_window:
+                        if hasattr(self.explorer_window.annotation_window, 'unselect_annotations'):
+                            self.explorer_window.annotation_window.unselect_annotations()
+                    # If there is a selection in the viewer, clear it
+                    if self.selected_widgets:
+                        changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
+                        self.clear_selection()
+                        self.selection_changed.emit(changed_ids)
                     return
 
             elif event.modifiers() == Qt.ControlModifier:
