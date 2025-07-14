@@ -701,6 +701,14 @@ class AnnotationViewer(QScrollArea):
             explorer = self.explorer_window
             image_path = widget.annotation.image_path
             annotation_to_select = widget.annotation
+        
+            # ctrl+right click to only select this annotation (single selection):
+            self.clear_selection()
+            self.select_widget(widget)
+            changed_ids = [widget.data_item.annotation.id]
+
+            if changed_ids:
+                self.selection_changed.emit(changed_ids)
 
             if hasattr(explorer, 'annotation_window'):
                 # Check if the image needs to be changed
@@ -710,7 +718,6 @@ class AnnotationViewer(QScrollArea):
 
                 # Now, select the annotation in the annotation_window
                 if hasattr(explorer.annotation_window, 'select_annotation'):
-                    # This method by default unselects other annotations
                     explorer.annotation_window.select_annotation(annotation_to_select)
                     
                 # Center the annotation window view on the selected annotation
@@ -718,7 +725,6 @@ class AnnotationViewer(QScrollArea):
                     explorer.annotation_window.center_on_annotation(annotation_to_select)
 
                 # Also clear any existing selection in the explorer window itself
-                explorer.annotation_viewer.clear_selection()
                 explorer.embedding_viewer.render_selection_from_ids(set())
                 explorer.update_label_window_selection()
                 explorer.update_button_states()
