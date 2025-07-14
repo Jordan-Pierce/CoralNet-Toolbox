@@ -346,6 +346,39 @@ class EmbeddingViewer(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection (point or rubber band) and panning."""
+        # Ctrl+Right-Click for context menu selection 
+        if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                # 1. Clear all selections in both viewers
+                self.graphics_scene.clearSelection()
+                item_at_pos.setSelected(True)
+                self.on_selection_changed()  # Updates internal state and emits signals
+
+                # 2. Sync annotation viewer selection
+                ann_id = item_at_pos.data_item.annotation.id
+                self.explorer_window.annotation_viewer.render_selection_from_ids({ann_id})
+
+                # 3. Update annotation window (set image, select, center)
+                explorer = self.explorer_window
+                annotation = item_at_pos.data_item.annotation
+                image_path = annotation.image_path
+
+                if hasattr(explorer, 'annotation_window'):
+                    if explorer.annotation_window.current_image_path != image_path:
+                        if hasattr(explorer.annotation_window, 'set_image'):
+                            explorer.annotation_window.set_image(image_path)
+                    if hasattr(explorer.annotation_window, 'select_annotation'):
+                        explorer.annotation_window.select_annotation(annotation)
+                    if hasattr(explorer.annotation_window, 'center_on_annotation'):
+                        explorer.annotation_window.center_on_annotation(annotation)
+
+                explorer.update_label_window_selection()
+                explorer.update_button_states()
+                event.accept()
+                return
+
+        # Handle left-click for selection or rubber band
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
             if isinstance(item_at_pos, EmbeddingPointItem):
