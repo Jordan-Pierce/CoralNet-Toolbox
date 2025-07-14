@@ -725,7 +725,7 @@ class AnnotationViewer(QScrollArea):
                     explorer.annotation_window.center_on_annotation(annotation_to_select)
 
                 # Also clear any existing selection in the explorer window itself
-                explorer.embedding_viewer.render_selection_from_ids(set())
+                explorer.embedding_viewer.render_selection_from_ids({widget.data_item.annotation.id})
                 explorer.update_label_window_selection()
                 explorer.update_button_states()
             
