@@ -346,6 +346,39 @@ class EmbeddingViewer(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection (point or rubber band) and panning."""
+        # Ctrl+Right-Click for context menu selection 
+        if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                # 1. Clear all selections in both viewers
+                self.graphics_scene.clearSelection()
+                item_at_pos.setSelected(True)
+                self.on_selection_changed()  # Updates internal state and emits signals
+
+                # 2. Sync annotation viewer selection
+                ann_id = item_at_pos.data_item.annotation.id
+                self.explorer_window.annotation_viewer.render_selection_from_ids({ann_id})
+
+                # 3. Update annotation window (set image, select, center)
+                explorer = self.explorer_window
+                annotation = item_at_pos.data_item.annotation
+                image_path = annotation.image_path
+
+                if hasattr(explorer, 'annotation_window'):
+                    if explorer.annotation_window.current_image_path != image_path:
+                        if hasattr(explorer.annotation_window, 'set_image'):
+                            explorer.annotation_window.set_image(image_path)
+                    if hasattr(explorer.annotation_window, 'select_annotation'):
+                        explorer.annotation_window.select_annotation(annotation)
+                    if hasattr(explorer.annotation_window, 'center_on_annotation'):
+                        explorer.annotation_window.center_on_annotation(annotation)
+
+                explorer.update_label_window_selection()
+                explorer.update_button_states()
+                event.accept()
+                return
+
+        # Handle left-click for selection or rubber band
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
             if isinstance(item_at_pos, EmbeddingPointItem):
@@ -701,6 +734,14 @@ class AnnotationViewer(QScrollArea):
             explorer = self.explorer_window
             image_path = widget.annotation.image_path
             annotation_to_select = widget.annotation
+        
+            # ctrl+right click to only select this annotation (single selection):
+            self.clear_selection()
+            self.select_widget(widget)
+            changed_ids = [widget.data_item.annotation.id]
+
+            if changed_ids:
+                self.selection_changed.emit(changed_ids)
 
             if hasattr(explorer, 'annotation_window'):
                 # Check if the image needs to be changed
@@ -710,7 +751,6 @@ class AnnotationViewer(QScrollArea):
 
                 # Now, select the annotation in the annotation_window
                 if hasattr(explorer.annotation_window, 'select_annotation'):
-                    # This method by default unselects other annotations
                     explorer.annotation_window.select_annotation(annotation_to_select)
                     
                 # Center the annotation window view on the selected annotation
@@ -718,8 +758,7 @@ class AnnotationViewer(QScrollArea):
                     explorer.annotation_window.center_on_annotation(annotation_to_select)
 
                 # Also clear any existing selection in the explorer window itself
-                explorer.annotation_viewer.clear_selection()
-                explorer.embedding_viewer.render_selection_from_ids(set())
+                explorer.embedding_viewer.render_selection_from_ids({widget.data_item.annotation.id})
                 explorer.update_label_window_selection()
                 explorer.update_button_states()
             
@@ -1033,11 +1072,17 @@ class AnnotationViewer(QScrollArea):
                             break
                         widget = widget.parent()
 
-                # If click is outside widgets and there is a selection, clear it
-                if not is_on_widget and self.selected_widgets:
-                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                    self.clear_selection()
-                    self.selection_changed.emit(changed_ids)
+                # If click is outside widgets, clear annotation_window selection
+                if not is_on_widget:
+                    # Clear annotation selection in the annotation_window as well
+                    if hasattr(self.explorer_window, 'annotation_window') and self.explorer_window.annotation_window:
+                        if hasattr(self.explorer_window.annotation_window, 'unselect_annotations'):
+                            self.explorer_window.annotation_window.unselect_annotations()
+                    # If there is a selection in the viewer, clear it
+                    if self.selected_widgets:
+                        changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
+                        self.clear_selection()
+                        self.selection_changed.emit(changed_ids)
                     return
 
             elif event.modifiers() == Qt.ControlModifier:
@@ -1730,13 +1775,15 @@ class ExplorerWindow(QMainWindow):
         """
         Identifies annotations whose label does not match the majority of its
         k-nearest neighbors in the high-dimensional feature space.
+        Skips any annotation or neighbor with an invalid label (id == -1).
         """
         # Get parameters from the stored property instead of hardcoding
         K = self.mislabel_params.get('k', 5)
         agreement_threshold = self.mislabel_params.get('threshold', 0.6)
 
         if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < K:
-            QMessageBox.information(self, "Not Enough Data",
+            QMessageBox.information(self, 
+                                    "Not Enough Data",
                                     f"This feature requires at least {K} points in the embedding viewer.")
             return
 
@@ -1747,7 +1794,6 @@ class ExplorerWindow(QMainWindow):
         model_info = self.model_settings_widget.get_selected_model()
         model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
         sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
-        # FIX: Also replace the forward slash to handle "N/A"
         sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
         model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
 
@@ -1757,13 +1803,17 @@ class ExplorerWindow(QMainWindow):
             index = self.feature_store._get_or_load_index(model_key)
             faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
             if index is None or not faiss_idx_to_ann_id:
-                QMessageBox.warning(self, "Error", "Could not find a valid feature index for the current model.")
+                QMessageBox.warning(self, 
+                                    "Error", 
+                                    "Could not find a valid feature index for the current model.")
                 return
 
             # Get the high-dimensional features for the points in the current view
             features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
             if not features_dict:
-                QMessageBox.warning(self, "Error", "Could not retrieve features for the items in view.")
+                QMessageBox.warning(self, 
+                                    "Error", 
+                                    "Could not retrieve features for the items in view.")
                 return
 
             query_ann_ids = list(features_dict.keys())
@@ -1774,25 +1824,33 @@ class ExplorerWindow(QMainWindow):
 
             mislabeled_ann_ids = []
             for i, ann_id in enumerate(query_ann_ids):
-                current_label = self.data_item_cache[ann_id].effective_label.id
-                
+                data_item = self.data_item_cache[ann_id]
+                # Use preview_label if present, else effective_label
+                label_obj = getattr(data_item, "preview_label", None) or data_item.effective_label
+                current_label_id = getattr(label_obj, "id", "-1")
+                if current_label_id == "-1":
+                    continue  # Skip if label is invalid
+
                 # Get neighbor labels, ignoring the first result (the point itself)
                 neighbor_faiss_indices = I[i][1:]
-                
+
                 neighbor_labels = []
                 for n_idx in neighbor_faiss_indices:
-                    # THIS IS THE CORRECTED LOGIC
                     if n_idx in faiss_idx_to_ann_id:
                         neighbor_ann_id = faiss_idx_to_ann_id[n_idx]
-                        # ADD THIS CHECK to ensure the neighbor hasn't been deleted
                         if neighbor_ann_id in self.data_item_cache:
-                            neighbor_labels.append(self.data_item_cache[neighbor_ann_id].effective_label.id)
+                            neighbor_item = self.data_item_cache[neighbor_ann_id]
+                            neighbor_label_obj = getattr(neighbor_item, "preview_label", None)
+                            if neighbor_label_obj is None:
+                                neighbor_label_obj = neighbor_item.effective_label
+                            neighbor_label_id = getattr(neighbor_label_obj, "id", "-1")
+                            if neighbor_label_id != "-1":
+                                neighbor_labels.append(neighbor_label_id)
 
                 if not neighbor_labels:
                     continue
 
-                # Use the agreement threshold instead of strict majority
-                num_matching_neighbors = neighbor_labels.count(current_label)
+                num_matching_neighbors = neighbor_labels.count(current_label_id)
                 agreement_ratio = num_matching_neighbors / len(neighbor_labels)
 
                 if agreement_ratio < agreement_threshold:
