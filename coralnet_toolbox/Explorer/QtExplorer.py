@@ -2142,7 +2142,10 @@ class ExplorerWindow(QMainWindow):
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
                 self.loaded_model = model
-                imgsz = getattr(model.model.args, 'imgsz', 128)
+                
+                # Get the imgsz, but if it's larger than 128, default to 128
+                # This is a common practice to ensure compatibility with smaller images.
+                imgsz = min(getattr(model.model.args, 'imgsz', 128), 128)  # Ensure imgsz is not larger than 128
                 
                 # Warm up the model
                 dummy_image = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
@@ -2158,7 +2161,7 @@ class ExplorerWindow(QMainWindow):
                 return None, None
         
         # Model already loaded and cached
-        return self.loaded_model, getattr(self.loaded_model.model.args, 'imgsz', 128)
+        return self.loaded_model, imgsz
 
     def _prepare_images_from_data_items(self, data_items, progress_bar=None):
         """
