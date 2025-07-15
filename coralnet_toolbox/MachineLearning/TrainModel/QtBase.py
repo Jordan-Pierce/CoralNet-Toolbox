@@ -660,6 +660,10 @@ class Base(QDialog):
                 QMessageBox.warning(self, "Import Warning", "The YAML file appears to be empty or invalid.")
                 return
 
+            # For backward compatibility, check if the old nested 'parameters' key exists.
+            # If not, use the whole data dictionary.
+            params_to_load = data.get('parameters', data)
+
             # Helper function to infer type from value
             def infer_type_and_value(value):
                 """
@@ -673,12 +677,9 @@ class Base(QDialog):
                 elif isinstance(value, float):
                     return "float", value
                 elif isinstance(value, str):
-                    # Check for boolean strings
                     if value.lower() in ['true', 'false']:
                         return "bool", value.lower() == 'true'
-                    # Check for numeric strings
                     try:
-                        # Try to convert to int first
                         if '.' not in value:
                             return "int", int(value)
                         else:
@@ -686,14 +687,13 @@ class Base(QDialog):
                     except ValueError:
                         return "string", value
                 else:
-                    # For any other type, convert to string
                     return "string", str(value)
 
             # Clear existing custom parameters before importing
             while self.custom_params:
                 self.remove_parameter_pair()
 
-            # Map parameters to UI controls
+            # Map standard parameters to their UI controls
             param_mapping = {
                 'epochs': self.epochs_spinbox,
                 'patience': self.patience_spinbox,
@@ -712,37 +712,31 @@ class Base(QDialog):
             }
 
             # Update UI controls with imported values
-            for param_name, value in data.items():
+            for param_name, value in params_to_load.items():
                 param_type, converted_value = infer_type_and_value(value)
                 
                 if param_name in param_mapping:
                     widget = param_mapping[param_name]
                     
                     if isinstance(widget, QSpinBox):
-                        if param_type in ['int', 'float'] and isinstance(converted_value, (int, float)):
+                        if isinstance(converted_value, (int, float)):
                             widget.setValue(int(converted_value))
                     elif isinstance(widget, QDoubleSpinBox):
-                        if param_type in ['int', 'float'] and isinstance(converted_value, (int, float)):
+                        if isinstance(converted_value, (int, float)):
                             widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
                         if param_name in ['multi_scale', 'save', 'weighted', 'val', 'verbose']:
-                            # Boolean parameters
-                            if param_type == 'bool':
-                                widget.setCurrentText("True" if converted_value else "False")
-                        else:
-                            # String parameters like optimizer
-                            if str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
-                                widget.setCurrentText(str(converted_value))
+                            widget.setCurrentText("True" if converted_value else "False")
+                        elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
+                            widget.setCurrentText(str(converted_value))
                 else:
-                    # Add as custom parameter using inferred type
+                    # Add as a custom parameter
                     self.add_parameter_pair()
-                    param_widgets = self.custom_params[-1]
-                    param_name_widget, param_value_widget, param_type_widget = param_widgets
+                    param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
                     
                     param_name_widget.setText(param_name)
                     param_type_widget.setCurrentText(param_type)
                     
-                    # Set value based on type
                     if param_type == "bool":
                         param_value_widget.setText("True" if converted_value else "False")
                     else:
@@ -750,14 +744,14 @@ class Base(QDialog):
 
             QMessageBox.information(self, 
                                     "Import Success", 
-                                    "Parameters successfully imported with automatic type inference")
+                                    "Parameters successfully imported with automatic type inference.")
 
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to import parameters: {str(e)}")
 
     def export_parameters(self):
         """
-        Export current parameters to a YAML file with explicit type information.
+        Export current parameters to a flat YAML file.
         """
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Export Parameters to YAML",
@@ -767,69 +761,56 @@ class Base(QDialog):
             return
 
         try:
-            # Structure: types section followed by parameters section
-            export_data = {
-                'types': {},
-                'parameters': {}
-            }
-            
-            # Standard parameters with their types
-            standard_params = {
-                'epochs': ('int', self.epochs_spinbox.value()),
-                'patience': ('int', self.patience_spinbox.value()),
-                'imgsz': ('int', self.imgsz_spinbox.value()),
-                'batch': ('int', self.batch_spinbox.value()),
-                'workers': ('int', self.workers_spinbox.value()),
-                'save_period': ('int', self.save_period_spinbox.value()),
-                'freeze_layers': ('float', self.freeze_layers_spinbox.value()),
-                'dropout': ('float', self.dropout_spinbox.value()),
-                'multi_scale': ('bool', self.multi_scale_combo.currentText() == "True"),
-                'save': ('bool', self.save_combo.currentText() == "True"),
-                'weighted': ('bool', self.weighted_combo.currentText() == "True"),
-                'val': ('bool', self.val_combo.currentText() == "True"),
-                'verbose': ('bool', self.verbose_combo.currentText() == "True"),
-                'optimizer': ('string', self.optimizer_combo.currentText())
-            }
+            # Use a single flat dictionary for export
+            export_data = {}
 
-            # Add standard parameters
-            for param_name, (param_type, value) in standard_params.items():
-                export_data['types'][param_name] = param_type
-                export_data['parameters'][param_name] = value
+            # Standard parameters
+            export_data['epochs'] = self.epochs_spinbox.value()
+            export_data['patience'] = self.patience_spinbox.value()
+            export_data['imgsz'] = self.imgsz_spinbox.value()
+            export_data['batch'] = self.batch_spinbox.value()
+            export_data['workers'] = self.workers_spinbox.value()
+            export_data['save_period'] = self.save_period_spinbox.value()
+            export_data['freeze_layers'] = self.freeze_layers_spinbox.value()
+            export_data['dropout'] = self.dropout_spinbox.value()
+            export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
+            export_data['save'] = self.save_combo.currentText() == "True"
+            export_data['weighted'] = self.weighted_combo.currentText() == "True"
+            export_data['val'] = self.val_combo.currentText() == "True"
+            export_data['verbose'] = self.verbose_combo.currentText() == "True"
+            export_data['optimizer'] = self.optimizer_combo.currentText()
 
             # Custom parameters
             for param_info in self.custom_params:
-                param_name, param_value, param_type = param_info
-                name = param_name.text().strip()
-                value = param_value.text().strip()
-                type_name = param_type.currentText()
+                param_name_widget, param_value_widget, param_type_widget = param_info
+                name = param_name_widget.text().strip()
+                value_str = param_value_widget.text().strip()
+                type_name = param_type_widget.currentText()
                 
-                if name and value:
-                    export_data['types'][name] = type_name
-                    
-                    if type_name == "bool":
-                        export_data['parameters'][name] = value.lower() == "true"
-                    elif type_name == "int":
-                        try:
-                            export_data['parameters'][name] = int(value)
-                        except ValueError:
-                            export_data['parameters'][name] = value
-                            export_data['types'][name] = "string"  # Fallback to string
-                    elif type_name == "float":
-                        try:
-                            export_data['parameters'][name] = float(value)
-                        except ValueError:
-                            export_data['parameters'][name] = value
-                            export_data['types'][name] = "string"  # Fallback to string
-                    else:  # string type
-                        export_data['parameters'][name] = value
+                if name and value_str:
+                    # Convert value to the correct type before exporting
+                    try:
+                        if type_name == "bool":
+                            value = value_str.lower() == "true"
+                        elif type_name == "int":
+                            value = int(value_str)
+                        elif type_name == "float":
+                            value = float(value_str)
+                        else:  # string type
+                            value = value_str
+                        export_data[name] = value
+                    except ValueError:
+                        # If conversion fails, save it as a string
+                        print(f"Warning: Could not convert '{value_str}' to {type_name} for parameter '{name}'. Saving as string.")
+                        export_data[name] = value_str
 
-            # Write to YAML file
+            # Write the flat dictionary to the YAML file
             with open(file_path, 'w') as f:
-                yaml.dump(export_data, f, default_flow_style=False, indent=2)
+                yaml.dump(export_data, f, default_flow_style=False, sort_keys=False, indent=2)
 
             QMessageBox.information(self, 
                                     "Export Success", 
-                                    "Parameters successfully exported")
+                                    "Parameters successfully exported.")
 
         except Exception as e:
             QMessageBox.critical(self, 
