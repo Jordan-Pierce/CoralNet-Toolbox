@@ -1466,6 +1466,7 @@ class ExplorerWindow(QMainWindow):
 
         self.device = main_window.device
         self.loaded_model = None
+        self.loaded_model_imgsz = 128
 
         self.feature_store = FeatureStore()
         
@@ -2139,19 +2140,36 @@ class ExplorerWindow(QMainWindow):
             print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
             try:
                 model = YOLO(model_name)
+                
+                # Check if the model task is compatible with the selected feature mode
+                if model.task != 'classify' and feature_mode == "Predictions":
+                    QMessageBox.warning(self, 
+                                        "Invalid Mode for Model",
+                                        f"The selected model is a '{model.task}' model. "
+                                        "The 'Predictions' feature mode is only available for 'classify' models. "
+                                        "Reverting to 'Embed Features' mode.")
+
+                    # Force the feature mode combo box back to "Embed Features"
+                    self.model_settings_widget.feature_mode_combo.setCurrentText("Embed Features")
+                    
+                    # On failure, reset the model cache
+                    self.loaded_model = None
+                    self.current_feature_generating_model = None
+                    return None, None
+
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
                 self.loaded_model = model
                 
                 # Get the imgsz, but if it's larger than 128, default to 128
-                # This is a common practice to ensure compatibility with smaller images.
-                imgsz = min(getattr(model.model.args, 'imgsz', 128), 128)  # Ensure imgsz is not larger than 128
+                imgsz = min(getattr(model.model.args, 'imgsz', 128), 128)
+                self.loaded_model_imgsz = imgsz
                 
                 # Warm up the model
                 dummy_image = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
                 model.predict(dummy_image, imgsz=imgsz, half=True, device=self.device, verbose=False)
                 
-                return model, imgsz
+                return model, self.loaded_model_imgsz
                 
             except Exception as e:
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
@@ -2160,8 +2178,8 @@ class ExplorerWindow(QMainWindow):
                 self.current_feature_generating_model = None
                 return None, None
         
-        # Model already loaded and cached
-        return self.loaded_model, imgsz
+        # Model already loaded and cached, return it and its image size
+        return self.loaded_model, self.loaded_model_imgsz
 
     def _prepare_images_from_data_items(self, data_items, progress_bar=None):
         """
