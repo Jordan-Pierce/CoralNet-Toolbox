@@ -130,7 +130,7 @@ class EmbeddingViewer(QWidget):
         # Create a QToolButton to have both a primary action and a dropdown menu
         self.find_mislabels_button = QToolButton()
         self.find_mislabels_button.setText("Find Potential Mislabels")
-        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup) # Key change for split-button style
+        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup)  # Key change for split-button style
         self.find_mislabels_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.find_mislabels_button.setStyleSheet(
             "QToolButton::menu-indicator {"
@@ -186,9 +186,18 @@ class EmbeddingViewer(QWidget):
         
         uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
         toolbar_layout.addWidget(self.find_uncertain_button)
-
+    
+        # Add a strech and separator
         toolbar_layout.addStretch()
-        
+        toolbar_layout.addWidget(self._create_separator())
+
+        # Center on selection button
+        self.center_on_selection_button = QPushButton()
+        self.center_on_selection_button.setIcon(get_icon("target.png"))
+        self.center_on_selection_button.setToolTip("Center view on selected point(s)")
+        self.center_on_selection_button.clicked.connect(self.center_on_selection)
+        toolbar_layout.addWidget(self.center_on_selection_button)
+                
         # Home button to reset view
         self.home_button = QPushButton()
         self.home_button.setIcon(get_icon("home.png"))
@@ -258,6 +267,7 @@ class EmbeddingViewer(QWidget):
 
         self.find_mislabels_button.setEnabled(points_exist)
         self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
+        self.center_on_selection_button.setEnabled(points_exist and selection_exists)
 
         if self.isolated_mode:
             self.isolate_button.hide()
@@ -270,12 +280,46 @@ class EmbeddingViewer(QWidget):
     def reset_view(self):
         """Reset the view to fit all embedding points."""
         self.fit_view_to_points()
+        
+    def center_on_selection(self):
+        """Centers the view on selected point(s) or maintains the current view if no points are selected."""
+        selected_items = self.graphics_scene.selectedItems()
+        if not selected_items:
+            # No selection, show a message
+            QMessageBox.information(self, "No Selection", "Please select one or more points first.")
+            return
+            
+        # Create a bounding rect that encompasses all selected points
+        selection_rect = None
+        
+        for item in selected_items:
+            if isinstance(item, EmbeddingPointItem):
+                # Get the item's bounding rect in scene coordinates
+                item_rect = item.sceneBoundingRect()
+                
+                # Add padding around the point for better visibility
+                padding = 50  # pixels
+                item_rect = item_rect.adjusted(-padding, -padding, padding, padding)
+                
+                if selection_rect is None:
+                    selection_rect = item_rect
+                else:
+                    selection_rect = selection_rect.united(item_rect)
+        
+        if selection_rect:
+            # Add extra margin for better visibility
+            margin = 20
+            selection_rect = selection_rect.adjusted(-margin, -margin, margin, margin)
+            
+            # Fit the view to the selection rect
+            self.graphics_view.fitInView(selection_rect, Qt.KeepAspectRatio)
 
     def show_placeholder(self):
         """Show the placeholder message and hide the graphics view."""
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
+        self.center_on_selection_button.setEnabled(False)  # Disable center button
         self.find_mislabels_button.setEnabled(False)
         self.find_uncertain_button.setEnabled(False)
 
