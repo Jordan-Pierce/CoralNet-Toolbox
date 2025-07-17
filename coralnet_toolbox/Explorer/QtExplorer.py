@@ -29,6 +29,8 @@ from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
 
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 try:
@@ -800,6 +802,18 @@ class AnnotationViewer(QScrollArea):
                 # Center the annotation window view on the selected annotation
                 if hasattr(explorer.annotation_window, 'center_on_annotation'):
                     explorer.annotation_window.center_on_annotation(annotation_to_select)
+                    
+                # Show resize handles for Rectangle annotations
+                if isinstance(annotation_to_select, RectangleAnnotation):
+                    explorer.annotation_window.set_selected_tool('select')
+                    explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
+                    select_tool = explorer.annotation_window.tools.get('select')
+
+                    if select_tool:
+                        # Engage the selection lock.
+                        select_tool.selection_locked = True
+                        # Show the resize handles for the now-selected annotation.
+                        select_tool._show_resize_handles()
 
                 # Also clear any existing selection in the explorer window itself
                 explorer.embedding_viewer.render_selection_from_ids({widget.data_item.annotation.id})
