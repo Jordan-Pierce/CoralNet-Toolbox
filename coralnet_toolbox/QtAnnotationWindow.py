@@ -48,6 +48,7 @@ class AnnotationWindow(QGraphicsView):
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
     annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
+    annotationModified = pyqtSignal(str)  # Signal to emit when annotation is modified
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""

@@ -61,7 +61,8 @@ class ResizeSubTool(SubTool):
         if self.target_annotation:
             self.target_annotation.create_cropped_image(self.annotation_window.rasterio_image)
             self.parent_tool.main_window.confidence_window.display_cropped_image(self.target_annotation)
-
+            self.annotation_window.annotationModified.emit(self.target_annotation.id)  # Emit modified signal
+            
         self.parent_tool.deactivate_subtool()
 
     # --- Handle Management Logic (moved from original class) ---

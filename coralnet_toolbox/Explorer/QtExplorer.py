@@ -1639,6 +1639,7 @@ class ExplorerWindow(QMainWindow):
             pass
 
         # Connect signals to slots
+        self.annotation_window.annotationModified.connect(self.on_annotation_modified)
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
         self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
         self.annotation_viewer.preview_changed.connect(self.on_preview_changed)
@@ -1655,16 +1656,27 @@ class ExplorerWindow(QMainWindow):
         
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
-        """Syncs selection from AnnotationViewer to EmbeddingViewer."""
-        # Per request, unselect any annotation in the main AnnotationWindow
+        """Syncs selection from AnnotationViewer to other components and manages UI state."""
+        # Unselect any annotation in the main AnnotationWindow for a clean slate
         if hasattr(self, 'annotation_window'):
             self.annotation_window.unselect_annotations()
 
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
+
+        # Sync selection to the embedding viewer
         if self.embedding_viewer.points_by_id:
             self.embedding_viewer.render_selection_from_ids(all_selected_ids)
 
-        # Call the new centralized method
+        # Get the select tool to manage its state
+        select_tool = self.annotation_window.tools.get('select')
+        if select_tool:
+            # If the selection from the explorer is not a single item (i.e., it's empty
+            # or a multi-selection), hide the handles and release the lock.
+            if len(all_selected_ids) != 1:
+                select_tool._hide_resize_handles()
+                select_tool.selection_locked = False
+
+        # Update the label window based on the new selection
         self.update_label_window_selection()
 
     @pyqtSlot(list)
@@ -1705,6 +1717,22 @@ class ExplorerWindow(QMainWindow):
             widget = self.annotation_viewer.annotation_widgets_by_id.get(ann_id)
             if widget:
                 widget.update_tooltip()
+                
+    @pyqtSlot(str)
+    def on_annotation_modified(self, annotation_id):
+        """
+        Handles an annotation being moved or resized in the AnnotationWindow.
+        This invalidates the cached features and updates the annotation's thumbnail.
+        """
+        # Update the AnnotationImageWidget in the AnnotationViewer
+        if hasattr(self, 'annotation_viewer'):
+            # Find the corresponding widget by its annotation ID
+            widget = self.annotation_viewer.annotation_widgets_by_id.get(annotation_id)
+            if widget:
+                # The widget is told to update its content from the modified annotation
+                widget.load_and_set_image()
+                # Recalculate widget positions to handle potential size changes
+                self.annotation_viewer.recalculate_widget_positions()
 
     @pyqtSlot()
     def on_reset_view_requested(self):
