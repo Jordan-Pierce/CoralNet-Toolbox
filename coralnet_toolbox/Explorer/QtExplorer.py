@@ -795,7 +795,7 @@ class AnnotationViewer(QScrollArea):
 
                 # Now, select the annotation in the annotation_window
                 if hasattr(explorer.annotation_window, 'select_annotation'):
-                    explorer.annotation_window.select_annotation(annotation_to_select)
+                    explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
                     
                 # Center the annotation window view on the selected annotation
                 if hasattr(explorer.annotation_window, 'center_on_annotation'):

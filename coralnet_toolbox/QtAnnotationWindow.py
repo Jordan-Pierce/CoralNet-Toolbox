@@ -546,7 +546,7 @@ class AnnotationWindow(QGraphicsView):
             return type(self.selected_annotations[0])
         return None
 
-    def select_annotation(self, annotation, multi_select=False):
+    def select_annotation(self, annotation, multi_select=False, quiet_mode=False):
         """Select an annotation and update the UI accordingly."""
         # If the annotation is already selected and Ctrl is pressed, unselect it
         if annotation in self.selected_annotations and multi_select:
@@ -572,7 +572,11 @@ class AnnotationWindow(QGraphicsView):
             
             # If this is the only selected annotation, update label window and confidence window
             if len(self.selected_annotations) == 1:
-                self.labelSelected.emit(annotation.label.id)
+                
+                if not quiet_mode:
+                    # Emit the label selected signal, unless in quiet mode.
+                    # This is in Explorer to avoid overwriting preview label.
+                    self.labelSelected.emit(annotation.label.id)
                 
                 # Make sure we have a cropped image
                 if not annotation.cropped_image:
