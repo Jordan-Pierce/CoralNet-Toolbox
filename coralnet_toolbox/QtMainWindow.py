@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import re
+import ctypes
 import requests
 
 from packaging import version
@@ -130,6 +131,9 @@ class MainWindow(QMainWindow):
 
     def __init__(self, __version__):
         super().__init__()
+        
+        # Get the process ID
+        self.pid = os.getpid()
 
         # Define icons
         self.coral_icon = get_icon("coral.png")
@@ -2325,6 +2329,62 @@ class MainWindow(QMainWindow):
             msg.setWindowTitle("Issues / Feature Requests")
             msg.setText(f'Click {here} to create a new issue or feature request.')
             msg.setTextFormat(Qt.RichText)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def check_windows_gdi_count(self):
+        """Calculate and print the number of GDI objects for the current process on Windows."""        
+        # 1. Check if the OS is Windows. If not, return early.
+        if os.name != 'nt':
+            return
+        
+        # Load necessary libraries
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+
+        # Define constants
+        PROCESS_QUERY_INFORMATION = 0x0400
+        GR_GDIOBJECTS = 0
+
+        process_handle = None
+        try:
+            # 2. Get a handle to the process from its PID
+            process_handle = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, self.pid)
+            
+            if not process_handle:
+                error_code = ctypes.get_last_error()
+                raise RuntimeError(f"Failed to open PID {self.pid}. Error code: {error_code}")
+
+            # 3. Use the handle to get the GDI object count
+            gdi_count = user32.GetGuiResources(process_handle, GR_GDIOBJECTS)
+            
+            if gdi_count >= 9500:  # GDI limit
+                self.show_gdi_limit_warning()
+
+        except Exception as e:
+            pass
+
+        finally:
+            # 4. CRITICAL: Always close the handle when you're done
+            if process_handle:
+                kernel32.CloseHandle(process_handle)
+                
+        return
+            
+    def show_gdi_limit_warning(self):
+        """
+        Show a warning dialog if the GDI limit is reached.
+        """
+        try:
+            self.untoggle_all_tools()
+            msg = QMessageBox()
+            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowTitle("GDI Limit Reached")
+            msg.setText(
+                "The GDI limit has been reached! Please immediately save your work, close, and reopen the application!"
+            )
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec_()
         except Exception as e:

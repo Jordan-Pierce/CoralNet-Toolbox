@@ -374,6 +374,9 @@ class AnnotationWindow(QGraphicsView):
 
     def set_image(self, image_path):
         """Set and display an image at the given path."""
+        # Calculate GDIs for Windows if needed
+        self.main_window.check_windows_gdi_count()
+        
         # Clean up
         self.clear_scene()
 
