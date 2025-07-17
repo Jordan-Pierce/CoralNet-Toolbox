@@ -215,14 +215,35 @@ class SelectTool(Tool):
         return self.annotation_window.annotations_dict.get(annotation_id) if annotation_id else None
 
     def _get_annotation_from_items(self, items, position):
-        """Finds the first valid annotation at a position from a list of items."""
-        for item in items:
-            # We don't want to select by clicking a resize handle
-            if item in self.resize_subtool.resize_handles_items:
-                continue
+        """
+        Finds the first valid annotation at a position from a list of items.
+        First prioritizes annotations where the center graphic contains the point,
+        then falls back to any annotation that contains the point.
+        """
+        # Filter out resize handles
+        valid_items = [item for item in items if item not in self.resize_subtool.resize_handles_items]
+        
+        center_threshold = 10.0  # Distance threshold in pixels to consider a click "on center"
+        center_candidates = []
+        general_candidates = []
+        
+        # Gather all potential candidates
+        for item in valid_items:
             annotation = self._get_annotation_from_item(item)
             if annotation and annotation.contains_point(position):
-                return annotation
+                # Calculate distance to center
+                center_distance = (position - annotation.center_xy).manhattanLength()
+                if center_distance <= center_threshold:
+                    center_candidates.append(annotation)
+                else:
+                    general_candidates.append(annotation)
+        
+        # Return priority: center candidates first, then general candidates
+        if center_candidates:
+            return center_candidates[0]
+        elif general_candidates:
+            return general_candidates[0]
+                
         return None
 
     def _handle_annotation_selection(self, position, items, modifiers):
