@@ -670,8 +670,8 @@ class EmbeddingSettingsWidget(QGroupBox):
 
     def apply_embedding(self):
         if self.explorer_window and hasattr(self.explorer_window, 'run_embedding_pipeline'):
-            # Clear all selections before running embedding pipeline
-            if hasattr(self.explorer_window, 'handle_selection_change'):
-                self.explorer_window.handle_selection_change([])
+            # Clear all selections before running a new embedding pipeline.
+            if hasattr(self.explorer_window, '_clear_selections'):
+                self.explorer_window._clear_selections()
 
             self.explorer_window.run_embedding_pipeline()

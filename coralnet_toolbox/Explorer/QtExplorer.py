@@ -1067,6 +1067,9 @@ class AnnotationViewer(QScrollArea):
             self.show_all_annotations()
 
         for widget in self.annotation_widgets_by_id.values():
+            # Fully deselect the widget. This stops the animation, reverts the
+            # pen to solid, and forces a repaint of the default state.
+            self.deselect_widget(widget)
             widget.setParent(None)
             widget.deleteLater()
 
@@ -1541,7 +1544,7 @@ class ExplorerWindow(QMainWindow):
             if hasattr(self.embedding_viewer, 'animation_timer') and self.embedding_viewer.animation_timer:
                 self.embedding_viewer.animation_timer.stop()
 
-        # Call the main cancellation method to revert any pending changes
+        # Call the main cancellation method to revert any pending changes and clear selections.
         self.clear_preview_changes()
 
         # Clean up the feature store by deleting its files
@@ -1629,9 +1632,6 @@ class ExplorerWindow(QMainWindow):
         self._initialize_data_item_cache()
         self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
-        
-        self.annotation_settings_widget.set_default_to_current_image()
-        self.refresh_filters()
 
         try:
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
@@ -1653,6 +1653,28 @@ class ExplorerWindow(QMainWindow):
         self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
         self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
         self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
+        
+    def _clear_selections(self):
+        """Clears selections in both viewers and stops animations."""
+        if not self._ui_initialized:
+            return
+            
+        # Clear selection in the annotation viewer, which also stops widget animations.
+        if self.annotation_viewer:
+            self.annotation_viewer.clear_selection()
+
+        # Clear selection in the embedding viewer. This deselects all points
+        # and stops the animation timer via its on_selection_changed handler.
+        if self.embedding_viewer:
+            self.embedding_viewer.render_selection_from_ids(set())
+
+        # Update other UI elements that depend on selection state.
+        self.update_label_window_selection()
+        self.update_button_states()
+        
+        # Process events
+        QApplication.processEvents()
+        print("Cleared all active selections.")
         
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
@@ -2743,8 +2765,12 @@ class ExplorerWindow(QMainWindow):
 
     def clear_preview_changes(self):
         """
-        Clears all preview changes in the annotation viewer and updates tooltips.
+        Clears all preview changes in the annotation viewer, reverts tooltips,
+        and clears any active selections.
         """
+        # First, clear any active selections from the UI.
+        self._clear_selections()
+        
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
 
@@ -2754,7 +2780,7 @@ class ExplorerWindow(QMainWindow):
             for point in self.embedding_viewer.points_by_id.values():
                 point.update_tooltip()
 
-        # After reverting all changes, update the button states
+        # After reverting all changes, update the button states.
         self.update_button_states()
         print("Cleared all pending changes.")
 
@@ -2798,13 +2824,12 @@ class ExplorerWindow(QMainWindow):
                 self.image_window.update_image_annotations(image_path)
             self.annotation_window.load_annotations()
 
-            # Refresh the annotation viewer since its underlying data has changed
+            # Refresh the annotation viewer since its underlying data has changed.
+            # This implicitly deselects everything by rebuilding the widgets.
             self.annotation_viewer.update_annotations(self.current_data_items)
 
-            # Reset selections and button states
-            self.embedding_viewer.render_selection_from_ids(set())
-            self.update_label_window_selection()
-            self.update_button_states()
+            # Explicitly clear selections and update UI states for consistency.
+            self._clear_selections()
 
             print("Applied changes successfully.")
 
