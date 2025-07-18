@@ -1675,6 +1675,8 @@ class ExplorerWindow(QMainWindow):
             if len(all_selected_ids) != 1:
                 select_tool._hide_resize_handles()
                 select_tool.selection_locked = False
+        # Ensure that the select tool is not active     
+        self.annotation_window.set_selected_tool(None)
 
         # Update the label window based on the new selection
         self.update_label_window_selection()
