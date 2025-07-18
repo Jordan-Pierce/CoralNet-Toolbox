@@ -59,6 +59,10 @@ class ResizeSubTool(SubTool):
     def mouseReleaseEvent(self, event):
         """Finalize the resize, update related windows, and deactivate."""
         if self.target_annotation:
+            # Normalize the coordinates after resize is complete
+            if hasattr(self.target_annotation, 'normalize_coordinates'):
+                self.target_annotation.normalize_coordinates()
+                
             self.target_annotation.create_cropped_image(self.annotation_window.rasterio_image)
             self.parent_tool.main_window.confidence_window.display_cropped_image(self.target_annotation)
             self.annotation_window.annotationModified.emit(self.target_annotation.id)  # Emit modified signal
