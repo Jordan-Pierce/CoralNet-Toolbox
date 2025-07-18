@@ -782,7 +782,7 @@ class AnnotationViewer(QScrollArea):
             annotation_to_select = widget.annotation
         
             # ctrl+right click to only select this annotation (single selection):
-            self.clear_selection()
+            self.clear_selection()  
             self.select_widget(widget)
             changed_ids = [widget.data_item.annotation.id]
 
@@ -795,7 +795,7 @@ class AnnotationViewer(QScrollArea):
                     if hasattr(explorer.annotation_window, 'set_image'):
                         explorer.annotation_window.set_image(image_path)
 
-                # Now, select the annotation in the annotation_window
+                # Now, select the annotation in the annotation_window (activates animation)
                 if hasattr(explorer.annotation_window, 'select_annotation'):
                     explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
                     
@@ -805,7 +805,7 @@ class AnnotationViewer(QScrollArea):
                     
                 # Show resize handles for Rectangle annotations
                 if isinstance(annotation_to_select, RectangleAnnotation):
-                    explorer.annotation_window.set_selected_tool('select')
+                    explorer.annotation_window.set_selected_tool('select') # Accidently unselects in AnnotationWindow
                     explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
                     select_tool = explorer.annotation_window.tools.get('select')
 
