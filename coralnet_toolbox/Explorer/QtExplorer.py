@@ -1724,6 +1724,12 @@ class ExplorerWindow(QMainWindow):
         Handles an annotation being moved or resized in the AnnotationWindow.
         This invalidates the cached features and updates the annotation's thumbnail.
         """
+        print(f"Annotation {annotation_id} was modified. Removing its cached features.")
+        if hasattr(self, 'feature_store'):
+            # This method must exist on the FeatureStore to clear features
+            # for the given annotation ID across all stored models.
+            self.feature_store.remove_features_for_annotation(annotation_id)
+            
         # Update the AnnotationImageWidget in the AnnotationViewer
         if hasattr(self, 'annotation_viewer'):
             # Find the corresponding widget by its annotation ID

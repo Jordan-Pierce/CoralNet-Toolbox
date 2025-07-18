@@ -149,6 +149,21 @@ class FeatureStore:
             index_path = f"{self.index_path_base}_{model_key}.faiss"
             print(f"Saving FAISS index for '{model_key}' to {index_path}")
             faiss.write_index(index_to_save, index_path)
+            
+    def remove_features_for_annotation(self, annotation_id):
+        """
+        Removes an annotation's feature metadata from the SQLite database.
+        This effectively orphans the vector in the FAISS index, invalidating it.
+        """
+        try:
+            self.cursor.execute(
+                "DELETE FROM features WHERE annotation_id = ?",
+                (annotation_id,)
+            )
+            self.conn.commit()
+            print(f"Invalidated features for annotation_id: {annotation_id}")
+        except sqlite3.Error as e:
+            print(f"Error removing feature for annotation {annotation_id}: {e}")
 
     def close(self):
         """Closes the database connection."""
