@@ -101,6 +101,11 @@ class EmbeddingViewer(QWidget):
         self.animation_timer.timeout.connect(self.animate_selection)
         self.animation_timer.setInterval(100)
 
+        # New timer for virtualization
+        self.view_update_timer = QTimer(self)
+        self.view_update_timer.setSingleShot(True)
+        self.view_update_timer.timeout.connect(self._update_visible_points)
+
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
         self.setup_ui()
         self.graphics_view.mousePressEvent = self.mousePressEvent
@@ -226,6 +231,26 @@ class EmbeddingViewer(QWidget):
         separator.setStyleSheet("color: gray; margin: 0 5px;")
         return separator
         
+    def _schedule_view_update(self):
+        """Schedules a delayed update of visible points to avoid performance issues."""
+        self.view_update_timer.start(50)  # 50ms delay
+
+    def _update_visible_points(self):
+        """Sets visibility for points based on whether they are in the viewport."""
+        if self.isolated_mode or not self.points_by_id:
+            return
+
+        # Get the visible rectangle in scene coordinates
+        visible_rect = self.graphics_view.mapToScene(self.graphics_view.viewport().rect()).boundingRect()
+        
+        # Add a buffer to make scrolling smoother by loading points before they enter the view
+        buffer_x = visible_rect.width() * 0.2
+        buffer_y = visible_rect.height() * 0.2
+        buffered_visible_rect = visible_rect.adjusted(-buffer_x, -buffer_y, buffer_x, buffer_y)
+
+        for point in self.points_by_id.values():
+            point.setVisible(buffered_visible_rect.contains(point.pos()) or point.isSelected())
+
     @pyqtSlot()
     def isolate_selection(self):
         """Hides all points that are not currently selected."""
@@ -237,8 +262,7 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setUpdatesEnabled(False)
         try:
             for point in self.points_by_id.values():
-                if point not in self.isolated_points:
-                    point.hide()
+                point.setVisible(point in self.isolated_points)
             self.isolated_mode = True
         finally:
             self.graphics_view.setUpdatesEnabled(True)
@@ -255,8 +279,8 @@ class EmbeddingViewer(QWidget):
         self.isolated_points.clear()
         self.graphics_view.setUpdatesEnabled(False)
         try:
-            for point in self.points_by_id.values():
-                point.show()
+            # Instead of showing all, let the virtualization logic take over
+            self._update_visible_points()
         finally:
             self.graphics_view.setUpdatesEnabled(True)
 
@@ -485,6 +509,7 @@ class EmbeddingViewer(QWidget):
             # Forward right-drag as left-drag for panning
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
+            self._schedule_view_update()
         else:
             # Default mouse move handling
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
@@ -498,6 +523,7 @@ class EmbeddingViewer(QWidget):
         elif event.button() == Qt.RightButton:
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
+            self._schedule_view_update()
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
         else:
             QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
@@ -527,6 +553,7 @@ class EmbeddingViewer(QWidget):
         # Translate view to keep mouse position stable
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
+        self._schedule_view_update()
 
     def update_embeddings(self, data_items):
         """Update the embedding visualization. Creates an EmbeddingPointItem for
@@ -543,6 +570,8 @@ class EmbeddingViewer(QWidget):
         
         # Ensure buttons are in the correct initial state
         self._update_toolbar_state()
+        # Set initial visibility
+        self._update_visible_points()
 
     def clear_points(self):
         """Clear all embedding points from the scene."""
@@ -587,6 +616,9 @@ class EmbeddingViewer(QWidget):
 
         # Update button states based on new selection
         self._update_toolbar_state()
+        
+        # A selection change can affect visibility (e.g., deselecting an off-screen point)
+        self._schedule_view_update()
 
     def animate_selection(self):
         """Animate selected points with a marching ants effect."""
@@ -626,6 +658,9 @@ class EmbeddingViewer(QWidget):
 
         # Manually trigger on_selection_changed to update animation and emit signals
         self.on_selection_changed()
+        
+        # After selection, update visibility to ensure newly selected points are shown
+        self._update_visible_points()
 
     def fit_view_to_points(self):
         """Fit the view to show all embedding points."""
