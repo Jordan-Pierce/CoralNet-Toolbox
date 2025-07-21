@@ -687,7 +687,7 @@ class AnnotationViewer(QWidget):
 
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
-        self.last_selected_index = -1
+        self.last_selected_item_id = None  # Use a persistent ID for the selection anchor
         self.current_widget_size = 96
         self.selection_at_press = set()
         self.rubber_band = None
@@ -1023,7 +1023,7 @@ class AnnotationViewer(QWidget):
         if not self.active_ordered_ids and sort_type == "None":
             return [("", data_items)]
 
-        if self.active_ordered_ids: # Don't show group headers for similarity results
+        if self.active_ordered_ids:  # Don't show group headers for similarity results
             return [("", data_items)]
 
         groups = []
@@ -1215,7 +1215,7 @@ class AnnotationViewer(QWidget):
 
         self.all_data_items = data_items
         self.selected_widgets.clear()
-        self.last_selected_index = -1
+        self.last_selected_item_id = None
 
         self.recalculate_layout()
         self._update_toolbar_state()
@@ -1388,9 +1388,20 @@ class AnnotationViewer(QWidget):
 
         # Shift or Shift+Ctrl: range selection.
         if modifiers in (Qt.ShiftModifier, Qt.ShiftModifier | Qt.ControlModifier):
-            if self.last_selected_index != -1 and self.last_selected_index < len(sorted_data_items):
-                start = min(self.last_selected_index, current_index)
-                end = max(self.last_selected_index, current_index)
+            last_index = -1
+            if self.last_selected_item_id:
+                try:
+                    # Find the data item corresponding to the last selected ID
+                    last_item = self.explorer_window.data_item_cache[self.last_selected_item_id]
+                    # Find its index in the *current* sorted list
+                    last_index = sorted_data_items.index(last_item)
+                except (KeyError, ValueError):
+                    # The last selected item is not in the current view or cache, so no anchor
+                    last_index = -1
+
+            if last_index != -1:
+                start = min(last_index, current_index)
+                end = max(last_index, current_index)
 
                 # Select all widgets in the range
                 for i in range(start, end + 1):
@@ -1403,17 +1414,14 @@ class AnnotationViewer(QWidget):
                 if self.select_widget(widget):
                     changed_ids.append(widget.data_item.annotation.id)
 
-            self.last_selected_index = current_index
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # Ctrl: toggle selection of the clicked widget
         elif modifiers == Qt.ControlModifier:
-            if widget.is_selected():
-                if self.deselect_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-            else:
-                if self.select_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-            self.last_selected_index = current_index
+            # Toggle selection and update the anchor
+            if self.toggle_widget_selection(widget):
+                changed_ids.append(widget.data_item.annotation.id)
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # No modifier: single selection
         else:
@@ -1428,7 +1436,7 @@ class AnnotationViewer(QWidget):
             # Select the clicked widget
             if self.select_widget(widget):
                 changed_ids.append(newly_selected_id)
-            self.last_selected_index = current_index
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # If in isolated mode, update which widgets are visible
         if self.isolated_mode:
@@ -1437,6 +1445,13 @@ class AnnotationViewer(QWidget):
         # Emit signal if any selection state changed
         if changed_ids:
             self.selection_changed.emit(changed_ids)
+
+    def toggle_widget_selection(self, widget):
+        """Toggles the selection state of a widget and returns True if changed."""
+        if widget.is_selected():
+            return self.deselect_widget(widget)
+        else:
+            return self.select_widget(widget)
 
     def select_widget(self, widget):
         """Selects a widget, updates its data_item, and returns True if state changed."""
@@ -1524,7 +1539,7 @@ class AnnotationViewer(QWidget):
 
         if something_changed:
             # Recalculate positions to update sorting and re-flow the layout
-            if self.sort_combo.currentText() in ("Label", "Image"):
+            if self.sort_combo.currentText() == "Label":
                 self.recalculate_layout()
 
     def has_preview_changes(self):
