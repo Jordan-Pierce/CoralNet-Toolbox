@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPen, QColor, QPainter
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
 
@@ -96,6 +96,10 @@ class AnnotationImageWidget(QWidget):
         self.pixmap = None
 
         self.animation_offset = 0
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self._update_animation_frame)
+        self.animation_timer.setInterval(75)
+
         self.setup_ui()
         self.load_and_set_image()
 
@@ -157,8 +161,14 @@ class AnnotationImageWidget(QWidget):
         Updates the widget's visual state based on the data_item's selection
         status. This should be called by the controlling viewer.
         """
-        # If the widget is no longer selected, reset its animation offset.
-        if not self.data_item.is_selected:
+        is_selected = self.data_item.is_selected
+
+        if is_selected:
+            if not self.animation_timer.isActive():
+                self.animation_timer.start()
+        else:
+            if self.animation_timer.isActive():
+                self.animation_timer.stop()
             self.animation_offset = 0
 
         # Trigger a repaint to show the new selection state (border, etc.)

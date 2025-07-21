@@ -662,11 +662,6 @@ class AnnotationViewer(QScrollArea):
         self.isolated_mode = False
         self.isolated_widgets = set()
 
-        # Add a single, centralized timer for selection animation
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._animate_selection)
-        self.animation_timer.setInterval(75)
-
         # State for new sorting options
         self.active_ordered_ids = []
         self.is_confidence_sort_available = False
@@ -912,12 +907,6 @@ class AnnotationViewer(QScrollArea):
             self.show_all_button.hide()
             self.isolate_button.setEnabled(selection_exists)
 
-    @pyqtSlot()
-    def _animate_selection(self):
-        """Animates all currently selected widgets."""
-        for widget in self.selected_widgets:
-            widget._update_animation_frame()
-
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []  # Clear any special ordering
@@ -1077,32 +1066,24 @@ class AnnotationViewer(QScrollArea):
         if self.isolated_mode:
             self.show_all_annotations()
 
-        # It's good practice to clear selection when the set of items changes.
-        if self.selected_widgets:
-            self.clear_selection()
-
-        new_data_ids = {item.annotation.id for item in data_items}
-        current_widget_ids = set(self.annotation_widgets_by_id.keys())
-
-        # --- Step 1: Remove widgets that are no longer in the filtered list ---
-        ids_to_remove = current_widget_ids - new_data_ids
-        for ann_id in ids_to_remove:
-            widget = self.annotation_widgets_by_id.pop(ann_id)
-            widget.hide()
+        for widget in self.annotation_widgets_by_id.values():
+            # Fully deselect the widget. This stops the animation, reverts the
+            # pen to solid, and forces a repaint of the default state.
+            self.deselect_widget(widget)
             widget.setParent(None)
             widget.deleteLater()
 
-        # --- Step 2: Add widgets for new items ---
-        new_data_map = {item.annotation.id: item for item in data_items}
-        ids_to_add = new_data_ids - current_widget_ids
-        for ann_id in ids_to_add:
-            data_item = new_data_map[ann_id]
+        self.annotation_widgets_by_id.clear()
+        self.selected_widgets.clear()
+        self.last_selected_index = -1
+
+        for data_item in data_items:
             annotation_widget = AnnotationImageWidget(
                 data_item, self.current_widget_size, self, self.content_widget)
-            annotation_widget.show()
-            self.annotation_widgets_by_id[ann_id] = annotation_widget
 
-        self.last_selected_index = -1
+            annotation_widget.show()
+            self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
+
         self.recalculate_widget_positions()
         self._update_toolbar_state()
         # Update the label window with the new annotation count
@@ -1377,10 +1358,6 @@ class AnnotationViewer(QScrollArea):
     def select_widget(self, widget):
         """Selects a widget, updates its data_item, and returns True if state changed."""
         if not widget.is_selected():  # is_selected() checks the data_item
-            # Start the animation timer if it's not already running and there will be a selection
-            if not self.animation_timer.isActive():
-                self.animation_timer.start()
-
             # 1. Controller modifies the state on the data item
             widget.data_item.set_selected(True)
             # 2. Controller tells the view to update its appearance
@@ -1399,11 +1376,6 @@ class AnnotationViewer(QScrollArea):
             widget.update_selection_visuals()
             if widget in self.selected_widgets:
                 self.selected_widgets.remove(widget)
-
-            # Stop the animation timer if this was the last selected widget
-            if not self.selected_widgets and self.animation_timer.isActive():
-                self.animation_timer.stop()
-
             self._update_toolbar_state()
             return True
         return False
