@@ -11,7 +11,7 @@ from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
-from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot
+from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
@@ -28,6 +28,8 @@ from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidge
 from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
+
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -98,6 +100,11 @@ class EmbeddingViewer(QWidget):
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.animate_selection)
         self.animation_timer.setInterval(100)
+
+        # New timer for virtualization
+        self.view_update_timer = QTimer(self)
+        self.view_update_timer.setSingleShot(True)
+        self.view_update_timer.timeout.connect(self._update_visible_points)
 
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
         self.setup_ui()
@@ -224,6 +231,26 @@ class EmbeddingViewer(QWidget):
         separator.setStyleSheet("color: gray; margin: 0 5px;")
         return separator
         
+    def _schedule_view_update(self):
+        """Schedules a delayed update of visible points to avoid performance issues."""
+        self.view_update_timer.start(50)  # 50ms delay
+
+    def _update_visible_points(self):
+        """Sets visibility for points based on whether they are in the viewport."""
+        if self.isolated_mode or not self.points_by_id:
+            return
+
+        # Get the visible rectangle in scene coordinates
+        visible_rect = self.graphics_view.mapToScene(self.graphics_view.viewport().rect()).boundingRect()
+        
+        # Add a buffer to make scrolling smoother by loading points before they enter the view
+        buffer_x = visible_rect.width() * 0.2
+        buffer_y = visible_rect.height() * 0.2
+        buffered_visible_rect = visible_rect.adjusted(-buffer_x, -buffer_y, buffer_x, buffer_y)
+
+        for point in self.points_by_id.values():
+            point.setVisible(buffered_visible_rect.contains(point.pos()) or point.isSelected())
+
     @pyqtSlot()
     def isolate_selection(self):
         """Hides all points that are not currently selected."""
@@ -235,8 +262,7 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setUpdatesEnabled(False)
         try:
             for point in self.points_by_id.values():
-                if point not in self.isolated_points:
-                    point.hide()
+                point.setVisible(point in self.isolated_points)
             self.isolated_mode = True
         finally:
             self.graphics_view.setUpdatesEnabled(True)
@@ -253,8 +279,8 @@ class EmbeddingViewer(QWidget):
         self.isolated_points.clear()
         self.graphics_view.setUpdatesEnabled(False)
         try:
-            for point in self.points_by_id.values():
-                point.show()
+            # Instead of showing all, let the virtualization logic take over
+            self._update_visible_points()
         finally:
             self.graphics_view.setUpdatesEnabled(True)
 
@@ -483,6 +509,7 @@ class EmbeddingViewer(QWidget):
             # Forward right-drag as left-drag for panning
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
+            self._schedule_view_update()
         else:
             # Default mouse move handling
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
@@ -496,6 +523,7 @@ class EmbeddingViewer(QWidget):
         elif event.button() == Qt.RightButton:
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseReleaseEvent(self.graphics_view, left_event)
+            self._schedule_view_update()
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
         else:
             QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
@@ -525,6 +553,7 @@ class EmbeddingViewer(QWidget):
         # Translate view to keep mouse position stable
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
+        self._schedule_view_update()
 
     def update_embeddings(self, data_items):
         """Update the embedding visualization. Creates an EmbeddingPointItem for
@@ -541,6 +570,8 @@ class EmbeddingViewer(QWidget):
         
         # Ensure buttons are in the correct initial state
         self._update_toolbar_state()
+        # Set initial visibility
+        self._update_visible_points()
 
     def clear_points(self):
         """Clear all embedding points from the scene."""
@@ -585,6 +616,9 @@ class EmbeddingViewer(QWidget):
 
         # Update button states based on new selection
         self._update_toolbar_state()
+        
+        # A selection change can affect visibility (e.g., deselecting an off-screen point)
+        self._schedule_view_update()
 
     def animate_selection(self):
         """Animate selected points with a marching ants effect."""
@@ -624,6 +658,9 @@ class EmbeddingViewer(QWidget):
 
         # Manually trigger on_selection_changed to update animation and emit signals
         self.on_selection_changed()
+        
+        # After selection, update visibility to ensure newly selected points are shown
+        self._update_visible_points()
 
     def fit_view_to_points(self):
         """Fit the view to show all embedding points."""
@@ -631,11 +668,13 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
-
-
-class AnnotationViewer(QScrollArea):
-    """Scrollable grid widget for displaying annotation image crops with selection,
-    filtering, and isolation support. Acts as a controller for the widgets."""
+            
+            
+class AnnotationViewer(QWidget):
+    """
+    Widget containing a toolbar and a scrollable grid for displaying annotation image crops.
+    Implements virtualization to only render visible widgets.
+    """
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
@@ -648,7 +687,7 @@ class AnnotationViewer(QScrollArea):
 
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
-        self.last_selected_index = -1
+        self.last_selected_item_id = None  # Use a persistent ID for the selection anchor
         self.current_widget_size = 96
         self.selection_at_press = set()
         self.rubber_band = None
@@ -660,23 +699,32 @@ class AnnotationViewer(QScrollArea):
         self.isolated_mode = False
         self.isolated_widgets = set()
 
-        # State for new sorting options
+        # State for sorting options
         self.active_ordered_ids = []
         self.is_confidence_sort_available = False
 
+        # New attributes for virtualization
+        self.all_data_items = []
+        self.widget_positions = {}  # ann_id -> QRect
+        self.update_timer = QTimer(self)
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self._update_visible_widgets)
+
         self.setup_ui()
+
+        # Connect scrollbar value changed to schedule an update for virtualization
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._schedule_update)
+        # Install an event filter on the viewport to handle mouse events for rubber band selection
+        self.scroll_area.viewport().installEventFilter(self)
 
     def setup_ui(self):
         """Set up the UI with a toolbar and a scrollable content area."""
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        main_container = QWidget()
-        main_layout = QVBoxLayout(main_container)
+        # This widget is the main container with its own layout
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
+        # Create and add the toolbar to the main layout
         toolbar_widget = QWidget()
         toolbar_layout = QHBoxLayout(toolbar_widget)
         toolbar_layout.setContentsMargins(4, 2, 4, 2)
@@ -742,16 +790,16 @@ class AnnotationViewer(QScrollArea):
         self.size_value_label.setMinimumWidth(30)
         toolbar_layout.addWidget(self.size_value_label)
         main_layout.addWidget(toolbar_widget)
-
+        
+        # Create the scroll area which will contain the content
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         self.content_widget = QWidget()
-        content_scroll = QScrollArea()
-        content_scroll.setWidgetResizable(True)
-        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        content_scroll.setWidget(self.content_widget)
-
-        main_layout.addWidget(content_scroll)
-        self.setWidget(main_container)
+        self.scroll_area.setWidget(self.content_widget)
+        main_layout.addWidget(self.scroll_area)
 
         # Set the initial state of the sort options
         self._update_sort_options_state()
@@ -780,7 +828,7 @@ class AnnotationViewer(QScrollArea):
             annotation_to_select = widget.annotation
         
             # ctrl+right click to only select this annotation (single selection):
-            self.clear_selection()
+            self.clear_selection()  
             self.select_widget(widget)
             changed_ids = [widget.data_item.annotation.id]
 
@@ -793,13 +841,25 @@ class AnnotationViewer(QScrollArea):
                     if hasattr(explorer.annotation_window, 'set_image'):
                         explorer.annotation_window.set_image(image_path)
 
-                # Now, select the annotation in the annotation_window
+                # Now, select the annotation in the annotation_window (activates animation)
                 if hasattr(explorer.annotation_window, 'select_annotation'):
-                    explorer.annotation_window.select_annotation(annotation_to_select)
+                    explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
                     
                 # Center the annotation window view on the selected annotation
                 if hasattr(explorer.annotation_window, 'center_on_annotation'):
                     explorer.annotation_window.center_on_annotation(annotation_to_select)
+                    
+                # Show resize handles for Rectangle annotations
+                if isinstance(annotation_to_select, RectangleAnnotation):
+                    explorer.annotation_window.set_selected_tool('select') # Accidently unselects in AnnotationWindow
+                    explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
+                    select_tool = explorer.annotation_window.tools.get('select')
+
+                    if select_tool:
+                        # Engage the selection lock.
+                        select_tool.selection_locked = True
+                        # Show the resize handles for the now-selected annotation.
+                        select_tool._show_resize_handles()
 
                 # Also clear any existing selection in the explorer window itself
                 explorer.embedding_viewer.render_selection_from_ids({widget.data_item.annotation.id})
@@ -811,7 +871,7 @@ class AnnotationViewer(QScrollArea):
     @pyqtSlot()
     def isolate_selection(self):
         """Hides all annotation widgets that are not currently selected."""
-        if not self.selected_widgets or self.isolated_mode:
+        if not self.selected_widgets:
             return
 
         self.isolated_widgets = set(self.selected_widgets)
@@ -821,12 +881,35 @@ class AnnotationViewer(QScrollArea):
                 if widget not in self.isolated_widgets:
                     widget.hide()
             self.isolated_mode = True
-            self.recalculate_widget_positions()
+            self.recalculate_layout()
         finally:
             self.content_widget.setUpdatesEnabled(True)
 
         self._update_toolbar_state()
         self.explorer_window.main_window.label_window.update_annotation_count()
+
+    def isolate_and_select_from_ids(self, ids_to_isolate):
+        """
+        Enters isolated mode showing only widgets for the given IDs, and also
+        selects them. This is the primary entry point from external viewers.
+        The isolated set is 'sticky' and will not change on subsequent internal
+        selection changes.
+        """
+        # Get the widget objects from the IDs
+        widgets_to_isolate = {
+            self.annotation_widgets_by_id[ann_id]
+            for ann_id in ids_to_isolate
+            if ann_id in self.annotation_widgets_by_id
+        }
+
+        if not widgets_to_isolate:
+            return
+
+        self.isolated_widgets = widgets_to_isolate
+        self.isolated_mode = True
+
+        self.render_selection_from_ids(ids_to_isolate)
+        self.recalculate_layout()
 
     def display_and_isolate_ordered_results(self, ordered_ids):
         """
@@ -851,7 +934,7 @@ class AnnotationViewer(QScrollArea):
                     widget.hide()
                     
             self.isolated_mode = True
-            self.recalculate_widget_positions()  # Crucial grid update
+            self.recalculate_layout()  # Crucial grid update
         finally:
             self.content_widget.setUpdatesEnabled(True)
 
@@ -874,7 +957,7 @@ class AnnotationViewer(QScrollArea):
             for widget in self.annotation_widgets_by_id.values():
                 widget.show()
 
-            self.recalculate_widget_positions()
+            self.recalculate_layout()
         finally:
             self.content_widget.setUpdatesEnabled(True)
 
@@ -896,62 +979,71 @@ class AnnotationViewer(QScrollArea):
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []  # Clear any special ordering
-        self.recalculate_widget_positions()
+        self.recalculate_layout()
 
     def set_confidence_sort_availability(self, is_available):
         """Sets the availability of the confidence sort option."""
         self.is_confidence_sort_available = is_available
         self._update_sort_options_state()
 
-    def _get_sorted_widgets(self):
-        """Get widgets sorted according to the current sort setting."""
+    def _get_sorted_data_items(self):
+        """Get data items sorted according to the current sort setting."""
         # If a specific order is active (e.g., from similarity search), use it.
         if self.active_ordered_ids:
-            widget_map = {w.data_item.annotation.id: w for w in self.annotation_widgets_by_id.values()}
-            ordered_widgets = [widget_map[ann_id] for ann_id in self.active_ordered_ids if ann_id in widget_map]
-            return ordered_widgets
+            item_map = {i.annotation.id: i for i in self.all_data_items}
+            ordered_items = [item_map[ann_id] for ann_id in self.active_ordered_ids if ann_id in item_map]
+            return ordered_items
 
         # Otherwise, use the dropdown sort logic
         sort_type = self.sort_combo.currentText()
-        widgets = list(self.annotation_widgets_by_id.values())
+        items = list(self.all_data_items)
 
         if sort_type == "Label":
-            widgets.sort(key=lambda w: w.data_item.effective_label.short_label_code)
+            items.sort(key=lambda i: i.effective_label.short_label_code)
         elif sort_type == "Image":
-            widgets.sort(key=lambda w: os.path.basename(w.data_item.annotation.image_path))
+            items.sort(key=lambda i: os.path.basename(i.annotation.image_path))
         elif sort_type == "Confidence":
             # Sort by confidence, descending. Handles cases with no confidence gracefully.
-            widgets.sort(key=lambda w: w.data_item.get_effective_confidence(), reverse=True)
-        
-        return widgets
+            items.sort(key=lambda i: i.get_effective_confidence(), reverse=True)
 
-    def _group_widgets_by_sort_key(self, widgets):
-        """Group widgets by the current sort key."""
+        return items
+
+    def _get_sorted_widgets(self):
+        """
+        Get widgets sorted according to the current sort setting.
+        This is kept for compatibility with selection logic.
+        """
+        sorted_data_items = self._get_sorted_data_items()
+        return [self.annotation_widgets_by_id[item.annotation.id]
+                for item in sorted_data_items if item.annotation.id in self.annotation_widgets_by_id]
+
+    def _group_data_items_by_sort_key(self, data_items):
+        """Group data items by the current sort key."""
         sort_type = self.sort_combo.currentText()
         if not self.active_ordered_ids and sort_type == "None":
-            return [("", widgets)]
-        
-        if self.active_ordered_ids: # Don't show group headers for similarity results
-            return [("", widgets)]
+            return [("", data_items)]
+
+        if self.active_ordered_ids:  # Don't show group headers for similarity results
+            return [("", data_items)]
 
         groups = []
         current_group = []
         current_key = None
-        for widget in widgets:
+        for item in data_items:
             if sort_type == "Label":
-                key = widget.data_item.effective_label.short_label_code
+                key = item.effective_label.short_label_code
             elif sort_type == "Image":
-                key = os.path.basename(widget.data_item.annotation.image_path)
+                key = os.path.basename(item.annotation.image_path)
             else:
                 key = "" # No headers for Confidence or None
             
             if key and current_key != key:
                 if current_group:
                     groups.append((current_key, current_group))
-                current_group = [widget]
+                current_group = [item]
                 current_key = key
             else:
-                current_group.append(widget)
+                current_group.append(item)
         if current_group:
             groups.append((current_key, current_group))
         return groups
@@ -982,7 +1074,7 @@ class AnnotationViewer(QScrollArea):
             " }"
         )
         header.setFixedHeight(30)
-        header.setMinimumWidth(self.viewport().width() - 20)
+        header.setMinimumWidth(self.scroll_area.viewport().width() - 20)
         header.show()
         self._group_headers.append(header)
         return header
@@ -994,35 +1086,79 @@ class AnnotationViewer(QScrollArea):
 
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
-        self.content_widget.setUpdatesEnabled(False)
+        self.recalculate_layout()
 
-        for widget in self.annotation_widgets_by_id.values():
-            widget.update_height(value)
+    def _schedule_update(self):
+        """Schedules a delayed update of visible widgets to avoid performance issues during rapid scrolling."""
+        self.update_timer.start(50)  # 50ms delay
+
+    def _update_visible_widgets(self):
+        """Shows and loads widgets that are in the viewport, and hides/unloads others."""
+        if not self.widget_positions:
+            return
+
+        self.content_widget.setUpdatesEnabled(False)
+        
+        # Determine the visible rectangle in the content widget's coordinates
+        scroll_y = self.scroll_area.verticalScrollBar().value()
+        visible_content_rect = QRect(0, 
+                                     scroll_y, 
+                                     self.scroll_area.viewport().width(), 
+                                     self.scroll_area.viewport().height())
+
+        # Add a buffer to load images slightly before they become visible
+        buffer = self.scroll_area.viewport().height() // 2
+        visible_content_rect.adjust(0, -buffer, 0, buffer)
+
+        visible_ids = set()
+        for ann_id, rect in self.widget_positions.items():
+            if rect.intersects(visible_content_rect):
+                visible_ids.add(ann_id)
+
+        # Update widgets based on visibility
+        for ann_id, widget in self.annotation_widgets_by_id.items():
+            if ann_id in visible_ids:
+                # This widget should be visible
+                widget.setGeometry(self.widget_positions[ann_id])
+                widget.load_image()  # Lazy-loads the image
+                widget.show()
+            else:
+                # This widget is not visible
+                if widget.isVisible():
+                    widget.hide()
+                    widget.unload_image()  # Free up memory
 
         self.content_widget.setUpdatesEnabled(True)
-        self.recalculate_widget_positions()
 
-    def recalculate_widget_positions(self):
-        """Manually positions widgets in a flow layout with sorting and group headers."""
-        if not self.annotation_widgets_by_id:
+    def recalculate_layout(self):
+        """Calculates the positions for all widgets and the total size of the content area."""
+        if not self.all_data_items:
             self.content_widget.setMinimumSize(1, 1)
             return
 
         self._clear_separator_labels()
-        visible_widgets = [w for w in self._get_sorted_widgets() if not w.isHidden()]
-        if not visible_widgets:
+        sorted_data_items = self._get_sorted_data_items()
+
+        # If in isolated mode, only consider the isolated widgets for layout
+        if self.isolated_mode:
+            isolated_ids = {w.data_item.annotation.id for w in self.isolated_widgets}
+            sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
+
+        if not sorted_data_items:
             self.content_widget.setMinimumSize(1, 1)
             return
 
         # Create groups based on the current sort key
-        groups = self._group_widgets_by_sort_key(visible_widgets)
+        groups = self._group_data_items_by_sort_key(sorted_data_items)
         spacing = max(5, int(self.current_widget_size * 0.08))
-        available_width = self.viewport().width()
+        available_width = self.scroll_area.viewport().width()
         x, y = spacing, spacing
         max_height_in_row = 0
 
-        # Calculate the maximum height of the widgets in each row
-        for group_name, group_widgets in groups:
+        self.widget_positions.clear()
+
+        # Calculate positions
+        for group_name, group_data_items in groups:
             if group_name and self.sort_combo.currentText() != "None":
                 if x > spacing:
                     x = spacing
@@ -1034,51 +1170,65 @@ class AnnotationViewer(QScrollArea):
                 x = spacing
                 max_height_in_row = 0
 
-            for widget in group_widgets:
+            for data_item in group_data_items:
+                ann_id = data_item.annotation.id
+                # Get or create widget to determine its size
+                if ann_id in self.annotation_widgets_by_id:
+                    widget = self.annotation_widgets_by_id[ann_id]
+                    widget.update_height(self.current_widget_size)  # Ensure size is up-to-date
+                else:
+                    widget = AnnotationImageWidget(data_item, self.current_widget_size, self, self.content_widget)
+                    self.annotation_widgets_by_id[ann_id] = widget
+                    widget.hide()  # Hide by default
+
                 widget_size = widget.size()
                 if x > spacing and x + widget_size.width() > available_width:
                     x = spacing
                     y += max_height_in_row + spacing
                     max_height_in_row = 0
-                widget.move(x, y)
+
+                self.widget_positions[ann_id] = QRect(x, y, widget_size.width(), widget_size.height())
+
                 x += widget_size.width() + spacing
                 max_height_in_row = max(max_height_in_row, widget_size.height())
 
         total_height = y + max_height_in_row + spacing
         self.content_widget.setMinimumSize(available_width, total_height)
 
+        # After calculating layout, update what's visible
+        self._update_visible_widgets()
+
     def update_annotations(self, data_items):
         """Update displayed annotations, creating new widgets for them."""
         if self.isolated_mode:
             self.show_all_annotations()
 
-        for widget in self.annotation_widgets_by_id.values():
-            widget.setParent(None)
-            widget.deleteLater()
+        # Clear out widgets for data items that are no longer in the new set
+        all_ann_ids = {item.annotation.id for item in data_items}
+        for ann_id, widget in list(self.annotation_widgets_by_id.items()):
+            if ann_id not in all_ann_ids:
+                if widget in self.selected_widgets:
+                    self.selected_widgets.remove(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.annotation_widgets_by_id[ann_id]
 
-        self.annotation_widgets_by_id.clear()
+        self.all_data_items = data_items
         self.selected_widgets.clear()
-        self.last_selected_index = -1
+        self.last_selected_item_id = None
 
-        for data_item in data_items:
-            annotation_widget = AnnotationImageWidget(
-                data_item, self.current_widget_size, self, self.content_widget)
-
-            annotation_widget.show()
-            self.annotation_widgets_by_id[data_item.annotation.id] = annotation_widget
-
-        self.recalculate_widget_positions()
+        self.recalculate_layout()
         self._update_toolbar_state()
         # Update the label window with the new annotation count
         self.explorer_window.main_window.label_window.update_annotation_count()
 
     def resizeEvent(self, event):
         """On window resize, reflow the annotation widgets."""
-        super().resizeEvent(event)
+        super(AnnotationViewer, self).resizeEvent(event)
         if not hasattr(self, '_resize_timer'):
             self._resize_timer = QTimer(self)
             self._resize_timer.setSingleShot(True)
-            self._resize_timer.timeout.connect(self.recalculate_widget_positions)
+            self._resize_timer.timeout.connect(self.recalculate_layout)
         self._resize_timer.start(100)
 
     def keyPressEvent(self, event):
@@ -1099,64 +1249,51 @@ class AnnotationViewer(QScrollArea):
         else:
             super().keyPressEvent(event)
 
-    def mousePressEvent(self, event):
-        """Handle mouse press for starting rubber band selection OR clearing selection."""
+    def eventFilter(self, source, event):
+        """Filters events from the scroll area's viewport to handle mouse interactions."""
+        if source is self.scroll_area.viewport():
+            if event.type() == QEvent.MouseButtonPress:
+                return self.viewport_mouse_press(event)
+            elif event.type() == QEvent.MouseMove:
+                return self.viewport_mouse_move(event)
+            elif event.type() == QEvent.MouseButtonRelease:
+                return self.viewport_mouse_release(event)
+            elif event.type() == QEvent.MouseButtonDblClick:
+                return self.viewport_mouse_double_click(event)
+
+        return super(AnnotationViewer, self).eventFilter(source, event)
+
+    def viewport_mouse_press(self, event):
+        """Handle mouse press inside the viewport for selection."""
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+            # Start rubber band selection
+            self.selection_at_press = set(self.selected_widgets)
+            self.rubber_band_origin = event.pos()
+
+            # Check if the press was on a widget to avoid starting rubber band on a widget click
+            content_pos = self.content_widget.mapFrom(self.scroll_area.viewport(), event.pos())
+            child_at_pos = self.content_widget.childAt(content_pos)
+            self.mouse_pressed_on_widget = isinstance(child_at_pos, AnnotationImageWidget)
+
+            return True  # Event handled
+
+        elif event.button() == Qt.LeftButton and not event.modifiers():
+            # Clear selection if clicking on the background
+            content_pos = self.content_widget.mapFrom(self.scroll_area.viewport(), event.pos())
+            if self.content_widget.childAt(content_pos) is None:
+                if self.selected_widgets:
+                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
+                    self.clear_selection()
+                    self.selection_changed.emit(changed_ids)
+                if hasattr(self.explorer_window.annotation_window, 'unselect_annotations'):
+                    self.explorer_window.annotation_window.unselect_annotations()
+                return True
+
+        return False  # Let the event propagate for default behaviors like scrolling
+
+    def viewport_mouse_double_click(self, event):
+        """Handle double-click in the viewport to clear selection and reset view."""
         if event.button() == Qt.LeftButton:
-            if not event.modifiers():
-                # If left click with no modifiers, check if click is outside widgets
-                is_on_widget = False
-                child_at_pos = self.childAt(event.pos())
-
-                if child_at_pos:
-                    widget = child_at_pos
-                    # Traverse up the parent chain to see if click is on an annotation widget
-                    while widget and widget != self:
-                        if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
-                            is_on_widget = True
-                            break
-                        widget = widget.parent()
-
-                # If click is outside widgets, clear annotation_window selection
-                if not is_on_widget:
-                    # Clear annotation selection in the annotation_window as well
-                    if hasattr(self.explorer_window, 'annotation_window') and self.explorer_window.annotation_window:
-                        if hasattr(self.explorer_window.annotation_window, 'unselect_annotations'):
-                            self.explorer_window.annotation_window.unselect_annotations()
-                    # If there is a selection in the viewer, clear it
-                    if self.selected_widgets:
-                        changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
-                        self.clear_selection()
-                        self.selection_changed.emit(changed_ids)
-                    return
-
-            elif event.modifiers() == Qt.ControlModifier:
-                # Start rubber band selection with Ctrl+Left click
-                self.selection_at_press = set(self.selected_widgets)
-                self.rubber_band_origin = event.pos()
-                self.mouse_pressed_on_widget = False
-                child_widget = self.childAt(event.pos())
-                if child_widget:
-                    widget = child_widget
-                    # Check if click is on a widget to avoid starting rubber band
-                    while widget and widget != self:
-                        if hasattr(widget, 'annotation_viewer') and widget.annotation_viewer == self:
-                            self.mouse_pressed_on_widget = True
-                            break
-                        widget = widget.parent()
-                return
-
-        elif event.button() == Qt.RightButton:
-            # Ignore right clicks
-            event.ignore()
-            return
-
-        # Default handler for other cases
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        """Handle double-click to clear selection and exit isolation mode."""
-        if event.button() == Qt.LeftButton:
-            changed_ids = []
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                 self.clear_selection()
@@ -1164,50 +1301,42 @@ class AnnotationViewer(QScrollArea):
             if self.isolated_mode:
                 self.show_all_annotations()
             self.reset_view_requested.emit()
-            event.accept()
-        else:
-            super().mouseDoubleClickEvent(event)
+            return True
+        return False
 
-    def mouseMoveEvent(self, event):
-        """Handle mouse move for DYNAMIC rubber band selection."""
-        # Only proceed if Ctrl+Left mouse drag is active and not on a widget
+    def viewport_mouse_move(self, event):
+        """Handle mouse move in the viewport for dynamic rubber band selection."""
         if (
             self.rubber_band_origin is None or
             event.buttons() != Qt.LeftButton or
-            event.modifiers() != Qt.ControlModifier
+            event.modifiers() != Qt.ControlModifier or
+            self.mouse_pressed_on_widget
         ):
-            super().mouseMoveEvent(event)
-            return
-
-        if self.mouse_pressed_on_widget:
-            # If drag started on a widget, do not start rubber band
-            super().mouseMoveEvent(event)
-            return
+            return False
 
         # Only start selection if drag distance exceeds threshold
         distance = (event.pos() - self.rubber_band_origin).manhattanLength()
         if distance < self.drag_threshold:
-            return
+            return True
 
         # Create and show the rubber band if not already present
         if not self.rubber_band:
-            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+            self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
 
         rect = QRect(self.rubber_band_origin, event.pos()).normalized()
         self.rubber_band.setGeometry(rect)
         self.rubber_band.show()
+
         selection_rect = self.rubber_band.geometry()
         content_widget = self.content_widget
         changed_ids = []
 
         # Iterate over all annotation widgets to update selection state
         for widget in self.annotation_widgets_by_id.values():
-            widget_rect_in_content = widget.geometry()
-            # Map widget's rect to viewport coordinates
-            widget_rect_in_viewport = QRect(
-                content_widget.mapTo(self.viewport(), widget_rect_in_content.topLeft()),
-                widget_rect_in_content.size()
-            )
+            # Map widget's geometry from content_widget coordinates to viewport coordinates
+            mapped_top_left = content_widget.mapTo(self.scroll_area.viewport(), widget.geometry().topLeft())
+            widget_rect_in_viewport = QRect(mapped_top_left, widget.geometry().size())
+            
             is_in_band = selection_rect.intersects(widget_rect_in_viewport)
             should_be_selected = (widget in self.selection_at_press) or is_in_band
 
@@ -1224,77 +1353,75 @@ class AnnotationViewer(QScrollArea):
         if changed_ids:
             self.selection_changed.emit(changed_ids)
 
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release to complete rubber band selection."""
+        return True
+
+    def viewport_mouse_release(self, event):
+        """Handle mouse release in the viewport to finalize rubber band selection."""
         if self.rubber_band_origin is not None and event.button() == Qt.LeftButton:
             if self.rubber_band and self.rubber_band.isVisible():
                 self.rubber_band.hide()
                 self.rubber_band.deleteLater()
                 self.rubber_band = None
-
-            self.selection_at_press = set()
             self.rubber_band_origin = None
-            self.mouse_pressed_on_widget = False
-            event.accept()
-            return
-
-        super().mouseReleaseEvent(event)
+            return True
+        return False
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes (single, ctrl, shift)."""
-        widget_list = [w for w in self._get_sorted_widgets() if not w.isHidden()]
+        # The list for range selection should be based on the sorted data items
+        sorted_data_items = self._get_sorted_data_items()
+
+        # In isolated mode, the list should only contain isolated items
+        if self.isolated_mode:
+            isolated_ids = {w.data_item.annotation.id for w in self.isolated_widgets}
+            sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
 
         try:
-            widget_index = widget_list.index(widget)
+            # Find the index of the clicked widget's data item
+            widget_data_item = widget.data_item
+            current_index = sorted_data_items.index(widget_data_item)
         except ValueError:
             return
 
         modifiers = event.modifiers()
         changed_ids = []
 
-        # Shift or Shift+Ctrl: range selection
-        if modifiers == Qt.ShiftModifier or modifiers == (Qt.ShiftModifier | Qt.ControlModifier):
-            if self.last_selected_index != -1:
-                # Find the last selected widget in the current list
-                last_selected_widget = None
-                for w in self.selected_widgets:
-                    if w in widget_list:
-                        try:
-                            last_index_in_current_list = widget_list.index(w)
-                            if (
-                                last_selected_widget is None
-                                or last_index_in_current_list > widget_list.index(last_selected_widget)
-                            ):
-                                last_selected_widget = w
-                        except ValueError:
-                            continue
+        # Shift or Shift+Ctrl: range selection.
+        if modifiers in (Qt.ShiftModifier, Qt.ShiftModifier | Qt.ControlModifier):
+            last_index = -1
+            if self.last_selected_item_id:
+                try:
+                    # Find the data item corresponding to the last selected ID
+                    last_item = self.explorer_window.data_item_cache[self.last_selected_item_id]
+                    # Find its index in the *current* sorted list
+                    last_index = sorted_data_items.index(last_item)
+                except (KeyError, ValueError):
+                    # The last selected item is not in the current view or cache, so no anchor
+                    last_index = -1
 
-                if last_selected_widget:
-                    last_selected_index_in_current_list = widget_list.index(last_selected_widget)
-                    start = min(last_selected_index_in_current_list, widget_index)
-                    end = max(last_selected_index_in_current_list, widget_index)
-                else:
-                    start, end = widget_index, widget_index
+            if last_index != -1:
+                start = min(last_index, current_index)
+                end = max(last_index, current_index)
 
                 # Select all widgets in the range
                 for i in range(start, end + 1):
-                    if self.select_widget(widget_list[i]):
-                        changed_ids.append(widget_list[i].data_item.annotation.id)
+                    item_to_select = sorted_data_items[i]
+                    widget_to_select = self.annotation_widgets_by_id.get(item_to_select.annotation.id)
+                    if widget_to_select and self.select_widget(widget_to_select):
+                        changed_ids.append(item_to_select.annotation.id)
             else:
                 # No previous selection, just select the clicked widget
                 if self.select_widget(widget):
                     changed_ids.append(widget.data_item.annotation.id)
-                self.last_selected_index = widget_index
+
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # Ctrl: toggle selection of the clicked widget
         elif modifiers == Qt.ControlModifier:
-            if widget.is_selected():
-                if self.deselect_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-            else:
-                if self.select_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-            self.last_selected_index = widget_index
+            # Toggle selection and update the anchor
+            if self.toggle_widget_selection(widget):
+                changed_ids.append(widget.data_item.annotation.id)
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # No modifier: single selection
         else:
@@ -1309,34 +1436,22 @@ class AnnotationViewer(QScrollArea):
             # Select the clicked widget
             if self.select_widget(widget):
                 changed_ids.append(newly_selected_id)
-            self.last_selected_index = widget_index
+            self.last_selected_item_id = widget.data_item.annotation.id
 
         # If in isolated mode, update which widgets are visible
         if self.isolated_mode:
-            self._update_isolation()
+            pass  # Do not change the isolated set on internal selection changes
 
         # Emit signal if any selection state changed
         if changed_ids:
             self.selection_changed.emit(changed_ids)
 
-    def _update_isolation(self):
-        """Update the isolated view to show only currently selected widgets."""
-        if not self.isolated_mode:
-            return
-        # If in isolated mode, only show selected widgets
-        if self.selected_widgets:
-            self.isolated_widgets.update(self.selected_widgets)
-            self.setUpdatesEnabled(False)
-            try:
-                for widget in self.annotation_widgets_by_id.values():
-                    if widget not in self.isolated_widgets:
-                        widget.hide()
-                    else:
-                        widget.show()
-                self.recalculate_widget_positions()
-
-            finally:
-                self.setUpdatesEnabled(True)
+    def toggle_widget_selection(self, widget):
+        """Toggles the selection state of a widget and returns True if changed."""
+        if widget.is_selected():
+            return self.deselect_widget(widget)
+        else:
+            return self.select_widget(widget)
 
     def select_widget(self, widget):
         """Selects a widget, updates its data_item, and returns True if state changed."""
@@ -1390,11 +1505,6 @@ class AnnotationViewer(QScrollArea):
             # Resync internal list of selected widgets from the source of truth
             self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
 
-            if self.isolated_mode and self.selected_widgets:
-                self.isolated_widgets.update(self.selected_widgets)
-                for widget in self.annotation_widgets_by_id.values():
-                    widget.setHidden(widget not in self.isolated_widgets)
-                self.recalculate_widget_positions()
         finally:
             self.setUpdatesEnabled(True)
         self._update_toolbar_state()
@@ -1410,7 +1520,7 @@ class AnnotationViewer(QScrollArea):
             changed_ids.append(widget.data_item.annotation.id)
 
         if self.sort_combo.currentText() == "Label":
-            self.recalculate_widget_positions()
+            self.recalculate_layout()
         if changed_ids:
             self.preview_changed.emit(changed_ids)
 
@@ -1429,8 +1539,8 @@ class AnnotationViewer(QScrollArea):
 
         if something_changed:
             # Recalculate positions to update sorting and re-flow the layout
-            if self.sort_combo.currentText() in ("Label", "Image"):
-                self.recalculate_widget_positions()
+            if self.sort_combo.currentText() == "Label":
+                self.recalculate_layout()
 
     def has_preview_changes(self):
         """Return True if there are preview changes."""
@@ -1527,7 +1637,7 @@ class ExplorerWindow(QMainWindow):
             if hasattr(self.embedding_viewer, 'animation_timer') and self.embedding_viewer.animation_timer:
                 self.embedding_viewer.animation_timer.stop()
 
-        # Call the main cancellation method to revert any pending changes
+        # Call the main cancellation method to revert any pending changes and clear selections.
         self.clear_preview_changes()
 
         # Clean up the feature store by deleting its files
@@ -1615,9 +1725,6 @@ class ExplorerWindow(QMainWindow):
         self._initialize_data_item_cache()
         self.annotation_settings_widget.set_default_to_current_image()
         self.refresh_filters()
-        
-        self.annotation_settings_widget.set_default_to_current_image()
-        self.refresh_filters()
 
         try:
             self.label_window.labelSelected.disconnect(self.on_label_selected_for_preview)
@@ -1625,6 +1732,7 @@ class ExplorerWindow(QMainWindow):
             pass
 
         # Connect signals to slots
+        self.annotation_window.annotationModified.connect(self.on_annotation_modified)
         self.label_window.labelSelected.connect(self.on_label_selected_for_preview)
         self.annotation_viewer.selection_changed.connect(self.on_annotation_view_selection_changed)
         self.annotation_viewer.preview_changed.connect(self.on_preview_changed)
@@ -1639,42 +1747,70 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
         self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
         
+    def _clear_selections(self):
+        """Clears selections in both viewers and stops animations."""
+        if not self._ui_initialized:
+            return
+            
+        # Clear selection in the annotation viewer, which also stops widget animations.
+        if self.annotation_viewer:
+            self.annotation_viewer.clear_selection()
+
+        # Clear selection in the embedding viewer. This deselects all points
+        # and stops the animation timer via its on_selection_changed handler.
+        if self.embedding_viewer:
+            self.embedding_viewer.render_selection_from_ids(set())
+
+        # Update other UI elements that depend on selection state.
+        self.update_label_window_selection()
+        self.update_button_states()
+        
+        # Process events
+        QApplication.processEvents()
+        print("Cleared all active selections.")
+        
     @pyqtSlot(list)
     def on_annotation_view_selection_changed(self, changed_ann_ids):
-        """Syncs selection from AnnotationViewer to EmbeddingViewer."""
-        # Per request, unselect any annotation in the main AnnotationWindow
+        """Syncs selection from AnnotationViewer to other components and manages UI state."""
+        # Unselect any annotation in the main AnnotationWindow for a clean slate
         if hasattr(self, 'annotation_window'):
             self.annotation_window.unselect_annotations()
 
         all_selected_ids = {w.data_item.annotation.id for w in self.annotation_viewer.selected_widgets}
+
+        # Sync selection to the embedding viewer
         if self.embedding_viewer.points_by_id:
+            blocker = QSignalBlocker(self.embedding_viewer)
             self.embedding_viewer.render_selection_from_ids(all_selected_ids)
 
-        # Call the new centralized method
+        # Get the select tool to manage its state
+        select_tool = self.annotation_window.tools.get('select')
+        if select_tool:
+            # If the selection from the explorer is not a single item (i.e., it's empty
+            # or a multi-selection), hide the handles and release the lock.
+            if len(all_selected_ids) != 1:
+                select_tool._hide_resize_handles()
+                select_tool.selection_locked = False
+        # Ensure that the select tool is not active     
+        self.annotation_window.set_selected_tool(None)
+
+        # Update the label window based on the new selection
         self.update_label_window_selection()
 
     @pyqtSlot(list)
     def on_embedding_view_selection_changed(self, all_selected_ann_ids):
-        """Syncs selection from EmbeddingViewer to AnnotationViewer."""
-        # Per request, unselect any annotation in the main AnnotationWindow
-        if hasattr(self, 'annotation_window'):
-            self.annotation_window.unselect_annotations()
+        """Syncs selection from EmbeddingViewer to AnnotationViewer and isolates."""
+        selected_ids_set = set(all_selected_ann_ids)
 
-        # Check the state BEFORE the selection is changed
-        was_empty_selection = len(self.annotation_viewer.selected_widgets) == 0
+        # If a selection is made in the embedding viewer, isolate those widgets.
+        if selected_ids_set:
+            # This new method will handle setting the isolated set and selecting them.
+            self.annotation_viewer.isolate_and_select_from_ids(selected_ids_set)
+        # If the selection is cleared in the embedding viewer, exit isolation mode.
+        elif self.annotation_viewer.isolated_mode:
+            self.annotation_viewer.show_all_annotations()
 
-        # Now, update the selection in the annotation viewer
-        self.annotation_viewer.render_selection_from_ids(set(all_selected_ann_ids))
-
-        # The rest of the logic now works correctly
-        is_new_selection = len(all_selected_ann_ids) > 0
-        if (
-            was_empty_selection and
-            is_new_selection and
-            not self.annotation_viewer.isolated_mode
-        ):
-            self.annotation_viewer.isolate_selection()
-
+        # We still need to update the label window based on the selection.
         self.update_label_window_selection()
 
     @pyqtSlot(list)
@@ -1691,6 +1827,32 @@ class ExplorerWindow(QMainWindow):
             widget = self.annotation_viewer.annotation_widgets_by_id.get(ann_id)
             if widget:
                 widget.update_tooltip()
+                
+    @pyqtSlot(str)
+    def on_annotation_modified(self, annotation_id):
+        """
+        Handles an annotation being moved or resized in the AnnotationWindow.
+        This invalidates the cached features and updates the annotation's thumbnail.
+        """
+        print(f"Annotation {annotation_id} was modified. Removing its cached features.")
+        if hasattr(self, 'feature_store'):
+            # This method must exist on the FeatureStore to clear features
+            # for the given annotation ID across all stored models.
+            self.feature_store.remove_features_for_annotation(annotation_id)
+            
+        # Update the AnnotationImageWidget in the AnnotationViewer
+        if hasattr(self, 'annotation_viewer'):
+            # Find the corresponding widget by its annotation ID
+            widget = self.annotation_viewer.annotation_widgets_by_id.get(annotation_id)
+            if widget:
+                # The annotation's geometry may have changed, so we need to update the widget.
+                # 1. Recalculate the aspect ratio.
+                widget.recalculate_aspect_ratio()
+                # 2. Unload the stale image data. This marks the widget as "dirty".
+                widget.unload_image()
+                # 3. Recalculate the layout. This will resize the widget based on the new
+                #    aspect ratio and reload the image if the widget is currently visible.
+                self.annotation_viewer.recalculate_layout()
 
     @pyqtSlot()
     def on_reset_view_requested(self):
@@ -2665,7 +2827,7 @@ class ExplorerWindow(QMainWindow):
                     widget.setParent(None)
                     widget.deleteLater()
             blocker.unblock()
-            self.annotation_viewer.recalculate_widget_positions()
+            self.annotation_viewer.recalculate_layout()
 
             # 4. Remove from EmbeddingViewer
             blocker = QSignalBlocker(self.embedding_viewer.graphics_scene)
@@ -2693,8 +2855,12 @@ class ExplorerWindow(QMainWindow):
 
     def clear_preview_changes(self):
         """
-        Clears all preview changes in the annotation viewer and updates tooltips.
+        Clears all preview changes in the annotation viewer, reverts tooltips,
+        and clears any active selections.
         """
+        # First, clear any active selections from the UI.
+        self._clear_selections()
+        
         if hasattr(self, 'annotation_viewer'):
             self.annotation_viewer.clear_preview_states()
 
@@ -2704,7 +2870,7 @@ class ExplorerWindow(QMainWindow):
             for point in self.embedding_viewer.points_by_id.values():
                 point.update_tooltip()
 
-        # After reverting all changes, update the button states
+        # After reverting all changes, update the button states.
         self.update_button_states()
         print("Cleared all pending changes.")
 
@@ -2748,13 +2914,12 @@ class ExplorerWindow(QMainWindow):
                 self.image_window.update_image_annotations(image_path)
             self.annotation_window.load_annotations()
 
-            # Refresh the annotation viewer since its underlying data has changed
+            # Refresh the annotation viewer since its underlying data has changed.
+            # This implicitly deselects everything by rebuilding the widgets.
             self.annotation_viewer.update_annotations(self.current_data_items)
 
-            # Reset selections and button states
-            self.embedding_viewer.render_selection_from_ids(set())
-            self.update_label_window_selection()
-            self.update_button_states()
+            # Explicitly clear selections and update UI states for consistency.
+            self._clear_selections()
 
             print("Applied changes successfully.")
 

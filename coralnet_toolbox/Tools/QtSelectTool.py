@@ -49,6 +49,7 @@ class SelectTool(Tool):
 
         # --- State for transient UI (like resize handles) ---
         self.resize_handles_visible = False
+        self.selection_locked = False
 
         self._connect_signals()
 
@@ -81,16 +82,36 @@ class SelectTool(Tool):
         self.deactivate_subtool()
         self._hide_resize_handles()
         self.annotation_window.viewport().setCursor(self.cursor)
+        self.selection_locked = False
 
     def deactivate(self):
         self.deactivate_subtool()
         self._hide_resize_handles()
         self.annotation_window.viewport().setCursor(self.default_cursor)
+        self.selection_locked = False
         super().deactivate()
 
     # --- Event Handlers (Dispatcher Logic) ---
 
     def mousePressEvent(self, event: QMouseEvent):
+        if self.selection_locked:
+            # If selection is locked, only allow interaction with resize handles.
+            # Check if a handle was clicked to start a resize operation.
+            position = self.annotation_window.mapToScene(event.pos())
+            items = self.annotation_window.scene.items(position)
+            if self.resize_handles_visible:
+                for item in items:
+                    if item in self.resize_subtool.resize_handles_items:
+                        handle_name = item.data(1)
+                        if handle_name and len(self.selected_annotations) == 1:
+                            self.set_active_subtool(
+                                self.resize_subtool, event,
+                                annotation=self.selected_annotations[0],
+                                handle_name=handle_name
+                            )
+                            return  # Exit after starting resize
+            return  # Otherwise, ignore the click entirely
+        
         # Ignore right mouse button events (used for panning)
         if event.button() == Qt.RightButton:
             return

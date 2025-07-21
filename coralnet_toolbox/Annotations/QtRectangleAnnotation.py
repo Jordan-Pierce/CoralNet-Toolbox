@@ -57,9 +57,14 @@ class RectangleAnnotation(Annotation):
 
     def set_cropped_bbox(self):
         """Set the cropped bounding box for the annotation."""
+        # Store the raw coordinates, keeping the top_left and bottom_right as they are
+        # to maintain the user's dragging experience
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
-        self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
-                                       self.bottom_right.y() - self.top_left.y()))
+        
+        # Calculate annotation_size using absolute differences to handle inverted coordinates
+        width = abs(self.bottom_right.x() - self.top_left.x())
+        height = abs(self.bottom_right.y() - self.top_left.y())
+        self.annotation_size = int(max(width, height))
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if the given point is within the rectangle."""
@@ -172,6 +177,10 @@ class RectangleAnnotation(Annotation):
         self.set_cropped_bbox()
         # Get the bounding box of the rectangle
         min_x, min_y, max_x, max_y = self.cropped_bbox
+        
+        # Ensure min/max values are correctly ordered to avoid negative width/height
+        min_x, max_x = min(min_x, max_x), max(min_x, max_x)
+        min_y, max_y = min(min_y, max_y), max(min_y, max_y)
 
         # Calculate the window for rasterio
         window = Window(
@@ -275,10 +284,30 @@ class RectangleAnnotation(Annotation):
         elif handle == "bottom_right":
             self.bottom_right = new_pos
 
+        # Normalize coordinates to ensure top_left has smaller values than bottom_right
+        self.normalize_coordinates()
+        
         self.set_precision(self.top_left, self.bottom_right)
         self.set_centroid()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        
+    def normalize_coordinates(self):
+        """Ensure that top_left has smaller coordinates than bottom_right."""
+        # Create temporary points to store the normalized coordinates
+        x_min = min(self.top_left.x(), self.bottom_right.x())
+        y_min = min(self.top_left.y(), self.bottom_right.y())
+        x_max = max(self.top_left.x(), self.bottom_right.x())
+        y_max = max(self.top_left.y(), self.bottom_right.y())
+        
+        # Update the points
+        self.top_left.setX(x_min)
+        self.top_left.setY(y_min)
+        self.bottom_right.setX(x_max)
+        self.bottom_right.setY(y_max)
+        
+        # Update centroid after normalization
+        self.set_centroid()
 
     @classmethod
     def combine(cls, annotations: list):

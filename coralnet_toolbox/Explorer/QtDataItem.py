@@ -94,6 +94,7 @@ class AnnotationImageWidget(QWidget):
         self.widget_height = widget_height
         self.aspect_ratio = 1.0
         self.pixmap = None
+        self.is_loaded = False  # Flag for lazy loading
 
         self.animation_offset = 0
         self.animation_timer = QTimer(self)
@@ -101,7 +102,9 @@ class AnnotationImageWidget(QWidget):
         self.animation_timer.setInterval(75)
 
         self.setup_ui()
-        self.load_and_set_image()
+        self.recalculate_aspect_ratio()  # Calculate aspect ratio from geometry
+        self.update_height(self.widget_height)  # Set initial size
+        self.update_tooltip()
 
     def setup_ui(self):
         """Set up the basic UI with a label for the image."""
@@ -117,29 +120,64 @@ class AnnotationImageWidget(QWidget):
         """Updates the tooltip by fetching the latest text from the data item."""
         self.setToolTip(self.data_item.get_tooltip_text())
 
-    def load_and_set_image(self):
-        """Load image, calculate its aspect ratio, and set the widget's initial size."""
+    def recalculate_aspect_ratio(self):
+        """Calculate aspect ratio from annotation geometry without loading image."""
+        try:
+            if hasattr(self.annotation, 'rect'):  # RectangleAnnotation
+                rect = self.annotation.rect
+                if rect.height() > 0:
+                    self.aspect_ratio = rect.width() / rect.height()
+            elif hasattr(self.annotation, 'size'):  # PatchAnnotation
+                self.aspect_ratio = 1.0
+            elif hasattr(self.annotation, 'polygon'):  # PolygonAnnotation
+                rect = self.annotation.polygon.boundingRect()
+                if rect.height() > 0:
+                    self.aspect_ratio = rect.width() / rect.height()
+            else:
+                # Fallback for other types or if geometry is not available
+                self.aspect_ratio = 1.0
+        except Exception as e:
+            print(f"Could not determine aspect ratio for {self.annotation.id}: {e}")
+            self.aspect_ratio = 1.0
+
+    def load_image(self):
+        """Loads the image pixmap if it hasn't been loaded yet."""
+        if self.is_loaded:
+            return
+
         try:
             cropped_pixmap = self.annotation.get_cropped_image_graphic()
             if cropped_pixmap and not cropped_pixmap.isNull():
                 self.pixmap = cropped_pixmap
-                if self.pixmap.height() > 0:
-                    self.aspect_ratio = self.pixmap.width() / self.pixmap.height()
-                else:
-                    self.aspect_ratio = 1.0
+                self.is_loaded = True
+                self._display_pixmap()
             else:
                 self.image_label.setText("No Image\nAvailable")
                 self.pixmap = None
-                self.aspect_ratio = 1.0
         except Exception as e:
             print(f"Error loading annotation image: {e}")
             self.image_label.setText("Error\nLoading Image")
             self.pixmap = None
-            self.aspect_ratio = 1.0
-            
-        self.update_height(self.widget_height)
-        # Set the initial tooltip
-        self.update_tooltip()
+
+    def unload_image(self):
+        """Unloads the pixmap to free memory."""
+        if not self.is_loaded:
+            return
+        self.pixmap = None
+        self.image_label.clear()
+        self.is_loaded = False
+
+    def _display_pixmap(self):
+        """Scales and displays the currently loaded pixmap."""
+        if self.pixmap:
+            new_width = int(self.widget_height * self.aspect_ratio)
+            scaled_pixmap = self.pixmap.scaled(
+                new_width - 8,
+                self.widget_height - 8,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
 
     def update_height(self, new_height):
         """Updates the widget's height and rescales its width and content accordingly."""
@@ -147,13 +185,7 @@ class AnnotationImageWidget(QWidget):
         new_width = int(self.widget_height * self.aspect_ratio)
         self.setFixedSize(new_width, new_height)
         if self.pixmap:
-            scaled_pixmap = self.pixmap.scaled(
-                new_width - 8,
-                new_height - 8,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.image_label.setPixmap(scaled_pixmap)
+            self._display_pixmap()
         self.update()
 
     def update_selection_visuals(self):
