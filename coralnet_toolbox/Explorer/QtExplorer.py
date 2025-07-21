@@ -1101,7 +1101,10 @@ class AnnotationViewer(QWidget):
         
         # Determine the visible rectangle in the content widget's coordinates
         scroll_y = self.scroll_area.verticalScrollBar().value()
-        visible_content_rect = QRect(0, scroll_y, self.scroll_area.viewport().width(), self.scroll_area.viewport().height())
+        visible_content_rect = QRect(0, 
+                                     scroll_y, 
+                                     self.scroll_area.viewport().width(), 
+                                     self.scroll_area.viewport().height())
 
         # Add a buffer to load images slightly before they become visible
         buffer = self.scroll_area.viewport().height() // 2
