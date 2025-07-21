@@ -398,8 +398,16 @@ class SeeAnythingTool(Tool):
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect.topLeft()
 
-        # Predict the mask provided prompts (using only the current user-drawn rectangles)
-        results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
+        task = self.see_anything_dialog.task_dropdown.currentText()
+        masks = None
+        if task == 'segment':
+            masks = []
+            for r in self.rectangles:
+                x1, y1, x2, y2 = r
+                masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+
+        # Predict from prompts, providing masks if the task is segmentation
+        results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)[0]
 
         if not results:
             # Make cursor normal
@@ -425,54 +433,58 @@ class SeeAnythingTool(Tool):
         # Clear previous annotations if any
         self.clear_annotations()
 
-        # Loop through the results from the current prediction
-        for result in self.results:
-            # Extract values from result
-            confidence = result.boxes.conf.item()
+        # Process results based on the task type
+        if self.see_anything_dialog.task == "segment":
+            if self.results.masks:
+                for i, polygon in enumerate(self.results.masks.xyn):
+                    confidence = self.results.boxes.conf[i].item()
+                    if confidence < self.main_window.get_uncertainty_thresh():
+                        continue
 
-            if confidence < self.main_window.get_uncertainty_thresh():
-                continue
+                    # Get absolute bounding box for area check (relative to work area)
+                    box_work_area = self.results.boxes.xyxy[i].detach().cpu().numpy()
+                    box_area = (box_work_area[2] - box_work_area[0]) * (box_work_area[3] - box_work_area[1])
 
-            # Get the bounding box coordinates (x1, y1, x2, y2) in normalized format
-            box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
+                    # Area filtering
+                    min_area = self.main_window.get_area_thresh_min() * image_area
+                    max_area = self.main_window.get_area_thresh_max() * image_area
+                    if not (min_area <= box_area <= max_area):
+                        continue
 
-            # Convert from normalized coordinates directly to absolute pixel coordinates in the whole image
-            box_abs = box.copy() * np.array([self.work_area_image.shape[1],
-                                             self.work_area_image.shape[0],
-                                             self.work_area_image.shape[1],
-                                             self.work_area_image.shape[0]])
+                    # Convert normalized polygon points to absolute coordinates in the whole image
+                    polygon_abs = polygon.copy()
+                    polygon_abs[:, 0] = polygon_abs[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
+                    polygon_abs[:, 1] = polygon_abs[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
 
-            # Add working area offset to get coordinates in the whole image
-            box_abs[0] += working_area_top_left.x()
-            box_abs[1] += working_area_top_left.y()
-            box_abs[2] += working_area_top_left.x()
-            box_abs[3] += working_area_top_left.y()
+                    polygon_abs = simplify_polygon(polygon_abs, 0.1)
+                    self.create_polygon_annotation(polygon_abs, confidence)
+                    
+        else:  # Task is 'detect'
+            if self.results.boxes:
+                for i, box_norm in enumerate(self.results.boxes.xyxyn):
+                    confidence = self.results.boxes.conf[i].item()
+                    if confidence < self.main_window.get_uncertainty_thresh():
+                        continue
 
-            # Check box area relative to **work area view** area
-            box_area = (box_abs[2] - box_abs[0]) * (box_abs[3] - box_abs[1])
+                    # Convert normalized box to absolute coordinates in the work area
+                    box_abs_work_area = box_norm.detach().cpu().numpy() * np.array(
+                        [self.work_area_image.shape[1], self.work_area_image.shape[0],
+                         self.work_area_image.shape[1], self.work_area_image.shape[0]])
+                    box_area = (box_abs_work_area[2] - box_abs_work_area[0]) * (box_abs_work_area[3] - box_abs_work_area[1])
 
-            # self.main_window.get_area_thresh_min()
-            if box_area < self.main_window.get_area_thresh_min() * image_area:
-                continue
+                    # Area filtering
+                    min_area = self.main_window.get_area_thresh_min() * image_area
+                    max_area = self.main_window.get_area_thresh_max() * image_area
+                    if not (min_area <= box_area <= max_area):
+                        continue
 
-            if box_area > self.main_window.get_area_thresh_max() * image_area:
-                continue
-
-            if self.see_anything_dialog.task == "segment":
-                # Use polygons from result.masks.data.xyn (list of polygons, each Nx2, normalized to crop)
-                polygon = result.masks.xyn[0]  # np.array of polygons, each as Nx2 array
-
-                # Convert normalized polygon points directly to whole image coordinates
-                polygon[:, 0] = polygon[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
-                polygon[:, 1] = polygon[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
-
-                polygon = simplify_polygon(polygon, 0.1)
-
-                # Create the polygon annotation and add it to self.annotations
-                self.create_polygon_annotation(polygon, confidence)
-            else:
-                # Create the rectangle annotation and add it to self.annotations
-                self.create_rectangle_annotation(box_abs, confidence)
+                    # Add working area offset to get coordinates in the whole image
+                    box_abs_full = box_abs_work_area.copy()
+                    box_abs_full[0] += working_area_top_left.x()
+                    box_abs_full[1] += working_area_top_left.y()
+                    box_abs_full[2] += working_area_top_left.x()
+                    box_abs_full[3] += working_area_top_left.y()
+                    self.create_rectangle_annotation(box_abs_full, confidence)
 
         self.annotation_window.scene.update()
 
@@ -750,4 +762,3 @@ class SeeAnythingTool(Tool):
 
         # Force update to ensure graphics are removed visually
         self.annotation_window.scene.update()
-
