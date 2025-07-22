@@ -2,6 +2,7 @@ import warnings
 
 import os
 import gc
+import json
 
 import numpy as np
 
@@ -13,10 +14,11 @@ from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup,
                              QFormLayout, QComboBox, QSpinBox, QSlider, QPushButton,
-                             QHBoxLayout)
+                             QHBoxLayout, QWidget, QFileDialog, QTabWidget, QLineEdit)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -54,7 +56,7 @@ class DeployGeneratorDialog(QDialog):
 
         self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 5)")
-        self.resize(600, 100)
+        self.resize(800, 600)  # Increased size to accommodate the horizontal layout
 
         self.deploy_model_dialog = None
         self.loaded_model = None
@@ -70,7 +72,7 @@ class DeployGeneratorDialog(QDialog):
         self.max_detect = 300
         self.loaded_model = None
         self.model_path = None
-        self.class_mapping = None
+        self.class_mapping = {}
 
         # Reference image and label
         self.source_images = []
@@ -78,15 +80,36 @@ class DeployGeneratorDialog(QDialog):
         # Target images
         self.target_images = []
 
+        # Main vertical layout for the dialog
         self.layout = QVBoxLayout(self)
 
-        # Setup the info layout
+        # Setup the info layout at the top
         self.setup_info_layout()
-        # Setup the source layout
+        
+        # Create horizontal layout for the two panels
+        self.horizontal_layout = QHBoxLayout()
+        self.layout.addLayout(self.horizontal_layout)
+        
+        # Create left panel
+        self.left_panel = QVBoxLayout()
+        self.horizontal_layout.addLayout(self.left_panel)
+        
+        # Create right panel
+        self.right_panel = QVBoxLayout()
+        self.horizontal_layout.addLayout(self.right_panel)
+        
+        # Add layouts to the left panel
+        self.setup_models_layout()
+        self.setup_parameters_layout()
+        self.setup_sam_layout()
+        self.setup_model_buttons_layout()
+        self.setup_status_layout()
+        
+        # Add layouts to the right panel
         self.setup_source_layout()
-        # Setup the image options layout
         self.setup_options_layout()
-        # Setup the buttons layout
+        
+        # Setup the buttons layout at the bottom
         self.setup_buttons_layout()
 
     def showEvent(self, event):
@@ -99,17 +122,13 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
-        self.update_detect_as_combo()
-        
-        self.deploy_model_dialog = self.main_window.see_anything_deploy_predictor_dialog
-        self.loaded_model = self.deploy_model_dialog.loaded_model
         
         # Update the source images (now assuming sources are valid)
         self.update_source_images()
 
     def setup_info_layout(self):
         """
-        Set up the layout and widgets for the info layout.
+        Set up the layout and widgets for the info layout that spans the top.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
@@ -122,40 +141,81 @@ class DeployGeneratorDialog(QDialog):
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.layout.addWidget(group_box)  # Add to main layout so it spans both panels
         
     def setup_models_layout(self):
         """
-        Setup model selection dropdown in a group box.
+        Setup the models layout with tabs for standard and custom models.
         """
-        group_box = QGroupBox("Models")
+        group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
+
+        # Create tabbed widget
+        tab_widget = QTabWidget()
+
+        # Tab 1: Standard models
+        standard_tab = QWidget()
+        standard_layout = QVBoxLayout(standard_tab)
 
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
-        # Define available models
-        self.models = {
-            "YOLOE-8S": "yoloe-v8s-seg.pt",
-            "YOLOE-8M": "yoloe-v8m-seg.pt",
-            "YOLOE-8L": "yoloe-v8l-seg.pt",
-            "YOLOE-11S": "yoloe-11s-seg.pt",
-            "YOLOE-11M": "yoloe-11m-seg.pt",
-            "YOLOE-11L": "yoloe-11l-seg.pt",
-        }
+        # Define available models (keep the existing dictionary)
+        self.models = [
+            "yoloe-v8s-seg.pt",
+            "yoloe-v8m-seg.pt",
+            "yoloe-v8l-seg.pt",
+            "yoloe-11s-seg.pt",
+            "yoloe-11m-seg.pt",
+            "yoloe-11l-seg.pt",
+        ]
 
         # Add all models to combo box
-        for model_name in self.models.keys():
+        for model_name in self.models:
             self.model_combo.addItem(model_name)
-            
+        
         # Set the default model
-        self.model_combo.setCurrentText("YOLOE-8S")
+        self.model_combo.setCurrentText("yoloe-v8s-seg.pt")
 
-        layout.addWidget(QLabel("Select Model:"))
-        layout.addWidget(self.model_combo)
+        standard_layout.addWidget(QLabel("Select Model:"))
+        standard_layout.addWidget(self.model_combo)
+
+        tab_widget.addTab(standard_tab, "Use Existing Model")
+
+        # Tab 2: Custom model
+        custom_tab = QWidget()
+        custom_layout = QFormLayout(custom_tab)
+
+        # Custom model file selection
+        self.model_path_edit = QLineEdit()
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_model_file)
+
+        model_path_layout = QHBoxLayout()
+        model_path_layout.addWidget(self.model_path_edit)
+        model_path_layout.addWidget(browse_button)
+        custom_layout.addRow("Custom Model:", model_path_layout)
+
+        # Class Mapping
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        custom_layout.addRow("Class Mapping:", class_mapping_layout)
+
+        tab_widget.addTab(custom_tab, "Custom Model")
+
+        # Add the tab widget to the main layout
+        layout.addWidget(tab_widget)
+
+        # Store the tab widget for later reference
+        self.model_tab_widget = tab_widget
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.left_panel.addWidget(group_box)  # Add to left panel
         
     def setup_parameters_layout(self):
         """
@@ -236,24 +296,8 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("", self.area_threshold_label)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
-    def detect_as_layout(self):
-        """Detect objects as layout."""
-        group_box = QGroupBox("Detect as: ")
-        layout = QFormLayout()
+        self.left_panel.addWidget(group_box)  # Add to left panel
 
-        # Sample Label
-        self.detect_as_combo = QComboBox()
-        for label in self.label_window.labels:
-            self.detect_as_combo.addItem(label.short_label_code, label.id)
-        self.detect_as_combo.setCurrentIndex(0)
-        self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
-        layout.addRow("Detect as:", self.detect_as_combo)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
@@ -266,7 +310,38 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.left_panel.addWidget(group_box)  # Add to left panel
+
+    def setup_model_buttons_layout(self):
+        """
+        Setup action buttons in a group box.
+        """
+        group_box = QGroupBox("Actions")
+        layout = QHBoxLayout()
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        group_box.setLayout(layout)
+        self.left_panel.addWidget(group_box)  # Add to left panel
+
+    def setup_status_layout(self):
+        """
+        Setup status display in a group box.
+        """
+        group_box = QGroupBox("Status")
+        layout = QVBoxLayout()
+
+        self.status_bar = QLabel("No model loaded")
+        layout.addWidget(self.status_bar)
+
+        group_box.setLayout(layout)
+        self.left_panel.addWidget(group_box)  # Add to left panel
 
     def setup_source_layout(self):
         """
@@ -286,7 +361,7 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Source Label:", self.source_label_combo_box)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.right_panel.addWidget(group_box)  # Add to right panel
 
     def setup_options_layout(self):
         """
@@ -322,71 +397,49 @@ class DeployGeneratorDialog(QDialog):
         layout.addWidget(self.apply_all_checkbox)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
-    def setup_buttons_layout(self):
-        """
-        Setup action buttons in a group box.
-        """
-        group_box = QGroupBox("Actions")
-        layout = QHBoxLayout()
+        self.right_panel.addWidget(group_box)  # Add to right panel
 
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
-
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
-    def setup_status_layout(self):
-        """
-        Setup status display in a group box.
-        """
-        group_box = QGroupBox("Status")
-        layout = QVBoxLayout()
-
-        self.status_bar = QLabel("No model loaded")
-        layout.addWidget(self.status_bar)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    # TODO something with this
     def setup_buttons_layout(self):
         """
         Set up the layout with buttons.
         """
         # Create a button box for the buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.apply)
+        button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
-        
-    def update_detect_as_combo(self):
-        """Update the label combo box with the current labels, preserving previous selection."""
-        # Store the previously selected index
-        previous_index = self.detect_as_combo.currentIndex() if hasattr(self, 'detect_as_combo') else 0
+    
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_path_edit.setText(file_path)
 
-        self.detect_as_combo.clear()
-        for label in self.label_window.labels:
-            self.detect_as_combo.addItem(label.short_label_code, label.id)
+            # Load the class mapping if it exists
+            dir_path = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.mapping_edit.setText(class_mapping_path)
 
-        # Restore the previous selection if possible
-        if 0 <= previous_index < self.detect_as_combo.count():
-            self.detect_as_combo.setCurrentIndex(previous_index)
-        else:
-            self.detect_as_combo.setCurrentIndex(0)
-            
-    def update_class_mapping(self):
-        """Update the class mapping based on the selected label."""
-        detect_as = self.detect_as_combo.currentText()
-        label = self.label_window.get_label_by_short_code(detect_as)
-        self.class_mapping = {0: label}
+    def browse_class_mapping_file(self):
+        """
+        Browse and select a class mapping file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            # Load the class mapping
+            self.class_mapping = json.load(open(file_path, 'r'))
+            self.mapping_edit.setText(file_path)
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -647,118 +700,52 @@ class DeployGeneratorDialog(QDialog):
 
         return np.array(source_bboxes), source_masks
 
-    def get_selected_image_paths(self):
-        """
-        Get the selected image paths based on the options.
-        Excludes the source image path if present.
-    
-        :return: List of selected image paths
-        """
-        # Get the source image path to exclude
-        source_image_path = self.source_image_combo_box.currentData()
-        
-        # Current image path showing
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
-            return []
-    
-        # Determine which images to export annotations for
-        if self.apply_filtered_checkbox.isChecked():
-            selected_paths = self.image_window.table_model.filtered_paths.copy()
-        elif self.apply_prev_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                selected_paths = self.image_window.table_model.filtered_paths[:current_index + 1].copy()
-            else:
-                selected_paths = [current_image_path]
-        elif self.apply_next_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                selected_paths = self.image_window.table_model.filtered_paths[current_index:].copy()
-            else:
-                selected_paths = [current_image_path]
-        elif self.apply_all_checkbox.isChecked():
-            selected_paths = self.image_window.raster_manager.image_paths.copy()
-        else:
-            # Only apply to the current image
-            selected_paths = [current_image_path]
-    
-        # Remove the source image path if it's in the selected paths
-        if source_image_path and source_image_path in selected_paths:
-            selected_paths.remove(source_image_path)
-    
-        return selected_paths
-
-    def apply(self):
-        """
-        Apply the selected batch inference options.
-        """
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        try:
-            # Get the source image path and label
-            self.source_image_path = self.source_image_combo_box.currentData()
-            self.source_label = self.source_label_combo_box.currentData()
-            # Get the source annotations
-            self.source_bboxes, self.source_masks = self.get_source_annotations()
-            # Get the selected image paths
-            self.target_images = self.get_selected_image_paths()
-            # Perform batch inference
-            self.batch_inference()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to make predictions: {str(e)}")
-        finally:
-            # Resume the cursor
-            QApplication.restoreOverrideCursor()
-
-        self.accept()
-        
     def load_model(self):
         """
-        Load the selected model with the current configuration.
+        Load the selected model.
         """
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
-        
+
         try:
-            # Check if SAM is active and update task state
-            self.update_sam_task_state()
-            
-            # Get selected model path
-            self.model_path = self.models[self.model_combo.currentText()]
-            self.task = self.use_task_dropdown.currentText()
+            # Get selected model path and download weights if needed
+            self.model_path = self.model_combo.currentText()
 
-            # Set the parameters
-            overrides = dict(model=self.model_path,
-                             task=self.task,
-                             mode='predict',
-                             save=False,
-                             retina_masks=self.task == "segment",
-                             max_det=self.get_max_detections(),
-                             imgsz=self.get_imgsz(),
-                             conf=self.main_window.get_uncertainty_thresh(),
-                             iou=self.main_window.get_iou_thresh(),
-                             device=self.main_window.device)
+            # Load model using registry
+            self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
 
-            # Load the model
-            self.loaded_model = FastSAMPredictor(overrides=overrides)
-            self.loaded_model.names = {0: self.class_mapping[0].short_label_code}
+            # Create a dummy visual dictionary
+            visuals = dict(
+                bboxes=np.array(
+                    [
+                        [120, 425, 160, 445],
+                    ],
+                ),
+                cls=np.array(
+                    np.zeros(1),
+                ),
+            )
 
-            with torch.no_grad():
-                # Run a blank through the model to initialize it
-                self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
+            # Run a dummy prediction to load the model
+            self.loaded_model.predict(
+                np.zeros((640, 640, 3), dtype=np.uint8),
+                visual_prompts=visuals.copy(),
+                predictor=YOLOEVPDetectPredictor,
+                imgsz=640,
+                conf=0.99,
+            )
+
+            # Load the model class names if available
+            if self.class_mapping:
+                self.add_labels_to_label_window()
 
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}")
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
+            self.status_bar.setText("Model loaded")
+            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Loading Model", str(e))
+            QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
 
         finally:
             # Restore cursor
@@ -766,9 +753,17 @@ class DeployGeneratorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            progress_bar = None
 
-        # Exit the dialog box
-        self.accept()
+    def add_labels_to_label_window(self):
+        """
+        Add labels to the label window based on the class mapping.
+        """
+        if self.class_mapping:
+            for label in self.class_mapping.values():
+                self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                                      label['long_label_code'],
+                                                                      QColor(*label['color']))
 
     def get_imgsz(self):
         """Get the image size for the model."""
@@ -784,6 +779,9 @@ class DeployGeneratorDialog(QDialog):
         """
         if not self.loaded_model:
             return
+        
+        # Update class mapping with reference label
+        self.class_mapping = {0: self.source_label_combo_box.currentData()}
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -842,38 +840,69 @@ class DeployGeneratorDialog(QDialog):
             work_areas_data = raster.get_work_areas_data()
 
         return work_areas_data
-
+    
     def _apply_model(self, inputs):
-        """Apply the model to the inputs."""
+        """Apply the model to the inputs. This method is an adaptation of predict_from_annotations."""
         # Update the model with user parameters
         self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
         self.loaded_model.iou = self.main_window.get_iou_thresh()
         self.loaded_model.max_det = self.get_max_detections()
+        
+        # Obtain all reference data
+        refer_image = self.source_image_combo_box.currentData()  # TODO Images
+        refer_bboxes, refer_masks = self.get_source_annotations() 
 
-        # Start the progress bar
+        # Set the task
+        self.task = self.use_task_dropdown.currentText()
+
+        # Create a visual dictionary
+        visuals = {
+            'bboxes': np.array(refer_bboxes),
+            'cls': np.zeros(len(refer_bboxes))
+        }
+        if self.task == 'segment':
+            visuals['masks'] = refer_masks
+
+        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+
+        # Create a progress bar
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(inputs))
-
+        
         results_list = []
 
-        # Process each input separately
+        # Iterate through each target image
         for idx, input_image in enumerate(inputs):
-            # Make predictions on single image
-            with torch.no_grad():
-                results = self.loaded_model(input_image)
-                results_list.append(results)
-                # Update the progress bar
-                progress_bar.update_progress()
-                # Clean up GPU memory after each prediction
-                gc.collect()
-                empty_cache()
 
-        # Close the progress bar
+            # Make predictions
+            results = self.loaded_model.predict(input_image,
+                                                refer_image=refer_image,
+                                                visual_prompts=visuals.copy(),
+                                                predictor=predictor,
+                                                imgsz=self.imgsz_spinbox.value(),
+                                                conf=self.main_window.get_uncertainty_thresh(),
+                                                iou=self.main_window.get_iou_thresh(),
+                                                max_det=self.get_max_detections(),
+                                                retina_masks=self.task == "segment")
+            
+            # Update the name of the results
+            results[0].names = {0: self.class_mapping[0].short_label_code}
+            # Append the results to the list
+            results_list.append(results)
+            # Update the progress bar
+            progress_bar.update_progress()
+            # Clear the cache
+            gc.collect()
+            empty_cache()
+
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()
         progress_bar.stop_progress()
         progress_bar.close()
-
+        
         return results_list
 
     def _apply_sam(self, results_list, image_path):
@@ -941,6 +970,7 @@ class DeployGeneratorDialog(QDialog):
                 # Update path and names
                 results[0].path = image_path
                 results[0].names = {0: self.class_mapping[0].short_label_code}
+                # This needs to be done again, incase SAM was used
 
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
@@ -967,25 +997,6 @@ class DeployGeneratorDialog(QDialog):
 
         # Close the progress bar
         progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-    def batch_inference(self):
-        """
-        Perform batch inference on the selected images.
-
-        """
-        # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title="Batch Inference")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.target_images))
-
-        if self.loaded_model is not None:
-            self.deploy_model_dialog.predict_from_annotations(refer_image=self.source_image_path,
-                                                              refer_label=self.source_label,
-                                                              refer_bboxes=self.source_bboxes,
-                                                              refer_masks=self.source_masks,
-                                                              target_images=self.target_images)
         progress_bar.stop_progress()
         progress_bar.close()
         

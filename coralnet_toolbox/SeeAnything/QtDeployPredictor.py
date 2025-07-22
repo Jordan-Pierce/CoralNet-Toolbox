@@ -179,37 +179,6 @@ class DeployPredictorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def browse_model_file(self):
-        """
-        Open a file dialog to browse for a model file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Model File",
-                                                   "",
-                                                   "Model Files (*.pt *.pth);;All Files (*)")
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-            self.mapping_edit.setText(file_path)
-
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
@@ -335,6 +304,37 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_path_edit.setText(file_path)
+
+            # Load the class mapping if it exists
+            dir_path = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.mapping_edit.setText(class_mapping_path)
+
+    def browse_class_mapping_file(self):
+        """
+        Browse and select a class mapping file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            # Load the class mapping
+            self.class_mapping = json.load(open(file_path, 'r'))
+            self.mapping_edit.setText(file_path)
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
