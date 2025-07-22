@@ -194,7 +194,7 @@ class EmbeddingViewer(QWidget):
         uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
         toolbar_layout.addWidget(self.find_uncertain_button)
     
-        # Add a strech and separator
+        # Add a stretch and separator
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self._create_separator())
 
@@ -851,7 +851,7 @@ class AnnotationViewer(QWidget):
                     
                 # Show resize handles for Rectangle annotations
                 if isinstance(annotation_to_select, RectangleAnnotation):
-                    explorer.annotation_window.set_selected_tool('select') # Accidently unselects in AnnotationWindow
+                    explorer.annotation_window.set_selected_tool('select')  # Accidentally unselects in AnnotationWindow
                     explorer.annotation_window.select_annotation(annotation_to_select, quiet_mode=True)
                     select_tool = explorer.annotation_window.tools.get('select')
 
