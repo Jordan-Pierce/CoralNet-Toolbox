@@ -272,7 +272,7 @@ class AnnotationDataItem:
         
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
-        self.embedding_id = embedding_id if embedding_id is not None else 0
+        self.embedding_id = embedding_id
         
         self._is_selected = False
         self._preview_label = None

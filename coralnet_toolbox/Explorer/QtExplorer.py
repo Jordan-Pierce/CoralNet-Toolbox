@@ -2658,6 +2658,7 @@ class ExplorerWindow(QMainWindow):
             norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
             item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
+            item.embedding_id = i
 
     def run_embedding_pipeline(self):
         """
@@ -2812,6 +2813,10 @@ class ExplorerWindow(QMainWindow):
             # 2. Remove from Explorer's internal data structures
             self.current_data_items = [
                 item for item in self.current_data_items if item.annotation.id not in deleted_ann_ids
+            ]
+            # Also update the annotation viewer's list to keep it in sync
+            self.annotation_viewer.all_data_items = [
+                item for item in self.annotation_viewer.all_data_items if item.annotation.id not in deleted_ann_ids
             ]
             for ann_id in deleted_ann_ids:
                 if ann_id in self.data_item_cache:
