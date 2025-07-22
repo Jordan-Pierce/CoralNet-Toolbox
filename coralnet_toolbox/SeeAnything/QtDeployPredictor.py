@@ -6,19 +6,19 @@ import ujson as json
 
 import numpy as np
 
+from torch.cuda import empty_cache
+from ultralytics.utils import ops
+
+from ultralytics import YOLOE
+from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
                              QWidget, QLineEdit, QFileDialog)
-
-from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
-from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
-
-from torch.cuda import empty_cache
-from ultralytics.utils import ops
 
 from coralnet_toolbox.Results import ResultsProcessor
 
@@ -516,9 +516,6 @@ class DeployPredictorDialog(QDialog):
         if image is None and image_path is not None:
             # Open the image using rasterio
             image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
-
-        # Preprocess the image
-        # image = preprocess_image(image)
 
         # Save the original image
         self.original_image = image

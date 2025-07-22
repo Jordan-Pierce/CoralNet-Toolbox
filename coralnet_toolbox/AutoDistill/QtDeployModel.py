@@ -52,7 +52,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("AutoDistill Deploy Model (Ctrl + 5)")
+        self.setWindowTitle("AutoDistill Deploy Model (Ctrl + 6)")
         self.resize(400, 325)
 
         # Initialize variables
