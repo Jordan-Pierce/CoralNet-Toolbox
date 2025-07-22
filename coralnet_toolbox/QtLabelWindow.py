@@ -280,7 +280,7 @@ class LabelWindow(QWidget):
 
         self.edit_label_button = QPushButton()
         self.edit_label_button.setIcon(self.main_window.edit_icon)
-        self.edit_label_button.setToolTip("Edit Label")
+        self.edit_label_button.setToolTip("Edit Label / Merge Labels")
         self.edit_label_button.setFixedSize(self.label_width, self.label_height)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
