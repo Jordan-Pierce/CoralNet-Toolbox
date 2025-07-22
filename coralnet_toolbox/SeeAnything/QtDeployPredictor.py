@@ -530,19 +530,19 @@ class DeployPredictorDialog(QDialog):
         else:
             self.resized_image = image
 
-    def predict_from_prompts(self, bboxes):
+    def predict_from_prompts(self, bboxes, masks=None):
         """
         Make predictions using the currently loaded model using prompts.
 
         Args:
-            bbox (np.ndarray): The bounding boxes to use as prompts.
+            bboxes (np.ndarray): The bounding boxes to use as prompts.
+            masks (list, optional): A list of polygons to use as prompts for segmentation.
 
         Returns:
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window,
-                                 "Model Not Loaded",
+            QMessageBox.critical(self.annotation_window, "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
             return None
 
@@ -556,14 +556,30 @@ class DeployPredictorDialog(QDialog):
         bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
         bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
 
+        # Set the predictor
+        self.task = self.task_dropdown.currentText()
+
         # Create a visual dictionary
         visuals = {
             'bboxes': np.array(bboxes),
-            'cls': np.zeros(len(bboxes))  # TODO figure this out
+            'cls': np.zeros(len(bboxes))
         }
+        if self.task == 'segment':
+            if masks:
+                scaled_masks = []
+                for mask in masks:
+                    scaled_mask = np.array(mask, dtype=np.float32)
+                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+                    scaled_masks.append(scaled_mask)
+                visuals['masks'] = scaled_masks
+            else:  # Fallback to creating masks from bboxes if no masks are provided
+                fallback_masks = []
+                for bbox in bboxes:
+                    x1, y1, x2, y2 = bbox
+                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+                visuals['masks'] = fallback_masks
 
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
 
         try:
@@ -590,7 +606,7 @@ class DeployPredictorDialog(QDialog):
 
         return results
 
-    def predict_from_annotations(self, refer_image, refer_label, refer_annotations, target_images):
+    def predict_from_annotations(self, refer_image, refer_label, refer_bboxes, refer_masks, target_images):
         """"""
         # Create a class mapping
         class_mapping = {0: refer_label}
@@ -605,14 +621,17 @@ class DeployPredictorDialog(QDialog):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
 
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(refer_annotations),
-            'cls': np.zeros(len(refer_annotations))
-        }
-
         # Set the predictor
         self.task = self.task_dropdown.currentText()
+
+        # Create a visual dictionary
+        visuals = {
+            'bboxes': np.array(refer_bboxes),
+            'cls': np.zeros(len(refer_bboxes))
+        }
+        if self.task == 'segment':
+            visuals['masks'] = refer_masks
+
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
 
         # Create a progress bar

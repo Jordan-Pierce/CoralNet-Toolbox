@@ -408,10 +408,6 @@ class AnnotationWindow(QGraphicsView):
 
         self.toggle_cursor_annotation()
 
-        # Set the image dimensions, and current view in status bar
-        self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
-        self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
-
         # Load all associated annotations
         self.load_annotations()
         # Update the image window's image annotations
@@ -420,6 +416,10 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.clear_display()
 
         QApplication.processEvents()
+
+        # Set the image dimensions, and current view in status bar
+        self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
 
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
@@ -466,29 +466,57 @@ class AnnotationWindow(QGraphicsView):
         self.centerOn(annotation_center)
     
     def center_on_annotation(self, annotation):
-        """Center and zoom in to focus on the specified annotation."""
+        """Center and zoom in to focus on the specified annotation with dynamic padding."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
             annotation.create_graphics_item(self.scene)
 
         # Get the bounding rect of the annotation in scene coordinates
         annotation_rect = annotation.graphics_item.boundingRect()
-        
-        # Add some padding around the annotation (20% on each side)
-        padding_x = annotation_rect.width() * 0.2
-        padding_y = annotation_rect.height() * 0.2
+
+        # Step 1: Calculate annotation and image area
+        annotation_area = annotation_rect.width() * annotation_rect.height()
+        if self.pixmap_image:
+            image_width = self.pixmap_image.width()
+            image_height = self.pixmap_image.height()
+        else:
+            # Fallback to scene rect if image not loaded
+            image_width = self.scene.sceneRect().width()
+            image_height = self.scene.sceneRect().height()
+        image_area = image_width * image_height
+
+        # Step 2: Compute the relative area ratio (avoid division by zero)
+        if image_area > 0:
+            relative_area = annotation_area / image_area
+        else:
+            relative_area = 1.0  # fallback, treat as full image
+
+        # Step 3: Map ratio to padding factor (smaller annotation = more padding)
+        # Example: padding_factor = clamp(0.5 * (1/relative_area)**0.5, 0.1, 0.5)
+        # - For very small annotations, padding approaches 0.5 (50%)
+        # - For large annotations, padding approaches 0.1 (10%)
+        import math
+        min_padding = 0.1  # 10%
+        max_padding = 0.5  # 50%
+        if relative_area > 0:
+            padding_factor = max(min(0.5 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
+        else:
+            padding_factor = min_padding
+
+        # Step 4: Apply dynamic padding
+        padding_x = annotation_rect.width() * padding_factor
+        padding_y = annotation_rect.height() * padding_factor
         padded_rect = annotation_rect.adjusted(-padding_x, -padding_y, padding_x, padding_y)
-        
+
         # Fit the padded annotation rect in the view
         self.fitInView(padded_rect, Qt.KeepAspectRatio)
-        
+
         # Update the zoom factor based on the new view transformation
-        # We can calculate this by comparing the viewport size to the scene rect size
         view_rect = self.viewport().rect()
-        zoom_x = view_rect.width() / padded_rect.width() 
+        zoom_x = view_rect.width() / padded_rect.width()
         zoom_y = view_rect.height() / padded_rect.height()
         self.zoom_factor = min(zoom_x, zoom_y)
-        
+
         # Signal that the view has changed
         self.viewChanged.emit(*self.get_image_dimensions())
 
