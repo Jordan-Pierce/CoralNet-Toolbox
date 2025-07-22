@@ -1,7 +1,7 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QColor
+from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import (QGraphicsRectItem, QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -30,8 +30,8 @@ class WorkAreaTool(Tool):
         self.current_rect = None
         self.work_areas = []  # List to store WorkArea objects for the current image
         
-        # Style settings for drawing the work area rectangle
-        self.work_area_pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
+        # Style settings for drawing the work area rectangle - update to use blue dashed line
+        self.work_area_pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
         
         # Track if Ctrl key is pressed
         self.ctrl_pressed = False
@@ -43,6 +43,9 @@ class WorkAreaTool(Tool):
         # Track current image path to detect image changes
         self.current_image_path = None
         
+        # Add hover position tracking for preview
+        self.hover_pos = None
+    
     def activate(self):
         """Activate the work area tool and set the appropriate cursor."""
         self.active = True
@@ -100,10 +103,12 @@ class WorkAreaTool(Tool):
                 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events to update the work area while drawing."""
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        self.hover_pos = scene_pos  # Track hover position for spacebar confirmation
+        
         if not self.drawing or not self.annotation_window.active_image:
             return
             
-        scene_pos = self.annotation_window.mapToScene(event.pos())
         self.update_drawing(scene_pos)
         
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -115,6 +120,11 @@ class WorkAreaTool(Tool):
         """Handle key press events for work area tool operations."""
         modifiers = event.modifiers()
         key = event.key()
+
+        # Confirm current drawing with spacebar
+        if key == Qt.Key_Space and self.drawing and self.hover_pos:
+            self.finish_drawing(self.hover_pos)
+            return
 
         # Ctrl+Alt for temporary work area
         if (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier):
@@ -139,12 +149,12 @@ class WorkAreaTool(Tool):
             return
 
         # Ctrl+Space to create a work area from current view
-        if key == Qt.Key_Space and self.annotation_window.active_image:
+        if key == Qt.Key_Space and self.annotation_window.active_image and not self.drawing:
             self.create_work_area_from_current_view()
             return
 
-        # Cancel current drawing (Backspace - without modifiers)
-        if key == Qt.Key_Backspace and self.drawing and not (modifiers & Qt.ControlModifier):
+        # Cancel current drawing (Backspace or Escape - without modifiers)
+        if (key == Qt.Key_Backspace or key == Qt.Key_Escape) and self.drawing and not (modifiers & Qt.ControlModifier):
             self.cancel_drawing()
             return
 
@@ -207,12 +217,13 @@ class WorkAreaTool(Tool):
         # Create an initial rectangle item for visual feedback
         self.current_rect = QGraphicsRectItem(QRectF(pos.x(), pos.y(), 0, 0))
         
-        # Get the width
-        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
+        # Create a dashed blue pen for the working area preview
+        pen = QPen(QColor(0, 120, 215))
+        pen.setStyle(Qt.DashLine)
+        pen.setWidth(2)
         
-        # Set the pen properties
-        self.work_area_pen.setWidth(width)
-        self.current_rect.setPen(self.work_area_pen)
+        self.current_rect.setPen(pen)
+        self.current_rect.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
         self.annotation_window.scene.addItem(self.current_rect)
         
     def update_drawing(self, pos):
@@ -227,6 +238,7 @@ class WorkAreaTool(Tool):
         constrained_rect = self.constrain_rect_to_image_bounds(rect)
         
         self.current_rect.setRect(constrained_rect)
+        self.hover_pos = pos  # Update hover position for key events
         
     def finish_drawing(self, pos):
         """Finish drawing the work area and add it to the list."""
