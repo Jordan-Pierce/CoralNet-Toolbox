@@ -61,6 +61,7 @@ class DeployGeneratorDialog(QDialog):
 
         self.deploy_model_dialog = None
         self.loaded_model = None
+        self.last_selected_label_code = None
         
         # Initialize variables
         self.imgsz = 1024
@@ -155,7 +156,8 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
         
-        # Update the source labels from the currently active image
+        # This now populates the dropdown and restores the last selection,
+        # which in turn triggers the filtering via its connected signal.
         self.update_source_labels()
 
         # Configure the image window's UI elements for this specific dialog
@@ -163,9 +165,6 @@ class DeployGeneratorDialog(QDialog):
 
         # Sync the dialog's image window with the main one
         self.sync_image_window()
-
-        # Apply the custom filter to set the initial image list view
-        self.filter_images_by_label_and_type()
 
     def sync_image_window(self):
         """
@@ -217,13 +216,16 @@ class DeployGeneratorDialog(QDialog):
         Filters the images in the selection window to show only those that
         contain the selected reference label with a valid annotation type
         (Polygon or Rectangle). Also updates the disabled search bar for
-        visual feedback.
+        visual feedback and saves the current selection.
         """
         source_label = self.source_label_combo_box.currentData()
         
         # Update the search bar text for visual feedback
         source_label_text = self.source_label_combo_box.currentText()
         self.image_selection_window.search_bar_labels.setEditText(source_label_text)
+        
+        # Save the current selection for the next time the dialog is opened
+        self.last_selected_label_code = source_label_text
 
         if not source_label:
             self.image_selection_window.table_model.set_filtered_paths([])
@@ -650,7 +652,8 @@ class DeployGeneratorDialog(QDialog):
 
     def update_source_labels(self):
         """
-        Updates the source label combo box with all labels in the project.
+        Updates the source label combo box with all labels in the project
+        and restores the last selected label.
 
         :return: True if labels were found, False otherwise
         """
@@ -671,6 +674,12 @@ class DeployGeneratorDialog(QDialog):
         # Add all labels from the project to the combo box
         for label_obj in all_labels:
             self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
+
+        # Restore the last selected label if it exists
+        if self.last_selected_label_code:
+            index = self.source_label_combo_box.findText(self.last_selected_label_code)
+            if index != -1:
+                self.source_label_combo_box.setCurrentIndex(index)
 
         return True
 
@@ -775,11 +784,6 @@ class DeployGeneratorDialog(QDialog):
                 self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
                                                                       label['long_label_code'],
                                                                       QColor(*label['color']))
-
-    def get_imgsz(self):
-        """Get the image size for the model."""
-        self.imgsz = self.imgsz_spinbox.value()
-        return self.imgsz
 
     def predict(self, image_paths=None):
         """
