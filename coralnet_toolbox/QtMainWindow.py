@@ -9,8 +9,8 @@ import requests
 
 from packaging import version
 
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
@@ -95,6 +95,7 @@ from coralnet_toolbox.SAM import (
 from coralnet_toolbox.SeeAnything import (
     TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
+    DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
@@ -258,6 +259,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (See Anything)
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
+        self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
 
         # Create dialogs (AutoDistill)
@@ -623,10 +625,16 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_action = QAction("Train Model", self)
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
         self.see_anything_menu.addAction(self.see_anything_train_model_action)
-        # Deploy Model
+        # Deploy Model submenu
+        self.see_anything_deploy_model_menu = self.see_anything_menu.addMenu("Deploy Model")
+        # Deploy Predictor
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
-        self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
+        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_predictor_action)
+        # Deploy Generator
+        self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
+        self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
+        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_generator_action)
         # Batch Inference
         self.see_anything_batch_inference_action = QAction("Batch Inference", self)
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
@@ -2194,6 +2202,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_deploy_predictor_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_deploy_generator_dialog(self):
+        """Open the See Anything Deploy Generator dialog to deploy a See Anything generator."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
