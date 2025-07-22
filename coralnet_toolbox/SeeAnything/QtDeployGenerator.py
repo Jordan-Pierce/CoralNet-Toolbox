@@ -16,9 +16,9 @@ from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
-                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup,
+                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QLineEdit,
                              QFormLayout, QComboBox, QSpinBox, QSlider, QPushButton,
-                             QHBoxLayout, QWidget, QFileDialog, QTabWidget, QLineEdit)
+                             QHBoxLayout, QWidget, QFileDialog, QTabWidget)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -27,6 +27,7 @@ from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.QtImageWindow import ImageWindow
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -56,7 +57,7 @@ class DeployGeneratorDialog(QDialog):
 
         self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 5)")
-        self.resize(800, 600)  # Increased size to accommodate the horizontal layout
+        self.resize(800, 800)  # Increased size to accommodate the horizontal layout
 
         self.deploy_model_dialog = None
         self.loaded_model = None
@@ -107,10 +108,41 @@ class DeployGeneratorDialog(QDialog):
         
         # Add layouts to the right panel
         self.setup_source_layout()
-        self.setup_options_layout()
+
+        # Add a full ImageWindow instance for target image selection
+        self.image_selection_window = ImageWindow(self.main_window)
+        self.right_panel.addWidget(self.image_selection_window)
         
         # Setup the buttons layout at the bottom
         self.setup_buttons_layout()
+
+    def configure_image_window_for_dialog(self):
+        """
+        Disables parts of the internal ImageWindow UI to guide user selection.
+        This forces the image list to only show images with annotations
+        matching the selected reference label.
+        """
+        iw = self.image_selection_window
+
+        # Disable and set filter checkboxes
+        iw.highlighted_checkbox.setEnabled(False)
+        iw.has_predictions_checkbox.setEnabled(False)
+        iw.no_annotations_checkbox.setEnabled(False)
+        iw.has_annotations_checkbox.setEnabled(False)
+        iw.highlighted_checkbox.setChecked(False)
+        iw.has_predictions_checkbox.setChecked(False)
+        iw.no_annotations_checkbox.setChecked(False)
+        iw.has_annotations_checkbox.setChecked(True)
+
+        # Disable search UI elements
+        iw.search_bar_images.setEnabled(False)
+        iw.image_search_button.setEnabled(False)
+        iw.search_bar_labels.setEnabled(False)
+        iw.label_search_button.setEnabled(False)
+        iw.top_k_combo.setEnabled(False)
+
+        # Set Top-K to Top1
+        iw.top_k_combo.setCurrentText("Top1")
 
     def showEvent(self, event):
         """
@@ -123,8 +155,127 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
         
-        # Update the source images (now assuming sources are valid)
-        self.update_source_images()
+        # Update the source labels from the currently active image
+        self.update_source_labels()
+
+        # Configure the image window's UI elements for this specific dialog
+        self.configure_image_window_for_dialog()
+
+        # Sync the dialog's image window with the main one
+        self.sync_image_window()
+
+        # Apply the custom filter to set the initial image list view
+        self.filter_images_by_label_and_type()
+
+    def sync_image_window(self):
+        """
+        Syncs the internal image window with the main application's image window,
+        ensuring the list of images and their states are up-to-date.
+        """
+        main_manager = self.main_window.image_window.raster_manager
+        dialog_manager = self.image_selection_window.raster_manager
+
+        # Add any new images
+        current_dialog_paths = set(dialog_manager.image_paths)
+        new_paths = [p for p in main_manager.image_paths if p not in current_dialog_paths]
+        for path in new_paths:
+            self.image_selection_window.add_image(path)
+
+        # Remove any deleted images
+        current_main_paths = set(main_manager.image_paths)
+        removed_paths = [p for p in dialog_manager.image_paths if p not in current_main_paths]
+        for path in removed_paths:
+            dialog_manager.remove_raster(path)
+        
+        # Explicitly update annotation counts for all images in the dialog's view.
+        for path in dialog_manager.image_paths:
+            self.image_selection_window.update_image_annotations(path)
+        
+        # Sync highlighted and selected state
+        highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
+        self.image_selection_window.table_model.set_highlighted_paths(highlighted_paths)
+        self.image_selection_window.update_highlighted_count_label()
+
+        selected_path = self.main_window.image_window.selected_image_path
+        if selected_path in self.image_selection_window.raster_manager.image_paths:
+            self.image_selection_window.select_row_for_path(selected_path)
+            self.image_selection_window.center_table_on_current_image()
+        
+        # Re-apply filters to update the view
+        self.image_selection_window.filter_images()
+
+    def sync_label_search(self):
+        """
+        Syncs the label search bar in the image window with the selected source label.
+        """
+        selected_label_text = self.source_label_combo_box.currentText()
+        if selected_label_text:
+            self.image_selection_window.search_bar_labels.setEditText(selected_label_text)
+            
+    def filter_images_by_label_and_type(self):
+        """
+        Filters the images in the selection window to show only those that
+        contain the selected reference label with a valid annotation type
+        (Polygon or Rectangle). Also updates the disabled search bar for
+        visual feedback.
+        """
+        source_label = self.source_label_combo_box.currentData()
+        
+        # Update the search bar text for visual feedback
+        source_label_text = self.source_label_combo_box.currentText()
+        self.image_selection_window.search_bar_labels.setEditText(source_label_text)
+
+        if not source_label:
+            self.image_selection_window.table_model.set_filtered_paths([])
+            return
+
+        all_paths = self.image_selection_window.raster_manager.image_paths
+        
+        final_filtered_paths = []
+        for path in all_paths:
+            annotations = self.annotation_window.get_image_annotations(path)
+            
+            # Check if this image has an annotation that matches the label and type
+            has_valid_annotation = False
+            for ann in annotations:
+                if ann.label.short_label_code == source_label.short_label_code:
+                    if isinstance(ann, (RectangleAnnotation, PolygonAnnotation)):
+                        has_valid_annotation = True
+                        break  # Found a valid one, no need to check others in this image
+            
+            if has_valid_annotation:
+                final_filtered_paths.append(path)
+        
+        # Update the table model directly with the precisely filtered list
+        self.image_selection_window.table_model.set_filtered_paths(final_filtered_paths)
+
+    def accept(self):
+        """
+        Run the batch prediction when the OK button is clicked.
+        """
+        if not self.loaded_model:
+            QMessageBox.warning(self, 
+                                "No Model", 
+                                "A model must be loaded before running predictions.")
+            return
+
+        if not self.source_label_combo_box.currentData():
+            QMessageBox.warning(self, 
+                                "No Source Label", 
+                                "A source label must be selected.")
+            return
+
+        # Get highlighted paths from our internal image window to use as targets
+        target_images = self.image_selection_window.table_model.get_highlighted_paths()
+
+        if not target_images:
+            QMessageBox.warning(self, 
+                                "No Target Images", 
+                                "You must highlight at least one image in the list to process.")
+            return
+
+        # Do not call self.predict here; just close the dialog and let the caller handle prediction
+        super().accept()
 
     def setup_info_layout(self):
         """
@@ -134,7 +285,9 @@ class DeployGeneratorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Generator to deploy and use.")
+        info_label = QLabel("Choose a Generator to deploy.\n"
+                            "Select a reference label, then highlight reference images that contain examples.\n"
+                            "Each additional reference image may increase accuracy but also processing time.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -345,56 +498,16 @@ class DeployGeneratorDialog(QDialog):
 
     def setup_source_layout(self):
         """
-        Set up the layout with source image and label selection.
-        Contains dropdown combo boxes for selecting the source image and label.
+        Set up the layout with source label selection.
+        The source image is implicitly the currently active image.
         """
-        group_box = QGroupBox("Source Selection")
+        group_box = QGroupBox("Reference Label")
         layout = QFormLayout()
-
-        # Create the source image combo box
-        self.source_image_combo_box = QComboBox()
-        self.source_image_combo_box.currentIndexChanged.connect(self.update_source_labels)
-        layout.addRow("Source Image:", self.source_image_combo_box)
 
         # Create the source label combo box
         self.source_label_combo_box = QComboBox()
-        layout.addRow("Source Label:", self.source_label_combo_box)
-
-        group_box.setLayout(layout)
-        self.right_panel.addWidget(group_box)  # Add to right panel
-
-    def setup_options_layout(self):
-        """
-        Set up the layout with image options.
-        """
-        # Create a group box for image options
-        group_box = QGroupBox("Image Options")
-        layout = QVBoxLayout()
-
-        # Create a button group for the image checkboxes
-        image_options_group = QButtonGroup(self)
-
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        # Add the checkboxes to the button group
-        image_options_group.addButton(self.apply_filtered_checkbox)
-        image_options_group.addButton(self.apply_prev_checkbox)
-        image_options_group.addButton(self.apply_next_checkbox)
-        image_options_group.addButton(self.apply_all_checkbox)
-
-        # Ensure only one checkbox can be checked at a time
-        image_options_group.setExclusive(True)
-
-        # Set the default checkbox
-        self.apply_all_checkbox.setChecked(True)
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
+        self.source_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
+        layout.addRow("Reference Label:", self.source_label_combo_box)
 
         group_box.setLayout(layout)
         self.right_panel.addWidget(group_box)  # Add to right panel
@@ -535,158 +648,52 @@ class DeployGeneratorDialog(QDialog):
             if self.loaded_model:
                 self.deactivate_model()
 
-    def has_valid_sources(self):
-        """
-        Check if there are any valid source images with polygon or rectangle annotations.
-
-        :return: True if valid sources exist, False otherwise
-        """
-        # Check if there are any images
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.information(None,
-                                    "No Images",
-                                    "No images available for batch inference.")
-            return False
-
-        # Check for images with valid annotations
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    return True
-
-        QMessageBox.information(None,
-                                "No Valid Annotations",
-                                "No images have polygon or rectangle annotations for batch inference.")
-        return False
-
-    def check_valid_sources(self):
-        """
-        Check if there are any valid source images with polygon or rectangle annotations.
-
-        :return: True if valid sources exist, False otherwise
-        """
-        # Check if there are any images
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.information(self,
-                                    "No Images",
-                                    "No images available for batch inference.")
-            return False
-
-        # Check for images with valid annotations
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    return True
-
-        QMessageBox.information(self,
-                                "No Valid Annotations",
-                                "No images have polygon or rectangle annotations for batch inference.")
-        return False
-
-    def update_source_images(self):
-        """
-        Updates the source image combo box with images that have at least one label
-        with a valid polygon or rectangle annotation.
-
-        :return: True if valid source images were found, False otherwise
-        """
-        self.source_image_combo_box.clear()
-        valid_images_found = False
-
-        # Get all image paths from the raster_manager
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            valid_annotation_found = False
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    valid_annotation_found = True
-                    break
-
-            if valid_annotation_found:
-                # Get the basename (filename)
-                basename = os.path.basename(image_path)
-                # Add item to combo box with full path as data
-                self.source_image_combo_box.addItem(basename, image_path)
-                valid_images_found = True
-
-        if not valid_images_found:
-            QMessageBox.information(self,
-                                    "No Source Images",
-                                    "No images available for batch inference.")
-            # Close the dialog since batch inference can't proceed
-            QApplication.processEvents()  # Process pending events
-            self.reject()
-            return False
-
-        # Update the combo box to have the selected image first
-        if self.annotation_window.current_image_path in self.image_window.raster_manager.image_paths:
-            self.source_image_combo_box.setCurrentText(os.path.basename(self.annotation_window.current_image_path))
-
-        # Update the source labels given changes in the source images
-        return self.update_source_labels()
-
     def update_source_labels(self):
         """
-        Updates the source label combo box with labels that have at least one
-        polygon or rectangle annotation from the current image.
+        Updates the source label combo box with all labels in the project.
 
-        :return: True if valid source labels were found, False otherwise
+        :return: True if labels were found, False otherwise
         """
         self.source_label_combo_box.clear()
 
-        source_image_path = self.source_image_combo_box.currentData()
-        if not source_image_path:
-            return False
+        # Get all labels from the main label window
+        all_labels = self.main_window.label_window.labels
 
-        # Get annotations for this image
-        annotations = self.annotation_window.get_image_annotations(source_image_path)
-
-        # Create a dict of labels with valid annotations
-        valid_labels = {}
-        for annotation in annotations:
-            if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                valid_labels[annotation.label.short_label_code] = annotation.label
-
-        # Add valid labels to combo box
-        for label_code, label_obj in valid_labels.items():
-            self.source_label_combo_box.addItem(label_code, label_obj)
-
-        if not valid_labels:
+        if not all_labels:
             QMessageBox.information(self,
-                                    "No Valid Labels",
-                                    "No labels with polygon or rectangle annotations available for batch inference.")
+                                    "No Labels in Project",
+                                    "There are no labels in this project to use as a reference.")
             # Close the dialog since batch inference can't proceed
-            QApplication.processEvents()  # Process pending events
+            QApplication.processEvents()
             self.reject()
             return False
+        
+        # Add all labels from the project to the combo box
+        for label_obj in all_labels:
+            self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
 
         return True
 
-    def get_source_annotations(self):
-        """Return a list of bboxes and masks for the source image
-        belonging to the selected label."""
-        source_image_path = self.source_image_combo_box.currentData()
-        source_label = self.source_label_combo_box.currentData()
+    def get_source_annotations(self, reference_label, reference_image_path):
+        """
+        Return a list of bboxes and masks for a specific image
+        belonging to the selected label.
 
-        # Get annotations for this image
-        annotations = self.annotation_window.get_image_annotations(source_image_path)
+        :param reference_label: The Label object to filter annotations by.
+        :param reference_image_path: The path of the image to get annotations from.
+        :return: A tuple containing a numpy array of bboxes and a list of masks.
+        """
+        if not all([reference_label, reference_image_path]):
+            return np.array([]), []
 
-        # Filter annotations by label
+        # Get all annotations for the specified image
+        annotations = self.annotation_window.get_image_annotations(reference_image_path)
+
+        # Filter annotations by the provided label
         source_bboxes = []
         source_masks = []
         for annotation in annotations:
-            if annotation.label.short_label_code == source_label.short_label_code:
+            if annotation.label.short_label_code == reference_label.short_label_code:
                 if isinstance(annotation, (PolygonAnnotation, RectangleAnnotation)):
                     bbox = annotation.cropped_bbox
                     source_bboxes.append(bbox)
@@ -742,10 +749,14 @@ class DeployGeneratorDialog(QDialog):
 
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
-            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
+            QMessageBox.information(self.annotation_window, 
+                                    "Model Loaded", 
+                                    "Model loaded successfully")
 
         except Exception as e:
-            QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
+            QMessageBox.critical(self.annotation_window, 
+                                 "Error Loading Model", 
+                                 f"Error loading model: {e}")
 
         finally:
             # Restore cursor
@@ -842,44 +853,67 @@ class DeployGeneratorDialog(QDialog):
         return work_areas_data
     
     def _apply_model(self, inputs):
-        """Apply the model to the inputs. This method is an adaptation of predict_from_annotations."""
+        """
+        Apply the model to the target inputs, using each highlighted source
+        image as an individual reference for a separate prediction run.
+        """
         # Update the model with user parameters
         self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
         self.loaded_model.iou = self.main_window.get_iou_thresh()
         self.loaded_model.max_det = self.get_max_detections()
         
-        # Obtain all reference data
-        refer_image = self.source_image_combo_box.currentData()  # TODO Images
-        refer_bboxes, refer_masks = self.get_source_annotations() 
+        reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
+
+        if not reference_image_paths:
+            QMessageBox.warning(self, 
+                                "No Reference Images", 
+                                "You must highlight at least one reference image.")
+            return []
+
+        # Get the selected reference label
+        source_label = self.source_label_combo_box.currentData()
+        
+        # Create a dictionary of reference annotations, with image path as the key.
+        reference_annotations_dict = {}
+        for path in reference_image_paths:
+            bboxes, masks = self.get_source_annotations(source_label, path)
+            if bboxes.size > 0:
+                reference_annotations_dict[path] = {
+                    'bboxes': bboxes,
+                    'masks': masks,
+                    'cls': np.zeros(len(bboxes))
+                }
 
         # Set the task
         self.task = self.use_task_dropdown.currentText()
-
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(refer_bboxes),
-            'cls': np.zeros(len(refer_bboxes))
-        }
-        if self.task == 'segment':
-            visuals['masks'] = refer_masks
-
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
 
-        # Create a progress bar
+        # Create a progress bar for iterating through reference images
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions per Reference")
         progress_bar.show()
-        progress_bar.start_progress(len(inputs))
+        progress_bar.start_progress(len(reference_annotations_dict))
         
         results_list = []
+        # The 'inputs' list contains work areas from the single target image.
+        # We will predict on the first work area/full image.
+        input_image = inputs[0] 
 
-        # Iterate through each target image
-        for idx, input_image in enumerate(inputs):
+        # Iterate through each reference image and its annotations
+        for ref_path, ref_annotations in reference_annotations_dict.items():
+            # The 'refer_image' parameter is the path to the current reference image
+            # The 'visual_prompts' are the annotations from that same reference image
+            visuals = {
+                'bboxes': ref_annotations['bboxes'],
+                'cls': ref_annotations['cls'],
+            }
+            if self.task == 'segment':
+                visuals['masks'] = ref_annotations['masks']
 
-            # Make predictions
+            # Make predictions on the target using the current reference
             results = self.loaded_model.predict(input_image,
-                                                refer_image=refer_image,
-                                                visual_prompts=visuals.copy(),
+                                                refer_image=ref_path,
+                                                visual_prompts=visuals,
                                                 predictor=predictor,
                                                 imgsz=self.imgsz_spinbox.value(),
                                                 conf=self.main_window.get_uncertainty_thresh(),
@@ -887,17 +921,15 @@ class DeployGeneratorDialog(QDialog):
                                                 max_det=self.get_max_detections(),
                                                 retina_masks=self.task == "segment")
             
-            # Update the name of the results
+            # Update the name of the results and append to the list
             results[0].names = {0: self.class_mapping[0].short_label_code}
-            # Append the results to the list
             results_list.append(results)
-            # Update the progress bar
+            
             progress_bar.update_progress()
-            # Clear the cache
             gc.collect()
             empty_cache()
 
-        # Make cursor normal
+        # Clean up
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()
         progress_bar.stop_progress()
@@ -1014,4 +1046,3 @@ class DeployGeneratorDialog(QDialog):
         # Update status bar
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")
-
