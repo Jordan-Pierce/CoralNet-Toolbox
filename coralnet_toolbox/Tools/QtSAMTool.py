@@ -644,7 +644,7 @@ class SAMTool(Tool):
 
             self.annotation_window.scene.update()
 
-        elif event.key() == Qt.Key_Backspace or event.key() == Qt.Key_Escape:
+        elif event.key() == Qt.Key_Backspace:
             # If creating working area, cancel it
             if self.creating_working_area:
                 self.cancel_working_area_creation()

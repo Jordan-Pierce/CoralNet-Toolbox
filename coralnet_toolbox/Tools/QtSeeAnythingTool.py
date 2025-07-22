@@ -71,9 +71,17 @@ class SeeAnythingTool(Tool):
         self.current_rect_graphics = None  # For the rectangle currently being drawn
         self.rectangles_processed = False  # Track if rectangles have been processed
 
+        # Add state variables for custom working area creation
+        self.creating_working_area = False
+        self.working_area_start = None
+        self.working_area_temp_graphics = None
+        
+        # Add hover position tracking
+        self.hover_pos = None
+        
         self.annotations = []
         self.results = None
-
+    
     def activate(self):
         """
         Activates the tool.
@@ -98,6 +106,9 @@ class SeeAnythingTool(Tool):
 
         # Clean up working area and shadow
         self.cancel_working_area()
+        
+        # Cancel working area creation if in progress
+        self.cancel_working_area_creation()
 
         # Clear detection data
         self.results = None
@@ -164,6 +175,117 @@ class SeeAnythingTool(Tool):
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
 
         self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.scene.update()
+        
+    def set_custom_working_area(self, start_point, end_point):
+        """
+        Create a working area from custom points selected by the user.
+        
+        Args:
+            start_point (QPointF): First corner of the working area
+            end_point (QPointF): Opposite corner of the working area
+        """
+        self.annotation_window.setCursor(Qt.WaitCursor)
+        
+        # Cancel any existing working area
+        self.cancel_working_area()
+        
+        # Calculate the rectangle bounds
+        left = max(0, int(min(start_point.x(), end_point.x())))
+        top = max(0, int(min(start_point.y(), end_point.y())))
+        right = min(int(self.annotation_window.pixmap_image.size().width()), 
+                    int(max(start_point.x(), end_point.x())))
+        bottom = min(int(self.annotation_window.pixmap_image.size().height()),
+                     int(max(start_point.y(), end_point.y())))
+        
+        # Ensure minimum size (at least 10x10 pixels)
+        if right - left < 10:
+            right = min(left + 10, int(self.annotation_window.pixmap_image.size().width()))
+        if bottom - top < 10:
+            bottom = min(top + 10, int(self.annotation_window.pixmap_image.size().height()))
+            
+        # Original image information
+        self.image_path = self.annotation_window.current_image_path
+        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
+        self.original_width = self.annotation_window.pixmap_image.size().width()
+        self.original_height = self.annotation_window.pixmap_image.size().height()
+            
+        # Create the WorkArea instance
+        self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
+        
+        # Get the thickness for the working area graphics
+        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
+        # Create and add the working area graphics
+        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.set_remove_button_visibility(False)
+        self.working_area.removed.connect(self.on_working_area_removed)
+        
+        # Create shadow overlay
+        shadow_brush = QBrush(QColor(0, 0, 0, 150))
+        shadow_path = QPainterPath()
+        shadow_path.addRect(self.annotation_window.scene.sceneRect())
+        shadow_path.addRect(self.working_area.rect)
+        shadow_path = shadow_path.simplified()
+        
+        self.shadow_area = QGraphicsPathItem(shadow_path)
+        self.shadow_area.setBrush(shadow_brush)
+        self.shadow_area.setPen(QPen(Qt.NoPen))
+        self.annotation_window.scene.addItem(self.shadow_area)
+        
+        # Crop the image based on the working area
+        self.work_area_image = self.original_image[top:bottom, left:right]
+        
+        # Set the image in the SeeAnything dialog
+        self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
+        
+        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.scene.update()
+
+    def display_working_area_preview(self, current_pos):
+        """
+        Display a preview rectangle for the working area being created.
+        
+        Args:
+            current_pos (QPointF): Current mouse position
+        """
+        if not self.working_area_start:
+            return
+            
+        # Remove previous preview if it exists
+        if self.working_area_temp_graphics:
+            self.annotation_window.scene.removeItem(self.working_area_temp_graphics)
+            self.working_area_temp_graphics = None
+            
+        # Create preview rectangle
+        rect = QRectF(
+            min(self.working_area_start.x(), current_pos.x()),
+            min(self.working_area_start.y(), current_pos.y()),
+            abs(current_pos.x() - self.working_area_start.x()),
+            abs(current_pos.y() - self.working_area_start.y())
+        )
+        
+        # Create a dashed blue pen for the working area preview
+        pen = QPen(QColor(0, 120, 215))
+        pen.setStyle(Qt.DashLine)
+        pen.setWidth(2)
+        
+        self.working_area_temp_graphics = QGraphicsRectItem(rect)
+        self.working_area_temp_graphics.setPen(pen)
+        self.working_area_temp_graphics.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
+        self.annotation_window.scene.addItem(self.working_area_temp_graphics)
+
+    def cancel_working_area_creation(self):
+        """
+        Cancel the process of creating a working area.
+        """
+        self.creating_working_area = False
+        self.working_area_start = None
+        
+        if self.working_area_temp_graphics:
+            self.annotation_window.scene.removeItem(self.working_area_temp_graphics)
+            self.working_area_temp_graphics = None
+            
         self.annotation_window.scene.update()
 
     def on_working_area_removed(self, work_area):
@@ -277,11 +399,24 @@ class SeeAnythingTool(Tool):
                                 "A label must be selected before adding an annotation.")
             return None
 
+        # Get position in scene coordinates
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        
+        # Handle working area creation mode
+        if not self.working_area and event.button() == Qt.LeftButton:
+            if not self.creating_working_area:
+                # Start working area creation
+                self.creating_working_area = True
+                self.working_area_start = scene_pos
+                return
+            elif self.creating_working_area and self.working_area_start:
+                # Finish working area creation
+                self.set_custom_working_area(self.working_area_start, scene_pos)
+                self.cancel_working_area_creation()
+                return
+
         if not self.working_area:
             return
-
-        # Position in the scene
-        scene_pos = self.annotation_window.mapToScene(event.pos())
 
         # Check if the position is within the working area
         if not self.working_area.contains_point(scene_pos):
@@ -319,6 +454,14 @@ class SeeAnythingTool(Tool):
         Args:
             event (QMouseEvent): The mouse move event.
         """
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        self.hover_pos = scene_pos
+        
+        # Update working area preview during creation
+        if self.creating_working_area and self.working_area_start:
+            self.display_working_area_preview(scene_pos)
+            return
+            
         if self.working_area and self.drawing_rectangle:
             # Update the end point while drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
@@ -334,6 +477,12 @@ class SeeAnythingTool(Tool):
             event (QKeyEvent): The key press event
         """
         if event.key() == Qt.Key_Space:
+            # If creating working area, confirm it
+            if self.creating_working_area and self.working_area_start and self.hover_pos:
+                self.set_custom_working_area(self.working_area_start, self.hover_pos)
+                self.cancel_working_area_creation()
+                return
+        
             # If there is no working area, set it
             if not self.working_area:
                 self.set_working_area()
@@ -359,6 +508,11 @@ class SeeAnythingTool(Tool):
                 self.cancel_working_area()
 
         elif event.key() == Qt.Key_Backspace:
+            # If creating working area, cancel it
+            if self.creating_working_area:
+                self.cancel_working_area_creation()
+                return
+                
             # Cancel current rectangle being drawn
             if self.drawing_rectangle:
                 self.drawing_rectangle = False
