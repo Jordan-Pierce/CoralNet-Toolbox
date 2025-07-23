@@ -111,7 +111,7 @@ class DeployGeneratorDialog(QDialog):
         # Add layouts to the right panel
         self.setup_source_layout()
 
-        # Add a full ImageWindow instance for target image selection
+        # # Add a full ImageWindow instance for target image selection
         self.image_selection_window = ImageWindow(self.main_window)
         self.right_panel.addWidget(self.image_selection_window)
         
@@ -131,16 +131,18 @@ class DeployGeneratorDialog(QDialog):
         iw.has_predictions_checkbox.setEnabled(False)
         iw.no_annotations_checkbox.setEnabled(False)
         iw.has_annotations_checkbox.setEnabled(False)
+        
         iw.highlighted_checkbox.setChecked(False)
         iw.has_predictions_checkbox.setChecked(False)
         iw.no_annotations_checkbox.setChecked(False)
         iw.has_annotations_checkbox.setChecked(True)
 
         # Disable search UI elements
-        iw.search_bar_images.setEnabled(False)
+        iw.home_button.setEnabled(False)
         iw.image_search_button.setEnabled(False)
-        iw.search_bar_labels.setEnabled(False)
         iw.label_search_button.setEnabled(False)
+        iw.search_bar_images.setEnabled(False)
+        iw.search_bar_labels.setEnabled(False)
         iw.top_k_combo.setEnabled(False)
 
         # Set Top-K to Top1
@@ -149,10 +151,13 @@ class DeployGeneratorDialog(QDialog):
         # Disconnect the double-click signal to prevent it from loading an image
         # in the main window, as this dialog is for selection only.
         try:
-            iw.tableView.doubleClicked.disconnect(iw.on_table_double_clicked)
+            iw.tableView.doubleClicked.disconnect()
         except TypeError:
-            # This happens if the signal has no connections, which is fine.
             pass
+        
+        # CRITICAL: Override the load_first_filtered_image method to prevent auto-loading
+        # This is the key fix to prevent unwanted load_image_by_path calls
+        iw.load_first_filtered_image = lambda: None
 
     def showEvent(self, event):
         """
@@ -165,15 +170,13 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
         
+        # Configure the image window's UI elements for this specific dialog
+        self.configure_image_window_for_dialog()
+        # Sync with main window's images BEFORE updating labels
+        self.sync_image_window()
         # This now populates the dropdown, restores the last selection,
         # and then manually triggers the image filtering.
         self.update_source_labels()
-
-        # Configure the image window's UI elements for this specific dialog
-        self.configure_image_window_for_dialog()
-
-        # Sync the dialog's image window with the main one
-        self.sync_image_window()
 
     def sync_image_window(self):
         """
@@ -187,7 +190,7 @@ class DeployGeneratorDialog(QDialog):
         current_dialog_paths = set(dialog_manager.image_paths)
         new_paths = [p for p in main_manager.image_paths if p not in current_dialog_paths]
         for path in new_paths:
-            self.image_selection_window.add_image(path)
+            dialog_manager.add_raster(path)
 
         # Remove any deleted images
         current_main_paths = set(main_manager.image_paths)
@@ -195,31 +198,10 @@ class DeployGeneratorDialog(QDialog):
         for path in removed_paths:
             dialog_manager.remove_raster(path)
         
-        # Explicitly update annotation counts for all images in the dialog's view.
+        # Explicitly update annotation counts for all images in the dialog's view
         for path in dialog_manager.image_paths:
-            self.image_selection_window.update_image_annotations(path)
-        
-        # Sync highlighted and selected state
-        highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
-        self.image_selection_window.table_model.set_highlighted_paths(highlighted_paths)
-        self.image_selection_window.update_highlighted_count_label()
-
-        selected_path = self.main_window.image_window.selected_image_path
-        if selected_path in self.image_selection_window.raster_manager.image_paths:
-            self.image_selection_window.select_row_for_path(selected_path)
-            self.image_selection_window.center_table_on_current_image()
-        
-        # NOTE: Do not re-apply general filters here. The view is controlled
-        # by filter_images_by_label_and_type. Calling filter_images() would
-        # override the specific label filtering.
-
-    def sync_label_search(self):
-        """
-        Syncs the label search bar in the image window with the selected source label.
-        """
-        selected_label_text = self.source_label_combo_box.currentText()
-        if selected_label_text:
-            self.image_selection_window.search_bar_labels.setEditText(selected_label_text)
+            annotations = self.annotation_window.get_image_annotations(path)
+            dialog_manager.update_annotation_info(path, annotations)
             
     def filter_images_by_label_and_type(self):
         """
