@@ -25,6 +25,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
+from coralnet_toolbox.Results import CombineResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtImageWindow import ImageWindow
@@ -925,9 +926,13 @@ class DeployGeneratorDialog(QDialog):
                                                 max_det=self.get_max_detections(),
                                                 retina_masks=self.task == "segment")
             
+            if not len(results[0].boxes):
+                # If no boxes were detected, skip to the next reference
+                continue
+            
             # Update the name of the results and append to the list
             results[0].names = {0: self.class_mapping[0].short_label_code}
-            results_list.append(results)
+            results_list.extend(results[0])
             
             progress_bar.update_progress()
             gc.collect()
@@ -939,7 +944,12 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
         
-        return results_list
+        # Combine results if there are any
+        combined_results = CombineResults().combine_results(results_list)
+        if combined_results is None:
+            return []
+        
+        return [[combined_results]]
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
