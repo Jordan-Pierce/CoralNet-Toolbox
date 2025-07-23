@@ -40,23 +40,17 @@ class BatchInferenceDialog(QDialog):
 
         self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("Batch Inference")
-        self.resize(600, 100)
+        self.resize(400, 100)
 
-        self.deploy_model_dialog = None
+        self.deploy_generator_dialog = None
         self.loaded_model = None
 
-        # Reference image and label
-        self.source_image_path = None
-        self.source_label = None
-        # Target images
-        self.target_images = []
+        self.image_paths = []
 
         self.layout = QVBoxLayout(self)
 
         # Setup the info layout
         self.setup_info_layout()
-        # Setup the source layout
-        self.setup_source_layout()
         # Setup the image options layout
         self.setup_options_layout()
         # Setup the buttons layout
@@ -69,11 +63,8 @@ class BatchInferenceDialog(QDialog):
         :param event: Show event
         """
         super().showEvent(event)
-        self.deploy_model_dialog = self.main_window.see_anything_deploy_predictor_dialog
-        self.loaded_model = self.deploy_model_dialog.loaded_model
-
-        # Update the source images (now assuming sources are valid)
-        self.update_source_images()
+        self.deploy_generator_dialog = self.main_window.see_anything_deploy_generator_dialog
+        self.loaded_model = self.deploy_generator_dialog.loaded_model
 
     def setup_info_layout(self):
         """
@@ -88,26 +79,6 @@ class BatchInferenceDialog(QDialog):
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_source_layout(self):
-        """
-        Set up the layout with source image and label selection.
-        Contains dropdown combo boxes for selecting the source image and label.
-        """
-        group_box = QGroupBox("Source Selection")
-        layout = QFormLayout()
-
-        # Create the source image combo box
-        self.source_image_combo_box = QComboBox()
-        self.source_image_combo_box.currentIndexChanged.connect(self.update_source_labels)
-        layout.addRow("Source Image:", self.source_image_combo_box)
-
-        # Create the source label combo box
-        self.source_label_combo_box = QComboBox()
-        layout.addRow("Source Label:", self.source_label_combo_box)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -159,212 +130,37 @@ class BatchInferenceDialog(QDialog):
 
         self.layout.addWidget(button_box)
 
-    def has_valid_sources(self):
-        """
-        Check if there are any valid source images with polygon or rectangle annotations.
-
-        :return: True if valid sources exist, False otherwise
-        """
-        # Check if there are any images
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.information(None,
-                                    "No Images",
-                                    "No images available for batch inference.")
-            return False
-
-        # Check for images with valid annotations
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    return True
-
-        QMessageBox.information(None,
-                                "No Valid Annotations",
-                                "No images have polygon or rectangle annotations for batch inference.")
-        return False
-
-    def check_valid_sources(self):
-        """
-        Check if there are any valid source images with polygon or rectangle annotations.
-
-        :return: True if valid sources exist, False otherwise
-        """
-        # Check if there are any images
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.information(self,
-                                    "No Images",
-                                    "No images available for batch inference.")
-            return False
-
-        # Check for images with valid annotations
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    return True
-
-        QMessageBox.information(self,
-                                "No Valid Annotations",
-                                "No images have polygon or rectangle annotations for batch inference.")
-        return False
-
-    def update_source_images(self):
-        """
-        Updates the source image combo box with images that have at least one label
-        with a valid polygon or rectangle annotation.
-
-        :return: True if valid source images were found, False otherwise
-        """
-        self.source_image_combo_box.clear()
-        valid_images_found = False
-
-        # Get all image paths from the raster_manager
-        for image_path in self.image_window.raster_manager.image_paths:
-            # Get annotations for this image
-            annotations = self.annotation_window.get_image_annotations(image_path)
-
-            # Check if there's at least one valid polygon/rectangle annotation
-            valid_annotation_found = False
-            for annotation in annotations:
-                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                    valid_annotation_found = True
-                    break
-
-            if valid_annotation_found:
-                # Get the basename (filename)
-                basename = os.path.basename(image_path)
-                # Add item to combo box with full path as data
-                self.source_image_combo_box.addItem(basename, image_path)
-                valid_images_found = True
-
-        if not valid_images_found:
-            QMessageBox.information(self,
-                                    "No Source Images",
-                                    "No images available for batch inference.")
-            # Close the dialog since batch inference can't proceed
-            QApplication.processEvents()  # Process pending events
-            self.reject()
-            return False
-
-        # Update the combo box to have the selected image first
-        if self.annotation_window.current_image_path in self.image_window.raster_manager.image_paths:
-            self.source_image_combo_box.setCurrentText(os.path.basename(self.annotation_window.current_image_path))
-
-        # Update the source labels given changes in the source images
-        return self.update_source_labels()
-
-    def update_source_labels(self):
-        """
-        Updates the source label combo box with labels that have at least one
-        polygon or rectangle annotation from the current image.
-
-        :return: True if valid source labels were found, False otherwise
-        """
-        self.source_label_combo_box.clear()
-
-        source_image_path = self.source_image_combo_box.currentData()
-        if not source_image_path:
-            return False
-
-        # Get annotations for this image
-        annotations = self.annotation_window.get_image_annotations(source_image_path)
-
-        # Create a dict of labels with valid annotations
-        valid_labels = {}
-        for annotation in annotations:
-            if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                valid_labels[annotation.label.short_label_code] = annotation.label
-
-        # Add valid labels to combo box
-        for label_code, label_obj in valid_labels.items():
-            self.source_label_combo_box.addItem(label_code, label_obj)
-
-        if not valid_labels:
-            QMessageBox.information(self,
-                                    "No Valid Labels",
-                                    "No labels with polygon or rectangle annotations available for batch inference.")
-            # Close the dialog since batch inference can't proceed
-            QApplication.processEvents()  # Process pending events
-            self.reject()
-            return False
-
-        return True
-
-    def get_source_annotations(self):
-        """Return a list of bboxes and masks for the source image
-        belonging to the selected label."""
-        source_image_path = self.source_image_combo_box.currentData()
-        source_label = self.source_label_combo_box.currentData()
-
-        # Get annotations for this image
-        annotations = self.annotation_window.get_image_annotations(source_image_path)
-
-        # Filter annotations by label
-        source_bboxes = []
-        source_masks = []
-        for annotation in annotations:
-            if annotation.label.short_label_code == source_label.short_label_code:
-                if isinstance(annotation, (PolygonAnnotation, RectangleAnnotation)):
-                    bbox = annotation.cropped_bbox
-                    source_bboxes.append(bbox)
-                    if isinstance(annotation, PolygonAnnotation):
-                        points = np.array([[p.x(), p.y()] for p in annotation.points])
-                        source_masks.append(points)
-                    elif isinstance(annotation, RectangleAnnotation):
-                        x1, y1, x2, y2 = bbox
-                        rect_points = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-                        source_masks.append(rect_points)
-
-        return np.array(source_bboxes), source_masks
-
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
-        Excludes the source image path if present.
-    
+
         :return: List of selected image paths
         """
-        # Get the source image path to exclude
-        source_image_path = self.source_image_combo_box.currentData()
-        
         # Current image path showing
         current_image_path = self.annotation_window.current_image_path
         if not current_image_path:
             return []
-    
+
         # Determine which images to export annotations for
         if self.apply_filtered_checkbox.isChecked():
-            selected_paths = self.image_window.table_model.filtered_paths.copy()
+            return self.image_window.table_model.filtered_paths
         elif self.apply_prev_checkbox.isChecked():
             if current_image_path in self.image_window.table_model.filtered_paths:
                 current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                selected_paths = self.image_window.table_model.filtered_paths[:current_index + 1].copy()
+                return self.image_window.table_model.filtered_paths[:current_index + 1]
             else:
-                selected_paths = [current_image_path]
+                return [current_image_path]
         elif self.apply_next_checkbox.isChecked():
             if current_image_path in self.image_window.table_model.filtered_paths:
                 current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                selected_paths = self.image_window.table_model.filtered_paths[current_index:].copy()
+                return self.image_window.table_model.filtered_paths[current_index:]
             else:
-                selected_paths = [current_image_path]
+                return [current_image_path]
         elif self.apply_all_checkbox.isChecked():
-            selected_paths = self.image_window.raster_manager.image_paths.copy()
+            return self.image_window.raster_manager.image_paths
         else:
             # Only apply to the current image
-            selected_paths = [current_image_path]
-    
-        # Remove the source image path if it's in the selected paths
-        if source_image_path and source_image_path in selected_paths:
-            selected_paths.remove(source_image_path)
-    
-        return selected_paths
+            return [current_image_path]
 
     def apply(self):
         """
@@ -374,14 +170,8 @@ class BatchInferenceDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         try:
-            # Get the source image path and label
-            self.source_image_path = self.source_image_combo_box.currentData()
-            self.source_label = self.source_label_combo_box.currentData()
-            # Get the source annotations
-            self.source_bboxes, self.source_masks = self.get_source_annotations()
             # Get the selected image paths
-            self.target_images = self.get_selected_image_paths()
-            # Perform batch inference
+            self.image_paths = self.get_selected_image_paths()
             self.batch_inference()
 
         except Exception as e:
@@ -395,18 +185,15 @@ class BatchInferenceDialog(QDialog):
     def batch_inference(self):
         """
         Perform batch inference on the selected images.
-
         """
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title="Batch Inference")
         progress_bar.show()
-        progress_bar.start_progress(len(self.target_images))
+        progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.deploy_model_dialog.predict_from_annotations(refer_image=self.source_image_path,
-                                                              refer_label=self.source_label,
-                                                              refer_bboxes=self.source_bboxes,
-                                                              refer_masks=self.source_masks,
-                                                              target_images=self.target_images)
+            self.deploy_generator_dialog.predict(image_paths=self.image_paths)
+
         progress_bar.stop_progress()
         progress_bar.close()
+

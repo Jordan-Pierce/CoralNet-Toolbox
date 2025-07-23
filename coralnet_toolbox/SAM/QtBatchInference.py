@@ -35,8 +35,6 @@ class BatchInferenceDialog(QDialog):
         self.deploy_model_dialog = None
         self.loaded_model = None
 
-        self.annotations = []
-        self.prepared_patches = []
         self.image_paths = []
 
         self.layout = QVBoxLayout(self)
