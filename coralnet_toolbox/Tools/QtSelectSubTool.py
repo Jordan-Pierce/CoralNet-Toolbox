@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor
+from PyQt5.QtGui import QPen, QColor, QBrush
 from PyQt5.QtWidgets import QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
@@ -22,15 +22,17 @@ class SelectSubTool(SubTool):
         super().activate(event)
         self.selection_start_pos = self.annotation_window.mapToScene(event.pos())
         
-        # Create and style the selection rectangle
+        # Create and style the selection rectangle (dashed blue, light blue fill)
         self.selection_rectangle = QGraphicsRectItem()
         width = self.parent_tool.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-        pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
+        pen = QPen(QColor(0, 120, 215))
+        pen.setStyle(Qt.DashLine)
         pen.setWidth(width)
         self.selection_rectangle.setPen(pen)
+        self.selection_rectangle.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
         self.selection_rectangle.setRect(QRectF(self.selection_start_pos, self.selection_start_pos))
         self.annotation_window.scene.addItem(self.selection_rectangle)
-
+        
     def deactivate(self):
         super().deactivate()
         if self.selection_rectangle:
