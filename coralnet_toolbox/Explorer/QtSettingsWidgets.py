@@ -204,7 +204,7 @@ class DuplicateSettingsWidget(QWidget):
         self.threshold_spinbox.setDecimals(3)
         self.threshold_spinbox.setRange(0.0, 10.0)
         self.threshold_spinbox.setSingleStep(0.01)
-        self.threshold_spinbox.setValue(0.05) # Default value for squared L2 distance
+        self.threshold_spinbox.setValue(0.1)  # Default value for squared L2 distance
         self.threshold_spinbox.setToolTip(
             "Similarity Threshold (Squared L2 Distance).\n"
             "Lower values mean more similar.\n"
