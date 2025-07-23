@@ -4,7 +4,7 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
-                             QLineEdit, QFileDialog, QFormLayout, QSpinBox)
+                             QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox)
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
@@ -189,6 +189,48 @@ class SimilaritySettingsWidget(QWidget):
             'k': self.k_spinbox.value()
         }
         
+        
+class DuplicateSettingsWidget(QWidget):
+    """Widget for configuring duplicate detection parameters."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super(DuplicateSettingsWidget, self).__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Using a DoubleSpinBox for the distance threshold
+        self.threshold_spinbox = QDoubleSpinBox()
+        self.threshold_spinbox.setDecimals(3)
+        self.threshold_spinbox.setRange(0.0, 10.0)
+        self.threshold_spinbox.setSingleStep(0.01)
+        self.threshold_spinbox.setValue(0.1)  # Default value for squared L2 distance
+        self.threshold_spinbox.setToolTip(
+            "Similarity Threshold (Squared L2 Distance).\n"
+            "Lower values mean more similar.\n"
+            "A value of 0 means identical features."
+        )
+        
+        self.threshold_spinbox.valueChanged.connect(self._emit_parameters)
+
+        form_layout = QHBoxLayout()
+        form_layout.addWidget(QLabel("Threshold:"))
+        form_layout.addWidget(self.threshold_spinbox)
+        layout.addLayout(form_layout)
+
+    def _emit_parameters(self):
+        """Emits the current parameters."""
+        params = {
+            'threshold': self.threshold_spinbox.value()
+        }
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        """Returns the current parameters as a dictionary."""
+        return {
+            'threshold': self.threshold_spinbox.value()
+        }
+
 
 class AnnotationSettingsWidget(QGroupBox):
     """Widget for filtering annotations by image, type, and label in a multi-column layout."""
@@ -213,7 +255,7 @@ class AnnotationSettingsWidget(QGroupBox):
         images_column.addWidget(images_label)
 
         self.images_list = QListWidget()
-        self.images_list.setSelectionMode(QListWidget.MultiSelection)
+        self.images_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.images_list.setMaximumHeight(50)
 
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
@@ -241,7 +283,7 @@ class AnnotationSettingsWidget(QGroupBox):
         type_column.addWidget(type_label)
 
         self.annotation_type_list = QListWidget()
-        self.annotation_type_list.setSelectionMode(QListWidget.MultiSelection)
+        self.annotation_type_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.annotation_type_list.setMaximumHeight(50)
         self.annotation_type_list.addItems(["PatchAnnotation",
                                             "RectangleAnnotation",
@@ -269,7 +311,7 @@ class AnnotationSettingsWidget(QGroupBox):
         label_column.addWidget(label_label)
 
         self.label_list = QListWidget()
-        self.label_list.setSelectionMode(QListWidget.MultiSelection)
+        self.label_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.label_list.setMaximumHeight(50)
 
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):

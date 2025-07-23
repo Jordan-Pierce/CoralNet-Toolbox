@@ -89,7 +89,7 @@ class RasterTableModel(QAbstractTableModel):
                 
         elif role == Qt.TextAlignmentRole:
             return Qt.AlignCenter
-            
+        
         elif role == Qt.FontRole:
             # Bold the selected raster's text
             if raster.is_selected:
@@ -112,6 +112,14 @@ class RasterTableModel(QAbstractTableModel):
                         f"Dimensions: {dimensions}\n"
                         f"Has Annotations: {'Yes' if raster.has_annotations else 'No'}\n"
                         f"Has Predictions: {'Yes' if raster.has_predictions else 'No'}")
+            elif index.column() == self.ANNOTATION_COUNT_COL and raster.annotation_count > 0:
+                # Show annotation counts per label in tooltip
+                if hasattr(raster, 'label_counts') and raster.label_counts:
+                    # Format the label counts for display
+                    label_counts_text = "\n".join([f"{label}: {count}" for label, count in raster.label_counts.items()])
+                    return f"Annotations by label:\n{label_counts_text}"
+                else:
+                    return f"Total annotations: {raster.annotation_count}"
                 
         return None
         

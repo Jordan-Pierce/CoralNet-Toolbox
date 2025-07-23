@@ -123,17 +123,29 @@ class Segment(Base):
         
     def update_sam_task_state(self):
         """
-        Centralized method to check if SAM is loaded and update task and dropdown accordingly.
+        Centralized method to check if SAM is loaded and update task accordingly.
+        If the user has selected to use SAM, this function ensures the task is set to 'segment'.
+        Crucially, it does NOT alter the task if SAM is not selected, respecting the
+        user's choice from the 'Task' dropdown.
         """
-        sam_active = (
-            self.sam_dialog is not None and 
-            self.sam_dialog.loaded_model is not None and
-            self.use_sam_dropdown.currentText() == "True"
-        )
-        if sam_active:
-            self.task = 'segment'
-        else:
-            self.use_sam_dropdown.setCurrentText("False")
+        # Check if the user wants to use the SAM model
+        if self.use_sam_dropdown.currentText() == "True":
+            # SAM is requested. Check if it's actually available.
+            sam_is_available = (
+                hasattr(self, 'sam_dialog') and
+                self.sam_dialog is not None and
+                self.sam_dialog.loaded_model is not None
+            )
+
+            if sam_is_available:
+                # If SAM is wanted and available, the task must be segmentation.
+                self.task = 'segment'
+            else:
+                # If SAM is wanted but not available, revert the dropdown and do nothing else.
+                # The 'is_sam_model_deployed' function already handles showing an error message.
+                self.use_sam_dropdown.setCurrentText("False")
+
+        # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
 
     def load_model(self):
         """

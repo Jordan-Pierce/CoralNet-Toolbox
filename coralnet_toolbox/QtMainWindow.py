@@ -9,8 +9,8 @@ import requests
 
 from packaging import version
 
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
@@ -95,6 +95,7 @@ from coralnet_toolbox.SAM import (
 from coralnet_toolbox.SeeAnything import (
     TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
+    DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
@@ -258,6 +259,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (See Anything)
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
+        self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
 
         # Create dialogs (AutoDistill)
@@ -623,10 +625,16 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_action = QAction("Train Model", self)
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
         self.see_anything_menu.addAction(self.see_anything_train_model_action)
-        # Deploy Model
+        # Deploy Model submenu
+        self.see_anything_deploy_model_menu = self.see_anything_menu.addMenu("Deploy Model")
+        # Deploy Predictor
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
-        self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
+        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_predictor_action)
+        # Deploy Generator
+        self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
+        self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
+        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_generator_action)
         # Batch Inference
         self.see_anything_batch_inference_action = QAction("Batch Inference", self)
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
@@ -674,6 +682,76 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         # Create and add the toolbar
         # ----------------------------------------
+        
+        # Define verbose tool descriptions
+        self.tool_descriptions = {
+            "select": ("Select Tool\n\n"
+                       "Select, modify, and manage annotations.\n"
+                       "• Left-click to select annotations; hold Ctrl+left-click to select multiple.\n"
+                       "• Left-click and drag to move selected annotations.\n"
+                       "• Ctrl+click and drag to create a selection rectangle.\n"
+                       "• Ctrl+Shift to show resize handles for a selected Rectangle and Polygon annotations.\n"
+                       "• Ctrl+X to cut a selected annotation along a drawn line.\n"
+                       "• Ctrl+C to combine multiple selected annotations.\n"
+                       "• Ctrl+Space to confirm selected annotations with top predictions.\n"
+                       "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
+                       "• Ctrl+Delete to remove selected annotations."),
+            
+            "patch": ("Patch Tool\n\n"
+                      "Create point (patch) annotations centered at the cursor.\n"
+                      "• Left-click to place a patch at the mouse location.\n"
+                      "• Hold Ctrl and use the mouse wheel or use the Patch Size box to adjust patch size.\n"
+                      "• A semi-transparent preview shows the patch before placing it."),
+            
+            "rectangle": ("Rectangle Tool\n\n"
+                          "Create rectangular annotations by clicking and dragging.\n"
+                          "• Left-click to set the first corner, then move the mouse to size the rectangle.\n"
+                          "• Left-click again to place the rectangle.\n"
+                          "• Press Backspace to cancel drawing the current rectangle.\n"
+                          "• A semi-transparent preview shows the rectangle while drawing."),
+            
+            "polygon": ("Polygon Tool\n\n"
+                        "Create polygon annotations with multiple vertices.\n"
+                        "• Left-click to set the first vertex, then move the mouse to draw the polygon\n"
+                        "• Hold Ctrl while left-clicking to draw straight-line segments.\n"
+                        "• Left-click again to complete the polygon.\n"
+                        "• Press Backspace to cancel the current polygon.\n"
+                        "• A semi-transparent preview shows the polygon while drawing."),
+            
+            "sam": ("Segment Anything (SAM) Tool\n\n"
+                    "Generates AI-powered segmentations.\n"
+                    "• Left-click to create a working area, then left-click again to confirm.\n"
+                    "\t• Or, press Spacebar to create a working area for the current view.\n"
+                    "• Ctrl+Left-click to add positive points (foreground).\n"
+                    "• Ctrl+Right-click to add negative points (background).\n"
+                    "• Left-click and drag to create a bounding box for prompting.\n"
+                    "• Press Spacebar to generate and confirm the segmentation.\n"
+                    "• Press Backspace to cancel the current operation.\n"
+                    "• Uncertainty can be adjusted in Parameters section.\n"
+                    "• A SAM predictor must be deployed first."),
+            
+            "see_anything": ("See Anything (YOLOE) Tool\n\n"
+                             "Uses YOLOE to detect / segments objects of interest based on visual prompts.\n"
+                             "• Left-click to create a working area, then click again to confirm.\n"
+                             "\t• Or, press Spacebar to create a working area for the current view.\n"
+                             "• Draw rectangles inside the working area to guide detection.\n"
+                             "• Press Spacebar to generate detections using drawn rectangles.\n"
+                             "• Press Spacebar again to confirm annotations or apply SAM refinement.\n"
+                             "• Press Backspace to cancel current operation or clear annotations.\n"
+                             "• Uncertainty can be adjusted in Parameters section.\n"
+                             "• A See Anything (YOLOE) predictor must be deployed first."),
+            
+            "work_area": ("Work Area Tool\n\n"
+                          "Defines regions for detection and segmentation models to run predictions on.\n"
+                          "• Left-click to create a working area, then left-click again to confirm.\n"
+                          "\t• Or, press Spacebar to create a work area from the current view.\n"
+                          "• Hold Ctrl+Shift to show delete buttons for existing work areas.\n"
+                          "• Press Ctrl+Shift+Backspace to clear all work areas.\n"
+                          "• Hold Ctrl+Alt to temporarily view a work area of the current view.\n"
+                          "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
+                          "• All work areas are automatically saved with the image in a Project (JSON) file.")
+        }
+    
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
         self.toolbar.setFixedWidth(40)
@@ -696,6 +774,7 @@ class MainWindow(QMainWindow):
         # Add tools here with icons
         self.select_tool_action = QAction(self.select_icon, "Select", self)
         self.select_tool_action.setCheckable(True)
+        self.select_tool_action.setToolTip(self.tool_descriptions["select"])
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
@@ -703,16 +782,19 @@ class MainWindow(QMainWindow):
 
         self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
         self.patch_tool_action.setCheckable(True)
+        self.patch_tool_action.setToolTip(self.tool_descriptions["patch"])
         self.patch_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.patch_tool_action)
 
         self.rectangle_tool_action = QAction(self.rectangle_icon, "Rectangle", self)
         self.rectangle_tool_action.setCheckable(True)
+        self.rectangle_tool_action.setToolTip(self.tool_descriptions["rectangle"])
         self.rectangle_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.rectangle_tool_action)
 
         self.polygon_tool_action = QAction(self.polygon_icon, "Polygon", self)
         self.polygon_tool_action.setCheckable(True)
+        self.polygon_tool_action.setToolTip(self.tool_descriptions["polygon"])
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
 
@@ -720,11 +802,13 @@ class MainWindow(QMainWindow):
 
         self.sam_tool_action = QAction(self.sam_icon, "SAM", self)
         self.sam_tool_action.setCheckable(True)
+        self.sam_tool_action.setToolTip(self.tool_descriptions["sam"])
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
 
         self.see_anything_tool_action = QAction(self.see_anything_icon, "See Anything (YOLOE)", self)
         self.see_anything_tool_action.setCheckable(True)
+        self.see_anything_tool_action.setToolTip(self.tool_descriptions["see_anything"])
         self.see_anything_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.see_anything_tool_action)
 
@@ -732,6 +816,7 @@ class MainWindow(QMainWindow):
 
         self.work_area_tool_action = QAction(self.workarea_icon, "Work Area", self)
         self.work_area_tool_action.setCheckable(True)
+        self.work_area_tool_action.setToolTip(self.tool_descriptions["work_area"])
         self.work_area_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.work_area_tool_action)
 
@@ -2194,6 +2279,27 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_deploy_predictor_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_deploy_generator_dialog(self):
+        """Open the See Anything Deploy Generator dialog to deploy a See Anything generator."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No images are present in the project.")
+            return
+        
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

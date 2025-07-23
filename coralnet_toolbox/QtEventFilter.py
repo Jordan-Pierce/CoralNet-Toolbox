@@ -23,6 +23,7 @@ class GlobalEventFilter(QObject):
         self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
+        self.see_anything_deploy_generator_dialog = main_window.see_anything_deploy_generator_dialog
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
         
     def eventFilter(self, obj, event):
@@ -69,9 +70,14 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_4:
                     self.sam_deploy_generator_dialog.predict()
                     return True
-
-                # Handle hotkey for auto distill prediction
+                
+                # Handle hotkey for see anything (YOLOE) generator
                 if event.key() == Qt.Key_5:
+                    self.see_anything_deploy_generator_dialog.predict()
+                    return True
+                
+                # Handle hotkey for auto distill prediction
+                if event.key() == Qt.Key_6:
                     self.auto_distill_deploy_model_dialog.predict()
                     return True
 

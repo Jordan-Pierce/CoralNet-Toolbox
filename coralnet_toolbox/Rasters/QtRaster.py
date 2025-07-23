@@ -67,6 +67,7 @@ class Raster(QObject):
         self.labels: Set = set()
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
+        self.label_counts = {}  # Store counts of annotations per label
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
@@ -253,6 +254,16 @@ class Raster(QObject):
         # Update labels
         self.labels = {annotation.label for annotation in annotations if annotation.label}
         
+        # Count annotations per label
+        self.label_counts = {}
+        for annotation in annotations:
+            if annotation.label:
+                label_name = annotation.label.short_label_code if hasattr(annotation.label, 'short_label_code') else str(annotation.label)
+                if label_name in self.label_counts:
+                    self.label_counts[label_name] += 1
+                else:
+                    self.label_counts[label_name] = 1
+    
     def matches_filter(self, 
                        search_text="", 
                        search_label="", 

@@ -6,19 +6,19 @@ import ujson as json
 
 import numpy as np
 
+from torch.cuda import empty_cache
+from ultralytics.utils import ops
+
+from ultralytics import YOLOE
+from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
                              QWidget, QLineEdit, QFileDialog)
-
-from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
-from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
-
-from torch.cuda import empty_cache
-from ultralytics.utils import ops
 
 from coralnet_toolbox.Results import ResultsProcessor
 
@@ -179,37 +179,6 @@ class DeployPredictorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def browse_model_file(self):
-        """
-        Open a file dialog to browse for a model file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Model File",
-                                                   "",
-                                                   "Model Files (*.pt *.pth);;All Files (*)")
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-            self.mapping_edit.setText(file_path)
-
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
@@ -335,6 +304,37 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_path_edit.setText(file_path)
+
+            # Load the class mapping if it exists
+            dir_path = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.mapping_edit.setText(class_mapping_path)
+
+    def browse_class_mapping_file(self):
+        """
+        Browse and select a class mapping file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            # Load the class mapping
+            self.class_mapping = json.load(open(file_path, 'r'))
+            self.mapping_edit.setText(file_path)
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -516,9 +516,6 @@ class DeployPredictorDialog(QDialog):
         if image is None and image_path is not None:
             # Open the image using rasterio
             image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
-
-        # Preprocess the image
-        # image = preprocess_image(image)
 
         # Save the original image
         self.original_image = image

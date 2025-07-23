@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollAre
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
                              QApplication, QGraphicsRectItem, QRubberBand, QMenu,
-                             QWidgetAction, QToolButton, QAction)
+                             QWidgetAction, QToolButton, QAction, QDoubleSpinBox)
 
 from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
@@ -28,6 +28,7 @@ from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidge
 from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import DuplicateSettingsWidget
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
@@ -68,6 +69,8 @@ class EmbeddingViewer(QWidget):
     mislabel_parameters_changed = pyqtSignal(dict) 
     find_uncertain_requested = pyqtSignal()
     uncertainty_parameters_changed = pyqtSignal(dict)
+    find_duplicates_requested = pyqtSignal()
+    duplicate_parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -193,6 +196,35 @@ class EmbeddingViewer(QWidget):
         
         uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
         toolbar_layout.addWidget(self.find_uncertain_button)
+        
+        # Create a QToolButton for duplicate detection
+        self.find_duplicates_button = QToolButton()
+        self.find_duplicates_button.setText("Find Duplicates")
+        self.find_duplicates_button.setToolTip(
+            "Find annotations that are likely duplicates based on feature similarity."
+        )
+        self.find_duplicates_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_duplicates_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_duplicates_button.setStyleSheet(
+            "QToolButton::menu-indicator { "
+            "subcontrol-position: right center; "
+            "subcontrol-origin: padding; "
+            "left: -4px; }"
+        )
+
+        run_duplicates_action = QAction("Find Duplicates", self)
+        run_duplicates_action.triggered.connect(self.find_duplicates_requested.emit)
+        self.find_duplicates_button.setDefaultAction(run_duplicates_action)
+
+        duplicate_settings_widget = DuplicateSettingsWidget()
+        duplicate_menu = QMenu(self)
+        duplicate_widget_action = QWidgetAction(duplicate_menu)
+        duplicate_widget_action.setDefaultWidget(duplicate_settings_widget)
+        duplicate_menu.addAction(duplicate_widget_action)
+        self.find_duplicates_button.setMenu(duplicate_menu)
+        
+        duplicate_settings_widget.parameters_changed.connect(self.duplicate_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_duplicates_button)
     
         # Add a stretch and separator
         toolbar_layout.addStretch()
@@ -293,6 +325,7 @@ class EmbeddingViewer(QWidget):
 
         self.find_mislabels_button.setEnabled(points_exist)
         self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
+        self.find_duplicates_button.setEnabled(points_exist)
         self.center_on_selection_button.setEnabled(points_exist and selection_exists)
 
         if self.isolated_mode:
@@ -348,6 +381,7 @@ class EmbeddingViewer(QWidget):
         self.center_on_selection_button.setEnabled(False)  # Disable center button
         self.find_mislabels_button.setEnabled(False)
         self.find_uncertain_button.setEnabled(False)
+        self.find_duplicates_button.setEnabled(False)
 
         self.isolate_button.show()
         self.isolate_button.setEnabled(False)
@@ -1584,6 +1618,7 @@ class ExplorerWindow(QMainWindow):
         self.mislabel_params = {'k': 20, 'threshold': 0.6}
         self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
         self.similarity_params = {'k': 30}
+        self.duplicate_params = {'threshold': 0.05}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
@@ -1744,6 +1779,8 @@ class ExplorerWindow(QMainWindow):
         self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
         self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
         self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
+        self.embedding_viewer.find_duplicates_requested.connect(self.find_duplicate_annotations)
+        self.embedding_viewer.duplicate_parameters_changed.connect(self.on_duplicate_params_changed)
         self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
         self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
         
@@ -1887,6 +1924,12 @@ class ExplorerWindow(QMainWindow):
         """Updates the stored parameters for uncertainty analysis."""
         self.uncertainty_params = params
         print(f"Uncertainty parameters updated: {self.uncertainty_params}")
+
+    @pyqtSlot(dict)
+    def on_duplicate_params_changed(self, params):
+        """Updates the stored parameters for duplicate detection."""
+        self.duplicate_params = params
+        print(f"Duplicate detection parameters updated: {self.duplicate_params}")
         
     @pyqtSlot(dict)
     def on_similarity_params_changed(self, params):
@@ -2064,6 +2107,98 @@ class ExplorerWindow(QMainWindow):
                     mislabeled_ann_ids.append(ann_id)
 
             self.embedding_viewer.render_selection_from_ids(set(mislabeled_ann_ids))
+
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def find_duplicate_annotations(self):
+        """
+        Identifies annotations that are likely duplicates based on feature similarity.
+        It uses a nearest-neighbor approach in the high-dimensional feature space.
+        For each group of duplicates found, it selects all but one "original".
+        """
+        threshold = self.duplicate_params.get('threshold', 0.05)
+
+        if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < 2:
+            QMessageBox.information(self, 
+                                    "Not Enough Data", 
+                                    "This feature requires at least 2 points in the embedding viewer.")
+            return
+
+        items_in_view = list(self.embedding_viewer.points_by_id.values())
+        data_items_in_view = [p.data_item for p in items_in_view]
+
+        model_info = self.model_settings_widget.get_selected_model()
+        model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            index = self.feature_store._get_or_load_index(model_key)
+            if index is None:
+                QMessageBox.warning(self, "Error", "Could not find a valid feature index for the current model.")
+                return
+
+            features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
+            if not features_dict:
+                QMessageBox.warning(self, "Error", "Could not retrieve features for the items in view.")
+                return
+
+            query_ann_ids = list(features_dict.keys())
+            query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
+
+            # Find the 2 nearest neighbors for each vector. D = squared L2 distances.
+            D, I = index.search(query_vectors, 2)
+
+            # Use a Disjoint Set Union (DSU) data structure to group duplicates.
+            parent = {ann_id: ann_id for ann_id in query_ann_ids}
+            
+            # Helper functions for DSU
+            def find_set(v):
+                if v == parent[v]:
+                    return v
+                parent[v] = find_set(parent[v])
+                return parent[v]
+            
+            def unite_sets(a, b):
+                a = find_set(a)
+                b = find_set(b)
+                if a != b:
+                    parent[b] = a
+            
+            id_map = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+
+            for i, ann_id in enumerate(query_ann_ids):
+                neighbor_faiss_idx = I[i, 1]  # The second result is the nearest neighbor
+                distance = D[i, 1]
+
+                if distance < threshold:
+                    neighbor_ann_id = id_map.get(neighbor_faiss_idx)
+                    if neighbor_ann_id and neighbor_ann_id in parent:
+                        unite_sets(ann_id, neighbor_ann_id)
+            
+            # Group annotations by their set representative
+            groups = {}
+            for ann_id in query_ann_ids:
+                root = find_set(ann_id)
+                if root not in groups:
+                    groups[root] = []
+                groups[root].append(ann_id)
+
+            copies_to_select = set()
+            for root_id, group_ids in groups.items():
+                if len(group_ids) > 1:
+                    # Sort IDs to consistently pick the same "original".
+                    # Sorting strings is reliable.
+                    sorted_ids = sorted(group_ids)
+                    # The first ID is the original, add the rest to the selection.
+                    copies_to_select.update(sorted_ids[1:])
+            
+            print(f"Found {len(copies_to_select)} duplicate annotations.")
+            self.embedding_viewer.render_selection_from_ids(copies_to_select)
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2658,6 +2793,7 @@ class ExplorerWindow(QMainWindow):
             norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
             item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
             item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
+            item.embedding_id = i
 
     def run_embedding_pipeline(self):
         """
@@ -2812,6 +2948,10 @@ class ExplorerWindow(QMainWindow):
             # 2. Remove from Explorer's internal data structures
             self.current_data_items = [
                 item for item in self.current_data_items if item.annotation.id not in deleted_ann_ids
+            ]
+            # Also update the annotation viewer's list to keep it in sync
+            self.annotation_viewer.all_data_items = [
+                item for item in self.annotation_viewer.all_data_items if item.annotation.id not in deleted_ann_ids
             ]
             for ann_id in deleted_ann_ids:
                 if ann_id in self.data_item_cache:
