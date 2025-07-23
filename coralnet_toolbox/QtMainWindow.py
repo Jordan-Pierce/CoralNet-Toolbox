@@ -2289,6 +2289,13 @@ class MainWindow(QMainWindow):
                                 "See Anything (YOLOE)",
                                 "No images are present in the project.")
             return
+        
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No annotations are present in the project.")
+            return
 
         try:
             self.untoggle_all_tools()

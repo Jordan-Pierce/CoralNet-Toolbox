@@ -15,10 +15,10 @@ from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
+from PyQt5.QtWidgets import (QMessageBox, QCheckBox, QVBoxLayout, QApplication,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QLineEdit,
                              QFormLayout, QComboBox, QSpinBox, QSlider, QPushButton,
-                             QHBoxLayout, QWidget, QFileDialog, QTabWidget)
+                             QHBoxLayout, QWidget, QFileDialog)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -146,6 +146,14 @@ class DeployGeneratorDialog(QDialog):
         # Set Top-K to Top1
         iw.top_k_combo.setCurrentText("Top1")
 
+        # Disconnect the double-click signal to prevent it from loading an image
+        # in the main window, as this dialog is for selection only.
+        try:
+            iw.tableView.doubleClicked.disconnect(iw.on_table_double_clicked)
+        except TypeError:
+            # This happens if the signal has no connections, which is fine.
+            pass
+
     def showEvent(self, event):
         """
         Set up the layout when the dialog is shown.
@@ -157,8 +165,8 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
         
-        # This now populates the dropdown and restores the last selection,
-        # which in turn triggers the filtering via its connected signal.
+        # This now populates the dropdown, restores the last selection,
+        # and then manually triggers the image filtering.
         self.update_source_labels()
 
         # Configure the image window's UI elements for this specific dialog
@@ -201,8 +209,9 @@ class DeployGeneratorDialog(QDialog):
             self.image_selection_window.select_row_for_path(selected_path)
             self.image_selection_window.center_table_on_current_image()
         
-        # Re-apply filters to update the view
-        self.image_selection_window.filter_images()
+        # NOTE: Do not re-apply general filters here. The view is controlled
+        # by filter_images_by_label_and_type. Calling filter_images() would
+        # override the specific label filtering.
 
     def sync_label_search(self):
         """
@@ -220,13 +229,15 @@ class DeployGeneratorDialog(QDialog):
         visual feedback and saves the current selection.
         """
         source_label = self.source_label_combo_box.currentData()
+        source_label_text = self.source_label_combo_box.currentText()
         
         # Update the search bar text for visual feedback
-        source_label_text = self.source_label_combo_box.currentText()
         self.image_selection_window.search_bar_labels.setEditText(source_label_text)
         
         # Save the current selection for the next time the dialog is opened
-        self.last_selected_label_code = source_label_text
+        # Only save if the selection is valid to avoid overwriting with an empty string
+        if source_label_text:
+            self.last_selected_label_code = source_label_text
 
         if not source_label:
             self.image_selection_window.table_model.set_filtered_paths([])
@@ -254,7 +265,7 @@ class DeployGeneratorDialog(QDialog):
 
     def accept(self):
         """
-        Run the batch prediction when the OK button is clicked.
+        Validate selections and store them before closing the dialog.
         """
         if not self.loaded_model:
             QMessageBox.warning(self, 
@@ -262,20 +273,25 @@ class DeployGeneratorDialog(QDialog):
                                 "A model must be loaded before running predictions.")
             return
 
-        if not self.source_label_combo_box.currentData():
+        current_label = self.source_label_combo_box.currentData()
+        if not current_label:
             QMessageBox.warning(self, 
                                 "No Source Label", 
                                 "A source label must be selected.")
             return
 
         # Get highlighted paths from our internal image window to use as targets
-        target_images = self.image_selection_window.table_model.get_highlighted_paths()
+        highlighted_images = self.image_selection_window.table_model.get_highlighted_paths()
 
-        if not target_images:
+        if not highlighted_images:
             QMessageBox.warning(self, 
                                 "No Target Images", 
                                 "You must highlight at least one image in the list to process.")
             return
+
+        # Store the selections for the caller to use after the dialog closes.
+        self.source_label = current_label
+        self.target_images = highlighted_images
 
         # Do not call self.predict here; just close the dialog and let the caller handle prediction
         super().accept()
@@ -288,8 +304,8 @@ class DeployGeneratorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Generator to deploy.\n"
-                            "Select a reference label, then highlight reference images that contain examples.\n"
+        info_label = QLabel("Choose a Generator to deploy. "
+                            "Select a reference label, then highlight reference images that contain examples. "
                             "Each additional reference image may increase accuracy but also processing time.")
 
         info_label.setOpenExternalLinks(True)
@@ -301,17 +317,10 @@ class DeployGeneratorDialog(QDialog):
         
     def setup_models_layout(self):
         """
-        Setup the models layout with tabs for standard and custom models.
+        Setup the models layout with a simple model selection combo box (no tabs).
         """
         group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
-
-        # Create tabbed widget
-        tab_widget = QTabWidget()
-
-        # Tab 1: Standard models
-        standard_tab = QWidget()
-        standard_layout = QVBoxLayout(standard_tab)
 
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
@@ -333,42 +342,8 @@ class DeployGeneratorDialog(QDialog):
         # Set the default model
         self.model_combo.setCurrentText("yoloe-v8s-seg.pt")
 
-        standard_layout.addWidget(QLabel("Select Model:"))
-        standard_layout.addWidget(self.model_combo)
-
-        tab_widget.addTab(standard_tab, "Use Existing Model")
-
-        # Tab 2: Custom model
-        custom_tab = QWidget()
-        custom_layout = QFormLayout(custom_tab)
-
-        # Custom model file selection
-        self.model_path_edit = QLineEdit()
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_model_file)
-
-        model_path_layout = QHBoxLayout()
-        model_path_layout.addWidget(self.model_path_edit)
-        model_path_layout.addWidget(browse_button)
-        custom_layout.addRow("Custom Model:", model_path_layout)
-
-        # Class Mapping
-        self.mapping_edit = QLineEdit()
-        self.mapping_button = QPushButton("Browse...")
-        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.mapping_edit)
-        class_mapping_layout.addWidget(self.mapping_button)
-        custom_layout.addRow("Class Mapping:", class_mapping_layout)
-
-        tab_widget.addTab(custom_tab, "Custom Model")
-
-        # Add the tab widget to the main layout
-        layout.addWidget(tab_widget)
-
-        # Store the tab widget for later reference
-        self.model_tab_widget = tab_widget
+        layout.addWidget(QLabel("Select Model:"))
+        layout.addWidget(self.model_combo)
 
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
@@ -446,7 +421,7 @@ class DeployGeneratorDialog(QDialog):
         self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
         self.area_threshold_max_slider.setTickInterval(10)
         self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min / 100.0:.2f} - {self.area_thresh_max / 100.0:.2f}")
         layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
@@ -525,37 +500,6 @@ class DeployGeneratorDialog(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
-    
-    def browse_model_file(self):
-        """
-        Open a file dialog to browse for a model file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Model File",
-                                                   "",
-                                                   "Model Files (*.pt *.pth);;All Files (*)")
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-            self.mapping_edit.setText(file_path)
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -654,33 +598,51 @@ class DeployGeneratorDialog(QDialog):
     def update_source_labels(self):
         """
         Updates the source label combo box with all labels in the project
-        and restores the last selected label.
+        that have at least one polygon or rectangle annotation.
+        Restores the last selected label.
 
-        :return: True if labels were found, False otherwise
+        :return: True if valid labels were found, False otherwise
         """
-        self.source_label_combo_box.clear()
-
-        # Get all labels from the main label window
-        all_labels = self.main_window.label_window.labels
-
-        if not all_labels:
-            QMessageBox.information(self,
-                                    "No Labels in Project",
-                                    "There are no labels in this project to use as a reference.")
-            # Close the dialog since batch inference can't proceed
-            QApplication.processEvents()
-            self.reject()
-            return False
+        # Block signals to prevent premature filtering while populating the list
+        self.source_label_combo_box.blockSignals(True)
         
-        # Add all labels from the project to the combo box
-        for label_obj in all_labels:
-            self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
+        try:
+            self.source_label_combo_box.clear()
 
-        # Restore the last selected label if it exists
-        if self.last_selected_label_code:
-            index = self.source_label_combo_box.findText(self.last_selected_label_code)
-            if index != -1:
-                self.source_label_combo_box.setCurrentIndex(index)
+            # Find all labels that are used in polygon or rectangle annotations
+            all_labels_in_project = self.main_window.label_window.labels
+            valid_labels = set()
+            if all_labels_in_project:
+                all_image_paths = self.main_window.image_window.raster_manager.image_paths
+                for path in all_image_paths:
+                    annotations = self.annotation_window.get_image_annotations(path)
+                    for ann in annotations:
+                        if isinstance(ann, (PolygonAnnotation, RectangleAnnotation)):
+                            valid_labels.add(ann.label)
+
+            if not valid_labels:
+                QMessageBox.information(self,
+                                        "No Valid Reference Annotations",
+                                        "No images have polygon or rectangle annotations to use as a reference.")
+                QApplication.processEvents()
+                self.reject()
+                return False
+            
+            # Add the valid labels to the combo box, sorted for consistency
+            sorted_valid_labels = sorted(list(valid_labels), key=lambda x: x.short_label_code)
+            for label_obj in sorted_valid_labels:
+                self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
+
+            # Restore the last selected label if it exists and is still valid
+            if self.last_selected_label_code:
+                index = self.source_label_combo_box.findText(self.last_selected_label_code)
+                if index != -1:
+                    self.source_label_combo_box.setCurrentIndex(index)
+        finally:
+            self.source_label_combo_box.blockSignals(False)
+        
+        # Manually trigger the filtering now that the list is stable
+        self.filter_images_by_label_and_type()
 
         return True
 
@@ -753,10 +715,6 @@ class DeployGeneratorDialog(QDialog):
                 conf=0.99,
             )
 
-            # Load the model class names if available
-            if self.class_mapping:
-                self.add_labels_to_label_window()
-
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, 
@@ -776,16 +734,6 @@ class DeployGeneratorDialog(QDialog):
             progress_bar.close()
             progress_bar = None
 
-    def add_labels_to_label_window(self):
-        """
-        Add labels to the label window based on the class mapping.
-        """
-        if self.class_mapping:
-            for label in self.class_mapping.values():
-                self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                                      label['long_label_code'],
-                                                                      QColor(*label['color']))
-
     def predict(self, image_paths=None):
         """
         Make predictions on the given image paths using the loaded model.
@@ -793,11 +741,11 @@ class DeployGeneratorDialog(QDialog):
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
         """
-        if not self.loaded_model:
+        if not self.loaded_model or not self.source_label:
             return
         
-        # Update class mapping with reference label
-        self.class_mapping = {0: self.source_label_combo_box.currentData()}
+        # Update class mapping with the selected reference label
+        self.class_mapping = {0: self.source_label}
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -867,7 +815,8 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model.iou = self.main_window.get_iou_thresh()
         self.loaded_model.max_det = self.get_max_detections()
         
-        reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
+        # NOTE: self.target_images contains the reference images highlighted in the dialog
+        reference_image_paths = self.target_images
 
         if not reference_image_paths:
             QMessageBox.warning(self, 
@@ -875,8 +824,8 @@ class DeployGeneratorDialog(QDialog):
                                 "You must highlight at least one reference image.")
             return []
 
-        # Get the selected reference label
-        source_label = self.source_label_combo_box.currentData()
+        # Get the selected reference label from the stored variable
+        source_label = self.source_label
         
         # Create a dictionary of reference annotations, with image path as the key.
         reference_annotations_dict = {}
@@ -928,6 +877,7 @@ class DeployGeneratorDialog(QDialog):
             
             if not len(results[0].boxes):
                 # If no boxes were detected, skip to the next reference
+                progress_bar.update_progress()
                 continue
             
             # Update the name of the results and append to the list
