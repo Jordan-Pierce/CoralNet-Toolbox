@@ -562,7 +562,7 @@ class ImageWindow(QWidget):
                 
         except Exception as e:
             self.show_error("Image Loading Error", 
-                          f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
+                            f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
             return False
                 
     @property

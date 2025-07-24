@@ -68,6 +68,11 @@ class Raster(QObject):
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
         self.label_counts = {}  # Store counts of annotations per label
+        self.annotation_types = {}  # Store counts of annotations per type
+        
+        # Add sets for efficient lookups
+        self.label_set: Set[str] = set()
+        self.annotation_type_set: Set[str] = set()
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
@@ -247,22 +252,30 @@ class Raster(QObject):
         self.annotation_count = len(annotations)
         self.has_annotations = bool(annotations)
         
-        # Check for predictions
-        predictions = [a.machine_confidence for a in annotations if a.machine_confidence != {}]
+        predictions = [a.machine_confidence for a in annotations if a.machine_confidence]
         self.has_predictions = len(predictions) > 0
         
-        # Update labels
-        self.labels = {annotation.label for annotation in annotations if annotation.label}
-        
-        # Count annotations per label
-        self.label_counts = {}
+        # Clear previous data
+        self.label_counts.clear()
+        self.annotation_types.clear()
+        self.label_set.clear()
+        self.annotation_type_set.clear()
+
         for annotation in annotations:
+            # Process label information
             if annotation.label:
-                label_name = annotation.label.short_label_code if hasattr(annotation.label, 'short_label_code') else str(annotation.label)
-                if label_name in self.label_counts:
-                    self.label_counts[label_name] += 1
+                if hasattr(annotation.label, 'short_label_code'):
+                    label_name = annotation.label.short_label_code
                 else:
-                    self.label_counts[label_name] = 1
+                    label_name = str(annotation.label)
+                
+                self.label_counts[label_name] = self.label_counts.get(label_name, 0) + 1
+                self.label_set.add(label_name)
+
+            # Process annotation type information
+            anno_type = annotation.__class__.__name__
+            self.annotation_types[anno_type] = self.annotation_types.get(anno_type, 0) + 1
+            self.annotation_type_set.add(anno_type)
     
     def matches_filter(self, 
                        search_text="", 

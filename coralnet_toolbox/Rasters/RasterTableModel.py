@@ -106,20 +106,40 @@ class RasterTableModel(QAbstractTableModel):
                 
         elif role == Qt.ToolTipRole:
             if index.column() == self.FILENAME_COL:
-                # Include full path and metadata in tooltip
                 dimensions = raster.metadata.get('dimensions', f"{raster.width}x{raster.height}")
-                return (f"Path: {path}\n"
-                        f"Dimensions: {dimensions}\n"
-                        f"Has Annotations: {'Yes' if raster.has_annotations else 'No'}\n"
-                        f"Has Predictions: {'Yes' if raster.has_predictions else 'No'}")
+                
+                tooltip_parts = [
+                    f"<b>Path:</b> {path}",
+                    f"<b>Dimensions:</b> {dimensions}",
+                    f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",
+                    f"<b>Predictions:</b> {'Yes' if raster.has_predictions else 'No'}"
+                ]
+
+                if raster.has_work_areas():
+                    tooltip_parts.append(f"<b>Work Areas:</b> {raster.count_work_items()}")
+
+                return "<br>".join(tooltip_parts)
+
             elif index.column() == self.ANNOTATION_COUNT_COL and raster.annotation_count > 0:
-                # Show annotation counts per label in tooltip
+                tooltip_text = f"<b>Total annotations:</b> {raster.annotation_count}"
+                
+                # Add annotation counts per label using a for loop
                 if hasattr(raster, 'label_counts') and raster.label_counts:
-                    # Format the label counts for display
-                    label_counts_text = "\n".join([f"{label}: {count}" for label, count in raster.label_counts.items()])
-                    return f"Annotations by label:\n{label_counts_text}"
-                else:
-                    return f"Total annotations: {raster.annotation_count}"
+                    label_items = []
+                    for label, count in raster.label_counts.items():
+                        label_items.append(f"<li>{label}: {count}</li>")
+                    label_counts_text = "".join(label_items)
+                    tooltip_text += f"<br><br><b>Annotations by label:</b><ul>{label_counts_text}</ul>"
+                
+                # Add annotation counts per type using a for loop
+                if hasattr(raster, 'annotation_types') and raster.annotation_types:
+                    type_items = []
+                    for type_name, count in raster.annotation_types.items():
+                        type_items.append(f"<li>{type_name}: {count}</li>")
+                    type_counts_text = "".join(type_items)
+                    tooltip_text += f"<br><b>Annotations by type:</b><ul>{type_counts_text}</ul>"
+                
+                return tooltip_text
                 
         return None
         

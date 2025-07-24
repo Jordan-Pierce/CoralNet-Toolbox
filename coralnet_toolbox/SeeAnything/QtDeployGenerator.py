@@ -198,53 +198,60 @@ class DeployGeneratorDialog(QDialog):
         for path in removed_paths:
             dialog_manager.remove_raster(path)
         
-        # Explicitly update annotation counts for all images in the dialog's view
+        # Explicitly update annotation info for all images in the dialog's view
         for path in dialog_manager.image_paths:
-            annotations = self.annotation_window.get_image_annotations(path)
-            dialog_manager.update_annotation_info(path, annotations)
+            raster = dialog_manager.get_raster(path)
+            if raster:
+                annotations = self.annotation_window.get_image_annotations(path)
+                # Call the update method directly on the raster object to cache its data
+                raster.update_annotation_info(annotations)
             
     def filter_images_by_label_and_type(self):
         """
-        Filters the images in the selection window to show only those that
-        contain the selected reference label with a valid annotation type
-        (Polygon or Rectangle). Also updates the disabled search bar for
-        visual feedback and saves the current selection.
+        Filters images using a custom logic based on the selected label
+        and required annotation types (Polygon or Rectangle). This bypasses
+        the ImageWindow's default filtering mechanism to avoid conflicts.
         """
         source_label = self.source_label_combo_box.currentData()
         source_label_text = self.source_label_combo_box.currentText()
-        
-        # Update the search bar text for visual feedback
-        self.image_selection_window.search_bar_labels.setEditText(source_label_text)
-        
-        # Save the current selection for the next time the dialog is opened
-        # Only save if the selection is valid to avoid overwriting with an empty string
+
+        # NOTE: Do not programmatically set the text on the disabled search bar.
+        # Doing so can trigger the ImageWindow's internal filtering logic, which
+        # conflicts with the manual, more specific filter being applied below.
+        # This conflict is the source of the bug where the image list disappears.
+        # self.image_selection_window.search_bar_labels.setEditText(source_label_text)
+
         if source_label_text:
             self.last_selected_label_code = source_label_text
 
         if not source_label:
+            # If no label is selected, show an empty list.
             self.image_selection_window.table_model.set_filtered_paths([])
             return
 
         all_paths = self.image_selection_window.raster_manager.image_paths
-        
         final_filtered_paths = []
-        for path in all_paths:
-            annotations = self.annotation_window.get_image_annotations(path)
-            
-            # Check if this image has an annotation that matches the label and type
-            has_valid_annotation = False
-            for ann in annotations:
-                if ann.label.short_label_code == source_label.short_label_code:
-                    if isinstance(ann, (RectangleAnnotation, PolygonAnnotation)):
-                        has_valid_annotation = True
-                        break  # Found a valid one, no need to check others in this image
-            
-            if has_valid_annotation:
-                final_filtered_paths.append(path)
-        
-        # Update the table model directly with the precisely filtered list
-        self.image_selection_window.table_model.set_filtered_paths(final_filtered_paths)
 
+        valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
+
+        # Loop through paths and check the pre-computed sets on each raster
+        for path in all_paths:
+            raster = self.image_selection_window.raster_manager.get_raster(path)
+            if not raster:
+                continue
+
+            # Check if the raster's cached set contains the selected label
+            has_label = source_label.short_label_code in raster.label_set
+
+            # Check if the raster's cached set contains a valid annotation type
+            has_valid_type = not valid_types.isdisjoint(raster.annotation_type_set)
+
+            if has_label and has_valid_type:
+                final_filtered_paths.append(path)
+
+        # Directly set the filtered list in the table model.
+        self.image_selection_window.table_model.set_filtered_paths(final_filtered_paths)
+    
     def accept(self):
         """
         Validate selections and store them before closing the dialog.
@@ -590,28 +597,29 @@ class DeployGeneratorDialog(QDialog):
 
     def update_source_labels(self):
         """
-        Updates the source label combo box with all labels in the project
-        that have at least one polygon or rectangle annotation.
-        Restores the last selected label.
-
-        :return: True if valid labels were found, False otherwise
+        Updates the source label combo box by reading from the cached data in
+        the dialog's raster objects. Restores the last selected label.
         """
-        # Block signals to prevent premature filtering while populating the list
         self.source_label_combo_box.blockSignals(True)
         
         try:
             self.source_label_combo_box.clear()
 
-            # Find all labels that are used in polygon or rectangle annotations
-            all_labels_in_project = self.main_window.label_window.labels
+            dialog_manager = self.image_selection_window.raster_manager
+            valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
             valid_labels = set()
-            if all_labels_in_project:
-                all_image_paths = self.main_window.image_window.raster_manager.image_paths
-                for path in all_image_paths:
-                    annotations = self.annotation_window.get_image_annotations(path)
-                    for ann in annotations:
-                        if isinstance(ann, (PolygonAnnotation, RectangleAnnotation)):
-                            valid_labels.add(ann.label)
+
+            # Create a lookup map to get full label objects from their codes
+            all_project_labels = {lbl.short_label_code: lbl for lbl in self.main_window.label_window.labels}
+
+            # Use the already-cached data in the dialog's rasters
+            for path in dialog_manager.image_paths:
+                raster = dialog_manager.get_raster(path)
+                if raster and not valid_types.isdisjoint(raster.annotation_type_set):
+                    # This raster has a valid annotation, so add its labels to the set
+                    for label_code in raster.label_set:
+                        if label_code in all_project_labels:
+                            valid_labels.add(all_project_labels[label_code])
 
             if not valid_labels:
                 QMessageBox.information(self,
@@ -621,12 +629,12 @@ class DeployGeneratorDialog(QDialog):
                 self.reject()
                 return False
             
-            # Add the valid labels to the combo box, sorted for consistency
+            # Add the valid labels to the combo box
             sorted_valid_labels = sorted(list(valid_labels), key=lambda x: x.short_label_code)
             for label_obj in sorted_valid_labels:
                 self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
 
-            # Restore the last selected label if it exists and is still valid
+            # Restore the last selected label if it's still valid
             if self.last_selected_label_code:
                 index = self.source_label_combo_box.findText(self.last_selected_label_code)
                 if index != -1:
@@ -636,7 +644,6 @@ class DeployGeneratorDialog(QDialog):
         
         # Manually trigger the filtering now that the list is stable
         self.filter_images_by_label_and_type()
-
         return True
 
     def get_source_annotations(self, reference_label, reference_image_path):
