@@ -88,6 +88,7 @@ The main window consists of several components:
       - **Isolate Selection**: Subset view;
       - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location;
       - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions);
+      - **Find Duplicates**: Select annotations that are likely duplicates of another (only selects the duplicates); 
       - **Home**: Resets the Embedding Viewer zoom level.
   **Tip**: 
     - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;
@@ -143,9 +144,12 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferencing using `FastSAM`.
 
 - **See Anything (YOLOE)**:
-  - **Train Model**: Train a YOLOE Segmentation model using an existing YOLO Segmentation dataset.
-  - **Deploy Predictor**: Deploy an existing `YOLOE` model to use interactively.
-  - **Batch Inference**: Perform batch inferencing using `YOLOE`.
+  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image;
+  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor; reference other images and labels;
+    - Select the `YOLOE` model, parameters, and load it;
+    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons);
+    - Use the loaded model on images, or work areas, and with batch inferencing;
+  - **Batch Inference**: Perform batch inferencing using loaded `YOLOE` generator.
 
 - **AutoDistill**:
   - **Deploy Model**: Deploy a foundational model
@@ -192,16 +196,22 @@ The main window consists of several components:
   - **Backspace**: Cancel the current polygon annotation.
 
 - **SAM Tool**: After a model is loaded
-  - **Space Bar**: Set working area; confirm prediction; finalize predictions and exit working area.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Ctrl + Left-Click**: Add positive point.
-  - **Ctrl + Right-Click**: Add negative point.
-  - **Backspace**: Discard unfinalized predictions.
+  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Backspace**: Cancel drawing the current work area.
+  - **Space**: Create a work area from the current view.
+    - **Space**: Set working area; confirm prediction; finalize predictions and exit working area.
+    - **Left-Click**: Start a box; press again to end a box.
+    - **Ctrl + Left-Click**: Add positive point.
+    - **Ctrl + Right-Click**: Add negative point.
+    - **Backspace**: Discard unfinalized predictions.
 
 - **See Anything (YOLOE) Tool**: After a model is loaded
-  - **Space Bar**: Set working area; run prediction; finalize predictions and exit working area.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Backspace**: Discard unfinalized predictions.
+  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Backspace**: Cancel drawing the current work area.
+  - **Space**: Create a work area from the current view.
+    - **Space**: Set working area; run prediction; finalize predictions and exit working area.
+    - **Left-Click**: Start a box; press again to end a box.
+    - **Backspace**: Discard unfinalized predictions.
 
 - **Work Area Tool**: For creating restricted areas for model prediction
   - **Left-Click**: Start drawing a work area; click again to finish drawing.
@@ -301,4 +311,7 @@ The main window consists of several components:
   - **Ctrl + 2**: Make predictions using Object Detection model.
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
   - **Ctrl + 4**: Make predictions using FastSAM model.
-  - **Ctrl + 5**: Make predictions using AutoDistill model.
+  - **Ctrl + 5**: Make predictions using YOLOE model.
+  - **Ctrl + 6**: Make predictions using AutoDistill model.
+
+- **Tooltips**: Hover over tool buttons, image / annotation rows for information about them.

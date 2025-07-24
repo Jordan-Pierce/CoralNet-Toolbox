@@ -2290,18 +2290,41 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
         
-        # Check if there are any annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE)",
                                 "No annotations are present in the project.")
+            return
+        
+        valid_reference_types = {"PolygonAnnotation", "RectangleAnnotation"}
+        has_valid_reference = False
+
+        # Iterate through the rasters in the main manager.
+        for raster in self.image_window.raster_manager.rasters.values():
+            # The values of our map are sets of annotation type names.
+            # e.g., [{'PointAnnotation'}, {'PolygonAnnotation', 'RectangleAnnotation'}]
+            for types_for_a_label in raster.label_to_types_map.values():
+                # Check if the set of types for this specific label
+                # has any overlap with our valid reference types.
+                if not valid_reference_types.isdisjoint(types_for_a_label):
+                    # A valid reference type was found for at least one label on this raster.
+                    has_valid_reference = True
+                    break  # Exit the inner loop (over types)
+            
+            if has_valid_reference:
+                break  # Exit the outer loop (over rasters)
+
+        if not has_valid_reference:
+            QMessageBox.warning(self,
+                                "No Valid Reference Annotations",
+                                "No images have polygon or rectangle annotations to use as a reference.")
             return
 
         try:
             self.untoggle_all_tools()
             self.see_anything_deploy_generator_dialog.exec_()
         except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
+            QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
 
     def open_see_anything_batch_inference_dialog(self):
         """Open the See Anything Batch Inference dialog to run batch inference with See Anything."""
