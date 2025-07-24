@@ -307,8 +307,9 @@ class Raster(QObject):
             label_match = False
             
             # Check actual annotation labels (always consider these)
-            for label in self.labels:
-                if hasattr(label, 'short_label_code') and search_label in label.short_label_code:
+            # Look for the search label in the label_set instead of self.labels
+            for label_code in self.label_set:
+                if search_label in label_code:
                     label_match = True
                     break
             

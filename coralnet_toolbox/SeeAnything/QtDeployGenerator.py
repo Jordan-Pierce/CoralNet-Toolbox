@@ -260,6 +260,7 @@ class DeployGeneratorDialog(QDialog):
             QMessageBox.warning(self, 
                                 "No Model", 
                                 "A model must be loaded before running predictions.")
+            super().reject()
             return
 
         current_label = self.source_label_combo_box.currentData()
@@ -267,6 +268,7 @@ class DeployGeneratorDialog(QDialog):
             QMessageBox.warning(self, 
                                 "No Source Label", 
                                 "A source label must be selected.")
+            super().reject()
             return
 
         # Get highlighted paths from our internal image window to use as targets
@@ -276,6 +278,7 @@ class DeployGeneratorDialog(QDialog):
             QMessageBox.warning(self, 
                                 "No Target Images", 
                                 "You must highlight at least one image in the list to process.")
+            super().reject()
             return
 
         # Store the selections for the caller to use after the dialog closes.
@@ -622,11 +625,18 @@ class DeployGeneratorDialog(QDialog):
                             valid_labels.add(all_project_labels[label_code])
 
             if not valid_labels:
-                QMessageBox.information(self,
-                                        "No Valid Reference Annotations",
-                                        "No images have polygon or rectangle annotations to use as a reference.")
-                QApplication.processEvents()
-                self.reject()
+                # If no images have suitable annotations, inform the user and close the dialog safely.
+                # Calling self.reject() directly inside showEvent can be unstable.
+                # QTimer.singleShot schedules the rejection to happen after the current event processing is finished.
+                from PyQt5.QtCore import QTimer
+
+                def reject_dialog():
+                    QMessageBox.information(self,
+                                            "No Valid Reference Annotations",
+                                            "No images have polygon or rectangle annotations to use as a reference.")
+                    self.reject()
+
+                QTimer.singleShot(0, reject_dialog)
                 return False
             
             # Add the valid labels to the combo box
