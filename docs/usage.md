@@ -88,6 +88,7 @@ The main window consists of several components:
       - **Isolate Selection**: Subset view;
       - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location;
       - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions);
+      - **Find Duplicates**: Select annotations that are likely duplicates of another (only selects the duplicates); 
       - **Home**: Resets the Embedding Viewer zoom level.
   **Tip**: 
     - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;
@@ -143,9 +144,12 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferencing using `FastSAM`.
 
 - **See Anything (YOLOE)**:
-  - **Train Model**: Train a YOLOE Segmentation model using an existing YOLO Segmentation dataset.
-  - **Deploy Predictor**: Deploy an existing `YOLOE` model to use interactively.
-  - **Batch Inference**: Perform batch inferencing using `YOLOE`.
+  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image;
+  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor; reference other images and labels;
+    - Select the `YOLOE` model, parameters, and load it;
+    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons);
+    - Use the loaded model on images, or work areas, and with batch inferencing;
+  - **Batch Inference**: Perform batch inferencing using loaded `YOLOE` generator.
 
 - **AutoDistill**:
   - **Deploy Model**: Deploy a foundational model
@@ -301,4 +305,7 @@ The main window consists of several components:
   - **Ctrl + 2**: Make predictions using Object Detection model.
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
   - **Ctrl + 4**: Make predictions using FastSAM model.
-  - **Ctrl + 5**: Make predictions using AutoDistill model.
+  - **Ctrl + 5**: Make predictions using YOLOE model.
+  - **Ctrl + 6**: Make predictions using AutoDistill model.
+
+- **Tooltips**: Hover over tool buttons, image / annotation rows for information about them.
