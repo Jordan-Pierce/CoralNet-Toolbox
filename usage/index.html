@@ -814,6 +814,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Isolate Selection</strong>: Subset view;</li>
 <li><strong>Find Potential Mislabels</strong>: Select potentially incorrectly labeled annotations, based on location;</li>
 <li><strong>Review Uncertain</strong>: Select annotations with lower Top-1 confidence scores (requires Predictions);</li>
+<li><strong>Find Duplicates</strong>: Select annotations that are likely duplicates of another (only selects the duplicates); </li>
 <li><strong>Home</strong>: Resets the Embedding Viewer zoom level.
   <strong>Tip</strong>: </li>
 <li>Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;</li>
@@ -893,10 +894,15 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>See Anything (YOLOE)</strong>:</p>
 </li>
-<li><strong>Train Model</strong>: Train a YOLOE Segmentation model using an existing YOLO Segmentation dataset.</li>
-<li><strong>Deploy Predictor</strong>: Deploy an existing <code>YOLOE</code> model to use interactively.</li>
+<li><strong>Deploy Predictor</strong>: Deploy a <code>YOLOE</code> model to use interactively within the same image;</li>
+<li><strong>Deploy Generator</strong>: Deploy a <code>YOLOE</code> model to use like a detector / segmentor; reference other images and labels;<ul>
+<li>Select the <code>YOLOE</code> model, parameters, and load it;</li>
+<li>Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons);</li>
+<li>Use the loaded model on images, or work areas, and with batch inferencing;</li>
+</ul>
+</li>
 <li>
-<p><strong>Batch Inference</strong>: Perform batch inferencing using <code>YOLOE</code>.</p>
+<p><strong>Batch Inference</strong>: Perform batch inferencing using loaded <code>YOLOE</code> generator.</p>
 </li>
 <li>
 <p><strong>AutoDistill</strong>:</p>
@@ -964,20 +970,30 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>SAM Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Space Bar</strong>: Set working area; confirm prediction; finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
+<li>
+<p><strong>Space</strong>: Create a work area from the current view.</p>
+<ul>
+<li><strong>Space</strong>: Set working area; confirm prediction; finalize predictions and exit working area.</li>
 <li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
 <li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
-<li>
-<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
+<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+</ul>
 </li>
 <li>
 <p><strong>See Anything (YOLOE) Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Space Bar</strong>: Set working area; run prediction; finalize predictions and exit working area.</li>
-<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li>
-<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
+<p><strong>Space</strong>: Create a work area from the current view.</p>
+<ul>
+<li><strong>Space</strong>: Set working area; run prediction; finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+</ul>
 </li>
 <li>
 <p><strong>Work Area Tool</strong>: For creating restricted areas for model prediction</p>
@@ -1090,7 +1106,13 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Ctrl + 2</strong>: Make predictions using Object Detection model.</li>
 <li><strong>Ctrl + 3</strong>: Make predictions using Instance Segmentation model.</li>
 <li><strong>Ctrl + 4</strong>: Make predictions using FastSAM model.</li>
-<li><strong>Ctrl + 5</strong>: Make predictions using AutoDistill model.</li>
+<li><strong>Ctrl + 5</strong>: Make predictions using YOLOE model.</li>
+<li>
+<p><strong>Ctrl + 6</strong>: Make predictions using AutoDistill model.</p>
+</li>
+<li>
+<p><strong>Tooltips</strong>: Hover over tool buttons, image / annotation rows for information about them.</p>
+</li>
 </ul>
 
 
@@ -1114,7 +1136,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="July 11, 2025 18:49:21 UTC"><span class="timeago" datetime="2025-07-11T18:49:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="July 11, 2025 18:49:21 UTC">2025-07-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="July 24, 2025 20:21:09 UTC"><span class="timeago" datetime="2025-07-24T20:21:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="July 24, 2025 20:21:09 UTC">2025-07-24</span>
   </span>
 
     
