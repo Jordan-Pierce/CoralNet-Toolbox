@@ -13,7 +13,7 @@ from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, )
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
 from torch.cuda import empty_cache
 
@@ -109,7 +109,7 @@ class TrainModelWorker(QThread):
 
             # Train the model
             self.model.train(**self.params,
-                             trainer=YOLOEPESegTrainer,
+                             trainer=YOLOEVPTrainer  , #YOLOEPESegTrainer,
                              device=self.device)
 
             # Post-run cleanup
@@ -222,6 +222,13 @@ class TrainModelDialog(QDialog):
         # Task specific parameters
         self.imgsz = 640
         self.batch = 4
+        
+        # Training parameters with defaults for linear-probing
+        self._lr0 = 1e-3
+        self._warmup_bias_lr = 0.0
+        self._weight_decay = 0.025
+        self._momentum = 0.9
+        self._close_mosaic = 0  # Default for linear-probing
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -232,6 +239,8 @@ class TrainModelDialog(QDialog):
         self.setup_dataset_layout()
         # Create the model layout (new)
         self.setup_model_layout()
+        # Create the output parameters layout
+        self.setup_output_parameters_layout()
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
@@ -327,6 +336,29 @@ class TrainModelDialog(QDialog):
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_output_parameters_layout(self):
+        """
+        Set up the layout and widgets for output parameters (project directory and name).
+        """
+        group_box = QGroupBox("Output")
+        layout = QFormLayout()
+
+        # Project
+        self.project_edit = QLineEdit()
+        self.project_button = QPushButton("Browse...")
+        self.project_button.clicked.connect(self.browse_project_dir)
+        project_layout = QHBoxLayout()
+        project_layout.addWidget(self.project_edit)
+        project_layout.addWidget(self.project_button)
+        layout.addRow("Project:", project_layout)
+
+        # Name
+        self.name_edit = QLineEdit()
+        layout.addRow("Name:", self.name_edit)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_parameters_layout(self):
         """
@@ -352,19 +384,6 @@ class TrainModelDialog(QDialog):
         group_layout = QVBoxLayout(group_box)
         group_layout.addWidget(scroll_area)
 
-        # Project
-        self.project_edit = QLineEdit()
-        self.project_button = QPushButton("Browse...")
-        self.project_button.clicked.connect(self.browse_project_dir)
-        project_layout = QHBoxLayout()
-        project_layout.addWidget(self.project_edit)
-        project_layout.addWidget(self.project_button)
-        form_layout.addRow("Project:", project_layout)
-
-        # Name
-        self.name_edit = QLineEdit()
-        form_layout.addRow("Name:", self.name_edit)
-
         # Fine-tune or Linear Probing
         self.training_mode = QComboBox()
         self.training_mode.addItems(["linear-probe", "fine-tune"])
@@ -381,10 +400,59 @@ class TrainModelDialog(QDialog):
 
         # Patience
         self.patience_spinbox = QSpinBox()
-        self.patience_spinbox.setMinimum(1)
+        self.patience_spinbox.setMinimum(0)  # Changed minimum to 0 to allow for 0 patience
         self.patience_spinbox.setMaximum(1000)
-        self.patience_spinbox.setValue(30)
+        self.patience_spinbox.setValue(0)  # Default for linear-probing
         form_layout.addRow("Patience:", self.patience_spinbox)
+
+        # Close Mosaic
+        self.close_mosaic_spinbox = QSpinBox()
+        self.close_mosaic_spinbox.setMinimum(0)
+        self.close_mosaic_spinbox.setMaximum(1000)
+        self.close_mosaic_spinbox.setValue(0)  # Default for linear-probing
+        form_layout.addRow("Close Mosaic:", self.close_mosaic_spinbox)
+        
+        # Optimizer
+        self.optimizer_combo = QComboBox()
+        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
+        self.optimizer_combo.setCurrentText("AdamW")
+        form_layout.addRow("Optimizer:", self.optimizer_combo)
+
+        # Learning Rate (lr0)
+        self.lr0_spinbox = QDoubleSpinBox()
+        self.lr0_spinbox.setDecimals(6)
+        self.lr0_spinbox.setMinimum(0.000001)
+        self.lr0_spinbox.setMaximum(1.0)
+        self.lr0_spinbox.setSingleStep(0.0001)
+        self.lr0_spinbox.setValue(self._lr0)
+        form_layout.addRow("Learning Rate:", self.lr0_spinbox)
+
+        # Warmup Bias Learning Rate
+        self.warmup_bias_lr_spinbox = QDoubleSpinBox()
+        self.warmup_bias_lr_spinbox.setDecimals(6)
+        self.warmup_bias_lr_spinbox.setMinimum(0.0)
+        self.warmup_bias_lr_spinbox.setMaximum(1.0)
+        self.warmup_bias_lr_spinbox.setSingleStep(0.0001)
+        self.warmup_bias_lr_spinbox.setValue(self._warmup_bias_lr)
+        form_layout.addRow("Warmup Bias LR:", self.warmup_bias_lr_spinbox)
+
+        # Weight Decay
+        self.weight_decay_spinbox = QDoubleSpinBox()
+        self.weight_decay_spinbox.setDecimals(6)
+        self.weight_decay_spinbox.setMinimum(0.0)
+        self.weight_decay_spinbox.setMaximum(1.0)
+        self.weight_decay_spinbox.setSingleStep(0.001)
+        self.weight_decay_spinbox.setValue(self._weight_decay)
+        form_layout.addRow("Weight Decay:", self.weight_decay_spinbox)
+
+        # Momentum
+        self.momentum_spinbox = QDoubleSpinBox()
+        self.momentum_spinbox.setDecimals(2)
+        self.momentum_spinbox.setMinimum(0.0)
+        self.momentum_spinbox.setMaximum(1.0)
+        self.momentum_spinbox.setSingleStep(0.01)
+        self.momentum_spinbox.setValue(self._momentum)
+        form_layout.addRow("Momentum:", self.momentum_spinbox)
 
         # Imgsz
         self.imgsz_spinbox = QSpinBox()
@@ -392,10 +460,6 @@ class TrainModelDialog(QDialog):
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
-
-        # Multi Scale
-        self.multi_scale_combo = create_bool_combo()
-        form_layout.addRow("Multi-Scale:", self.multi_scale_combo)
 
         # Batch
         self.batch_spinbox = QSpinBox()
@@ -421,20 +485,6 @@ class TrainModelDialog(QDialog):
         self.save_period_spinbox.setMaximum(1000)
         self.save_period_spinbox.setValue(-1)
         form_layout.addRow("Save Period:", self.save_period_spinbox)
-
-        # Dropout
-        self.dropout_spinbox = QDoubleSpinBox()
-        self.dropout_spinbox.setMinimum(0.0)
-        self.dropout_spinbox.setMaximum(1.0)
-        self.dropout_spinbox.setValue(0.0)
-        form_layout.addRow("Dropout:", self.dropout_spinbox)
-
-        # Optimizer
-        self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("AdamW")
-        form_layout.addRow("Optimizer:", self.optimizer_combo)
-
         # Val
         self.val_combo = create_bool_combo()
         form_layout.addRow("Validation:", self.val_combo)
@@ -489,9 +539,32 @@ class TrainModelDialog(QDialog):
             # Fine-tune mode
             self.epochs_spinbox.setValue(80)
             self.patience_spinbox.setValue(20)
+            self.close_mosaic_spinbox.setValue(10)
+            self._close_mosaic = 10
+            
+            # These parameters stay the same for both modes
+            self.lr0_spinbox.setValue(1e-3)
+            self.warmup_bias_lr_spinbox.setValue(0.0)
+            self.weight_decay_spinbox.setValue(0.025)
+            self.momentum_spinbox.setValue(0.9)
+            
+            # Ensure optimizer is set to AdamW
+            self.optimizer_combo.setCurrentText("AdamW")
         else:
+            # Linear-probing mode
             self.epochs_spinbox.setValue(2)
-            self.patience_spinbox.setValue(1)
+            self.patience_spinbox.setValue(0)
+            self.close_mosaic_spinbox.setValue(0)
+            self._close_mosaic = 0
+            
+            # These parameters stay the same for both modes
+            self.lr0_spinbox.setValue(1e-3)
+            self.warmup_bias_lr_spinbox.setValue(0.0)
+            self.weight_decay_spinbox.setValue(0.025)
+            self.momentum_spinbox.setValue(0.9)
+            
+            # Ensure optimizer is set to AdamW
+            self.optimizer_combo.setCurrentText("AdamW")
 
     def load_model_combobox(self):
         """Load the model combobox with the available models."""
@@ -605,13 +678,16 @@ class TrainModelDialog(QDialog):
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'multi_scale': self.multi_scale_combo.currentText() == "True",
+            'optimizer': self.optimizer_combo.currentText(),
+            'lr0': self.lr0_spinbox.value(),
+            'warmup_bias_lr': self.warmup_bias_lr_spinbox.value(),
+            'weight_decay': self.weight_decay_spinbox.value(),
+            'momentum': self.momentum_spinbox.value(),
+            'close_mosaic': self.close_mosaic_spinbox.value(),
             'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
-            'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'plots': True,
@@ -643,12 +719,6 @@ class TrainModelDialog(QDialog):
                             params[name] = float(value)
                         except ValueError:
                             params[name] = value
-
-        params['lr0'] = 1e-3 if 'lr0' not in params else params['lr0']
-        params['warmup_bias_lr'] = 0.0 if 'warmup_bias_lr' not in params else params['warmup_bias_lr']
-        params['weight_decay'] = 0.025 if 'weight_decay' not in params else params['weight_decay']
-        params['momentum'] = 0.9 if 'momentum' not in params else params['momentum']
-        params['close_mosaic'] = 10 if 'close_mosaic' not in params else params['close_mosaic']
 
         # Return the dictionary of parameters
         return params

@@ -562,7 +562,7 @@ class ImageWindow(QWidget):
                 
         except Exception as e:
             self.show_error("Image Loading Error", 
-                          f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
+                            f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
             return False
                 
     @property
@@ -1182,26 +1182,25 @@ class ImagePreviewTooltip(QFrame):
             self.hide()
             
     def show_at(self, global_pos):
-        """
-        Position and show the tooltip at the specified global position,
-        always placing it to the bottom-right of the cursor.
-        
-        Args:
-            global_pos (QPoint): Position to show the tooltip
-        """
-        # Always position to bottom-right of cursor with fixed offset
-        x, y = global_pos.x() + 25, global_pos.y() + 25
-        
-        # Ensure tooltip stays within screen boundaries
-        screen_rect = self.screen().geometry()
+        """Position and show the tooltip at the specified global position."""
+        # Position tooltip to bottom-right of cursor
+        x, y = global_pos.x() + 15, global_pos.y() + 15
+
+        # Get the screen that contains the cursor position
+        screen = QApplication.screenAt(global_pos)
+        if not screen:
+            screen = QApplication.primaryScreen()
+
+        # Get screen geometry and tooltip size
+        screen_rect = screen.geometry()
         tooltip_size = self.sizeHint()
-        
-        # Adjust position if needed to stay on screen
+
+        # Adjust position to stay on screen
         if x + tooltip_size.width() > screen_rect.right():
-            x = screen_rect.right() - tooltip_size.width() - 10
+            x = global_pos.x() - tooltip_size.width() - 15
         if y + tooltip_size.height() > screen_rect.bottom():
-            y = screen_rect.bottom() - tooltip_size.height() - 10
-            
+            y = global_pos.y() - tooltip_size.height() - 15
+
         # Set position and show
         self.move(x, y)
         self.show()

@@ -53,6 +53,10 @@ class Detect(Base):
         self.include_rectangles_checkbox.setEnabled(True)  # Enable user to uncheck rectangles if desired
         self.include_polygons_checkbox.setChecked(True)
         self.include_polygons_checkbox.setEnabled(True)  # Already enabled
+
+        # Explicitly enable negative sample options for detection
+        self.include_negatives_radio.setEnabled(True)
+        self.exclude_negatives_radio.setEnabled(True)
         
     def create_dataset(self, output_dir_path):
         """
@@ -106,12 +110,20 @@ class Detect(Base):
         Process and save detection annotations.
 
         Args:
-            annotations (list): List of annotations.
+            annotations (list): List of annotations for this split.
             split_dir (str): Path to the split directory.
             split (str): Split name (e.g., "Training", "Validation", "Testing").
         """
-        # Get unique image paths
-        image_paths = list(set(a.image_path for a in annotations))
+        # Determine the full list of images for this split (including negatives)
+        if split == "Training":
+            image_paths = self.train_images
+        elif split == "Validation":
+            image_paths = self.val_images
+        elif split == "Testing":
+            image_paths = self.test_images
+        else:
+            image_paths = []
+
         if not image_paths:
             return
 
@@ -124,6 +136,7 @@ class Detect(Base):
         for image_path in image_paths:
             yolo_annotations = []
             image_height, image_width = rasterio_open(image_path).shape
+            # Filter the annotations passed to this function to get only those for the current image
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:
@@ -132,11 +145,11 @@ class Detect(Base):
                 yolo_annotations.append(f"{class_number} {annotation}")
 
             # Save the annotations to a text file
-            file_ext = image_path.split(".")[-1]
-            text_file = os.path.basename(image_path).replace(f".{file_ext}", ".txt")
+            file_ext = os.path.splitext(image_path)[1]
+            text_file = os.path.basename(image_path).replace(file_ext, ".txt")
             text_path = os.path.join(f"{split_dir}/labels", text_file)
 
-            # Write the annotations to the text file
+            # Write the annotations to the text file (creates an empty file for negatives)
             with open(text_path, 'w') as f:
                 for annotation in yolo_annotations:
                     f.write(annotation + '\n')

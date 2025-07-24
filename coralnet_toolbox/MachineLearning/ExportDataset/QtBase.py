@@ -42,7 +42,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
-        self.resize(1000, 600)
+        self.resize(1000, 800)
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Export Dataset")
 
@@ -64,10 +64,8 @@ class Base(QDialog):
         self.setup_output_layout()
         # Setup the ratio layout
         self.setup_ratio_layout()
-        # Setup the annotation layout
-        self.setup_annotation_layout()
-        # Setup the options layout
-        self.setup_options_layout()
+        # Setup the data selection layout
+        self.setup_data_selection_layout()
         # Setup the table layout
         self.setup_table_layout()
         # Setup the status layout
@@ -147,10 +145,25 @@ class Base(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def setup_annotation_layout(self):
-        """Setup the annotation type checkboxes layout."""
+    def setup_data_selection_layout(self):
+        """Setup the layout for data selection options in a horizontal arrangement."""
+        options_layout = QHBoxLayout()
+
+        # Create and add the group boxes
+        annotation_types_group = self.create_annotation_layout()
+        image_options_group = self.create_image_source_layout()
+        negative_samples_group = self.create_negative_samples_layout()
+
+        options_layout.addWidget(annotation_types_group)
+        options_layout.addWidget(image_options_group)
+        options_layout.addWidget(negative_samples_group)
+
+        self.layout.addLayout(options_layout)
+
+    def create_annotation_layout(self):
+        """Creates the annotation type checkboxes layout group box."""
         group_box = QGroupBox("Annotation Types")
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
 
         self.include_patches_checkbox = QCheckBox("Include Patch Annotations")
         self.include_rectangles_checkbox = QCheckBox("Include Rectangle Annotations")
@@ -161,30 +174,24 @@ class Base(QDialog):
         layout.addWidget(self.include_polygons_checkbox)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
 
-    def setup_options_layout(self):
-        """Setup the image options layout."""
-        group_box = QGroupBox("Image Options")
-        layout = QHBoxLayout()  # Changed from QVBoxLayout to QHBoxLayout
+    def create_image_source_layout(self):
+        """Creates the image source options layout group box."""
+        group_box = QGroupBox("Image Source")
+        layout = QVBoxLayout()
 
-        # Create a button group for the image checkboxes
         self.image_options_group = QButtonGroup(self)
 
         self.all_images_radio = QRadioButton("All Images")
         self.filtered_images_radio = QRadioButton("Filtered Images")
 
-        # Add the radio buttons to the button group
         self.image_options_group.addButton(self.all_images_radio)
         self.image_options_group.addButton(self.filtered_images_radio)
-
-        # Ensure only one radio button can be checked at a time
         self.image_options_group.setExclusive(True)
 
-        # Set the default radio button
         self.all_images_radio.setChecked(True)
 
-        # Connect radio button signals
         self.all_images_radio.toggled.connect(self.update_image_selection)
         self.filtered_images_radio.toggled.connect(self.update_image_selection)
 
@@ -192,7 +199,32 @@ class Base(QDialog):
         layout.addWidget(self.filtered_images_radio)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
+
+    def create_negative_samples_layout(self):
+        """Creates the negative sample options layout group box."""
+        group_box = QGroupBox("Negative Samples")
+        layout = QVBoxLayout()
+
+        self.negative_samples_group = QButtonGroup(self)
+
+        self.include_negatives_radio = QRadioButton("Include Negatives")
+        self.exclude_negatives_radio = QRadioButton("Exclude Negatives")
+
+        self.negative_samples_group.addButton(self.include_negatives_radio)
+        self.negative_samples_group.addButton(self.exclude_negatives_radio)
+        self.negative_samples_group.setExclusive(True)
+
+        self.exclude_negatives_radio.setChecked(True)
+
+        # Connect to update stats when changed. Only one needed for the group.
+        self.include_negatives_radio.toggled.connect(self.update_summary_statistics)
+
+        layout.addWidget(self.include_negatives_radio)
+        layout.addWidget(self.exclude_negatives_radio)
+
+        group_box.setLayout(layout)
+        return group_box
 
     def setup_table_layout(self):
         """Setup the label counts table layout."""
@@ -424,6 +456,11 @@ class Base(QDialog):
         else:
             images = self.image_window.raster_manager.image_paths
 
+        # If "Exclude Negatives" is checked, only use images that have selected annotations.
+        if self.exclude_negatives_radio.isChecked():
+            image_paths_with_annotations = {a.image_path for a in self.selected_annotations}
+            images = [img for img in images if img in image_paths_with_annotations]
+
         random.shuffle(images)
 
         train_split = int(len(images) * self.train_ratio)
@@ -551,9 +588,6 @@ class Base(QDialog):
 
         self.updating_summary_statistics = True
 
-        # Split the data by images
-        self.split_data()
-
         # Selected labels based on user's selection
         self.selected_labels = []
         for row in range(self.label_counts_table.rowCount()):
@@ -564,6 +598,9 @@ class Base(QDialog):
 
         # Filter annotations based on the selected annotation types and current tab
         self.selected_annotations = self.filter_annotations()
+        
+        # Split the data by images
+        self.split_data()
 
         # Split the data by annotations
         self.determine_splits()

@@ -624,7 +624,7 @@ class MainWindow(QMainWindow):
         # Train Model
         self.see_anything_train_model_action = QAction("Train Model", self)
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
-        self.see_anything_menu.addAction(self.see_anything_train_model_action)
+        # self.see_anything_menu.addAction(self.see_anything_train_model_action)  TODO Doesn't work
         # Deploy Model submenu
         self.see_anything_deploy_model_menu = self.see_anything_menu.addMenu("Deploy Model")
         # Deploy Predictor
@@ -2311,16 +2311,22 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
 
-        if not self.see_anything_deploy_predictor_dialog.loaded_model:
+        if not self.see_anything_deploy_generator_dialog.loaded_model:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
-                                "Please deploy a model before running batch inference.")
+                                "Please deploy a generator before running batch inference.")
+            return
+        
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "Cannot run See Anything (YOLOE) without reference annotations in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            if self.see_anything_batch_inference_dialog.has_valid_sources():
-                self.see_anything_batch_inference_dialog.exec_()
+            self.see_anything_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
