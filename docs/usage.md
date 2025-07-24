@@ -196,16 +196,22 @@ The main window consists of several components:
   - **Backspace**: Cancel the current polygon annotation.
 
 - **SAM Tool**: After a model is loaded
-  - **Space Bar**: Set working area; confirm prediction; finalize predictions and exit working area.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Ctrl + Left-Click**: Add positive point.
-  - **Ctrl + Right-Click**: Add negative point.
-  - **Backspace**: Discard unfinalized predictions.
+  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Backspace**: Cancel drawing the current work area.
+  - **Space**: Create a work area from the current view.
+    - **Space**: Set working area; confirm prediction; finalize predictions and exit working area.
+    - **Left-Click**: Start a box; press again to end a box.
+    - **Ctrl + Left-Click**: Add positive point.
+    - **Ctrl + Right-Click**: Add negative point.
+    - **Backspace**: Discard unfinalized predictions.
 
 - **See Anything (YOLOE) Tool**: After a model is loaded
-  - **Space Bar**: Set working area; run prediction; finalize predictions and exit working area.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Backspace**: Discard unfinalized predictions.
+  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Backspace**: Cancel drawing the current work area.
+  - **Space**: Create a work area from the current view.
+    - **Space**: Set working area; run prediction; finalize predictions and exit working area.
+    - **Left-Click**: Start a box; press again to end a box.
+    - **Backspace**: Discard unfinalized predictions.
 
 - **Work Area Tool**: For creating restricted areas for model prediction
   - **Left-Click**: Start drawing a work area; click again to finish drawing.

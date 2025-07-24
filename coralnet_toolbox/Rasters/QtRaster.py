@@ -2,6 +2,7 @@ import warnings
 
 import os
 import gc
+from collections import defaultdict
 from typing import Optional, Set, List
 
 import cv2
@@ -13,7 +14,6 @@ from PyQt5.QtCore import QObject
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
-from coralnet_toolbox.utilities import rasterio_to_cropped_image
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
@@ -68,11 +68,9 @@ class Raster(QObject):
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
         self.label_counts = {}  # Store counts of annotations per label
-        self.annotation_types = {}  # Store counts of annotations per type
         
-        # Add sets for efficient lookups
-        self.label_set: Set[str] = set()
-        self.annotation_type_set: Set[str] = set()
+        self.label_set: Set[str] = set()  # Add sets for efficient lookups
+        self.label_to_types_map = {}  # This replaces annotation_types and annotation_type_set
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
@@ -244,6 +242,7 @@ class Raster(QObject):
     def update_annotation_info(self, annotations: list):
         """
         Update annotation-related information for this raster.
+        This now builds a more powerful cache mapping labels to their annotation types.
         
         Args:
             annotations (list): List of annotation objects
@@ -257,9 +256,11 @@ class Raster(QObject):
         
         # Clear previous data
         self.label_counts.clear()
-        self.annotation_types.clear()
         self.label_set.clear()
-        self.annotation_type_set.clear()
+        self.label_to_types_map.clear() # Clear the new map
+
+        # Use a defaultdict to simplify the aggregation logic
+        temp_map = defaultdict(set)
 
         for annotation in annotations:
             # Process label information
@@ -269,13 +270,39 @@ class Raster(QObject):
                 else:
                     label_name = str(annotation.label)
                 
+                # Update label counts and the set of all labels
                 self.label_counts[label_name] = self.label_counts.get(label_name, 0) + 1
                 self.label_set.add(label_name)
 
-            # Process annotation type information
+                # Process annotation type information and link it to the label
+                anno_type = annotation.__class__.__name__
+                temp_map[label_name].add(anno_type)
+
+        # Convert defaultdict back to a regular dict for the final attribute
+        self.label_to_types_map = dict(temp_map)
+        
+    @property
+    def annotation_types(self) -> dict:
+        """
+        Computes a simple count of each annotation type on-the-fly.
+        This property provides backward compatibility for features like the tooltip
+        without needing to store this data permanently.
+        
+        Returns:
+            dict: A dictionary mapping annotation type names to their counts.
+                e.g., {'PolygonAnnotation': 5, 'PointAnnotation': 2}
+        """
+        type_counts = defaultdict(int)
+        # The self.label_to_types_map structure is {'label': {'type1', 'type2'}}
+        # This is not ideal for counting total types. We need the original annotations list.
+        if not self.annotations:
+            return {}
+            
+        for annotation in self.annotations:
             anno_type = annotation.__class__.__name__
-            self.annotation_types[anno_type] = self.annotation_types.get(anno_type, 0) + 1
-            self.annotation_type_set.add(anno_type)
+            type_counts[anno_type] += 1
+            
+        return dict(type_counts)
     
     def matches_filter(self, 
                        search_text="", 
