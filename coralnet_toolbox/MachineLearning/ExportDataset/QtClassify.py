@@ -60,6 +60,10 @@ class Classify(Base):
         self.include_polygons_checkbox.setChecked(True)
         self.include_polygons_checkbox.setEnabled(True)
 
+        # Disable negative sample options for classification
+        self.include_negatives_radio.setEnabled(False)
+        self.exclude_negatives_radio.setEnabled(False)
+
     def create_dataset(self, output_dir_path):
         """
         Create an image classification dataset.
