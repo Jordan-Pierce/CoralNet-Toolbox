@@ -117,17 +117,20 @@ class TestSimplifyPolygon:
         polygon = Polygon(result)
         assert polygon.is_valid
 
-    def test_empty_and_minimal_inputs(self):
-        """Test edge cases with minimal inputs."""
+    def test_edge_cases_and_invalid_inputs(self):
+        """Test edge cases with empty, minimal, and invalid inputs."""
+        # Test with empty list - should return empty list
+        assert simplify_polygon([], simplify_tolerance=0.1) == []
+
         # Test with minimal valid polygon (triangle)
         minimal = [(0, 0), (1, 0), (0, 1)]
         result = simplify_polygon(minimal, simplify_tolerance=0.1)
-        assert len(result) >= 3
+        assert len(result) == 3
         
         # Test with duplicate points (should be handled gracefully)
         with_duplicates = [(0, 0), (0, 0), (1, 0), (1, 1), (0, 1)]
         result = simplify_polygon(with_duplicates, simplify_tolerance=0.1)
-        assert isinstance(result, list)
+        assert len(result) == 4
 
     def test_large_tolerance(self):
         """Test behavior with very large tolerance values."""
