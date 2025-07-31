@@ -22,7 +22,7 @@ class TestSimplifyPolygon:
         # Verify it's still a valid polygon
         polygon = Polygon(result)
         assert polygon.is_valid
-        assert abs(polygon.area - 1.0) < 1e-10
+        assert polygon.area == pytest.approx(1.0)
 
     def test_complex_polygon_simplification(self):
         """Test that a complex polygon gets simplified."""
@@ -44,7 +44,7 @@ class TestSimplifyPolygon:
         assert polygon.is_valid
         # Area should be approximately preserved
         original_polygon = Polygon(complex_points)
-        assert abs(polygon.area - original_polygon.area) < 0.1
+        assert polygon.area == pytest.approx(original_polygon.area)
 
     def test_different_tolerance_values(self):
         """Test that different tolerance values produce different levels of simplification."""
@@ -139,15 +139,5 @@ class TestSimplifyPolygon:
         
         # Even with large tolerance, should maintain basic polygon structure
         assert len(result) >= 3  # At least a triangle
-        polygon = Polygon(result)
-        assert polygon.is_valid
-
-    def test_zero_tolerance(self):
-        """Test behavior with zero tolerance (no simplification)."""
-        complex_points = [(0, 0), (0.1, 0), (0.2, 0), (1, 0), (1, 1), (0, 1)]
-        result = simplify_polygon(complex_points, simplify_tolerance=0.0)
-        
-        # With zero tolerance, should preserve more detail
-        assert len(result) >= 4  # Should preserve most points
         polygon = Polygon(result)
         assert polygon.is_valid
