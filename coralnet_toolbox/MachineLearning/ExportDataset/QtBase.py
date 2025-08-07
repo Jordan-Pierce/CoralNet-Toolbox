@@ -42,7 +42,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
-        self.resize(1000, 800)
+        self.resize(800, 800)
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Export Dataset")
 
