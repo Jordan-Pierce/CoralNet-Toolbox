@@ -2,10 +2,10 @@ import warnings
 
 import os
 import gc
-import ujson as json
 
 import numpy as np
 
+import torch
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
+                             QSlider, QSpinBox, QVBoxLayout, QGroupBox,
                              QWidget, QLineEdit, QFileDialog)
 
 from coralnet_toolbox.Results import ResultsProcessor
@@ -58,6 +58,8 @@ class DeployPredictorDialog(QDialog):
         self.max_detect = 500
         self.model_path = None
         self.loaded_model = None
+        self.vpe_path = None
+        self.vpe = None
         self.image_path = None
 
         self.class_mapping = {}
@@ -98,7 +100,10 @@ class DeployPredictorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Predictor to deploy and use interactively with the See Anything tool.")
+        info_label = QLabel(
+            "Choose a Predictor to deploy and use interactively with the See Anything tool. "
+            "Optionally include a custom visual prompt encoding (VPE) file."
+        )
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -109,21 +114,15 @@ class DeployPredictorDialog(QDialog):
 
     def setup_models_layout(self):
         """
-        Setup the models layout with tabs for standard and custom models.
+        Setup the models layout with standard models and file selection.
         """
         group_box = QGroupBox("Model Selection")
-        layout = QVBoxLayout()
-
-        # Create tabbed widget
-        tab_widget = QTabWidget()
-
-        # Tab 1: Standard models
-        standard_tab = QWidget()
-        standard_layout = QVBoxLayout(standard_tab)
-
+        layout = QFormLayout()
+    
+        # Model dropdown
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-
+    
         # Define available models
         standard_models = [
             'yoloe-v8s-seg.pt',
@@ -133,48 +132,23 @@ class DeployPredictorDialog(QDialog):
             'yoloe-11m-seg.pt',
             'yoloe-11l-seg.pt',
         ]
-
+    
         # Add all models to combo box
         self.model_combo.addItems(standard_models)
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
-
-        standard_layout.addWidget(QLabel("Models"))
-        standard_layout.addWidget(self.model_combo)
-
-        tab_widget.addTab(standard_tab, "Use Existing Model")
-
-        # Tab 2: Custom model
-        custom_tab = QWidget()
-        custom_layout = QFormLayout(custom_tab)
-
-        # Custom model file selection
-        self.model_path_edit = QLineEdit()
+        
+        layout.addRow("Models:", self.model_combo)
+        
+        # Add custom vpe file selection
+        self.vpe_path_edit = QLineEdit()
         browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_model_file)
+        browse_button.clicked.connect(self.browse_vpe_file)
 
-        model_path_layout = QHBoxLayout()
-        model_path_layout.addWidget(self.model_path_edit)
-        model_path_layout.addWidget(browse_button)
-        custom_layout.addRow("Custom Model:", model_path_layout)
-
-        # Class Mapping
-        self.mapping_edit = QLineEdit()
-        self.mapping_button = QPushButton("Browse...")
-        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.mapping_edit)
-        class_mapping_layout.addWidget(self.mapping_button)
-        custom_layout.addRow("Class Mapping:", class_mapping_layout)
-
-        tab_widget.addTab(custom_tab, "Custom Model")
-
-        # Add the tab widget to the main layout
-        layout.addWidget(tab_widget)
-
-        # Store the tab widget for later reference
-        self.model_tab_widget = tab_widget
+        vpe_path_layout = QHBoxLayout()
+        vpe_path_layout.addWidget(self.vpe_path_edit)
+        vpe_path_layout.addWidget(browse_button)
+        layout.addRow("Custom VPE:", vpe_path_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -305,36 +279,50 @@ class DeployPredictorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
-    def browse_model_file(self):
+    def browse_vpe_file(self):
         """
-        Open a file dialog to browse for a model file.
+        Open a file dialog to browse for a VPE file and load it.
         """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Model File",
-                                                   "",
-                                                   "Model Files (*.pt *.pth);;All Files (*)")
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-            self.mapping_edit.setText(file_path)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Visual Prompt Encoding (VPE) File",
+            "",
+            "VPE Files (*.pt);;All Files (*)"
+        )
+        
+        if not file_path:
+            return
+            
+        self.vpe_path_edit.setText(file_path)
+        self.vpe_path = file_path
+        
+        try:
+            # Load the VPE file
+            loaded_vpe = torch.load(file_path)
+            
+            # Move to the appropriate device if needed
+            loaded_vpe = loaded_vpe.to(self.main_window.device)
+            
+            # Store the loaded VPE
+            self.vpe = loaded_vpe
+            
+            # Check if it's a valid VPE file by checking for expected attributes
+            if not hasattr(loaded_vpe, 'shape') or not isinstance(loaded_vpe, dict):
+                self.vpe = None
+                QMessageBox.warning(
+                    self, 
+                    "Invalid VPE", 
+                    "The file does not appear to be a valid VPE format."
+                )
+                
+        except Exception as e:
+            self.vpe = None
+            self.status_bar.setText(f"Error loading VPE: {str(e)}")
+            QMessageBox.critical(
+                self, 
+                "Error Loading VPE", 
+                f"Failed to load VPE file: {str(e)}"
+            )
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -412,26 +400,26 @@ class DeployPredictorDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
-
+    
         try:
             # Get selected model path and download weights if needed
             self.model_path = self.model_combo.currentText()
-
+    
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
-
-            # Create a dummy visual dictionary
+    
+            # Create a dummy visual dictionary for standard model loading
             visuals = dict(
                 bboxes=np.array(
                     [
-                        [120, 425, 160, 445],
+                        [120, 425, 160, 445],  # Random box
                     ],
                 ),
                 cls=np.array(
                     np.zeros(1),
                 ),
             )
-
+    
             # Run a dummy prediction to load the model
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
@@ -440,18 +428,26 @@ class DeployPredictorDialog(QDialog):
                 imgsz=640,
                 conf=0.99,
             )
-
-            # Load the model class names if available
-            if self.class_mapping:
-                self.add_labels_to_label_window()
-
-            progress_bar.finish_progress()
-            self.status_bar.setText("Model loaded")
-            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
-
+    
+            # If a VPE file was loaded, use it with the model after the dummy prediction
+            if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
+                # Directly set the final tensor as the prompt for the predictor
+                self.loaded_model.is_fused = lambda: False
+                self.loaded_model.set_classes(["object0"], self.vpe)
+                self.status_bar.setText(f"Model loaded with custom VPE: {os.path.basename(self.vpe_path)}")
+                message = "Model loaded with custom VPE"
+            else:
+                self.status_bar.setText("Model loaded with default VPE")
+                message = "Model loaded successfully"
+                
+            self.status_bar.setText(message)
+            QMessageBox.information(self.annotation_window, "Model Loaded", message)
+    
         except Exception as e:
+            self.loaded_model = None
+            self.status_bar.setText(f"Error loading model: {str(e)}")
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
-
+    
         finally:
             # Restore cursor
             QApplication.restoreOverrideCursor()
@@ -459,18 +455,8 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
-
+    
         self.accept()
-
-    def add_labels_to_label_window(self):
-        """
-        Add labels to the label window based on the class mapping.
-        """
-        if self.class_mapping:
-            for label in self.class_mapping.values():
-                self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                                      label['long_label_code'],
-                                                                      QColor(*label['color']))
 
     def resize_image(self, image):
         """
@@ -539,7 +525,8 @@ class DeployPredictorDialog(QDialog):
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window, "Model Not Loaded",
+            QMessageBox.critical(self.annotation_window, 
+                                 "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
             return None
 
@@ -681,6 +668,8 @@ class DeployPredictorDialog(QDialog):
         # Clear the model
         self.loaded_model = None
         self.model_path = None
+        self.vpe_path = None
+        self.vpe = None
         self.image_path = None
         self.original_image = None
         self.resized_image = None
