@@ -437,6 +437,11 @@ class SelectTool(Tool):
         # Add the newly created annotations from the cut.
         for new_anno in new_annotations:
             self.annotation_window.add_annotation_from_tool(new_anno)
+            
+    def cancel_cutting_mode(self):
+        """Safely cancels cutting mode."""
+        if self.active_subtool and isinstance(self.active_subtool, CutSubTool):
+            self.deactivate_subtool()
 
     # --- Convenience Properties ---
     @property

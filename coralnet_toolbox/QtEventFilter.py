@@ -91,9 +91,20 @@ class GlobalEventFilter(QObject):
                 
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                # First check if the select tool is active
                 if self.main_window.select_tool_action.isChecked():
+                    selected_tool = self.annotation_window.selected_tool
+                    select_tool = self.annotation_window.tools[selected_tool]
+                    # Get the active subtool if it exists, pass to its keyPressEvent
+                    if hasattr(select_tool, 'active_subtool') and select_tool.active_subtool:
+                        select_tool.active_subtool.keyPressEvent(event)
+                        return True
+                            
+                    # Otherwise, proceed with deletion if there are selected annotations
                     if self.annotation_window.selected_annotations:
                         self.annotation_window.delete_selected_annotations()
+                        return True
+                    
                     # Consume the event so it doesn't do anything else
                     return True
             
