@@ -87,6 +87,10 @@ class Annotation(QObject):
     def get_polygon(self):
         """Get the polygon representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_painter_path(self):
+        """Get the QPainterPath representation of this annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the annotation's bounding box."""
