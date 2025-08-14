@@ -3,7 +3,7 @@ import warnings
 from rasterio.windows import Window
 
 from shapely.ops import unary_union
-from shapely.geometry import Polygon 
+from shapely.geometry import Point, Polygon 
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
@@ -65,25 +65,77 @@ class PatchAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
 
     def contains_point(self, point: QPointF):
-        """Check if the point is within the annotation's bounding box."""
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        return rect.contains(point)
+        """
+        Check if the given point is inside the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+
+            # Create a Shapely polygon
+            shapely_polygon = Polygon(shell=shell_coords)
+
+            # Convert the input QPointF to a Shapely Point
+            shapely_point = Point(point.x(), point.y())
+
+            # Return Shapely's boolean result for the containment check
+            return shapely_polygon.contains(shapely_point)
+
+        except Exception:
+            # Fallback to the original QRectF implementation if Shapely fails
+            half_size = self.annotation_size / 2
+            rect = QRectF(self.center_xy.x() - half_size,
+                          self.center_xy.y() - half_size,
+                          self.annotation_size,
+                          self.annotation_size)
+            return rect.contains(point)
 
     def get_centroid(self):
         """Get the centroid of the annotation."""
         return (float(self.center_xy.x()), float(self.center_xy.y()))
 
     def get_area(self):
-        """Calculate the area of the square patch."""
-        return self.annotation_size * self.annotation_size
+        """
+        Calculate the net area of the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+
+            # A valid polygon needs at least 3 points
+            if len(shell_coords) < 3:
+                return 0.0
+
+            # Create a Shapely polygon and return its area
+            shapely_polygon = Polygon(shell=shell_coords)
+            return shapely_polygon.area
+
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            return self.annotation_size * self.annotation_size
 
     def get_perimeter(self):
-        """Calculate the perimeter of the square patch."""
-        return 4 * self.annotation_size
+        """
+        Calculate the perimeter of the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+            
+            # A shape with fewer than 2 points has no length
+            if len(shell_coords) < 2:
+                return 0.0
+
+            # Create a Shapely polygon and return its perimeter (length)
+            shapely_polygon = Polygon(shell=shell_coords)
+            return shapely_polygon.length
+
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            return 4 * self.annotation_size
 
     def get_polygon(self):
         """Get the polygon representation of this patch (a square)."""
