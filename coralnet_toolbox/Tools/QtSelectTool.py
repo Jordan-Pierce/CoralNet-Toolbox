@@ -11,6 +11,7 @@ from coralnet_toolbox.Tools.QtMoveSubTool import MoveSubTool
 from coralnet_toolbox.Tools.QtResizeSubTool import ResizeSubTool
 from coralnet_toolbox.Tools.QtSelectSubTool import SelectSubTool
 from coralnet_toolbox.Tools.QtCutSubTool import CutSubTool
+from coralnet_toolbox.Tools.QtSubtractSubTool import SubtractSubTool
 
 from coralnet_toolbox.Annotations import (PatchAnnotation, 
                                           PolygonAnnotation, 
@@ -45,6 +46,9 @@ class SelectTool(Tool):
         self.resize_subtool = ResizeSubTool(self)
         self.select_subtool = SelectSubTool(self)
         self.cut_subtool = CutSubTool(self)
+        self.subtract_subtool = SubtractSubTool(self)
+        
+        # --- State for the currently active sub-tool ---
         self.active_subtool: SubTool | None = None
 
         # --- State for transient UI (like resize handles) ---
@@ -175,9 +179,14 @@ class SelectTool(Tool):
             if modifiers & Qt.ShiftModifier and len(self.selected_annotations) == 1:
                 self._show_resize_handles()
             
-            # Ctrl+X: Start cutting mode
-            if event.key() == Qt.Key_X and len(self.selected_annotations) == 1:
-                self.set_active_subtool(self.cut_subtool, event, annotation=self.selected_annotations[0])
+            # --- Ctrl+X Hotkey Overload ---
+            if event.key() == Qt.Key_X:
+                if len(self.selected_annotations) > 1:
+                    # If more than one annotation is selected, perform subtraction.
+                    self.subtract_selected_annotations(event)
+                elif len(self.selected_annotations) == 1:
+                    # If only one is selected, start cutting mode.
+                    self.set_active_subtool(self.cut_subtool, event, annotation=self.selected_annotations[0])
 
             # Ctrl+C: Combine selected annotations
             elif event.key() == Qt.Key_C and len(self.selected_annotations) > 1:
@@ -315,6 +324,16 @@ class SelectTool(Tool):
                 annotation.update_user_confidence(top_label)
         if len(self.selected_annotations) == 1:
             self.annotation_window.main_window.confidence_window.refresh_display()
+            
+    def subtract_selected_annotations(self, event):
+        """
+        Initiates the subtraction operation by activating the SubtractSubTool.
+        """
+        self.set_active_subtool(
+            self.subtract_subtool, 
+            event, 
+            selected_annotations=self.selected_annotations.copy()
+        )
 
     def combine_selected_annotations(self):
         """Combine multiple selected annotations of the same type."""

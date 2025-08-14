@@ -125,6 +125,11 @@ class Annotation(QObject):
     def cut(cls, annotations: list, cutting_points: list):
         """Cut multiple annotations using specified cutting points."""
         raise NotImplementedError("Subclasses must implement this method.")
+    
+    @classmethod
+    def substract(cls, base_annotation, cutter_annotations: list):
+        """Subtract cutter annotations from a base annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def show_warning_message(self):
         """Display a warning message about removing machine suggestions when altering an annotation."""

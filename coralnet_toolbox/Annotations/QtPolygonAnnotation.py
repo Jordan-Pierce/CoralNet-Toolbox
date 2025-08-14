@@ -642,7 +642,7 @@ class PolygonAnnotation(Annotation):
                 # Create a new annotation with the new points and holes
                 new_anno = cls(
                     points=new_points,
-                    holes=new_holes, # Pass the new holes
+                    holes=new_holes,  # Pass the new holes
                     short_label_code=annotation.label.short_label_code,
                     long_label_code=annotation.label.long_label_code,
                     color=annotation.label.color,
@@ -662,7 +662,76 @@ class PolygonAnnotation(Annotation):
         except Exception as e:
             print(f"Error during polygon cutting: {e}")
             return [annotation]
+        
+    @classmethod
+    def subtract(cls, base_annotation, cutter_annotations: list):
+        """
+        Performs a "cookie cutter" subtraction.
 
+        Subtracts the combined area of the cutter_annotations from the base_annotation.
+        Includes a safety check to ensure there is an overlap before proceeding.
+        """
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+        from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+
+        if not base_annotation or not cutter_annotations:
+            return None
+
+        try:
+            # --- Convert all annotations to Shapely objects ---
+            base_shell = [(p.x(), p.y()) for p in base_annotation.points]
+            base_holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(base_annotation, 'holes', [])]
+            base_polygon = Polygon(base_shell, base_holes)
+
+            cutter_polygons = []
+            for anno in cutter_annotations:
+                shell = [(p.x(), p.y()) for p in anno.points]
+                holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
+                cutter_polygons.append(Polygon(shell, holes))
+            
+            cutter_union = unary_union(cutter_polygons)
+
+            # --- Safety Check: Abort if there is no intersection ---
+            if not base_polygon.intersects(cutter_union):
+                # No overlap, so no operation is performed. Return None.
+                return None
+
+            # --- Perform the geometric difference operation ---
+            result_geom = base_polygon.difference(cutter_union)
+
+            if result_geom.is_empty:
+                return None
+
+            # --- Rebuild the appropriate annotation type from the result ---
+            common_args = {
+                "short_label_code": base_annotation.label.short_label_code,
+                "long_label_code": base_annotation.label.long_label_code,
+                "color": base_annotation.label.color,
+                "image_path": base_annotation.image_path,
+                "label_id": base_annotation.label.id
+            }
+
+            if result_geom.geom_type == 'Polygon':
+                exterior_points = [QPointF(x, y) for x, y in result_geom.exterior.coords]
+                interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in result_geom.interiors]
+                return cls(points=exterior_points, holes=interior_holes, **common_args)
+
+            elif result_geom.geom_type == 'MultiPolygon':
+                new_polygons = []
+                for poly in result_geom.geoms:
+                    exterior_points = [QPointF(x, y) for x, y in poly.exterior.coords]
+                    interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in poly.interiors]
+                    new_polygons.append(cls(points=exterior_points, holes=interior_holes, **common_args))
+                return MultiPolygonAnnotation(polygons=new_polygons, **common_args)
+
+            else:
+                return None
+
+        except Exception as e:
+            print(f"Error during polygon subtraction: {e}")
+            return None
+        
     def to_dict(self):
         """Convert the annotation to a dictionary, including points and holes."""
         base_dict = super().to_dict()
