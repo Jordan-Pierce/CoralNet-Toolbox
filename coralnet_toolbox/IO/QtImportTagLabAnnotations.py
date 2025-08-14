@@ -161,23 +161,25 @@ class ImportTagLabAnnotations:
                         short_label_code = label_info['name'].strip()
                         long_label_code = label_info['name'].strip()
                         color = QColor(*label_info['fill'])
-
-                        # Unpack the annotation data
-                        bbox = annotation['bbox']
-                        centroid = annotation['centroid']
-                        area = annotation['area']
-                        perimeter = annotation['perimeter']
-                        contour = annotation['contour']
-                        inner_contours = annotation['inner contours']
-                        class_name = annotation['class name']
-                        instance_name = annotation['instance name']
-                        blob_name = annotation['blob name']
-                        idx = annotation['id']
-                        note = annotation['note']
-                        data = annotation['data']
+                       
+                        # Pack all other data into a dict
+                        imported_data = {
+                            'bbox': annotation.get('bbox'),
+                            'centroid': annotation.get('centroid'),
+                            'area': annotation.get('area'),
+                            'perimeter': annotation.get('perimeter'),
+                            'class_name': annotation.get('class name'),
+                            'instance_name': annotation.get('instance name'),
+                            'blob_name': annotation.get('blob name'),
+                            'id': annotation.get('id'),
+                            'note': annotation.get('note'),
+                            'data': annotation.get('data'),
+                        }
 
                         # Convert contour string to points
                         points = self.parse_contour(annotation['contour'])
+                        # Convert inner contours to a list of lists of points (holes)
+                        holes = [self.parse_contour(inner) for inner in annotation.get('inner contours', [])]
 
                         # Create the label if it doesn't exist
                         label = self.label_window.add_label_if_not_exists(short_label_code,
@@ -191,8 +193,12 @@ class ImportTagLabAnnotations:
                             long_label_code=long_label_code,
                             color=color,
                             image_path=image_full_path,
-                            label_id=label_id
+                            label_id=label_id,
+                            holes=holes,
                         )
+                        # Add additional data to the annotation
+                        polygon_annotation.data = imported_data
+                        
                         # Add annotation to the dict
                         self.annotation_window.add_annotation_to_dict(polygon_annotation)
 
