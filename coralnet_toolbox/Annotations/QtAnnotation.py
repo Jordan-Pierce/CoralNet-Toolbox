@@ -178,38 +178,36 @@ class Annotation(QObject):
         # Remove old group if it exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
-            # Clear references to deleted items
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
             self.polygon_graphics_item = None
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # Create the main graphics item based on the polygon
-        polygon = self.get_polygon()
-        self.graphics_item = QGraphicsPolygonItem(polygon)
-        
-        # Style the main graphics item with color and pen
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-        self.graphics_item.setBrush(QBrush(color))
-        
-        # Use the consolidated pen creation method
-        self.graphics_item.setPen(self._create_pen(color))
-        
-        self.graphics_item.setData(0, self.id)
-        self.graphics_item_group.addToGroup(self.graphics_item)
+        # The subclass has already created self.graphics_item.
+        # This parent method is now only responsible for styling and grouping it.
+        if self.graphics_item:
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+            self.graphics_item.setBrush(QBrush(color))
+            
+            self.graphics_item.setPen(self._create_pen(color))
+            
+            self.graphics_item.setData(0, self.id)
+            self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # Create the center graphics item
+        # Create and group the helper graphics (center, bbox, etc.)
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
-        # Create the bounding box graphics item
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
-        # Create the polygon graphics item
-        points = [polygon.at(i) for i in range(polygon.count())]
-        self.create_polygon_graphics_item(points, scene, add_to_group=True)
+        
+        # The old self.polygon_graphics_item is redundant if self.graphics_item is the main shape
+        # We will let the other helper creation calls remain for now.
+        if isinstance(self.graphics_item, QGraphicsPolygonItem):
+             points = [self.graphics_item.polygon().at(i) for i in range(self.graphics_item.polygon().count())]
+             self.create_polygon_graphics_item(points, scene, add_to_group=True)
 
-        # Add the group to the scene
+        # Add the final group to the scene
         scene.addItem(self.graphics_item_group)
         
     def set_visibility(self, visible):
