@@ -115,29 +115,42 @@ class MultiPolygonAnnotation(Annotation):
         return QPointF(self.cropped_bbox[2], self.cropped_bbox[3])
 
     def get_cropped_image_graphic(self):
-        """Return a QPixmap of the cropped image masked by the annotation polygons."""
+        """Return a QPixmap of the cropped image masked by all annotation polygons and their holes."""
+        from PyQt5.QtGui import QTransform
+        
         if not self.cropped_image:
             return None
 
-        # Create a transparent image to use as a mask
+        # --- Create a single QPainterPath for all polygons, with translated coordinates ---
+        # The path needs coordinates relative to the cropped image's top-left corner.
+        offset_x = self.cropped_bbox[0]
+        offset_y = self.cropped_bbox[1]
+        
+        # We will combine all sub-polygon paths into one main path for drawing.
+        full_path = QPainterPath()
+        for poly in self.polygons:
+            # Get the individual polygon's path (which includes its holes)
+            poly_path = poly.get_painter_path()
+            
+            # Translate the path to the cropped image's coordinate system and add to the main path
+            transform = QTransform().translate(-offset_x, -offset_y)
+            full_path.addPath(transform.map(poly_path))
+
+        # --- Create the mask using the combined path ---
         masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
         masked_image.fill(Qt.transparent)
-        painter = QPainter(masked_image)
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(Qt.NoPen)
+        mask_painter = QPainter(masked_image)
+        mask_painter.setBrush(QBrush(Qt.white))
+        mask_painter.setPen(Qt.NoPen)
+        mask_painter.drawPath(full_path) # Draw the complete path with all polygons and holes
+        mask_painter.end()
 
-        # Draw each polygon (shifted to cropped bbox) in white on the mask
-        for poly in self.polygons:
-            cropped_points = [QPointF(p.x() - self.cropped_bbox[0], p.y() - self.cropped_bbox[1]) for p in poly.points]
-            painter.drawPolygon(QPolygonF(cropped_points))
-        painter.end()
-
-        # Convert the mask image to a pixmap and create a mask bitmap
+        # Convert the mask image to a QRegion for clipping
         mask_pixmap = QPixmap.fromImage(masked_image)
         mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
         mask_region = QRegion(mask_bitmap)
 
-        # Prepare the final pixmap for the cropped image
+        # --- Compose the final graphic ---
         cropped_image_graphic = QPixmap(self.cropped_image.size())
         result_painter = QPainter(cropped_image_graphic)
         result_painter.setRenderHint(QPainter.Antialiasing)
@@ -151,15 +164,11 @@ class MultiPolygonAnnotation(Annotation):
         result_painter.setClipRegion(mask_region)
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
-        # Draw dashed outline for each polygon
-        pen = QPen(Qt.black)
-        pen.setStyle(Qt.SolidLine)  # Solid line
-        pen.setWidth(1)  # Line width
+        # Draw the outline for the combined path
+        pen = QPen(Qt.black, 1, Qt.SolidLine)
         result_painter.setPen(pen)
         result_painter.setClipping(False)
-        for poly in self.polygons:
-            cropped_points = [QPointF(p.x() - self.cropped_bbox[0], p.y() - self.cropped_bbox[1]) for p in poly.points]
-            result_painter.drawPolygon(QPolygonF(cropped_points))
+        result_painter.drawPath(full_path) # Draw outlines for all polygons and holes
         result_painter.end()
 
         return cropped_image_graphic
@@ -190,6 +199,9 @@ class MultiPolygonAnnotation(Annotation):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create and add QGraphicsItems for all polygons to the scene."""
+        # This import is necessary to check the type of the created item
+        from PyQt5.QtWidgets import QGraphicsPathItem
+
         # Remove old group if it exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
@@ -200,16 +212,20 @@ class MultiPolygonAnnotation(Annotation):
         # Create a new group to hold all polygon items
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # Add each polygon as a QGraphicsPolygonItem to the group
+        # Add each polygon as a QGraphicsPathItem to the group
         for poly in self.polygons:
-            item = QGraphicsPolygonItem(QPolygonF(poly.points))
+            # Get the path with holes from the PolygonAnnotation object
+            path = poly.get_painter_path()
+            
+            # Create a QGraphicsPathItem which can render holes
+            item = QGraphicsPathItem(path)
+            
+            # Apply styling
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            
-            # Use the consolidated pen creation method
             item.setPen(self._create_pen(color))
             item.setBrush(QBrush(color))
-            item.setData(0, self.id)  # <-- Enable selection by id
+            item.setData(0, self.id)
             self.graphics_item_group.addToGroup(item)
 
         # Add centroid and bounding box helper graphics to the group
@@ -225,27 +241,35 @@ class MultiPolygonAnnotation(Annotation):
 
     def update_graphics_item(self):
         """Update the QGraphicsItems for all polygons and helper graphics."""
+        # This import is necessary to check the type of the created item
+        from PyQt5.QtWidgets import QGraphicsPathItem
+
+        scene = None
         # If a graphics item group exists and is in a scene, remove it before updating
         if self.graphics_item_group and self.graphics_item_group.scene():
             scene = self.graphics_item_group.scene()
             scene.removeItem(self.graphics_item_group)
-            self.graphics_item_group = QGraphicsItemGroup()
-            self.center_graphics_item = None
-            self.bounding_box_graphics_item = None
-            self.polygon_graphics_item = None
-        else:
-            scene = None
 
-        # Recreate QGraphicsPolygonItems for each polygon and add to the group
+        # Create a new group to hold all polygon items
+        self.graphics_item_group = QGraphicsItemGroup()
+        self.center_graphics_item = None
+        self.bounding_box_graphics_item = None
+        self.polygon_graphics_item = None
+
+        # Recreate QGraphicsPathItems for each polygon and add to the group
         for poly in self.polygons:
-            item = QGraphicsPolygonItem(QPolygonF(poly.points))
+            # Get the path with holes from the PolygonAnnotation object
+            path = poly.get_painter_path()
+            
+            # Create a QGraphicsPathItem which can render holes
+            item = QGraphicsPathItem(path)
+            
+            # Apply styling
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            
-            # Use the consolidated pen creation method
             item.setPen(self._create_pen(color))
             item.setBrush(QBrush(color))
-            item.setData(0, self.id)  # <-- Enable selection by id
+            item.setData(0, self.id)
             self.graphics_item_group.addToGroup(item)
 
         # Add centroid and bounding box helper graphics to the group
@@ -257,7 +281,7 @@ class MultiPolygonAnnotation(Annotation):
             add_to_group=True
         )
 
-        # Add the updated group back to the scene if available
+        # Add the updated group back to the scene if it exists
         if scene:
             scene.addItem(self.graphics_item_group)
     
