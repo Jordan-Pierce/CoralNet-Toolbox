@@ -301,19 +301,30 @@ class DeployPredictorDialog(QDialog):
             loaded_vpe = torch.load(file_path)
             
             # Move to the appropriate device if needed
-            loaded_vpe = loaded_vpe.to(self.main_window.device)
-            
-            # Store the loaded VPE
-            self.vpe = loaded_vpe
-            
+            # loaded_vpe = loaded_vpe.to(self.main_window.device)
+            # -----------------------------------------------
+            # TODO remove this once ultralytyics bug is fixed
+            # Check if GPU is available, move to it, else CPU
+            if torch.cuda.is_available():
+                loaded_vpe = loaded_vpe.to("cuda")
+            else:
+                loaded_vpe = loaded_vpe.to("cpu")
+
             # Check if it's a valid VPE file by checking for expected attributes
-            if not hasattr(loaded_vpe, 'shape') or not isinstance(loaded_vpe, dict):
+            if hasattr(loaded_vpe, 'shape') or isinstance(loaded_vpe, dict):
+                # Store the loaded VPE
+                self.vpe = loaded_vpe
+            else:
+                # Invalid VPE file format
                 self.vpe = None
+                self.status_bar.setText("Invalid VPE file format")
                 QMessageBox.warning(
                     self, 
                     "Invalid VPE", 
                     "The file does not appear to be a valid VPE format."
                 )
+                # Clear the VPE path edit field so it's empty
+                self.vpe_path_edit.clear()
                 
         except Exception as e:
             self.vpe = None
@@ -423,12 +434,12 @@ class DeployPredictorDialog(QDialog):
             # Run a dummy prediction to load the model
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
-                visual_prompts=visuals.copy(),
+                visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
                 predictor=YOLOEVPDetectPredictor,
                 imgsz=640,
                 conf=0.99,
             )
-    
+
             # If a VPE file was loaded, use it with the model after the dummy prediction
             if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
                 # Directly set the final tensor as the prompt for the predictor
@@ -442,7 +453,7 @@ class DeployPredictorDialog(QDialog):
                 
             self.status_bar.setText(message)
             QMessageBox.information(self.annotation_window, "Model Loaded", message)
-    
+
         except Exception as e:
             self.loaded_model = None
             self.status_bar.setText(f"Error loading model: {str(e)}")
@@ -457,6 +468,43 @@ class DeployPredictorDialog(QDialog):
             progress_bar = None
     
         self.accept()
+        
+    def reload_model(self):
+        """Subset of the load_model method"""
+        self.loaded_model = None
+        
+        # Get selected model path and download weights if needed
+        self.model_path = self.model_combo.currentText()
+
+        # Load model using registry
+        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.main_window.device)
+
+        # Create a dummy visual dictionary for standard model loading
+        visuals = dict(
+            bboxes=np.array(
+                [
+                    [120, 425, 160, 445],  # Random box
+                ],
+            ),
+            cls=np.array(
+                np.zeros(1),
+            ),
+        )
+
+        # Run a dummy prediction to load the model
+        self.loaded_model.predict(
+            np.zeros((640, 640, 3), dtype=np.uint8),
+            visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
+            predictor=YOLOEVPDetectPredictor,
+            imgsz=640,
+            conf=0.99,
+        )
+
+        # If a VPE file was loaded, use it with the model after the dummy prediction
+        if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
+            # Directly set the final tensor as the prompt for the predictor
+            self.loaded_model.is_fused = lambda: False
+            self.loaded_model.set_classes(["object0"], self.vpe)
 
     def resize_image(self, image):
         """
@@ -512,6 +560,66 @@ class DeployPredictorDialog(QDialog):
             self.resized_image = self.resize_image(image)
         else:
             self.resized_image = image
+            
+    def scale_prompts(self, bboxes, masks=None):
+        """
+        Scale the bounding boxes and masks to the resized image.
+        """
+        # Update the bbox coordinates to be relative to the resized image
+        bboxes = np.array(bboxes)
+        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
+
+        # Set the predictor
+        self.task = self.task_dropdown.currentText()
+
+        # Create a visual dictionary
+        visual_prompts = {
+            'bboxes': np.array(bboxes),
+            'cls': np.zeros(len(bboxes))
+        }
+        if self.task == 'segment':
+            if masks:
+                scaled_masks = []
+                for mask in masks:
+                    scaled_mask = np.array(mask, dtype=np.float32)
+                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+                    scaled_masks.append(scaled_mask)
+                visual_prompts['masks'] = scaled_masks
+            else:  # Fallback to creating masks from bboxes if no masks are provided
+                fallback_masks = []
+                for bbox in bboxes:
+                    x1, y1, x2, y2 = bbox
+                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+                visual_prompts['masks'] = fallback_masks
+        
+        return visual_prompts
+            
+    def prompts_to_vpes(self, visual_prompt, image):
+        """
+        Convert visual prompts to VPEs (Visual Prompt Embeddings).
+        
+        Args:
+            visual_prompt (dict): Dictionary containing visual prompts
+            image (np.ndarray): The image to process
+            
+        Returns:
+            torch.Tensor: The generated VPE tensor, normalized
+        """
+        if not self.loaded_model:
+            return None
+            
+        # Set the prompts to the model predictor
+        self.loaded_model.predictor.set_prompts(visual_prompt)
+        
+        # Get the VPE from the model
+        vpe = self.loaded_model.predictor.get_vpe(image)
+        
+        # Normalize the embedding
+        return torch.nn.functional.normalize(vpe, p=2, dim=-1)
 
     def predict_from_prompts(self, bboxes, masks=None):
         """
@@ -533,43 +641,37 @@ class DeployPredictorDialog(QDialog):
         if not len(bboxes):
             return None
 
-        # Update the bbox coordinates to be relative to the resized image
-        bboxes = np.array(bboxes)
-        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
-
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
-
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(bboxes),
-            'cls': np.zeros(len(bboxes))
-        }
-        if self.task == 'segment':
-            if masks:
-                scaled_masks = []
-                for mask in masks:
-                    scaled_mask = np.array(mask, dtype=np.float32)
-                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-                    scaled_masks.append(scaled_mask)
-                visuals['masks'] = scaled_masks
-            else:  # Fallback to creating masks from bboxes if no masks are provided
-                fallback_masks = []
-                for bbox in bboxes:
-                    x1, y1, x2, y2 = bbox
-                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
-                visuals['masks'] = fallback_masks
+        # Get the scaled visual prompts
+        visual_prompts = self.scale_prompts(bboxes, masks)
+        
+        # If VPEs are being used
+        if self.vpe is not None:
+            # Generate a new VPE from the current visual prompts
+            new_vpe = self.prompts_to_vpes(visual_prompts, self.resized_image)
+            
+            if new_vpe is not None:
+                # If we already have a VPE, average with the existing one
+                if self.vpe.shape == new_vpe.shape:
+                    self.vpe = (self.vpe + new_vpe) / 2
+                    # Re-normalize
+                    self.vpe = torch.nn.functional.normalize(self.vpe, p=2, dim=-1)
+                else:
+                    # Replace with the new VPE if shapes don't match
+                    self.vpe = new_vpe
+                
+                # Set the updated VPE in the model
+                self.loaded_model.is_fused = lambda: False
+                self.loaded_model.set_classes(["object0"], self.vpe)
+            
+            # Clear visual prompts since we're using VPE
+            visual_prompts = {}  # this is okay with a fused model
 
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
 
         try:
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
-                                                visual_prompts=visuals.copy(),
+                                                visual_prompts=visual_prompts.copy(),  
                                                 predictor=predictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
@@ -668,11 +770,13 @@ class DeployPredictorDialog(QDialog):
         # Clear the model
         self.loaded_model = None
         self.model_path = None
-        self.vpe_path = None
-        self.vpe = None
         self.image_path = None
         self.original_image = None
         self.resized_image = None
+        # Also clear the VPE 
+        self.vpe_path_edit.clear()
+        self.vpe_path = None
+        self.vpe = None
         # Clear the cache
         gc.collect()
         empty_cache()

@@ -173,6 +173,7 @@ class SeeAnythingTool(Tool):
 
         # Set the image in the SeeAnything dialog
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
+        # self.see_anything_dialog.reload_model()
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
