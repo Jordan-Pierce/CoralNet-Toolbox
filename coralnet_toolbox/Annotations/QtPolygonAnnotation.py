@@ -718,10 +718,17 @@ class PolygonAnnotation(Annotation):
 
             cutter_polygons, cutter_source_annotations = [], []
             for anno in cutter_annotations:
-                shell = [(p.x(), p.y()) for p in anno.points]
-                holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
-                cutter_polygons.append(Polygon(shell, holes))
-                cutter_source_annotations.append(anno)
+                if isinstance(anno, MultiPolygonAnnotation):
+                    for poly in anno.polygons:
+                        shell = [(p.x(), p.y()) for p in poly.points]
+                        holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(poly, 'holes', [])]
+                        cutter_polygons.append(Polygon(shell, holes))
+                        cutter_source_annotations.append(poly)
+                else:
+                    shell = [(p.x(), p.y()) for p in anno.points]
+                    holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
+                    cutter_polygons.append(Polygon(shell, holes))
+                    cutter_source_annotations.append(anno)
             
             cutter_union = unary_union(cutter_polygons)
 
