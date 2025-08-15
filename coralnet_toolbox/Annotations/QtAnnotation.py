@@ -4,8 +4,8 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
 from PyQt5.QtGui import QColor, QPolygonF, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
@@ -54,12 +54,11 @@ class Annotation(QObject):
         self.annotation_size = None
         self.tolerance = 0.1  # Default detail level for simplification/densification
 
-        # Attributes to store the graphics items for center/centroid, bounding box, and polygon
+        # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.polygon_graphics_item = None
 
-        # New: group for all graphics items
+        # Group for all graphics items
         self.graphics_item_group = None
         
         # Animation properties
