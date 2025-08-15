@@ -1,7 +1,7 @@
 import warnings
 import numpy as np
 
-from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
 
@@ -12,6 +12,7 @@ from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import simplify_polygon
+from coralnet_toolbox.utilities import polygonize_mask_with_holes
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -369,40 +370,43 @@ class SAMTool(Tool):
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Get the points of the top1 mask
+            # Get the top confidence prediction's mask tensor
             top1_index = np.argmax(results.boxes.conf)
-            predictions = results[top1_index].masks.xy[0]
+            mask_tensor = results[top1_index].masks.data
 
-            # Safety check: make sure we have predicted points
-            if len(predictions) == 0:
-                QApplication.restoreOverrideCursor()
-                return
-
-            # Clean the polygon using Ramer-Douglas-Peucker algorithm
-            predictions = simplify_polygon(predictions, 0.1)
+            # Polygonize the mask using the new method to get the exterior and holes
+            exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
 
             # Safety check: need at least 3 points for a valid polygon
-            if len(predictions) < 3:
+            if len(exterior_coords) < 3:
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Move the points back to the original image space
+            # --- Process and Clean the Polygon Points ---
             working_area_top_left = self.working_area.rect.topLeft()
-            points = [(point[0] + working_area_top_left.x(),
-                       point[1] + working_area_top_left.y()) for point in predictions]
+            offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
 
-            # Convert to QPointF for graphics
-            self.points = [QPointF(*point) for point in points]
+            # Simplify, offset, and convert the exterior points
+            simplified_exterior = simplify_polygon(exterior_coords, 0.1)
+            self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
 
-            # Create the temporary annotation
+            # Simplify, offset, and convert each hole
+            final_holes = []
+            for hole_coords in holes_coords_list:
+                if len(hole_coords) >= 3:  # Ensure holes are also valid polygons
+                    simplified_hole = simplify_polygon(hole_coords, 0.1)
+                    final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
+
+            # Create the temporary annotation, now with holes
             self.temp_annotation = PolygonAnnotation(
-                self.points,
-                self.annotation_window.selected_label.short_label_code,
-                self.annotation_window.selected_label.long_label_code,
-                self.annotation_window.selected_label.color,
-                self.annotation_window.current_image_path,
-                self.annotation_window.selected_label.id,
-                self.main_window.label_window.active_label.transparency
+                points=self.points,
+                holes=final_holes,
+                short_label_code=self.annotation_window.selected_label.short_label_code,
+                long_label_code=self.annotation_window.selected_label.long_label_code,
+                color=self.annotation_window.selected_label.color,
+                image_path=self.annotation_window.current_image_path,
+                label_id=self.annotation_window.selected_label.id,
+                transparency=self.main_window.label_window.active_label.transparency
             )
 
             # Create the graphics item for the temporary annotation
@@ -727,24 +731,32 @@ class SAMTool(Tool):
             QApplication.restoreOverrideCursor()
             return None
 
-        # Get the top confidence prediction
+        # Get the top confidence prediction's mask tensor
         top1_index = np.argmax(results.boxes.conf)
-        predictions = results[top1_index].masks.xy[0]
+        mask_tensor = results[top1_index].masks.data
 
-        # Safety check for predictions
-        if len(predictions) == 0:
+        # Polygonize the mask using the new method to get the exterior and holes
+        exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
+
+        # Safety check for an empty result
+        if not exterior_coords:
             QApplication.restoreOverrideCursor()
             return None
 
-        # Clean polygon points
-        predictions = simplify_polygon(predictions, 0.1)
-
-        # Move points back to original image space
+        # --- Process and Clean the Polygon Points ---
         working_area_top_left = self.working_area.rect.topLeft()
-        points = [(point[0] + working_area_top_left.x(),
-                   point[1] + working_area_top_left.y()) for point in predictions]
-        # Convert to QPointF for graphics
-        self.points = [QPointF(*point) for point in points]
+        offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
+
+        # Simplify, offset, and convert the exterior points
+        simplified_exterior = simplify_polygon(exterior_coords, 0.1)
+        self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
+
+        # Simplify, offset, and convert each hole
+        final_holes = []
+        for hole_coords in holes_coords_list:
+            if len(hole_coords) >= 3:
+                simplified_hole = simplify_polygon(hole_coords, 0.1)
+                final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
 
         # Require at least 3 points for valid polygon
         if len(self.points) < 3:
@@ -754,15 +766,16 @@ class SAMTool(Tool):
         # Get confidence score
         confidence = results.boxes.conf[top1_index].item()
 
-        # Create final annotation
+        # Create final annotation, now passing the holes argument
         annotation = PolygonAnnotation(
-            self.points,
-            self.annotation_window.selected_label.short_label_code,
-            self.annotation_window.selected_label.long_label_code,
-            self.annotation_window.selected_label.color,
-            self.annotation_window.current_image_path,
-            self.annotation_window.selected_label.id,
-            self.main_window.label_window.active_label.transparency
+            points=self.points,
+            holes=final_holes,
+            short_label_code=self.annotation_window.selected_label.short_label_code,
+            long_label_code=self.annotation_window.selected_label.long_label_code,
+            color=self.annotation_window.selected_label.color,
+            image_path=self.annotation_window.current_image_path,
+            label_id=self.annotation_window.selected_label.id,
+            transparency=self.main_window.label_window.active_label.transparency
         )
 
         # Update confidence

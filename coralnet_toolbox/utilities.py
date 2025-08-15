@@ -9,14 +9,14 @@ import requests
 import traceback
 from functools import lru_cache
 
+import cv2
 import torch
 import numpy as np
 
 import rasterio
 from rasterio.windows import Window
 
-from shapely.validation import make_valid
-from shapely.geometry import Polygon, MultiPolygon, LineString, GeometryCollection
+from shapely.geometry import Polygon
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage
@@ -542,50 +542,6 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
-def attempt_download_asset(app, asset_name, asset_url):
-    """
-    Attempt to download an asset from the given URL.
-
-    :param app:
-    :param asset_name:
-    :param asset_url:
-    :return:
-    """
-    # Create a progress dialog
-    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
-
-    try:
-        # Get the asset name
-        asset_name = os.path.basename(asset_name)
-        asset_path = os.path.join(os.getcwd(), asset_name)
-
-        if os.path.exists(asset_path):
-            return
-
-        # Download the asset
-        response = requests.get(asset_url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024  # 1 Kibibyte
-
-        # Initialize the progress bar
-        progress_dialog.start_progress(total_size // block_size)
-        progress_dialog.show()
-
-        with open(asset_path, 'wb') as f:
-            for data in response.iter_content(block_size):
-                if progress_dialog.wasCanceled():
-                    raise Exception("Download canceled by user")
-                f.write(data)
-                progress_dialog.update_progress()
-
-    except Exception as e:
-        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
-
-    # Close the progress dialog
-    progress_dialog.set_value(progress_dialog.max_value)
-    progress_dialog.close()
-
-
 def simplify_polygon(xy_points, simplify_tolerance=0.1):
     """
     Filter a list of points to keep only the largest polygon and simplify it.
@@ -665,6 +621,88 @@ def densify_polygon(xy_points):
         print(f"Error densifying polygon: {e}")
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
+
+def polygonize_mask_with_holes(mask_tensor):
+    """
+    Converts a boolean mask tensor to an exterior polygon and a list of interior hole polygons.
+
+    Args:
+        mask_tensor (torch.Tensor): A 2D boolean tensor from the prediction results.
+
+    Returns:
+        A tuple containing:
+        - exterior (list of tuples): The (x, y) vertices of the outer boundary.
+        - holes (list of lists of tuples): A list where each element is a list of (x, y) vertices for a hole.
+    """
+    # Convert the tensor to a NumPy array format that OpenCV can use
+    mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
+
+    # Find all contours and their hierarchy
+    # cv2.RETR_CCOMP organizes contours into a two-level hierarchy: external boundaries and holes inside them.
+    contours, hierarchy = cv2.findContours(mask_np, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours or hierarchy is None:
+        return [], []
+
+    exterior = []
+    holes = []
+
+    # Process the hierarchy to separate the exterior from the holes
+    for i, contour in enumerate(contours):
+        # An external contour's parent in the hierarchy is -1
+        if hierarchy[0][i][3] == -1:
+            # Squeeze to convert from [[x, y]] to [x, y] format
+            exterior = contour.squeeze(axis=1).tolist()
+        else:
+            # Any other contour is treated as a hole
+            holes.append(contour.squeeze(axis=1).tolist())
+
+    return exterior, holes
+
+
+def attempt_download_asset(app, asset_name, asset_url):
+    """
+    Attempt to download an asset from the given URL.
+
+    :param app:
+    :param asset_name:
+    :param asset_url:
+    :return:
+    """
+    # Create a progress dialog
+    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
+
+    try:
+        # Get the asset name
+        asset_name = os.path.basename(asset_name)
+        asset_path = os.path.join(os.getcwd(), asset_name)
+
+        if os.path.exists(asset_path):
+            return
+
+        # Download the asset
+        response = requests.get(asset_url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024  # 1 Kibibyte
+
+        # Initialize the progress bar
+        progress_dialog.start_progress(total_size // block_size)
+        progress_dialog.show()
+
+        with open(asset_path, 'wb') as f:
+            for data in response.iter_content(block_size):
+                if progress_dialog.wasCanceled():
+                    raise Exception("Download canceled by user")
+                f.write(data)
+                progress_dialog.update_progress()
+
+    except Exception as e:
+        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
+
+    # Close the progress dialog
+    progress_dialog.set_value(progress_dialog.max_value)
+    progress_dialog.close()
+    
 
 def console_user(error_msg, parent=None):
     """
