@@ -615,12 +615,13 @@ class SAMTool(Tool):
                     # Use existing temporary annotation
                     final_annotation = PolygonAnnotation(
                         self.points,
-                        self.annotation_window.selected_label.short_label_code,
-                        self.annotation_window.selected_label.long_label_code,
-                        self.annotation_window.selected_label.color,
-                        self.annotation_window.current_image_path,
-                        self.annotation_window.selected_label.id,
-                        self.main_window.label_window.active_label.transparency
+                        self.temp_annotation.label.short_label_code,
+                        self.temp_annotation.label.long_label_code,
+                        self.temp_annotation.label.color,
+                        self.temp_annotation.image_path,
+                        self.temp_annotation.label.id,
+                        self.temp_annotation.label.transparency,
+                        holes=self.temp_annotation.holes
                     )
 
                     # Copy confidence data
@@ -641,7 +642,7 @@ class SAMTool(Tool):
                     final_annotation = self.create_annotation(True)
                     if final_annotation:
                         self.annotation_window.add_annotation_from_tool(final_annotation)
-                        self.clear_prompt_graphics()
+                        self.clear_prompt_graphics() 
             # If no active prompts, cancel the working area
             else:
                 self.cancel_working_area()
