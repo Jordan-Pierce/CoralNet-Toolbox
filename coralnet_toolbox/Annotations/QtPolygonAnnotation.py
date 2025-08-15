@@ -83,6 +83,7 @@ class PolygonAnnotation(Annotation):
             centroid_x = sum(point.x() for point in self.points) / len(self.points)
             centroid_y = sum(point.y() for point in self.points) / len(self.points)
             self.center_xy = QPointF(centroid_x, centroid_y)
+            
         except Exception:
             # Convert the QPointF lists to coordinate tuples for Shapely
             shell_coords = [(p.x(), p.y()) for p in self.points]
