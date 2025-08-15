@@ -1,26 +1,18 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-import cv2
-import math
-import numpy as np
-
 from rasterio.windows import Window
-from shapely.geometry import Point
-from shapely.geometry import Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
-
-from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPolygonItem, QGraphicsPathItem,
-                             QGraphicsItem, QGraphicsItemGroup, QMessageBox)
-
-from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
-                         QPainter, QRegion, QImage, QPainterPath)
+from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPathItem, QGraphicsItemGroup,)
+from PyQt5.QtGui import (QPixmap, QColor, QPen, 
+                         QBrush, QPolygonF, QPainter,
+                         QRegion, QImage, QPainterPath)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -142,7 +134,7 @@ class MultiPolygonAnnotation(Annotation):
         mask_painter = QPainter(masked_image)
         mask_painter.setBrush(QBrush(Qt.white))
         mask_painter.setPen(Qt.NoPen)
-        mask_painter.drawPath(full_path) # Draw the complete path with all polygons and holes
+        mask_painter.drawPath(full_path)  # Draw the complete path with all polygons and holes
         mask_painter.end()
 
         # Convert the mask image to a QRegion for clipping
@@ -168,7 +160,7 @@ class MultiPolygonAnnotation(Annotation):
         pen = QPen(Qt.black, 1, Qt.SolidLine)
         result_painter.setPen(pen)
         result_painter.setClipping(False)
-        result_painter.drawPath(full_path) # Draw outlines for all polygons and holes
+        result_painter.drawPath(full_path)  # Draw outlines for all polygons and holes
         result_painter.end()
 
         return cropped_image_graphic
@@ -287,7 +279,8 @@ class MultiPolygonAnnotation(Annotation):
     
     def _update_pen_styles(self):
         """Update pen styles with current animated line offset for all polygon items."""
-        if not self.is_selected:
+        # This check can be simplified to guard the whole method
+        if not self.is_selected and not self.animation_timer.isActive():
             return
             
         color = QColor(self.label.color)
@@ -295,17 +288,16 @@ class MultiPolygonAnnotation(Annotation):
         
         # Update all polygon items in the group
         if self.graphics_item_group:
+            # We need to check for QGraphicsPathItem, not QGraphicsPolygonItem
             for item in self.graphics_item_group.childItems():
-                if isinstance(item, QGraphicsPolygonItem):
+                if isinstance(item, QGraphicsPathItem):
                     item.setPen(pen)
         
-        # Update helper graphics items
+        # Update helper graphics items (no change needed here)
         if self.center_graphics_item:
             self.center_graphics_item.setPen(pen)
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setPen(pen)
-        if self.polygon_graphics_item:
-            self.polygon_graphics_item.setPen(pen)
             
     def update_polygon(self, delta):
         """Show a warning that MultiPolygonAnnotations should be cut before updating."""
