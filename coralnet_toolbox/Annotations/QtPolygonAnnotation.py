@@ -78,18 +78,12 @@ class PolygonAnnotation(Annotation):
         """
         Calculate the true geometric centroid of the polygon, accounting for any holes.
         """
-        # Fallback for invalid or simple shapes
-        if len(self.points) < 3:
-            if not self.points:
-                self.center_xy = QPointF(0, 0)
-                return
-            # For lines or points, a simple average is sufficient
+        try:
+            # Simple average of the outer points for stability
             centroid_x = sum(point.x() for point in self.points) / len(self.points)
             centroid_y = sum(point.y() for point in self.points) / len(self.points)
             self.center_xy = QPointF(centroid_x, centroid_y)
-            return
-
-        try:
+        except Exception:
             # Convert the QPointF lists to coordinate tuples for Shapely
             shell_coords = [(p.x(), p.y()) for p in self.points]
             holes_coords = [[(p.x(), p.y()) for p in hole] for hole in self.holes]
@@ -102,13 +96,6 @@ class PolygonAnnotation(Annotation):
 
             # Update the annotation's center_xy with the new coordinates
             self.center_xy = QPointF(centroid.x, centroid.y)
-
-        except Exception:
-            # If Shapely fails (e.g., due to invalid geometry like self-intersections),
-            # fall back to the simple average of the outer points as a last resort.
-            centroid_x = sum(point.x() for point in self.points) / len(self.points)
-            centroid_y = sum(point.y() for point in self.points) / len(self.points)
-            self.center_xy = QPointF(centroid_x, centroid_y)
 
     def set_cropped_bbox(self):
         """Calculate the bounding box of the polygon defined by the points."""
