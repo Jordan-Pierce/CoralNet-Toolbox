@@ -666,17 +666,49 @@ class PolygonAnnotation(Annotation):
     @classmethod
     def subtract(cls, base_annotation, cutter_annotations: list):
         """
-        Performs a "cookie cutter" subtraction.
+        Performs a symmetrical subtraction.
 
-        Subtracts the combined area of the cutter_annotations from the base_annotation.
-        Includes a safety check to ensure there is an overlap before proceeding.
+        Subtracts the combined area of cutter_annotations from the base_annotation,
+        and also subtracts the base_annotation from each of the cutter_annotations.
+        Returns a list of all resulting annotation fragments.
         """
         from shapely.geometry import Polygon
         from shapely.ops import unary_union
         from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
+        def _create_annotations_from_geom(geom, source_annotation):
+            """Creates appropriate Annotation objects from a Shapely geometry."""
+            if geom.is_empty:
+                return []
+
+            common_args = {
+                "short_label_code": source_annotation.label.short_label_code,
+                "long_label_code": source_annotation.label.long_label_code,
+                "color": source_annotation.label.color,
+                "image_path": source_annotation.image_path,
+                "label_id": source_annotation.label.id
+            }
+
+            if geom.geom_type == 'Polygon':
+                exterior_points = [QPointF(x, y) for x, y in geom.exterior.coords]
+                interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in geom.interiors]
+                return [cls(points=exterior_points, holes=interior_holes, **common_args)]
+
+            elif geom.geom_type == 'MultiPolygon':
+                new_polygons = []
+                for poly in geom.geoms:
+                    if poly.is_empty: continue
+                    exterior_points = [QPointF(x, y) for x, y in poly.exterior.coords]
+                    interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in poly.interiors]
+                    new_polygons.append(cls(points=exterior_points, holes=interior_holes, **common_args))
+                
+                if new_polygons:
+                    return [MultiPolygonAnnotation(polygons=new_polygons, **common_args)]
+
+            return []
+
         if not base_annotation or not cutter_annotations:
-            return None
+            return []
 
         try:
             # --- Convert all annotations to Shapely objects ---
@@ -684,53 +716,35 @@ class PolygonAnnotation(Annotation):
             base_holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(base_annotation, 'holes', [])]
             base_polygon = Polygon(base_shell, base_holes)
 
-            cutter_polygons = []
+            cutter_polygons, cutter_source_annotations = [], []
             for anno in cutter_annotations:
                 shell = [(p.x(), p.y()) for p in anno.points]
                 holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
                 cutter_polygons.append(Polygon(shell, holes))
+                cutter_source_annotations.append(anno)
             
             cutter_union = unary_union(cutter_polygons)
 
-            # --- Safety Check: Abort if there is no intersection ---
             if not base_polygon.intersects(cutter_union):
-                # No overlap, so no operation is performed. Return None.
-                return None
+                return []  # No overlap, so return an empty list to signal no-op
 
-            # --- Perform the geometric difference operation ---
-            result_geom = base_polygon.difference(cutter_union)
+            all_results = []
 
-            if result_geom.is_empty:
-                return None
+            # --- 1. Calculate Base - CutterUnion ---
+            result_base_geom = base_polygon.difference(cutter_union)
+            all_results.extend(_create_annotations_from_geom(result_base_geom, base_annotation))
 
-            # --- Rebuild the appropriate annotation type from the result ---
-            common_args = {
-                "short_label_code": base_annotation.label.short_label_code,
-                "long_label_code": base_annotation.label.long_label_code,
-                "color": base_annotation.label.color,
-                "image_path": base_annotation.image_path,
-                "label_id": base_annotation.label.id
-            }
+            # --- 2. Calculate each Cutter - Base ---
+            for i, cutter_poly in enumerate(cutter_polygons):
+                source_anno = cutter_source_annotations[i]
+                result_cutter_geom = cutter_poly.difference(base_polygon)
+                all_results.extend(_create_annotations_from_geom(result_cutter_geom, source_anno))
 
-            if result_geom.geom_type == 'Polygon':
-                exterior_points = [QPointF(x, y) for x, y in result_geom.exterior.coords]
-                interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in result_geom.interiors]
-                return cls(points=exterior_points, holes=interior_holes, **common_args)
-
-            elif result_geom.geom_type == 'MultiPolygon':
-                new_polygons = []
-                for poly in result_geom.geoms:
-                    exterior_points = [QPointF(x, y) for x, y in poly.exterior.coords]
-                    interior_holes = [[QPointF(x, y) for x, y in interior.coords] for interior in poly.interiors]
-                    new_polygons.append(cls(points=exterior_points, holes=interior_holes, **common_args))
-                return MultiPolygonAnnotation(polygons=new_polygons, **common_args)
-
-            else:
-                return None
+            return all_results
 
         except Exception as e:
             print(f"Error during polygon subtraction: {e}")
-            return None
+            return []
         
     def to_dict(self):
         """Convert the annotation to a dictionary, including points and holes."""
