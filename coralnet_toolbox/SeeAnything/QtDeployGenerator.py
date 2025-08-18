@@ -769,31 +769,30 @@ class DeployGeneratorDialog(QDialog):
         """
         Save the current VPE tensor to disk.
         """
+        # Attempt to get references from selected rows in ImageWindow
+        references_dict = self._get_references()
+        
+        # Check if references_dict is empty
+        if not references_dict:
+            QMessageBox.warning(
+                self,
+                "No References Selected",
+                "No reference images with valid annotations were selected. " 
+                "Please select at least one reference image."
+            )
+            return
+            
+        # Convert the references to VPE
+        self.vpe = self.annotations_to_vpe(references_dict)
+        
+        # Check if VPE creation was successful
         if self.vpe is None:
-            # Attempt to get references from selected rows in ImageWindow
-            references_dict = self._get_references()
-            
-            # Check if references_dict is empty
-            if not references_dict:
-                QMessageBox.warning(
-                    self,
-                    "No References Selected",
-                    "No reference images with valid annotations were selected. " 
-                    "Please select at least one reference image."
-                )
-                return
-                
-            # Convert the references to VPE
-            self.vpe = self.annotations_to_vpe(references_dict)
-            
-            # Check if VPE creation was successful
-            if self.vpe is None:
-                QMessageBox.critical(
-                    self,
-                    "VPE Creation Failed",
-                    "Failed to create VPE from selected references. Please check your annotations."
-                )
-                return
+            QMessageBox.critical(
+                self,
+                "VPE Creation Failed",
+                "Failed to create VPE from selected references. Please check your annotations."
+            )
+            return
 
         # Open file dialog to select save location
         file_path, _ = QFileDialog.getSaveFileName(
