@@ -553,9 +553,8 @@ class SeeAnythingTool(Tool):
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect.topLeft()
 
-        task = self.see_anything_dialog.task_dropdown.currentText()
         masks = None
-        if task == 'segment':
+        if self.see_anything_dialog.task_dropdown.currentText() == 'segment':
             masks = []
             for r in self.rectangles:
                 x1, y1, x2, y2 = r
@@ -588,8 +587,8 @@ class SeeAnythingTool(Tool):
         # Clear previous annotations if any
         self.clear_annotations()
 
-        # Process results based on the task type
-        if self.see_anything_dialog.task == "segment":
+        # Process results based on the task type (creates polygons or rectangle annotations)
+        if self.see_anything_dialog.task_dropdown.currentText() == "segment":
             if self.results.masks:
                 for i, polygon in enumerate(self.results.masks.xyn):
                     confidence = self.results.boxes.conf[i].item()
@@ -625,7 +624,9 @@ class SeeAnythingTool(Tool):
                     box_abs_work_area = box_norm.detach().cpu().numpy() * np.array(
                         [self.work_area_image.shape[1], self.work_area_image.shape[0],
                          self.work_area_image.shape[1], self.work_area_image.shape[0]])
-                    box_area = (box_abs_work_area[2] - box_abs_work_area[0]) * (box_abs_work_area[3] - box_abs_work_area[1])
+                    # Calculate the area of the bounding box
+                    box_area = (box_abs_work_area[2] - box_abs_work_area[0]) * \
+                               (box_abs_work_area[3] - box_abs_work_area[1])
 
                     # Area filtering
                     min_area = self.main_window.get_area_thresh_min() * image_area

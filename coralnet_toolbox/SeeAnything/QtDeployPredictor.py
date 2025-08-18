@@ -435,7 +435,7 @@ class DeployPredictorDialog(QDialog):
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
                 visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-                predictor=YOLOEVPDetectPredictor,
+                predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
                 imgsz=640,
                 conf=0.99,
             )
@@ -495,7 +495,7 @@ class DeployPredictorDialog(QDialog):
         self.loaded_model.predict(
             np.zeros((640, 640, 3), dtype=np.uint8),
             visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-            predictor=YOLOEVPDetectPredictor,
+            predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
             imgsz=640,
             conf=0.99,
         )
@@ -666,13 +666,11 @@ class DeployPredictorDialog(QDialog):
             # Clear visual prompts since we're using VPE
             visual_prompts = {}  # this is okay with a fused model
 
-        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
-
         try:
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
                                                 visual_prompts=visual_prompts.copy(),  
-                                                predictor=predictor,
+                                                predictor=YOLOEVPSegPredictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
@@ -718,8 +716,6 @@ class DeployPredictorDialog(QDialog):
         if self.task == 'segment':
             visuals['masks'] = refer_masks
 
-        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
-
         # Create a progress bar
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
@@ -733,7 +729,7 @@ class DeployPredictorDialog(QDialog):
                 results = self.loaded_model.predict(target_image,
                                                     refer_image=refer_image,
                                                     visual_prompts=visuals.copy(),
-                                                    predictor=predictor,
+                                                    predictor=YOLOEVPSegPredictor,
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.main_window.get_uncertainty_thresh(),
                                                     iou=self.main_window.get_iou_thresh(),
