@@ -87,9 +87,16 @@ class CutSubTool(SubTool):
         self._update_cut_line_path(position)
 
     def keyPressEvent(self, event):
-        """Handle key press events for canceling the cut."""
-        if event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
+        """Handle key press events for cutting operations."""
+        # Check for Ctrl+X to toggle cutting mode off
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
             self.parent_tool.deactivate_subtool()
+            return
+            
+        # Handle Backspace to clear the current cutting line but stay in cutting mode
+        if event.key() == Qt.Key_Backspace:
+            self._clear_cutting_line()
+            return
 
     def _start_drawing_cut_line(self, position):
         """Start drawing the cut line from the given position."""
@@ -114,6 +121,15 @@ class CutSubTool(SubTool):
             for point in self.cutting_points[1:]:
                 path.lineTo(point)
             self.cutting_path_item.setPath(path)
+            
+    def _clear_cutting_line(self):
+        """Clear the current cutting line but remain in cutting mode."""
+        self.cutting_points = []
+        self.drawing_in_progress = False
+        if self.cutting_path_item:
+            self.annotation_window.scene.removeItem(self.cutting_path_item)
+            self.cutting_path_item = None
+            self.annotation_window.scene.update()
             
     def _break_apart_multipolygon(self):
         """Handle the special case of 'cutting' a MultiPolygonAnnotation."""

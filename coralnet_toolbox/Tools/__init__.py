@@ -14,6 +14,7 @@ from .QtCutSubTool import CutSubTool
 from .QtMoveSubTool import MoveSubTool
 from .QtResizeSubTool import ResizeSubTool
 from .QtSelectSubTool import SelectSubTool
+from .QtSubtractSubTool import SubtractSubTool
 
 __all__ = [
     'PanTool',
@@ -29,4 +30,5 @@ __all__ = [
     'MoveSubTool',
     'ResizeSubTool',
     'SelectSubTool',
+    'SubtractSubTool',
 ]

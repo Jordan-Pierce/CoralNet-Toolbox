@@ -124,5 +124,22 @@ class ResizeSubTool(SubTool):
         }
 
     def _get_polygon_handles(self, annotation):
-        """Return resize handles for a polygon annotation."""
-        return {f"point_{i}": QPointF(p.x(), p.y()) for i, p in enumerate(annotation.points)}
+        """
+        Return resize handles for a polygon, including its outer boundary and all holes.
+        Uses the new handle format: 'point_{poly_index}_{vertex_index}'.
+        """
+        handles = {}
+
+        # 1. Create handles for the outer boundary using the 'outer' keyword.
+        for i, p in enumerate(annotation.points):
+            handle_name = f"point_outer_{i}"
+            handles[handle_name] = QPointF(p.x(), p.y())
+
+        # 2. Create handles for each of the inner holes using their index.
+        if hasattr(annotation, 'holes'):
+            for hole_index, hole in enumerate(annotation.holes):
+                for vertex_index, p in enumerate(hole):
+                    handle_name = f"point_{hole_index}_{vertex_index}"
+                    handles[handle_name] = QPointF(p.x(), p.y())
+        
+        return handles

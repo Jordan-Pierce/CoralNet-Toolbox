@@ -166,9 +166,16 @@ The main window consists of several components:
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-  - **Ctrl + X**: Enter cutting mode; left-click to start, draw line, left-click to end.
-  - **Backspace/Ctrl + X**: Cancel cutting mode.
-    - MultiPolygonAnnotations: Break apart each PolygonAnnotation.    
+  - **Ctrl + X**: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.
+     - **Cutting Rules**:
+         - Only a single annotation can be selected.
+         - Press Ctrl-X to enter cutting mode, left-click to start, draw line, left-click to end.
+         - Press Backspace or Delete to cancel the current cutting line without making changes.
+     - **Exploding Rules**:
+         - Select a MultiPolygonAnnotation, press Ctrl + X to explode it into multiple PolygonAnnotations.
+     - **Subtraction Rules**:
+         - Multiple overlapping annotations must be selected one-by-one.
+         - The first annotations will be used as the cutters, the last polygon will be used as the base.   
   - **Ctrl + C**: Combine multiple selected annotations (if same type and label).
     - **Combining Rules**: 
       - All selected annotations must have the same label.
