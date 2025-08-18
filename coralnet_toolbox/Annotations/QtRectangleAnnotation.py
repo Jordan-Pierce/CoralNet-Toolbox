@@ -2,13 +2,14 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from rasterio.windows import Window
-from shapely.ops import split
-from shapely.geometry import Polygon, LineString, box
+
+from shapely.ops import split, unary_union
+from shapely.geometry import Point, LineString, box
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
-from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter,
-                         QImage, QRegion)
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
+from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
+                         QPainter, QImage, QRegion, QPainterPath)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
@@ -67,21 +68,60 @@ class RectangleAnnotation(Annotation):
         self.annotation_size = int(max(width, height))
 
     def contains_point(self, point: QPointF) -> bool:
-        """Check if the given point is within the rectangle."""
-        return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
-                self.top_left.y() <= point.y() <= self.bottom_right.y())
+        """Check if the given point is within the rectangle using Shapely."""
+        try:
+            # Create a shapely box from the rectangle's corner coordinates
+            shapely_rect = box(self.top_left.x(), 
+                               self.top_left.y(),
+                               self.bottom_right.x(), 
+                               self.bottom_right.y())
+
+            # Convert the input QPointF to a Shapely Point
+            shapely_point = Point(point.x(), point.y())
+
+            # Return Shapely's boolean result for the containment check
+            return shapely_rect.contains(shapely_point)
+        
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
+                    self.top_left.y() <= point.y() <= self.bottom_right.y())
 
     def get_centroid(self):
         """Get the centroid of the annotation."""
         return (float(self.center_xy.x()), float(self.center_xy.y()))
 
     def get_area(self):
-        """Calculate the area of the rectangle."""
-        return (self.bottom_right.x() - self.top_left.x()) * (self.bottom_right.y() - self.top_left.y())
+        """Calculate the area of the rectangle using Shapely."""
+        try:
+            # Create a shapely box from the rectangle's corner coordinates
+            shapely_rect = box(self.top_left.x(), 
+                               self.top_left.y(),
+                               self.bottom_right.x(), 
+                               self.bottom_right.y())
+            return shapely_rect.area
+
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            width = self.bottom_right.x() - self.top_left.x()
+            height = self.bottom_right.y() - self.top_left.y()
+            return width * height
 
     def get_perimeter(self):
-        """Calculate the perimeter of the rectangle."""
-        return 2 * (self.bottom_right.x() - self.top_left.x()) + 2 * (self.bottom_right.y() - self.top_left.y())
+        """Calculate the perimeter of the rectangle using Shapely."""
+        try:
+            # Create a shapely box from the rectangle's corner coordinates
+            shapely_rect = box(self.top_left.x(), 
+                               self.top_left.y(),
+                               self.bottom_right.x(), 
+                               self.bottom_right.y())
+            return shapely_rect.length
+        
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            width = self.bottom_right.x() - self.top_left.x()
+            height = self.bottom_right.y() - self.top_left.y()
+            return 2 * width + 2 * height
 
     def get_polygon(self):
         """Get the polygon representation of this rectangle."""
@@ -92,6 +132,15 @@ class RectangleAnnotation(Annotation):
             QPointF(self.top_left.x(), self.bottom_right.y())
         ]
         return QPolygonF(points)
+    
+    def get_painter_path(self) -> QPainterPath:
+        """
+        Get a QPainterPath representation of the annotation.
+        """
+        path = QPainterPath()
+        polygon = self.get_polygon()
+        path.addPolygon(polygon)
+        return path
 
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the bounding box."""
@@ -102,69 +151,55 @@ class RectangleAnnotation(Annotation):
         return self.bottom_right
 
     def get_cropped_image_graphic(self):
-        """Create a cropped image with a mask and dotted outline."""
+        """Create a cropped image with a mask and solid outline."""
         if self.cropped_image is None:
             return None
 
         # Create a QImage with transparent background for the mask
         masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
-        masked_image.fill(Qt.transparent)  # Transparent background
+        masked_image.fill(Qt.transparent)
 
-        # Create a QPainter to draw the polygon onto the mask
-        painter = QPainter(masked_image)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(Qt.white))  # White fill for the mask area
-        painter.setPen(Qt.NoPen)
+        # Create a painter to draw the path onto the mask
+        mask_painter = QPainter(masked_image)
+        mask_painter.setRenderHint(QPainter.Antialiasing)
+        mask_painter.setBrush(QBrush(Qt.white))
+        mask_painter.setPen(Qt.NoPen)
 
-        # Define the rectangle points based on top_left and bottom_right
-        rectangle_points = [
-            self.top_left,
-            QPointF(self.bottom_right.x(), self.top_left.y()),
-            self.bottom_right,
-            QPointF(self.top_left.x(), self.bottom_right.y())
-        ]
+        # Create a path from the points relative to the cropped image
+        path = QPainterPath()
+        # The cropped image is the same size as the rectangle, so the path is from (0,0)
+        path.addRect(0, 0, self.cropped_image.width(), self.cropped_image.height())
 
-        # Create a copy of the points that are transformed to be relative to the cropped_image
-        cropped_points = [QPointF(point.x() - self.cropped_bbox[0],
-                                  point.y() - self.cropped_bbox[1]) for point in rectangle_points]
-
-        # Create a polygon from the cropped points
-        polygon = QPolygonF(cropped_points)
-
-        # Draw the polygon onto the mask
-        painter.drawPolygon(polygon)
-        painter.end()
+        # Draw the path onto the mask
+        mask_painter.drawPath(path)
+        mask_painter.end()
 
         # Convert the mask QImage to QPixmap and create a bitmap mask
-        # We want the inside of the polygon to show the image, so we DON'T use MaskInColor
         mask_pixmap = QPixmap.fromImage(masked_image)
         mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
-
-        # Convert bitmap to region for clipping
         mask_region = QRegion(mask_bitmap)
 
         # Create the result image
         cropped_image_graphic = QPixmap(self.cropped_image.size())
-
-        # First draw the entire original image at 50% opacity (for area outside polygon)
         result_painter = QPainter(cropped_image_graphic)
         result_painter.setRenderHint(QPainter.Antialiasing)
-        result_painter.setOpacity(0.5)  # 50% opacity for outside the polygon
+        
+        # Draw the background at 50% opacity
+        result_painter.setOpacity(0.5)
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
-        # Then draw the full opacity image only in the masked area (inside the polygon)
-        result_painter.setOpacity(1.0)  # Reset to full opacity
+        # Draw the full-opacity image inside the masked region
+        result_painter.setOpacity(1.0)
         result_painter.setClipRegion(mask_region)
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
-        # Draw the dotted line outline on top
+        # Draw the solid line outline on top
         pen = QPen(Qt.black)
-        pen.setStyle(Qt.SolidLine)  # Solid line
-        pen.setWidth(1)  # Line width
+        pen.setStyle(Qt.SolidLine)
+        pen.setWidth(1)
         result_painter.setPen(pen)
-        result_painter.setClipping(False)  # Disable clipping for the outline
-        result_painter.drawPolygon(polygon)
-
+        result_painter.setClipping(False)
+        result_painter.drawPath(path)
         result_painter.end()
 
         return cropped_image_graphic
@@ -198,29 +233,25 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
-        """Create all graphics items for the rectangle annotation and add them to the scene as a group."""
-        # Use a polygon (rectangle) as the main graphics item for consistency
-        points = [
-            self.top_left,
-            QPointF(self.bottom_right.x(), self.top_left.y()),
-            self.bottom_right,
-            QPointF(self.top_left.x(), self.bottom_right.y())
-        ]
-        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
-        # Call parent to handle group and helpers
+        """Create all graphics items for the annotation and add them to the scene."""
+        # Get the complete shape as a QPainterPath.
+        path = self.get_painter_path()
+        
+        # Use a QGraphicsPathItem for rendering.
+        self.graphics_item = QGraphicsPathItem(path)
+        
+        # Call the parent class method to handle grouping, styling, and adding to the scene.
         super().create_graphics_item(scene)
     
     def update_graphics_item(self):
         """Update the graphical representation of the rectangle annotation."""
-        # Use a polygon (rectangle) as the main graphics item for consistency
-        points = [
-            self.top_left,
-            QPointF(self.bottom_right.x(), self.top_left.y()),
-            self.bottom_right,
-            QPointF(self.top_left.x(), self.bottom_right.y())
-        ]
-        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
-        # Call parent to handle group and helpers
+        # Get the complete shape as a QPainterPath.
+        path = self.get_painter_path()
+        
+        # Use a QGraphicsPathItem to correctly represent the shape.
+        self.graphics_item = QGraphicsPathItem(path)
+        
+        # Call the parent class method to handle rebuilding the graphics group.
         super().update_graphics_item()
         
     def update_polygon(self, delta):
@@ -311,74 +342,53 @@ class RectangleAnnotation(Annotation):
 
     @classmethod
     def combine(cls, annotations: list):
-        """Combine multiple rectangle annotations into a single encompassing rectangle,
-        but only if every annotation overlaps with at least one other annotation.
-
-        Args:
-            annotations: List of RectangleAnnotations objects to combine.
-
-        Returns:
-            A new RectangleAnnotations that encompasses all input rectangles if every
-            annotation overlaps with at least one other, otherwise None.
+        """Combine multiple rectangle annotations into a single encompassing rectangle
+        using Shapely, but only if every annotation overlaps with at least one other.
         """
         if not annotations:
             return None
-
         if len(annotations) == 1:
             return annotations[0]
 
-        # Check if each annotation overlaps with at least one other annotation
-        for i, anno_i in enumerate(annotations):
+        # Convert all annotations to Shapely boxes
+        shapely_rects = []
+        for anno in annotations:
+            shaped_rect = box(anno.top_left.x(), 
+                              anno.top_left.y(),
+                              anno.bottom_right.x(), 
+                              anno.bottom_right.y())
+            
+            shapely_rects.append(shaped_rect)
+            
+        # 1. Perform the overlap check using Shapely's `intersects`
+        for i, rect_i in enumerate(shapely_rects):
             has_overlap = False
-            for j, anno_j in enumerate(annotations):
-                if i == j:
-                    continue
-
-                # Check if these two rectangles overlap
-                if (anno_i.top_left.x() < anno_j.bottom_right.x() and
-                    anno_i.bottom_right.x() > anno_j.top_left.x() and
-                    anno_i.top_left.y() < anno_j.bottom_right.y() and
-                    anno_i.bottom_right.y() > anno_j.top_left.y()):
+            for j, rect_j in enumerate(shapely_rects):
+                if i != j and rect_i.intersects(rect_j):
                     has_overlap = True
                     break
-
-            # If any annotation doesn't overlap with any other, return None
             if not has_overlap:
-                return None
+                return None  # An annotation is isolated, cancel the combine
 
-        # Find the minimum top-left and maximum bottom-right coordinates
-        min_x = min(anno.top_left.x() for anno in annotations)
-        min_y = min(anno.top_left.y() for anno in annotations)
-        max_x = max(anno.bottom_right.x() for anno in annotations)
-        max_y = max(anno.bottom_right.y() for anno in annotations)
+        # 2. Get the encompassing bounding box using Shapely's union and bounds
+        merged_geom = unary_union(shapely_rects)
+        min_x, min_y, max_x, max_y = merged_geom.bounds
 
         # Create new rectangle with these bounds
         top_left = QPointF(min_x, min_y)
         bottom_right = QPointF(max_x, max_y)
 
         # Extract info from the first annotation
-        short_label_code = annotations[0].label.short_label_code
-        long_label_code = annotations[0].label.long_label_code
-        color = annotations[0].label.color
-        image_path = annotations[0].image_path
-        label_id = annotations[0].label.id
-
-        # Create a new annotation with the merged points
+        first_anno = annotations[0]
         new_annotation = cls(
             top_left=top_left,
             bottom_right=bottom_right,
-            short_label_code=short_label_code,
-            long_label_code=long_label_code,
-            color=color,
-            image_path=image_path,
-            label_id=label_id
+            short_label_code=first_anno.label.short_label_code,
+            long_label_code=first_anno.label.long_label_code,
+            color=first_anno.label.color,
+            image_path=first_anno.image_path,
+            label_id=first_anno.label.id
         )
-
-        # All input annotations have the same rasterio source, use it for the new one
-        if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
-            if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
-                new_annotation.rasterio_src = annotations[0].rasterio_src
-                new_annotation.create_cropped_image(new_annotation.rasterio_src)
 
         return new_annotation
 

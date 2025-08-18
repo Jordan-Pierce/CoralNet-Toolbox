@@ -197,30 +197,50 @@ class ExportTagLabAnnotations:
         """
         # Calculate bounding box, centroid, area, perimeter, and contour
         points = annotation.points
+        # Convert points to TagLab contour format
+        contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
+        inner_contours = []
+        if hasattr(annotation, 'holes') and annotation.holes:
+            # Convert holes to TagLab format
+            for hole in annotation.holes:
+                inner_contours.append(self.taglabToPoints(np.array([[point.x(), point.y()] for point in hole])))
+        
+        # Calculate bounding box
         min_x = int(min(point.x() for point in points))
         min_y = int(min(point.y() for point in points))
         max_x = int(max(point.x() for point in points))
-        max_y = int(max(point.y() for point in points))
+        max_y = int(max(point.y() for point in points))        
         width = max_x - min_x
         height = max_y - min_y
+        bbox = [min_x, min_y, width, height]
+        
+        # Calculate centroid
         centroid_x = float(f"{sum(point.x() for point in points) / len(points):.1f}")
         centroid_y = float(f"{sum(point.y() for point in points) / len(points):.1f}")
+        centroid = [centroid_x, centroid_y]
+        
         area = float(f"{annotation.get_area():.1f}")
         perimeter = float(f"{annotation.get_perimeter():.1f}")
-        contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
+        data = annotation.data if hasattr(annotation, 'data') else {}
+        
+        # Pop these keys from data if they exist
+        class_name = data.pop('class_name', annotation.label.short_label_code)
+        instance_name = data.pop('instance_name', "coral0")
+        blob_name = data.pop('blob_name', f"c-0-{centroid_x}x-{centroid_y}y")
+        note = data.pop('note', "")
 
         annotation_dict = {
-            "bbox": [min_y, min_x, width, height],
-            "centroid": [centroid_x, centroid_y],
+            "bbox": bbox,
+            "centroid": centroid,
             "area": area,
             "perimeter": perimeter,
             "contour": contour,
-            "inner contours": [],
-            "class name": annotation.label.short_label_code,
-            "instance name": "coral0",  # Placeholder, update as needed
-            "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
-            "note": "",
-            "data": {}
+            "inner contours": inner_contours,
+            "class name": class_name,
+            "instance name": instance_name,
+            "blob name": blob_name,
+            "note": note,
+            "data": data
         }
         
         return annotation_dict

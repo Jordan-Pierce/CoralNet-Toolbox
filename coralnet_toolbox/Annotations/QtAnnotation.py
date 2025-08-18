@@ -4,8 +4,8 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
 from PyQt5.QtGui import QColor, QPolygonF, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
@@ -54,12 +54,11 @@ class Annotation(QObject):
         self.annotation_size = None
         self.tolerance = 0.1  # Default detail level for simplification/densification
 
-        # Attributes to store the graphics items for center/centroid, bounding box, and polygon
+        # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.polygon_graphics_item = None
 
-        # New: group for all graphics items
+        # Group for all graphics items
         self.graphics_item_group = None
         
         # Animation properties
@@ -86,6 +85,10 @@ class Annotation(QObject):
 
     def get_polygon(self):
         """Get the polygon representation of this annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_painter_path(self):
+        """Get the QPainterPath representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
     def get_bounding_box_top_left(self):
@@ -124,6 +127,11 @@ class Annotation(QObject):
     @classmethod
     def cut(cls, annotations: list, cutting_points: list):
         """Cut multiple annotations using specified cutting points."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    @classmethod
+    def subtract(cls, base_annotation, cutter_annotations: list):
+        """Subtract cutter annotations from a base annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
     def show_warning_message(self):
@@ -171,45 +179,35 @@ class Annotation(QObject):
         self.graphics_item = None
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.polygon_graphics_item = None
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the annotation and add them to the scene as a group."""
         # Remove old group if it exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
-            # Clear references to deleted items
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
-            self.polygon_graphics_item = None
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # Create the main graphics item based on the polygon
-        polygon = self.get_polygon()
-        self.graphics_item = QGraphicsPolygonItem(polygon)
-        
-        # Style the main graphics item with color and pen
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-        self.graphics_item.setBrush(QBrush(color))
-        
-        # Use the consolidated pen creation method
-        self.graphics_item.setPen(self._create_pen(color))
-        
-        self.graphics_item.setData(0, self.id)
-        self.graphics_item_group.addToGroup(self.graphics_item)
+        # The subclass has already created self.graphics_item.
+        # This parent method is now only responsible for styling and grouping it.
+        if self.graphics_item:
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+            self.graphics_item.setBrush(QBrush(color))
+            
+            self.graphics_item.setPen(self._create_pen(color))
+            
+            self.graphics_item.setData(0, self.id)
+            self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # Create the center graphics item
+        # Create and group the helper graphics (center, bbox, etc.)
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
-        # Create the bounding box graphics item
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
-        # Create the polygon graphics item
-        points = [polygon.at(i) for i in range(polygon.count())]
-        self.create_polygon_graphics_item(points, scene, add_to_group=True)
-
-        # Add the group to the scene
+        
+        # Add the final group to the scene
         scene.addItem(self.graphics_item_group)
         
     def set_visibility(self, visible):
@@ -289,8 +287,6 @@ class Annotation(QObject):
             self.center_graphics_item.setPen(pen)
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setPen(pen)
-        if self.polygon_graphics_item:
-            self.polygon_graphics_item.setPen(pen)
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
@@ -345,32 +341,6 @@ class Annotation(QObject):
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
         else:
             scene.addItem(self.bounding_box_graphics_item)
-    
-    def create_polygon_graphics_item(self, points, scene, add_to_group=False):
-        """Create a graphical item representing the annotation's polygon outline."""
-        try:
-            has_scene = self.polygon_graphics_item and self.polygon_graphics_item.scene()
-        except RuntimeError:
-            self.polygon_graphics_item = None
-            has_scene = False
-    
-        if has_scene:
-            self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-    
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-    
-        polygon = QPolygonF(points)
-        self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
-        self.polygon_graphics_item.setBrush(color)
-    
-        # Use the consolidated pen creation method
-        self.polygon_graphics_item.setPen(self._create_pen(color))
-    
-        if add_to_group and self.graphics_item_group:
-            self.graphics_item_group.addToGroup(self.polygon_graphics_item)
-        else:
-            scene.addItem(self.polygon_graphics_item)
 
     def get_center_xy(self):
         """Get the center coordinates of the annotation."""
@@ -405,9 +375,11 @@ class Annotation(QObject):
         try:
             if self.graphics_item_group and self.graphics_item_group.scene():
                 scene = self.graphics_item_group.scene()
+                
         except RuntimeError:
             self.graphics_item_group = None
             scene = None
+            
         if scene is not None:
             # Remove the old group from the scene
             scene.removeItem(self.graphics_item_group)
@@ -439,19 +411,6 @@ class Annotation(QObject):
     
             # Use the consolidated pen creation method
             self.bounding_box_graphics_item.setPen(self._create_pen(color))
-    
-    def update_polygon_graphics_item(self, points):
-        """Update the shape and appearance of the polygon graphics item."""
-        if self.polygon_graphics_item:
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-    
-            polygon = QPolygonF(points)
-            self.polygon_graphics_item.setPolygon(polygon)
-            self.polygon_graphics_item.setBrush(color)
-    
-            # Use the consolidated pen creation method
-            self.polygon_graphics_item.setPen(self._create_pen(color))
     
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""

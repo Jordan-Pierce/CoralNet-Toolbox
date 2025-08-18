@@ -1,16 +1,18 @@
 import warnings
 
-import cv2
-import numpy as np
 from rasterio.windows import Window
 
+from shapely.ops import unary_union
+from shapely.geometry import Point, Polygon 
+
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
 from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter,
-                         QPolygonF, QImage, QRegion)
+                         QPolygonF, QImage, QRegion, QPainterPath)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
@@ -63,25 +65,77 @@ class PatchAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
 
     def contains_point(self, point: QPointF):
-        """Check if the point is within the annotation's bounding box."""
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        return rect.contains(point)
+        """
+        Check if the given point is inside the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+
+            # Create a Shapely polygon
+            shapely_polygon = Polygon(shell=shell_coords)
+
+            # Convert the input QPointF to a Shapely Point
+            shapely_point = Point(point.x(), point.y())
+
+            # Return Shapely's boolean result for the containment check
+            return shapely_polygon.contains(shapely_point)
+
+        except Exception:
+            # Fallback to the original QRectF implementation if Shapely fails
+            half_size = self.annotation_size / 2
+            rect = QRectF(self.center_xy.x() - half_size,
+                          self.center_xy.y() - half_size,
+                          self.annotation_size,
+                          self.annotation_size)
+            return rect.contains(point)
 
     def get_centroid(self):
         """Get the centroid of the annotation."""
         return (float(self.center_xy.x()), float(self.center_xy.y()))
 
     def get_area(self):
-        """Calculate the area of the square patch."""
-        return self.annotation_size * self.annotation_size
+        """
+        Calculate the net area of the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+
+            # A valid polygon needs at least 3 points
+            if len(shell_coords) < 3:
+                return 0.0
+
+            # Create a Shapely polygon and return its area
+            shapely_polygon = Polygon(shell=shell_coords)
+            return shapely_polygon.area
+
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            return self.annotation_size * self.annotation_size
 
     def get_perimeter(self):
-        """Calculate the perimeter of the square patch."""
-        return 4 * self.annotation_size
+        """
+        Calculate the perimeter of the polygon using Shapely.
+        """
+        try:
+            # Convert the patch's corners to coordinate tuples for Shapely
+            qt_polygon = self.get_polygon()
+            shell_coords = [(p.x(), p.y()) for p in qt_polygon]
+            
+            # A shape with fewer than 2 points has no length
+            if len(shell_coords) < 2:
+                return 0.0
+
+            # Create a Shapely polygon and return its perimeter (length)
+            shapely_polygon = Polygon(shell=shell_coords)
+            return shapely_polygon.length
+
+        except Exception:
+            # Fallback to the original implementation if Shapely fails
+            return 4 * self.annotation_size
 
     def get_polygon(self):
         """Get the polygon representation of this patch (a square)."""
@@ -93,6 +147,20 @@ class PatchAnnotation(Annotation):
             QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
         ]
         return QPolygonF(points)
+    
+    def get_painter_path(self) -> QPainterPath:
+        """
+        Get a QPainterPath representation of the annotation.
+        """
+        path = QPainterPath()
+
+        # Get the square's corners from the existing get_polygon method
+        polygon = self.get_polygon()
+
+        # Add the polygon to the path
+        path.addPolygon(polygon)
+
+        return path
 
     def get_bounding_box_top_left(self):
         """Get the top-left corner of the bounding box."""
@@ -105,65 +173,52 @@ class PatchAnnotation(Annotation):
         return QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size)
 
     def get_cropped_image_graphic(self):
-        """Get the cropped image with a dotted outline and black background."""
+        """Get the cropped image with a solid outline."""
         if self.cropped_image is None:
             return None
 
         # Create a QImage with transparent background for the mask
         masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
-        masked_image.fill(Qt.transparent)  # Transparent background
+        masked_image.fill(Qt.transparent)
 
-        # Create a QPainter to draw the polygon onto the mask
-        painter = QPainter(masked_image)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(Qt.white))  # White fill for the mask area
-        painter.setPen(Qt.NoPen)
+        # Create a painter to draw the path onto the mask
+        mask_painter = QPainter(masked_image)
+        mask_painter.setRenderHint(QPainter.Antialiasing)
+        mask_painter.setBrush(QBrush(Qt.white))  # White fill for the mask area
+        mask_painter.setPen(Qt.NoPen)
+        
+        # Define the square's corners relative to the cropped image (0,0)
+        path = QPainterPath()
+        path.addRect(0, 0, self.cropped_image.width(), self.cropped_image.height())
 
-        # Define the square's corners as a polygon
-        cropped_points = [
-            QPointF(0, 0),
-            QPointF(self.cropped_image.width(), 0),
-            QPointF(self.cropped_image.width(), self.cropped_image.height()),
-            QPointF(0, self.cropped_image.height())
-        ]
+        # Draw the path onto the mask
+        mask_painter.drawPath(path)
+        mask_painter.end()
 
-        # Create a polygon from the cropped points
-        polygon = QPolygonF(cropped_points)
-
-        # Draw the polygon onto the mask
-        painter.drawPolygon(polygon)
-        painter.end()
-
-        # Convert the mask QImage to QPixmap and create a bitmap mask
-        # We want the inside of the polygon to show the image, so we DON'T use MaskInColor
+        # Convert the mask to a QRegion for clipping
         mask_pixmap = QPixmap.fromImage(masked_image)
         mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
-
-        # Convert bitmap to region for clipping
         mask_region = QRegion(mask_bitmap)
 
-        # Create the result image
+        # Create the result image with the background at 50% opacity
         cropped_image_graphic = QPixmap(self.cropped_image.size())
-
-        # First draw the entire original image at 50% opacity (for area outside polygon)
         result_painter = QPainter(cropped_image_graphic)
         result_painter.setRenderHint(QPainter.Antialiasing)
-        result_painter.setOpacity(0.5)  # 50% opacity for outside the polygon
+        result_painter.setOpacity(0.5)
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
-        # Then draw the full opacity image only in the masked area (inside the polygon)
-        result_painter.setOpacity(1.0)  # Reset to full opacity
+        # Draw the full-opacity image inside the masked region
+        result_painter.setOpacity(1.0)
         result_painter.setClipRegion(mask_region)
         result_painter.drawPixmap(0, 0, self.cropped_image)
 
-        # Draw the dotted line outline on top
+        # Draw the solid line outline on top
         pen = QPen(Qt.black)
-        pen.setStyle(Qt.SolidLine)  # Solid line
-        pen.setWidth(1)  # Line width
+        pen.setStyle(Qt.SolidLine)
+        pen.setWidth(1)
         result_painter.setPen(pen)
         result_painter.setClipping(False)  # Disable clipping for the outline
-        result_painter.drawPolygon(polygon)
-
+        result_painter.drawPath(path)
         result_painter.end()
 
         return cropped_image_graphic
@@ -195,31 +250,25 @@ class PatchAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
-        """Create all graphics items for the patch annotation and add them to the scene as a group."""
-        # Use a polygon (square) as the main graphics item
-        half_size = self.annotation_size / 2
-        points = [
-            QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),  # Top-left
-            QPointF(self.center_xy.x() + half_size, self.center_xy.y() - half_size),  # Top-right
-            QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),  # Bottom-right
-            QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
-        ]
-        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
-        # Call parent to handle group and helpers
+        """Create all graphics items for the annotation and add them to the scene."""
+        # Get the complete shape as a QPainterPath.
+        path = self.get_painter_path()
+        
+        # Use a QGraphicsPathItem for rendering.
+        self.graphics_item = QGraphicsPathItem(path)
+        
+        # Call the parent class method to handle grouping, styling, and adding to the scene.
         super().create_graphics_item(scene)
     
     def update_graphics_item(self):
         """Update the graphical representation of the patch annotation."""
-        # Use a polygon (square) as the main graphics item
-        half_size = self.annotation_size / 2
-        points = [
-            QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),  # Top-left
-            QPointF(self.center_xy.x() + half_size, self.center_xy.y() - half_size),  # Top-right
-            QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),  # Bottom-right
-            QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
-        ]
-        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
-        # Call parent to handle group and helpers
+        # Get the complete shape as a QPainterPath.
+        path = self.get_painter_path()
+        
+        # Use a QGraphicsPathItem to correctly represent the shape.
+        self.graphics_item = QGraphicsPathItem(path)
+        
+        # Call the parent class method to handle rebuilding the graphics group.
         super().update_graphics_item()
         
     def update_polygon(self, delta):
@@ -259,153 +308,53 @@ class PatchAnnotation(Annotation):
     @classmethod
     def combine(cls, annotations: list):
         """
-        Combine multiple annotations (patches and/or polygons) into a single polygon annotation.
-        If any annotation is not touching at least one other, cancel the operation (return None).
+        Combine annotations using Shapely's union operation.
+        Returns a single PolygonAnnotation or a MultiPolygonAnnotation.
         """
         if not annotations:
             return None
+        if len(annotations) == 1:
+            return annotations[0]
 
-        # Check that all annotations have the same label
-        first_annotation = annotations[0]
-        if not all(annotation.label.id == first_annotation.label.id for annotation in annotations):
-            return None  # Can't combine annotations with different labels
+        try:
+            # 1. Convert all input annotations to Shapely Polygons.
+            shapely_polygons = []
+            for anno in annotations:
+                # get_polygon() works for both PatchAnnotation and PolygonAnnotation
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                shapely_polygons.append(Polygon(points))
 
-        # Separate patches and polygons
-        patches = [annotation for annotation in annotations if isinstance(annotation, cls)]
-        polygons = [annotation for annotation in annotations if not isinstance(annotation, cls)]
+            # 2. Perform the union operation.
+            merged_geom = unary_union(shapely_polygons)
+            
+            # --- Get properties from the first annotation for the new one ---
+            first_anno = annotations[0]
+            common_args = {
+                "short_label_code": first_anno.label.short_label_code,
+                "long_label_code": first_anno.label.long_label_code,
+                "color": first_anno.label.color,
+                "image_path": first_anno.image_path,
+                "label_id": first_anno.label.id
+            }
 
-        # --- TOUCHING CHECK ---
-        # For each annotation, check if it touches at least one other
-        def patch_touches(a, b):
-            # Use bounding box intersection for patches
-            rect_a = QRectF(a.get_bounding_box_top_left(), a.get_bounding_box_bottom_right())
-            rect_b = QRectF(b.get_bounding_box_top_left(), b.get_bounding_box_bottom_right())
-            return rect_a.intersects(rect_b)
+            # 3. Build the appropriate new annotation based on the result.
+            if merged_geom.geom_type == 'Polygon':
+                exterior_points = [QPointF(x, y) for x, y in merged_geom.exterior.coords]
+                return PolygonAnnotation(points=exterior_points, **common_args)
 
-        def poly_touches(a, b):
-            # Use polygon intersection for polygons
-            poly_a = a.get_polygon()
-            poly_b = b.get_polygon()
-            return poly_a.intersected(poly_b).count() > 0
+            elif merged_geom.geom_type == 'MultiPolygon':
+                new_polygons = []
+                for poly in merged_geom.geoms:
+                    exterior_points = [QPointF(x, y) for x, y in poly.exterior.coords]
+                    new_polygons.append(PolygonAnnotation(points=exterior_points, **common_args))
+                return MultiPolygonAnnotation(polygons=new_polygons, **common_args)
+            
+            return None  # The geometry is empty or an unexpected type
 
-        for i, anno_i in enumerate(annotations):
-            has_touch = False
-            for j, anno_j in enumerate(annotations):
-                if i == j:
-                    continue
-                if isinstance(anno_i, cls) and isinstance(anno_j, cls):
-                    if patch_touches(anno_i, anno_j):
-                        has_touch = True
-                        break
-                elif not isinstance(anno_i, cls) and not isinstance(anno_j, cls):
-                    if poly_touches(anno_i, anno_j):
-                        has_touch = True
-                        break
-                else:
-                    # Patch vs Polygon: check if patch bbox intersects polygon
-                    patch = anno_i if isinstance(anno_i, cls) else anno_j
-                    poly = anno_j if isinstance(anno_i, cls) else anno_i
-                    rect_patch = QRectF(
-                        patch.get_bounding_box_top_left(),
-                        patch.get_bounding_box_bottom_right()
-                    )
-                    poly_tl = poly.get_bounding_box_top_left()
-                    poly_br = poly.get_bounding_box_bottom_right()
-                    if any(rect_patch.contains(pt) for pt in [poly_tl, poly_br]):
-                        has_touch = True
-                        break
-            if not has_touch:
-                return None  # Cancel combine if any annotation is not touching another
-
-        # Separate patches and polygons
-        result_polygons = []
-
-        # If we have patches, combine them into a polygon
-        if patches:
-            # Determine the bounds for creating a combined mask
-            min_x = min(anno.get_bounding_box_top_left().x() for anno in patches)
-            min_y = min(anno.get_bounding_box_top_left().y() for anno in patches)
-            max_x = max(anno.get_bounding_box_bottom_right().x() for anno in patches)
-            max_y = max(anno.get_bounding_box_bottom_right().y() for anno in patches)
-
-            # Add padding for safety
-            padding = 20
-            min_x -= padding
-            min_y -= padding
-            max_x += padding
-            max_y += padding
-
-            # Create a mask for the combined shape
-            width = int(max_x - min_x)
-            height = int(max_y - min_y)
-            if width <= 0 or height <= 0:
-                width = max(1, width)
-                height = max(1, height)
-
-            combined_mask = np.zeros((height, width), dtype=np.uint8)
-
-            # Draw all patches on the mask
-            for annotation in patches:
-                half_size = annotation.annotation_size / 2
-                rect_x = int(annotation.center_xy.x() - half_size - min_x)
-                rect_y = int(annotation.center_xy.y() - half_size - min_y)
-                rect_width = int(annotation.annotation_size)
-                rect_height = int(annotation.annotation_size)
-
-                # Make sure the rectangle is within the mask bounds
-                rect_x = max(0, rect_x)
-                rect_y = max(0, rect_y)
-                rect_width = min(width - rect_x, rect_width)
-                rect_height = min(height - rect_y, rect_height)
-
-                # Draw the rectangle on the mask
-                if rect_width > 0 and rect_height > 0:
-                    combined_mask[rect_y: rect_y + rect_height, rect_x: rect_x + rect_width] = 255
-
-            # Find contours of the combined shape
-            contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            if contours:
-                # Get the largest contour
-                largest_contour = max(contours, key=cv2.contourArea)
-
-                # Simplify the contour slightly to reduce point count
-                epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
-                approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
-
-                # Convert back to original coordinate system and to QPointF
-                points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
-
-                # Create a new polygon annotation
-                patches_polygon = PolygonAnnotation(
-                    points=points,
-                    short_label_code=first_annotation.label.short_label_code,
-                    long_label_code=first_annotation.label.long_label_code,
-                    color=first_annotation.label.color,
-                    image_path=first_annotation.image_path,
-                    label_id=first_annotation.label.id
-                )
-
-                # Copy rasterio source if available
-                if hasattr(first_annotation, 'rasterio_src') and first_annotation.rasterio_src is not None:
-                    patches_polygon.rasterio_src = first_annotation.rasterio_src
-                    patches_polygon.create_cropped_image(patches_polygon.rasterio_src)
-
-                result_polygons.append(patches_polygon)
-
-        # Add existing polygons to the result list
-        result_polygons.extend(polygons)
-
-        # If we only have one result polygon, return it
-        if len(result_polygons) == 1:
-            return result_polygons[0]
-
-        # If we have multiple polygons, combine them using PolygonAnnotation.combine
-        elif len(result_polygons) > 1:
-            return PolygonAnnotation.combine(result_polygons)
-
-        # Otherwise return None
-        return None
+        except Exception as e:
+            print(f"Error during polygon combination: {e}")
+            return None
 
     @classmethod
     def cut(cls, annotations: list, cutting_points: list):
