@@ -166,7 +166,7 @@ The main window consists of several components:
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-  - **Ctrl + X**: Cut a polygon annotation, explode a multi-polygon annotation, or substract polygon annotations.
+  - **Ctrl + X**: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.
      - **Cutting Rules**:
          - Only a single annotation can be selected.
          - Press Ctrl-X to enter cutting mode, left-click to start, draw line, left-click to end.
