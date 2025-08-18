@@ -130,7 +130,7 @@ class Annotation(QObject):
         raise NotImplementedError("Subclasses must implement this method.")
     
     @classmethod
-    def substract(cls, base_annotation, cutter_annotations: list):
+    def subtract(cls, base_annotation, cutter_annotations: list):
         """Subtract cutter annotations from a base annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
 
