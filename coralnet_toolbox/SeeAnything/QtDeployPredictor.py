@@ -58,8 +58,6 @@ class DeployPredictorDialog(QDialog):
         self.max_detect = 500
         self.model_path = None
         self.loaded_model = None
-        self.vpe_path = None
-        self.vpe = None
         self.image_path = None
 
         self.class_mapping = {}
@@ -135,21 +133,12 @@ class DeployPredictorDialog(QDialog):
     
         # Add all models to combo box
         self.model_combo.addItems(standard_models)
+        
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
-        
+        # Create a layout for the model selection
         layout.addRow("Models:", self.model_combo)
         
-        # Add custom vpe file selection
-        self.vpe_path_edit = QLineEdit()
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_vpe_file)
-
-        vpe_path_layout = QHBoxLayout()
-        vpe_path_layout.addWidget(self.vpe_path_edit)
-        vpe_path_layout.addWidget(browse_button)
-        layout.addRow("Custom VPE:", vpe_path_layout)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -278,62 +267,6 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-    def browse_vpe_file(self):
-        """
-        Open a file dialog to browse for a VPE file and load it.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Visual Prompt Encoding (VPE) File",
-            "",
-            "VPE Files (*.pt);;All Files (*)"
-        )
-        
-        if not file_path:
-            return
-            
-        self.vpe_path_edit.setText(file_path)
-        self.vpe_path = file_path
-        
-        try:
-            # Load the VPE file
-            loaded_vpe = torch.load(file_path)
-            
-            # Move to the appropriate device if needed
-            # loaded_vpe = loaded_vpe.to(self.main_window.device)
-            # -----------------------------------------------
-            # TODO remove this once ultralytyics bug is fixed
-            # Check if GPU is available, move to it, else CPU
-            if torch.cuda.is_available():
-                loaded_vpe = loaded_vpe.to("cuda")
-            else:
-                loaded_vpe = loaded_vpe.to("cpu")
-
-            # Check if it's a valid VPE file by checking for expected attributes
-            if hasattr(loaded_vpe, 'shape') or isinstance(loaded_vpe, dict):
-                # Store the loaded VPE
-                self.vpe = loaded_vpe
-            else:
-                # Invalid VPE file format
-                self.vpe = None
-                self.status_bar.setText("Invalid VPE file format")
-                QMessageBox.warning(
-                    self, 
-                    "Invalid VPE", 
-                    "The file does not appear to be a valid VPE format."
-                )
-                # Clear the VPE path edit field so it's empty
-                self.vpe_path_edit.clear()
-                
-        except Exception as e:
-            self.vpe = None
-            self.status_bar.setText(f"Error loading VPE: {str(e)}")
-            QMessageBox.critical(
-                self, 
-                "Error Loading VPE", 
-                f"Failed to load VPE file: {str(e)}"
-            )
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -440,23 +373,12 @@ class DeployPredictorDialog(QDialog):
                 conf=0.99,
             )
 
-            # If a VPE file was loaded, use it with the model after the dummy prediction
-            if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
-                # Directly set the final tensor as the prompt for the predictor
-                self.loaded_model.is_fused = lambda: False
-                self.loaded_model.set_classes(["object0"], self.vpe)
-                self.status_bar.setText(f"Model loaded with custom VPE: {os.path.basename(self.vpe_path)}")
-                message = "Model loaded with custom VPE"
-            else:
-                self.status_bar.setText("Model loaded with default VPE")
-                message = "Model loaded successfully"
-                
-            self.status_bar.setText(message)
-            QMessageBox.information(self.annotation_window, "Model Loaded", message)
+            self.status_bar.setText(f"Loaded ({self.model_path}")
+            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
             self.loaded_model = None
-            self.status_bar.setText(f"Error loading model: {str(e)}")
+            self.status_bar.setText(f"Error loading model: {self.model_path}")
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
     
         finally:
@@ -466,45 +388,6 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
-    
-        self.accept()
-        
-    def reload_model(self):
-        """Subset of the load_model method"""
-        self.loaded_model = None
-        
-        # Get selected model path and download weights if needed
-        self.model_path = self.model_combo.currentText()
-
-        # Load model using registry
-        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.main_window.device)
-
-        # Create a dummy visual dictionary for standard model loading
-        visuals = dict(
-            bboxes=np.array(
-                [
-                    [120, 425, 160, 445],  # Random box
-                ],
-            ),
-            cls=np.array(
-                np.zeros(1),
-            ),
-        )
-
-        # Run a dummy prediction to load the model
-        self.loaded_model.predict(
-            np.zeros((640, 640, 3), dtype=np.uint8),
-            visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-            predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
-            imgsz=640,
-            conf=0.99,
-        )
-
-        # If a VPE file was loaded, use it with the model after the dummy prediction
-        if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
-            # Directly set the final tensor as the prompt for the predictor
-            self.loaded_model.is_fused = lambda: False
-            self.loaded_model.set_classes(["object0"], self.vpe)
 
     def resize_image(self, image):
         """
@@ -597,29 +480,6 @@ class DeployPredictorDialog(QDialog):
                 visual_prompts['masks'] = fallback_masks
         
         return visual_prompts
-            
-    def prompts_to_vpes(self, visual_prompt, image):
-        """
-        Convert visual prompts to VPEs (Visual Prompt Embeddings).
-        
-        Args:
-            visual_prompt (dict): Dictionary containing visual prompts
-            image (np.ndarray): The image to process
-            
-        Returns:
-            torch.Tensor: The generated VPE tensor, normalized
-        """
-        if not self.loaded_model:
-            return None
-            
-        # Set the prompts to the model predictor
-        self.loaded_model.predictor.set_prompts(visual_prompt)
-        
-        # Get the VPE from the model
-        vpe = self.loaded_model.predictor.get_vpe(image)
-        
-        # Normalize the embedding
-        return torch.nn.functional.normalize(vpe, p=2, dim=-1)
 
     def predict_from_prompts(self, bboxes, masks=None):
         """
@@ -643,28 +503,6 @@ class DeployPredictorDialog(QDialog):
 
         # Get the scaled visual prompts
         visual_prompts = self.scale_prompts(bboxes, masks)
-        
-        # If VPEs are being used
-        if self.vpe is not None:
-            # Generate a new VPE from the current visual prompts
-            new_vpe = self.prompts_to_vpes(visual_prompts, self.resized_image)
-            
-            if new_vpe is not None:
-                # If we already have a VPE, average with the existing one
-                if self.vpe.shape == new_vpe.shape:
-                    self.vpe = (self.vpe + new_vpe) / 2
-                    # Re-normalize
-                    self.vpe = torch.nn.functional.normalize(self.vpe, p=2, dim=-1)
-                else:
-                    # Replace with the new VPE if shapes don't match
-                    self.vpe = new_vpe
-                
-                # Set the updated VPE in the model
-                self.loaded_model.is_fused = lambda: False
-                self.loaded_model.set_classes(["object0"], self.vpe)
-            
-            # Clear visual prompts since we're using VPE
-            visual_prompts = {}  # this is okay with a fused model
 
         try:
             # Make predictions
@@ -705,16 +543,30 @@ class DeployPredictorDialog(QDialog):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
 
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
+        # Get the scaled visual prompts
+        visual_prompts = self.scale_prompts(refer_bboxes, refer_masks)
 
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(refer_bboxes),
-            'cls': np.zeros(len(refer_bboxes))
-        }
-        if self.task == 'segment':
-            visuals['masks'] = refer_masks
+        # If VPEs are being used
+        if self.vpe is not None:
+            # Generate a new VPE from the current visual prompts
+            new_vpe = self.prompts_to_vpes(visual_prompts, self.resized_image)
+            
+            if new_vpe is not None:
+                # If we already have a VPE, average with the existing one
+                if self.vpe.shape == new_vpe.shape:
+                    self.vpe = (self.vpe + new_vpe) / 2
+                    # Re-normalize
+                    self.vpe = torch.nn.functional.normalize(self.vpe, p=2, dim=-1)
+                else:
+                    # Replace with the new VPE if shapes don't match
+                    self.vpe = new_vpe
+                
+                # Set the updated VPE in the model
+                self.loaded_model.is_fused = lambda: False
+                self.loaded_model.set_classes(["object0"], self.vpe)
+            
+            # Clear visual prompts since we're using VPE
+            visual_prompts = {}  # this is okay with a fused model
 
         # Create a progress bar
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -728,7 +580,7 @@ class DeployPredictorDialog(QDialog):
                 # Make predictions
                 results = self.loaded_model.predict(target_image,
                                                     refer_image=refer_image,
-                                                    visual_prompts=visuals.copy(),
+                                                    visual_prompts=visual_prompts.copy(),
                                                     predictor=YOLOEVPSegPredictor,
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.main_window.get_uncertainty_thresh(),
@@ -769,10 +621,6 @@ class DeployPredictorDialog(QDialog):
         self.image_path = None
         self.original_image = None
         self.resized_image = None
-        # Also clear the VPE 
-        self.vpe_path_edit.clear()
-        self.vpe_path = None
-        self.vpe = None
         # Clear the cache
         gc.collect()
         empty_cache()

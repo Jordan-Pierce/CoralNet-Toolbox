@@ -554,6 +554,7 @@ class SeeAnythingTool(Tool):
         working_area_top_left = self.working_area.rect.topLeft()
 
         masks = None
+        # Create masks from the rectangles (these are not polygons)
         if self.see_anything_dialog.task_dropdown.currentText() == 'segment':
             masks = []
             for r in self.rectangles:

@@ -83,6 +83,8 @@ class DeployGeneratorDialog(QDialog):
         self.source_label = None
         # Target images
         self.target_images = []
+        self.vpe_path = None
+        self.vpe = None
 
         # Main vertical layout for the dialog
         self.layout = QVBoxLayout(self)
@@ -110,7 +112,7 @@ class DeployGeneratorDialog(QDialog):
         self.setup_status_layout()
         
         # Add layouts to the right panel
-        self.setup_source_layout()
+        self.setup_reference_layout()
 
         # # Add a full ImageWindow instance for target image selection
         self.image_selection_window = ImageWindow(self.main_window)
@@ -317,19 +319,19 @@ class DeployGeneratorDialog(QDialog):
         Setup the models layout with a simple model selection combo box (no tabs).
         """
         group_box = QGroupBox("Model Selection")
-        layout = QVBoxLayout()
+        layout = QFormLayout()
 
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
         # Define available models (keep the existing dictionary)
         self.models = [
-            "yoloe-v8s-seg.pt",
-            "yoloe-v8m-seg.pt",
-            "yoloe-v8l-seg.pt",
-            "yoloe-11s-seg.pt",
-            "yoloe-11m-seg.pt",
-            "yoloe-11l-seg.pt",
+            'yoloe-v8s-seg.pt',
+            'yoloe-v8m-seg.pt',
+            'yoloe-v8l-seg.pt',
+            'yoloe-11s-seg.pt',
+            'yoloe-11m-seg.pt',
+            'yoloe-11l-seg.pt',
         ]
 
         # Add all models to combo box
@@ -337,10 +339,19 @@ class DeployGeneratorDialog(QDialog):
             self.model_combo.addItem(model_name)
         
         # Set the default model
-        self.model_combo.setCurrentText("yoloe-v8s-seg.pt")
+        self.model_combo.setCurrentIndex(self.models.index('yoloe-v8s-seg.pt'))
+        # Create a layout for the model selection
+        layout.addRow(QLabel("Models:"), self.model_combo)
 
-        layout.addWidget(QLabel("Select Model:"))
-        layout.addWidget(self.model_combo)
+        # Add custom vpe file selection
+        self.vpe_path_edit = QLineEdit()
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_vpe_file)
+
+        vpe_path_layout = QHBoxLayout()
+        vpe_path_layout.addWidget(self.vpe_path_edit)
+        vpe_path_layout.addWidget(browse_button)
+        layout.addRow("Custom VPE:", vpe_path_layout)
 
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
@@ -445,17 +456,27 @@ class DeployGeneratorDialog(QDialog):
         Setup action buttons in a group box.
         """
         group_box = QGroupBox("Actions")
-        layout = QHBoxLayout()
+        main_layout = QVBoxLayout()
 
+        # First row: Load and Deactivate buttons side by side
+        button_row = QHBoxLayout()
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
+        button_row.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
+        button_row.addWidget(deactivate_button)
 
-        group_box.setLayout(layout)
+        main_layout.addLayout(button_row)
+
+        # Second row: Save VPE button, stretched to match width
+        save_vpe_button = QPushButton("Save VPE")
+        save_vpe_button.clicked.connect(self.save_vpe)
+        save_vpe_button.setSizePolicy(load_button.sizePolicy())
+        main_layout.addWidget(save_vpe_button)
+
+        group_box.setLayout(main_layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
 
     def setup_status_layout(self):
@@ -471,18 +492,23 @@ class DeployGeneratorDialog(QDialog):
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
 
-    def setup_source_layout(self):
+    def setup_reference_layout(self):
         """
         Set up the layout with source label selection.
         The source image is implicitly the currently active image.
         """
-        group_box = QGroupBox("Reference Label")
+        group_box = QGroupBox("Reference")
         layout = QFormLayout()
 
         # Create the source label combo box
         self.source_label_combo_box = QComboBox()
         self.source_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
         layout.addRow("Reference Label:", self.source_label_combo_box)
+        
+        # Create a Reference model combobox (VPE, Images)
+        self.reference_method_combo_box = QComboBox()
+        self.reference_method_combo_box.addItems(["VPE", "Images"])
+        layout.addRow("Reference Method:", self.reference_method_combo_box)
 
         group_box.setLayout(layout)
         self.right_panel.addWidget(group_box)  # Add to right panel
@@ -682,6 +708,129 @@ class DeployGeneratorDialog(QDialog):
                         source_masks.append(rect_points)
 
         return np.array(source_bboxes), source_masks
+    
+    def browse_vpe_file(self):
+        """
+        Open a file dialog to browse for a VPE file and load it.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Visual Prompt Encoding (VPE) File",
+            "",
+            "VPE Files (*.pt);;All Files (*)"
+        )
+        
+        if not file_path:
+            return
+            
+        self.vpe_path_edit.setText(file_path)
+        self.vpe_path = file_path
+        
+        try:
+            # Load the VPE file
+            loaded_vpe = torch.load(file_path)
+            
+            # Move to the appropriate device if needed
+            # loaded_vpe = loaded_vpe.to(self.main_window.device)
+            # -----------------------------------------------
+            # TODO remove this once ultralytyics bug is fixed
+            # Check if GPU is available, move to it, else CPU
+            if torch.cuda.is_available():
+                loaded_vpe = loaded_vpe.to("cuda")
+            else:
+                loaded_vpe = loaded_vpe.to("cpu")
+
+            # Check if it's a valid VPE file by checking for expected attributes
+            if hasattr(loaded_vpe, 'shape') or isinstance(loaded_vpe, dict):
+                # Store the loaded VPE
+                self.vpe = loaded_vpe
+            else:
+                # Invalid VPE file format
+                self.vpe = None
+                self.status_bar.setText("Invalid VPE file format")
+                QMessageBox.warning(
+                    self, 
+                    "Invalid VPE", 
+                    "The file does not appear to be a valid VPE format."
+                )
+                # Clear the VPE path edit field so it's empty
+                self.vpe_path_edit.clear()
+                
+        except Exception as e:
+            self.vpe = None
+            self.status_bar.setText(f"Error loading VPE: {str(e)}")
+            QMessageBox.critical(
+                self, 
+                "Error Loading VPE", 
+                f"Failed to load VPE file: {str(e)}"
+            )
+            
+    def save_vpe(self):
+        """
+        Save the current VPE tensor to disk.
+        """
+        if self.vpe is None:
+            # Attempt to get references from selected rows in ImageWindow
+            references_dict = self._get_references()
+            
+            # Check if references_dict is empty
+            if not references_dict:
+                QMessageBox.warning(
+                    self,
+                    "No References Selected",
+                    "No reference images with valid annotations were selected. " 
+                    "Please select at least one reference image."
+                )
+                return
+                
+            # Convert the references to VPE
+            self.vpe = self.annotations_to_vpe(references_dict)
+            
+            # Check if VPE creation was successful
+            if self.vpe is None:
+                QMessageBox.critical(
+                    self,
+                    "VPE Creation Failed",
+                    "Failed to create VPE from selected references. Please check your annotations."
+                )
+                return
+
+        # Open file dialog to select save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save VPE Tensor",
+            "",
+            "PyTorch Tensor (*.pt);;All Files (*)"
+        )
+        
+        if not file_path:
+            return  # User canceled the dialog
+        
+        # Add .pt extension if not present
+        if not file_path.endswith('.pt'):
+            file_path += '.pt'
+        
+        try:
+            # Export the final_vpe tensor to disk
+            
+            # Move to CPU before saving to ensure compatibility when loading
+            final_vpe_cpu = self.vpe.cpu()
+            
+            # Save the tensor
+            torch.save(final_vpe_cpu, file_path)
+            
+            self.status_bar.setText(f"Saved VPE tensor to {os.path.basename(file_path)}")
+            QMessageBox.information(
+                self,
+                "VPE Saved",
+                f"Saved VPE tensor to {file_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error Saving VPE",
+                f"Failed to save VPE: {str(e)}"
+            )
 
     def load_model(self):
         """
@@ -713,19 +862,28 @@ class DeployGeneratorDialog(QDialog):
             # Run a dummy prediction to load the model
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
-                visual_prompts=visuals.copy(),
-                predictor=YOLOEVPDetectPredictor,
+                visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
+                predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what 
                 imgsz=640,
                 conf=0.99,
             )
 
-            progress_bar.finish_progress()
-            self.status_bar.setText("Model loaded")
-            QMessageBox.information(self.annotation_window, 
-                                    "Model Loaded", 
-                                    "Model loaded successfully")
+            # If a VPE file was loaded, use it with the model after the dummy prediction
+            if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
+                # Directly set the final tensor as the prompt for the predictor
+                self.loaded_model.is_fused = lambda: False
+                self.loaded_model.set_classes(["object0"], self.vpe)
+                self.status_bar.setText(f"Model loaded with custom VPE: {os.path.basename(self.vpe_path)}")
+                message = "Model loaded with custom VPE"
+            else:
+                self.status_bar.setText("Model loaded with default VPE")
+                message = "Model loaded successfully"
+                
+            self.status_bar.setText(message)
+            QMessageBox.information(self.annotation_window, "Model Loaded", message)
 
         except Exception as e:
+            self.loaded_model = None
             QMessageBox.critical(self.annotation_window, 
                                  "Error Loading Model", 
                                  f"Error loading model: {e}")
@@ -737,7 +895,48 @@ class DeployGeneratorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
+            
+    def reload_model(self):
+        """
+        Subset of the load_model method. This is needed when additional 
+        reference images and annotations (i.e., VPEs) are added (we have 
+        to re-load the model each time).
+        """
+        self.loaded_model = None
+        
+        # Get selected model path and download weights if needed
+        self.model_path = self.model_combo.currentText()
 
+        # Load model using registry
+        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.main_window.device)
+
+        # Create a dummy visual dictionary for standard model loading
+        visuals = dict(
+            bboxes=np.array(
+                [
+                    [120, 425, 160, 445],  # Random box
+                ],
+            ),
+            cls=np.array(
+                np.zeros(1),
+            ),
+        )
+
+        # Run a dummy prediction to load the model
+        self.loaded_model.predict(
+            np.zeros((640, 640, 3), dtype=np.uint8),
+            visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
+            predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
+            imgsz=640,
+            conf=0.99,
+        )
+
+        # If a VPE file was loaded, use it with the model after the dummy prediction
+        if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
+            # Directly set the final tensor as the prompt for the predictor
+            self.loaded_model.is_fused = lambda: False
+            self.loaded_model.set_classes(["object0"], self.vpe)
+            
     def predict(self, image_paths=None):
         """
         Make predictions on the given image paths using the loaded model.
@@ -809,16 +1008,10 @@ class DeployGeneratorDialog(QDialog):
 
         return work_areas_data
     
-    def _apply_model(self, inputs):
+    def _get_references(self):
         """
-        Apply the model to the target inputs, using each highlighted source
-        image as an individual reference for a separate prediction run.
+        Get the reference annotations for the currently selected rows.
         """
-        # Update the model with user parameters
-        self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
-        self.loaded_model.iou = self.main_window.get_iou_thresh()
-        self.loaded_model.max_det = self.get_max_detections()
-        
         # NOTE: self.target_images contains the reference images highlighted in the dialog
         reference_image_paths = self.target_images
 
@@ -826,7 +1019,7 @@ class DeployGeneratorDialog(QDialog):
             QMessageBox.warning(self, 
                                 "No Reference Images", 
                                 "You must highlight at least one reference image.")
-            return []
+            return {}
 
         # Get the selected reference label from the stored variable
         source_label = self.source_label
@@ -842,37 +1035,48 @@ class DeployGeneratorDialog(QDialog):
                     'cls': np.zeros(len(bboxes))
                 }
 
-        # Set the task
-        self.task = self.use_task_dropdown.currentText()
-        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+        return reference_annotations_dict
 
+    def _apply_model_using_images(self, inputs, reference_dict):
+        """
+        Apply the model using the provided images and reference annotations (dict). This method
+        loops through each reference image using its annotations; we then aggregate
+        all the results together. Less efficient, but potentially more accurate.
+
+        Args:
+            inputs (list): List of input images.
+            reference_dict (dict): Dictionary containing reference annotations for each image.
+
+        Returns:
+            list: List of prediction results.
+        """
         # Create a progress bar for iterating through reference images
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions per Reference")
         progress_bar.show()
-        progress_bar.start_progress(len(reference_annotations_dict))
-        
+        progress_bar.start_progress(len(reference_dict))
+
         results_list = []
         # The 'inputs' list contains work areas from the single target image.
         # We will predict on the first work area/full image.
         input_image = inputs[0] 
 
         # Iterate through each reference image and its annotations
-        for ref_path, ref_annotations in reference_annotations_dict.items():
+        for ref_path, ref_annotations in reference_dict.items():
             # The 'refer_image' parameter is the path to the current reference image
             # The 'visual_prompts' are the annotations from that same reference image
-            visuals = {
+            visual_prompts = {
                 'bboxes': ref_annotations['bboxes'],
                 'cls': ref_annotations['cls'],
             }
             if self.task == 'segment':
-                visuals['masks'] = ref_annotations['masks']
+                visual_prompts['masks'] = ref_annotations['masks']
 
             # Make predictions on the target using the current reference
             results = self.loaded_model.predict(input_image,
                                                 refer_image=ref_path,
-                                                visual_prompts=visuals,
-                                                predictor=predictor,
+                                                visual_prompts=visual_prompts,
+                                                predictor=YOLOEVPSegPredictor,
                                                 imgsz=self.imgsz_spinbox.value(),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
@@ -904,6 +1108,132 @@ class DeployGeneratorDialog(QDialog):
             return []
         
         return [[combined_results]]
+    
+    def references_to_vpe(self, reference_dict):
+        """
+        Converts the contents of a reference dictionary to VPEs (Visual Prompt Embeddings).
+        Reference dictionaries contain information about the visual prompts for each reference image:
+        dict[image_path]: {bboxes, masks, cls}
+
+        Args:
+            reference_dict (dict): The reference dictionary containing visual prompts for each image.
+
+        Returns:
+            torch.Tensor: The generated VPE tensor, normalized, or None if empty reference_dict
+        """
+        # Check if the reference dictionary is empty
+        if not reference_dict:
+            return None
+            
+        # Create a list to hold the VPE tensors
+        vpe_list = []
+
+        for ref_path, ref_annotations in reference_dict.items():
+            # Set the prompts to the model predictor
+            self.loaded_model.predictor.set_prompts(ref_annotations)
+
+            # Get the VPE from the model
+            vpe = self.loaded_model.predictor.get_vpe(ref_path)
+            vpe_list.append(vpe)
+
+        # Check if we have any valid VPEs
+        if not vpe_list:
+            return None
+            
+        # Combine the list of VPE tensors and average them
+        final_vpe = torch.cat(vpe_list).mean(dim=0, keepdim=True)
+
+        # Normalize the final embedding
+        final_vpe = torch.nn.functional.normalize(final_vpe, p=2, dim=-1)
+        
+        return final_vpe
+
+    def _apply_model_using_vpe(self, inputs, references_dict):
+        """
+        Apply the model to the inputs using VPE generated from reference annotations.
+        
+        Args:
+            inputs (list): List of input images.
+            references_dict (dict): Dictionary containing reference annotations for each image.
+            
+        Returns:
+            list: List of prediction results, or empty list if VPE creation fails.
+        """
+        # First reload the model to clear any cached data
+        self.reload_model()
+
+        # Check if references_dict is empty
+        if not references_dict:
+            QMessageBox.warning(
+                self,
+                "No Reference Images",
+                "No reference images with valid annotations were found. Cannot create VPE."
+            )
+            return []
+
+        # Convert the reference dictionary to VPEs
+        self.vpe = self.references_to_vpe(references_dict)
+        
+        # Check if VPE creation was successful
+        if self.vpe is None:
+            QMessageBox.warning(
+                self,
+                "VPE Creation Failed",
+                "Failed to create VPE from references. Please check your annotations."
+            )
+            return []
+        
+        # Directly set the final tensor as the prompt for the predictor.
+        # The `inference` method is designed to use this tensor.
+        self.loaded_model.is_fused = lambda: False
+        self.loaded_model.set_classes(["object0"], self.vpe)
+        
+        # Make predictions on the target using the current reference
+        results = self.loaded_model.predict(inputs[0],
+                                            visual_prompts=[],
+                                            predictor=YOLOEVPSegPredictor,
+                                            imgsz=self.imgsz_spinbox.value(),
+                                            conf=self.main_window.get_uncertainty_thresh(),
+                                            iou=self.main_window.get_iou_thresh(),
+                                            max_det=self.get_max_detections(),
+                                            retina_masks=self.task == "segment")
+
+        return [results]
+        
+    def _apply_model(self, inputs):
+        """
+        Apply the model to the target inputs, using each highlighted source
+        image as an individual reference for a separate prediction run. This method
+        does what predictor's predict_from_annotations previously did, but include VPEs.
+        """        
+        # Update the model with user parameters
+        self.task = self.use_task_dropdown.currentText()
+        
+        self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
+        self.loaded_model.iou = self.main_window.get_iou_thresh()
+        self.loaded_model.max_det = self.get_max_detections()
+        
+        # Get the reference information for the currently selected rows
+        # Dict[image_path]: {bboxes, masks, cls}
+        references_dict = self._get_references()
+        
+        # Check if we have any references
+        if not references_dict:
+            QMessageBox.warning(
+                self,
+                "No References Selected",
+                "No reference images with valid annotations were selected. Please select at least one reference image."
+            )
+            return []
+        
+        # Check if the user is using VPE or Reference Images
+        if self.reference_method_combo_box.currentText() == "VPE":
+            # Use the VPE method
+            results = self._apply_model_using_vpe(inputs, references_dict)
+        else:  # Use Reference Images
+            results = self._apply_model_using_images(inputs, references_dict)
+
+        return results
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
@@ -1006,6 +1336,10 @@ class DeployGeneratorDialog(QDialog):
         """
         self.loaded_model = None
         self.model_path = None
+        # Also clear the VPE 
+        self.vpe_path_edit.clear()
+        self.vpe_path = None
+        self.vpe = None
         # Clean up resources
         gc.collect()
         torch.cuda.empty_cache()
