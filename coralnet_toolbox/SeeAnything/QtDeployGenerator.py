@@ -79,10 +79,9 @@ class DeployGeneratorDialog(QDialog):
         self.class_mapping = {}
 
         # Reference image and label
-        self.source_images = []
-        self.source_label = None
-        # Target images
-        self.target_images = []
+        self.reference_label = None
+        self.reference_image_paths = []
+        # Visual Prompting Encoding (VPE)
         self.vpe_path = None
         self.vpe = None
 
@@ -192,7 +191,7 @@ class DeployGeneratorDialog(QDialog):
         self.sync_image_window()
         # This now populates the dropdown, restores the last selection,
         # and then manually triggers the image filtering.
-        self.update_source_labels()
+        self.update_reference_labels()
 
     def sync_image_window(self):
         """
@@ -221,14 +220,14 @@ class DeployGeneratorDialog(QDialog):
         annotation that has BOTH the selected label AND a valid type (Polygon or Rectangle).
         This uses the fast, pre-computed cache for performance.
         """
-        source_label = self.source_label_combo_box.currentData()
-        source_label_text = self.source_label_combo_box.currentText()
+        reference_label = self.reference_label_combo_box.currentData()
+        reference_label_text = self.reference_label_combo_box.currentText()
 
         # Store the last selected label for a better user experience on re-opening.
-        if source_label_text:
-            self.last_selected_label_code = source_label_text
+        if reference_label_text:
+            self.last_selected_label_code = reference_label_text
 
-        if not source_label:
+        if not reference_label:
             # If no label is selected (e.g., during initialization), show an empty list.
             self.image_selection_window.table_model.set_filtered_paths([])
             return
@@ -237,7 +236,7 @@ class DeployGeneratorDialog(QDialog):
         final_filtered_paths = []
         
         valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
-        selected_label_code = source_label.short_label_code
+        selected_label_code = reference_label.short_label_code
 
         # Loop through paths and check the pre-computed map on each raster
         for path in all_paths:
@@ -267,30 +266,23 @@ class DeployGeneratorDialog(QDialog):
             QMessageBox.warning(self, 
                                 "No Model", 
                                 "A model must be loaded before running predictions.")
-            super().reject()
             return
 
-        current_label = self.source_label_combo_box.currentData()
-        if not current_label:
+        self.reference_label = self.reference_label_combo_box.currentData()
+        if not self.reference_label:
             QMessageBox.warning(self, 
-                                "No Source Label", 
-                                "A source label must be selected.")
-            super().reject()
+                                "No Reference Label", 
+                                "A reference label must be selected.")
             return
 
         # Get highlighted paths from our internal image window to use as targets
-        highlighted_images = self.image_selection_window.table_model.get_highlighted_paths()
+        self.reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
 
-        if not highlighted_images:
+        if not self.reference_image_paths:
             QMessageBox.warning(self, 
-                                "No Target Images", 
+                                "No Reference Images", 
                                 "You must highlight at least one image in the list to process.")
-            super().reject()
             return
-
-        # Store the selections for the caller to use after the dialog closes.
-        self.source_label = current_label
-        self.target_images = highlighted_images
 
         # Do not call self.predict here; just close the dialog and let the caller handle prediction
         super().accept()
@@ -470,11 +462,18 @@ class DeployGeneratorDialog(QDialog):
 
         main_layout.addLayout(button_row)
 
-        # Second row: Save VPE button, stretched to match width
+        # Second row: Save VPE button + Ghost button side by side
+        vpe_row = QHBoxLayout()
         save_vpe_button = QPushButton("Save VPE")
         save_vpe_button.clicked.connect(self.save_vpe)
-        save_vpe_button.setSizePolicy(load_button.sizePolicy())
-        main_layout.addWidget(save_vpe_button)
+        vpe_row.addWidget(save_vpe_button)
+
+        ghost_button = QPushButton()
+        ghost_button.setEnabled(False)
+        ghost_button.setFlat(True)
+        vpe_row.addWidget(ghost_button)
+
+        main_layout.addLayout(vpe_row)
 
         group_box.setLayout(main_layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
@@ -494,16 +493,16 @@ class DeployGeneratorDialog(QDialog):
 
     def setup_reference_layout(self):
         """
-        Set up the layout with source label selection.
-        The source image is implicitly the currently active image.
+        Set up the layout with reference label selection.
+        The reference image is implicitly the currently active image.
         """
         group_box = QGroupBox("Reference")
         layout = QFormLayout()
 
-        # Create the source label combo box
-        self.source_label_combo_box = QComboBox()
-        self.source_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
-        layout.addRow("Reference Label:", self.source_label_combo_box)
+        # Create the reference label combo box
+        self.reference_label_combo_box = QComboBox()
+        self.reference_label_combo_box.currentIndexChanged.connect(self.filter_images_by_label_and_type)
+        layout.addRow("Reference Label:", self.reference_label_combo_box)
         
         # Create a Reference model combobox (VPE, Images)
         self.reference_method_combo_box = QComboBox()
@@ -629,15 +628,15 @@ class DeployGeneratorDialog(QDialog):
             if self.loaded_model:
                 self.deactivate_model()
 
-    def update_source_labels(self):
+    def update_reference_labels(self):
         """
-        Updates the source label combo box with labels that are associated with
+        Updates the reference label combo box with labels that are associated with
         valid reference annotations (Polygons or Rectangles), using the fast cache.
         """
-        self.source_label_combo_box.blockSignals(True)
+        self.reference_label_combo_box.blockSignals(True)
         
         try:
-            self.source_label_combo_box.clear()
+            self.reference_label_combo_box.clear()
 
             dialog_manager = self.image_selection_window.raster_manager
             valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
@@ -661,22 +660,22 @@ class DeployGeneratorDialog(QDialog):
             # Add the valid labels to the combo box, sorted alphabetically.
             sorted_valid_labels = sorted(list(valid_labels), key=lambda x: x.short_label_code)
             for label_obj in sorted_valid_labels:
-                self.source_label_combo_box.addItem(label_obj.short_label_code, label_obj)
+                self.reference_label_combo_box.addItem(label_obj.short_label_code, label_obj)
 
             # Restore the last selected label if it's still present in the list.
             if self.last_selected_label_code:
-                index = self.source_label_combo_box.findText(self.last_selected_label_code)
+                index = self.reference_label_combo_box.findText(self.last_selected_label_code)
                 if index != -1:
-                    self.source_label_combo_box.setCurrentIndex(index)
+                    self.reference_label_combo_box.setCurrentIndex(index)
         finally:
-            self.source_label_combo_box.blockSignals(False)
+            self.reference_label_combo_box.blockSignals(False)
         
         # Manually trigger the filtering now that the combo box is stable.
         self.filter_images_by_label_and_type()
 
         return True
 
-    def get_source_annotations(self, reference_label, reference_image_path):
+    def get_reference_annotations(self, reference_label, reference_image_path):
         """
         Return a list of bboxes and masks for a specific image
         belonging to the selected label.
@@ -692,22 +691,22 @@ class DeployGeneratorDialog(QDialog):
         annotations = self.annotation_window.get_image_annotations(reference_image_path)
 
         # Filter annotations by the provided label
-        source_bboxes = []
-        source_masks = []
+        reference_bboxes = []
+        reference_masks = []
         for annotation in annotations:
             if annotation.label.short_label_code == reference_label.short_label_code:
                 if isinstance(annotation, (PolygonAnnotation, RectangleAnnotation)):
                     bbox = annotation.cropped_bbox
-                    source_bboxes.append(bbox)
+                    reference_bboxes.append(bbox)
                     if isinstance(annotation, PolygonAnnotation):
                         points = np.array([[p.x(), p.y()] for p in annotation.points])
-                        source_masks.append(points)
+                        reference_masks.append(points)
                     elif isinstance(annotation, RectangleAnnotation):
                         x1, y1, x2, y2 = bbox
                         rect_points = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-                        source_masks.append(rect_points)
+                        reference_masks.append(rect_points)
 
-        return np.array(source_bboxes), source_masks
+        return np.array(reference_bboxes), reference_masks
     
     def browse_vpe_file(self):
         """
@@ -781,9 +780,12 @@ class DeployGeneratorDialog(QDialog):
                 "Please select at least one reference image."
             )
             return
+        
+        # Reload the model
+        self.reload_model()
             
         # Convert the references to VPE
-        self.vpe = self.annotations_to_vpe(references_dict)
+        self.vpe = self.references_to_vpe(references_dict)
         
         # Check if VPE creation was successful
         if self.vpe is None:
@@ -943,11 +945,11 @@ class DeployGeneratorDialog(QDialog):
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
         """
-        if not self.loaded_model or not self.source_label:
+        if not self.loaded_model or not self.reference_label:
             return
         
         # Update class mapping with the selected reference label
-        self.class_mapping = {0: self.source_label}
+        self.class_mapping = {0: self.reference_label}
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -1011,22 +1013,22 @@ class DeployGeneratorDialog(QDialog):
         """
         Get the reference annotations for the currently selected rows.
         """
-        # NOTE: self.target_images contains the reference images highlighted in the dialog
-        reference_image_paths = self.target_images
+        # Update the reference images
+        self.reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
 
-        if not reference_image_paths:
+        if not self.reference_image_paths:
             QMessageBox.warning(self, 
                                 "No Reference Images", 
                                 "You must highlight at least one reference image.")
             return {}
 
         # Get the selected reference label from the stored variable
-        source_label = self.source_label
+        reference_label = self.reference_label
         
         # Create a dictionary of reference annotations, with image path as the key.
         reference_annotations_dict = {}
-        for path in reference_image_paths:
-            bboxes, masks = self.get_source_annotations(source_label, path)
+        for path in self.reference_image_paths:
+            bboxes, masks = self.get_reference_annotations(reference_label, path)
             if bboxes.size > 0:
                 reference_annotations_dict[path] = {
                     'bboxes': bboxes,
@@ -1201,7 +1203,7 @@ class DeployGeneratorDialog(QDialog):
         
     def _apply_model(self, inputs):
         """
-        Apply the model to the target inputs, using each highlighted source
+        Apply the model to the target inputs, using each highlighted reference
         image as an individual reference for a separate prediction run. This method
         does what predictor's predict_from_annotations previously did, but include VPEs.
         """        
@@ -1339,7 +1341,7 @@ class DeployGeneratorDialog(QDialog):
         self.vpe_path_edit.clear()
         self.vpe_path = None
         self.vpe = None
-        # Clean up resources
+        # Clean up rereferences
         gc.collect()
         torch.cuda.empty_cache()
         # Untoggle all tools
