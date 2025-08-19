@@ -2,8 +2,6 @@ import warnings
 
 import os
 import gc
-import json
-import copy
 
 import numpy as np
 
@@ -12,14 +10,12 @@ from torch.cuda import empty_cache
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
-from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QMessageBox, QCheckBox, QVBoxLayout, QApplication,
+from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QLineEdit,
                              QFormLayout, QComboBox, QSpinBox, QSlider, QPushButton,
-                             QHBoxLayout, QWidget, QFileDialog)
+                             QHBoxLayout)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -632,6 +628,7 @@ class DeployGeneratorDialog(QDialog):
         """
         Updates the reference label combo box with labels that are associated with
         valid reference annotations (Polygons or Rectangles), using the fast cache.
+        Excludes the special "Review" label with id "-1".
         """
         self.reference_label_combo_box.blockSignals(True)
         
@@ -655,7 +652,10 @@ class DeployGeneratorDialog(QDialog):
                         # This label is a valid reference label.
                         # Add its full Label object to our set of valid labels.
                         if label_code in all_project_labels:
-                            valid_labels.add(all_project_labels[label_code])
+                            label_obj = all_project_labels[label_code]
+                            # Exclude the special "Review" label with id "-1"
+                            if not (label_obj.short_label_code == "Review" and str(label_obj.id) == "-1"):
+                                valid_labels.add(label_obj)
 
             # Add the valid labels to the combo box, sorted alphabetically.
             sorted_valid_labels = sorted(list(valid_labels), key=lambda x: x.short_label_code)
@@ -842,38 +842,11 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.show()
 
         try:
-            # Get selected model path and download weights if needed
-            self.model_path = self.model_combo.currentText()
+            # Load the model using reload_model method
+            self.reload_model()
 
-            # Load model using registry
-            self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
-
-            # Create a dummy visual dictionary
-            visuals = dict(
-                bboxes=np.array(
-                    [
-                        [120, 425, 160, 445],
-                    ],
-                ),
-                cls=np.array(
-                    np.zeros(1),
-                ),
-            )
-
-            # Run a dummy prediction to load the model
-            self.loaded_model.predict(
-                np.zeros((640, 640, 3), dtype=np.uint8),
-                visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-                predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what 
-                imgsz=640,
-                conf=0.99,
-            )
-
-            # If a VPE file was loaded, use it with the model after the dummy prediction
+            # VPE should have already been loaded through the browse_vpe_file method
             if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
-                # Directly set the final tensor as the prompt for the predictor
-                self.loaded_model.is_fused = lambda: False
-                self.loaded_model.set_classes(["object0"], self.vpe)
                 self.status_bar.setText(f"Model loaded with custom VPE: {os.path.basename(self.vpe_path)}")
                 message = "Model loaded with custom VPE"
             else:
@@ -906,13 +879,7 @@ class DeployGeneratorDialog(QDialog):
         This method also ensures that we stash the currently highlighted reference
         image paths before reloading, so they're available for predictions
         even if the user switches the active image in the main window.
-        """
-        # First, ensure we've captured the currently highlighted reference images
-        # Store them in self.reference_image_paths for later use
-        current_highlighted_paths = self.image_selection_window.table_model.get_highlighted_paths()
-        if current_highlighted_paths:
-            self.reference_image_paths = current_highlighted_paths
-        
+        """        
         self.loaded_model = None
         
         # Get selected model path and download weights if needed
@@ -922,7 +889,7 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.main_window.device)
 
         # Create a dummy visual dictionary for standard model loading
-        visuals = dict(
+        visual_prompts = dict(
             bboxes=np.array(
                 [
                     [120, 425, 160, 445],  # Random box
@@ -936,7 +903,7 @@ class DeployGeneratorDialog(QDialog):
         # Run a dummy prediction to load the model
         self.loaded_model.predict(
             np.zeros((640, 640, 3), dtype=np.uint8),
-            visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
+            visual_prompts=visual_prompts.copy(),  # This needs to happen to properly initialize the predictor
             predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
             imgsz=640,
             conf=0.99,
@@ -1095,7 +1062,7 @@ class DeployGeneratorDialog(QDialog):
             results = self.loaded_model.predict(input_image,
                                                 refer_image=ref_path,
                                                 visual_prompts=visual_prompts,
-                                                predictor=YOLOEVPSegPredictor,
+                                                # predictor=YOLOEVPSegPredictor,
                                                 imgsz=self.imgsz_spinbox.value(),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
@@ -1179,7 +1146,7 @@ class DeployGeneratorDialog(QDialog):
             list: List of prediction results, or empty list if VPE creation fails.
         """
         # First reload the model to clear any cached data
-        self.reload_model()
+        self.reload_model()  # This is necessary here
 
         # Check if references_dict is empty
         if not references_dict:
@@ -1202,15 +1169,13 @@ class DeployGeneratorDialog(QDialog):
             )
             return []
         
-        # Directly set the final tensor as the prompt for the predictor.
-        # The `inference` method is designed to use this tensor.
-        self.loaded_model.is_fused = lambda: False
+        # This is necessary here, as after we reload the model, the previous VPE is outdated.
+        self.loaded_model.is_fused = lambda: False 
         self.loaded_model.set_classes(["object0"], self.vpe)
         
         # Make predictions on the target using the current reference
         results = self.loaded_model.predict(inputs[0],
                                             visual_prompts=[],
-                                            predictor=YOLOEVPSegPredictor,
                                             imgsz=self.imgsz_spinbox.value(),
                                             conf=self.main_window.get_uncertainty_thresh(),
                                             iou=self.main_window.get_iou_thresh(),
