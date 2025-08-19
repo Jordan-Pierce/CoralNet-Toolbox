@@ -902,7 +902,17 @@ class DeployGeneratorDialog(QDialog):
         Subset of the load_model method. This is needed when additional 
         reference images and annotations (i.e., VPEs) are added (we have 
         to re-load the model each time).
+        
+        This method also ensures that we stash the currently highlighted reference
+        image paths before reloading, so they're available for predictions
+        even if the user switches the active image in the main window.
         """
+        # First, ensure we've captured the currently highlighted reference images
+        # Store them in self.reference_image_paths for later use
+        current_highlighted_paths = self.image_selection_window.table_model.get_highlighted_paths()
+        if current_highlighted_paths:
+            self.reference_image_paths = current_highlighted_paths
+        
         self.loaded_model = None
         
         # Get selected model path and download weights if needed
@@ -1011,12 +1021,20 @@ class DeployGeneratorDialog(QDialog):
     
     def _get_references(self):
         """
-        Get the reference annotations for the currently selected rows.
+        Get the reference annotations for the selected reference images.
+        Uses the stored reference_image_paths if available (already accepted from dialog)
+        or the currently highlighted paths if we're still in the dialog.
         """
-        # Update the reference images
-        self.reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
+        # First try to use already stored reference paths (from accept() method)
+        if hasattr(self, 'reference_image_paths') and self.reference_image_paths:
+            reference_paths = self.reference_image_paths
+        else:
+            # If no stored paths, get the currently highlighted ones
+            reference_paths = self.image_selection_window.table_model.get_highlighted_paths()
+            # Update the stored paths for future use
+            self.reference_image_paths = reference_paths
 
-        if not self.reference_image_paths:
+        if not reference_paths:
             QMessageBox.warning(self, 
                                 "No Reference Images", 
                                 "You must highlight at least one reference image.")
@@ -1027,7 +1045,7 @@ class DeployGeneratorDialog(QDialog):
         
         # Create a dictionary of reference annotations, with image path as the key.
         reference_annotations_dict = {}
-        for path in self.reference_image_paths:
+        for path in reference_paths:
             bboxes, masks = self.get_reference_annotations(reference_label, path)
             if bboxes.size > 0:
                 reference_annotations_dict[path] = {
