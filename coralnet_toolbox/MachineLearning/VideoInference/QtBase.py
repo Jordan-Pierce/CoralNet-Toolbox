@@ -320,10 +320,6 @@ class Base(QDialog):
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
-            else:
-                self.update_record_buttons()
-        else:
-            self.update_record_buttons()
 
     def browse_model(self):
         """Open file dialog to select model file (filtered to .pt, .pth)."""

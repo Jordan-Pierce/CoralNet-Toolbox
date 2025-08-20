@@ -2,10 +2,10 @@ import warnings
 
 import os
 import gc
-import ujson as json
 
 import numpy as np
 
+import torch
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
+                             QSlider, QSpinBox, QVBoxLayout, QGroupBox,
                              QWidget, QLineEdit, QFileDialog)
 
 from coralnet_toolbox.Results import ResultsProcessor
@@ -98,7 +98,10 @@ class DeployPredictorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Predictor to deploy and use interactively with the See Anything tool.")
+        info_label = QLabel(
+            "Choose a Predictor to deploy and use interactively with the See Anything tool. "
+            "Optionally include a custom visual prompt encoding (VPE) file."
+        )
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -109,21 +112,15 @@ class DeployPredictorDialog(QDialog):
 
     def setup_models_layout(self):
         """
-        Setup the models layout with tabs for standard and custom models.
+        Setup the models layout with standard models and file selection.
         """
         group_box = QGroupBox("Model Selection")
-        layout = QVBoxLayout()
-
-        # Create tabbed widget
-        tab_widget = QTabWidget()
-
-        # Tab 1: Standard models
-        standard_tab = QWidget()
-        standard_layout = QVBoxLayout(standard_tab)
-
+        layout = QFormLayout()
+    
+        # Model dropdown
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-
+    
         # Define available models
         standard_models = [
             'yoloe-v8s-seg.pt',
@@ -133,49 +130,15 @@ class DeployPredictorDialog(QDialog):
             'yoloe-11m-seg.pt',
             'yoloe-11l-seg.pt',
         ]
-
+    
         # Add all models to combo box
         self.model_combo.addItems(standard_models)
+        
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
-
-        standard_layout.addWidget(QLabel("Models"))
-        standard_layout.addWidget(self.model_combo)
-
-        tab_widget.addTab(standard_tab, "Use Existing Model")
-
-        # Tab 2: Custom model
-        custom_tab = QWidget()
-        custom_layout = QFormLayout(custom_tab)
-
-        # Custom model file selection
-        self.model_path_edit = QLineEdit()
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_model_file)
-
-        model_path_layout = QHBoxLayout()
-        model_path_layout.addWidget(self.model_path_edit)
-        model_path_layout.addWidget(browse_button)
-        custom_layout.addRow("Custom Model:", model_path_layout)
-
-        # Class Mapping
-        self.mapping_edit = QLineEdit()
-        self.mapping_button = QPushButton("Browse...")
-        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.mapping_edit)
-        class_mapping_layout.addWidget(self.mapping_button)
-        custom_layout.addRow("Class Mapping:", class_mapping_layout)
-
-        tab_widget.addTab(custom_tab, "Custom Model")
-
-        # Add the tab widget to the main layout
-        layout.addWidget(tab_widget)
-
-        # Store the tab widget for later reference
-        self.model_tab_widget = tab_widget
-
+        # Create a layout for the model selection
+        layout.addRow("Models:", self.model_combo)
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -304,37 +267,6 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-    def browse_model_file(self):
-        """
-        Open a file dialog to browse for a model file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Model File",
-                                                   "",
-                                                   "Model Files (*.pt *.pth);;All Files (*)")
-        if file_path:
-            self.model_path_edit.setText(file_path)
-
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-            self.mapping_edit.setText(file_path)
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -412,46 +344,43 @@ class DeployPredictorDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
-
+    
         try:
             # Get selected model path and download weights if needed
             self.model_path = self.model_combo.currentText()
-
+    
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
-
-            # Create a dummy visual dictionary
+    
+            # Create a dummy visual dictionary for standard model loading
             visuals = dict(
                 bboxes=np.array(
                     [
-                        [120, 425, 160, 445],
+                        [120, 425, 160, 445],  # Random box
                     ],
                 ),
                 cls=np.array(
                     np.zeros(1),
                 ),
             )
-
+    
             # Run a dummy prediction to load the model
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
-                visual_prompts=visuals.copy(),
-                predictor=YOLOEVPDetectPredictor,
+                visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
+                predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
                 imgsz=640,
                 conf=0.99,
             )
 
-            # Load the model class names if available
-            if self.class_mapping:
-                self.add_labels_to_label_window()
-
-            progress_bar.finish_progress()
-            self.status_bar.setText("Model loaded")
+            self.status_bar.setText(f"Loaded ({self.model_path}")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
+            self.loaded_model = None
+            self.status_bar.setText(f"Error loading model: {self.model_path}")
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
-
+    
         finally:
             # Restore cursor
             QApplication.restoreOverrideCursor()
@@ -459,18 +388,6 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
-
-        self.accept()
-
-    def add_labels_to_label_window(self):
-        """
-        Add labels to the label window based on the class mapping.
-        """
-        if self.class_mapping:
-            for label in self.class_mapping.values():
-                self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                                      label['long_label_code'],
-                                                                      QColor(*label['color']))
 
     def resize_image(self, image):
         """
@@ -526,6 +443,43 @@ class DeployPredictorDialog(QDialog):
             self.resized_image = self.resize_image(image)
         else:
             self.resized_image = image
+            
+    def scale_prompts(self, bboxes, masks=None):
+        """
+        Scale the bounding boxes and masks to the resized image.
+        """
+        # Update the bbox coordinates to be relative to the resized image
+        bboxes = np.array(bboxes)
+        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
+
+        # Set the predictor
+        self.task = self.task_dropdown.currentText()
+
+        # Create a visual dictionary
+        visual_prompts = {
+            'bboxes': np.array(bboxes),
+            'cls': np.zeros(len(bboxes))
+        }
+        if self.task == 'segment':
+            if masks:
+                scaled_masks = []
+                for mask in masks:
+                    scaled_mask = np.array(mask, dtype=np.float32)
+                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+                    scaled_masks.append(scaled_mask)
+                visual_prompts['masks'] = scaled_masks
+            else:  # Fallback to creating masks from bboxes if no masks are provided
+                fallback_masks = []
+                for bbox in bboxes:
+                    x1, y1, x2, y2 = bbox
+                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+                visual_prompts['masks'] = fallback_masks
+        
+        return visual_prompts
 
     def predict_from_prompts(self, bboxes, masks=None):
         """
@@ -539,51 +493,22 @@ class DeployPredictorDialog(QDialog):
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window, "Model Not Loaded",
+            QMessageBox.critical(self.annotation_window, 
+                                 "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
             return None
 
         if not len(bboxes):
             return None
 
-        # Update the bbox coordinates to be relative to the resized image
-        bboxes = np.array(bboxes)
-        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
-
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
-
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(bboxes),
-            'cls': np.zeros(len(bboxes))
-        }
-        if self.task == 'segment':
-            if masks:
-                scaled_masks = []
-                for mask in masks:
-                    scaled_mask = np.array(mask, dtype=np.float32)
-                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-                    scaled_masks.append(scaled_mask)
-                visuals['masks'] = scaled_masks
-            else:  # Fallback to creating masks from bboxes if no masks are provided
-                fallback_masks = []
-                for bbox in bboxes:
-                    x1, y1, x2, y2 = bbox
-                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
-                visuals['masks'] = fallback_masks
-
-        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+        # Get the scaled visual prompts
+        visual_prompts = self.scale_prompts(bboxes, masks)
 
         try:
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
-                                                visual_prompts=visuals.copy(),
-                                                predictor=predictor,
+                                                visual_prompts=visual_prompts.copy(),  
+                                                predictor=YOLOEVPSegPredictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
@@ -618,18 +543,30 @@ class DeployPredictorDialog(QDialog):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
 
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
+        # Get the scaled visual prompts
+        visual_prompts = self.scale_prompts(refer_bboxes, refer_masks)
 
-        # Create a visual dictionary
-        visuals = {
-            'bboxes': np.array(refer_bboxes),
-            'cls': np.zeros(len(refer_bboxes))
-        }
-        if self.task == 'segment':
-            visuals['masks'] = refer_masks
-
-        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+        # If VPEs are being used
+        if self.vpe is not None:
+            # Generate a new VPE from the current visual prompts
+            new_vpe = self.prompts_to_vpes(visual_prompts, self.resized_image)
+            
+            if new_vpe is not None:
+                # If we already have a VPE, average with the existing one
+                if self.vpe.shape == new_vpe.shape:
+                    self.vpe = (self.vpe + new_vpe) / 2
+                    # Re-normalize
+                    self.vpe = torch.nn.functional.normalize(self.vpe, p=2, dim=-1)
+                else:
+                    # Replace with the new VPE if shapes don't match
+                    self.vpe = new_vpe
+                
+                # Set the updated VPE in the model
+                self.loaded_model.is_fused = lambda: False
+                self.loaded_model.set_classes(["object0"], self.vpe)
+            
+            # Clear visual prompts since we're using VPE
+            visual_prompts = {}  # this is okay with a fused model
 
         # Create a progress bar
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -643,8 +580,8 @@ class DeployPredictorDialog(QDialog):
                 # Make predictions
                 results = self.loaded_model.predict(target_image,
                                                     refer_image=refer_image,
-                                                    visual_prompts=visuals.copy(),
-                                                    predictor=predictor,
+                                                    visual_prompts=visual_prompts.copy(),
+                                                    predictor=YOLOEVPSegPredictor,
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.main_window.get_uncertainty_thresh(),
                                                     iou=self.main_window.get_iou_thresh(),
