@@ -225,6 +225,13 @@ class DeployGeneratorDialog(QDialog):
         annotation that has BOTH the selected label AND a valid type (Polygon or Rectangle).
         This uses the fast, pre-computed cache for performance.
         """
+        # Persist the user's current highlights from the table model before filtering.
+        # This ensures that if the user highlights items and then changes the filter,
+        # their selection is not lost.
+        current_highlights = self.image_selection_window.table_model.get_highlighted_paths()
+        if current_highlights:
+            self.reference_image_paths = current_highlights
+
         reference_label = self.reference_label_combo_box.currentData()
         reference_label_text = self.reference_label_combo_box.currentText()
 
@@ -272,7 +279,7 @@ class DeployGeneratorDialog(QDialog):
             if valid_selections:
                 # Highlight previously selected paths that are still valid
                 self.image_selection_window.table_model.set_highlighted_paths(valid_selections)
-        
+                
     def accept(self):
         """
         Validate selections and store them before closing the dialog.
@@ -1039,56 +1046,46 @@ class DeployGeneratorDialog(QDialog):
         return work_areas_data
     
     def _get_references(self):
-        """
-        Get the reference annotations for the selected reference images.
-        Uses the stored reference_image_paths if available (already accepted from dialog)
-        or the currently highlighted paths if we're still in the dialog.
-        
-        Returns:
-            dict: Dictionary mapping image paths to annotation data, or empty dict if no valid references.
-        """
-        # First try to use already stored reference paths (from accept() method)
-        if hasattr(self, 'reference_image_paths') and self.reference_image_paths:
-            reference_paths = self.reference_image_paths
-        else:
-            # If no stored paths, get the currently highlighted ones
+            """
+            Get the reference annotations for the selected reference images by always
+            using the currently highlighted rows in the UI as the source of truth.
+            
+            Returns:
+                dict: Dictionary mapping image paths to annotation data, or empty dict if no valid references.
+            """
+            # Always get the latest highlighted paths from the UI. This ensures the
+            # state is never stale and reflects exactly what the user has selected.
             reference_paths = self.image_selection_window.table_model.get_highlighted_paths()
-            # Store these paths for future use - even before dialog is accepted
+
+            # Update the dialog's internal state to match the current UI selection.
             self.reference_image_paths = reference_paths
 
-        if not reference_paths:
-            # Try to get all highlighted paths if nothing is highlighted (as a fallback)
-            highlighted_paths = self.image_selection_window.table_model.get_highlighted_paths()
-            if highlighted_paths:
-                reference_paths = highlighted_paths[:1]  # Use at least the first highlighted path
-                self.reference_image_paths = reference_paths
-                print(f"No paths highlighted, using first filtered path: {reference_paths[0]}")
-            else:
-                print("No reference images available in filtered list")
+            if not reference_paths:
+                print("No reference images highlighted in the list")
                 return {}
 
-        # Get the reference label - using stored value or current selection
-        reference_label = self.reference_label
-        if not reference_label:
-            reference_label = self.reference_label_combo_box.currentData()
-            if reference_label:
-                self.reference_label = reference_label
-            else:
-                print("No reference label selected")
-                return {}
-        
-        # Create a dictionary of reference annotations, with image path as the key.
-        reference_annotations_dict = {}
-        for path in reference_paths:
-            bboxes, masks = self.get_reference_annotations(reference_label, path)
-            if bboxes.size > 0:
-                reference_annotations_dict[path] = {
-                    'bboxes': bboxes,
-                    'masks': masks,
-                    'cls': np.zeros(len(bboxes))
-                }
+            # Get the reference label - using stored value or current selection
+            reference_label = self.reference_label
+            if not reference_label:
+                reference_label = self.reference_label_combo_box.currentData()
+                if reference_label:
+                    self.reference_label = reference_label
+                else:
+                    print("No reference label selected")
+                    return {}
+            
+            # Create a dictionary of reference annotations, with image path as the key.
+            reference_annotations_dict = {}
+            for path in reference_paths:
+                bboxes, masks = self.get_reference_annotations(reference_label, path)
+                if bboxes.size > 0:
+                    reference_annotations_dict[path] = {
+                        'bboxes': bboxes,
+                        'masks': masks,
+                        'cls': np.zeros(len(bboxes))
+                    }
 
-        return reference_annotations_dict
+            return reference_annotations_dict
 
     def _apply_model_using_images(self, inputs, reference_dict):
         """
@@ -1412,47 +1409,41 @@ class DeployGeneratorDialog(QDialog):
     def show_vpe(self):
         """
         Show a visualization of the VPEs using PyQtGraph.
+        This method now always recalculates VPEs from the currently highlighted reference images.
         """
-        # Create a list to hold all VPEs
-        all_vpes = []
-        
-        # Add imported VPEs if available
+        vpes_with_source = []
+
+        # 1. Add imported VPEs with their source type
         if self.imported_vpes:
-            all_vpes.extend(self.imported_vpes)
-        
-        # Check if we should generate new VPEs from reference images
+            for vpe in self.imported_vpes:
+                vpes_with_source.append((vpe, "Import"))
+
+        # 2. Get the currently selected reference images
         references_dict = self._get_references()
+
+        # 3. If there are reference images, calculate their VPEs and add with source type
         if references_dict:
-            # Try to use existing reference VPEs or generate new ones
-            if not self.reference_vpes:
-                # Reload the model to ensure clean state
-                self.reload_model()
-                
-                # Convert references to VPEs without updating self.reference_vpes
-                new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=False)
-                
-                if new_vpes:
-                    # Add new VPEs to collection
-                    all_vpes.extend(new_vpes)
-            else:
-                # Use existing reference VPEs
-                all_vpes.extend(self.reference_vpes)
-        
-        # Check if we have any VPEs to visualize
-        if not all_vpes:
+            self.reload_model()
+            new_reference_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
+            if new_reference_vpes:
+                for vpe in new_reference_vpes:
+                    vpes_with_source.append((vpe, "Reference"))
+
+        # 4. Check if we have anything to visualize
+        if not vpes_with_source:
             QMessageBox.warning(
                 self,
                 "No VPEs Available",
                 "No VPEs available to visualize. Please either load a VPE file or select reference images."
             )
             return
-        
-        # Create a final (averaged) VPE for visualization
-        averaged_vpe = torch.cat(all_vpes).mean(dim=0, keepdim=True)
+
+        # 5. Create the visualization dialog, passing the list of tuples
+        all_vpe_tensors = [vpe for vpe, source in vpes_with_source]
+        averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
         final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
-        
-        # Create and show the visualization dialog
-        dialog = VPEVisualizationDialog(all_vpes, final_vpe, self)
+
+        dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
         dialog.exec_()
         
     def deactivate_model(self):
@@ -1485,21 +1476,21 @@ class VPEVisualizationDialog(QDialog):
     """
     Dialog for visualizing VPE embeddings in 2D space using PCA.
     """
-    def __init__(self, vpe_list, final_vpe=None, parent=None):
+    def __init__(self, vpe_list_with_source, final_vpe=None, parent=None):
         """
-        Initialize the dialog with a list of VPE tensors.
+        Initialize the dialog with a list of VPE tensors and their sources.
         
         Args:
-            vpe_list (list): List of VPE tensors to visualize
+            vpe_list_with_source (list): List of (VPE tensor, source_str) tuples
             final_vpe (torch.Tensor, optional): The final (averaged) VPE
             parent (QWidget, optional): Parent widget
         """
         super().__init__(parent)
         self.setWindowTitle("VPE Visualization")
-        self.resize(800, 600)
+        self.resize(1000, 1000)
         
-        # Store the VPE tensors
-        self.vpe_list = vpe_list
+        # Store the VPEs and their sources
+        self.vpe_list_with_source = vpe_list_with_source
         self.final_vpe = final_vpe
         
         # Create the layout
@@ -1508,16 +1499,14 @@ class VPEVisualizationDialog(QDialog):
         # Create the plot widget
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('w')  # White background
-        self.plot_widget.setTitle("PCA Visualization of Visual Prompt Embeddings", color="#000000", size="20pt")
-        self.plot_widget.getAxis('left').setLabel('Principal Component 2', color="#000000")
-        self.plot_widget.getAxis('bottom').setLabel('Principal Component 1', color="#000000")
+        self.plot_widget.setTitle("PCA Visualization of Visual Prompt Embeddings", color="#000000", size="10pt")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
         # Add the plot widget to the layout
         layout.addWidget(self.plot_widget)
         
         # Add spacing between plot_widget and info_label
-        layout.addSpacing(20)  # Increase this value for a larger gap
+        layout.addSpacing(20)
         
         # Add information label at the bottom
         self.info_label = QLabel()
@@ -1536,12 +1525,12 @@ class VPEVisualizationDialog(QDialog):
         """
         Apply PCA to the VPE tensors and visualize them in 2D space.
         """
-        if not self.vpe_list:
+        if not self.vpe_list_with_source:
             self.info_label.setText("No VPEs available to visualize.")
             return
         
-        # Convert tensors to numpy arrays for PCA
-        vpe_arrays = [vpe.detach().cpu().numpy().squeeze() for vpe in self.vpe_list]
+        # Convert tensors to numpy arrays for PCA, separating them from the source string
+        vpe_arrays = [vpe.detach().cpu().numpy().squeeze() for vpe, source in self.vpe_list_with_source]
         
         # If final VPE is provided, add it to the arrays
         final_vpe_array = None
@@ -1558,7 +1547,7 @@ class VPEVisualizationDialog(QDialog):
         # Clear the plot
         self.plot_widget.clear()
         
-        # Generate random colors for individual VPEs (visually distinct)
+        # Generate random colors for individual VPEs
         num_vpes = len(vpe_arrays)
         colors = self.generate_distinct_colors(num_vpes)
         
@@ -1566,14 +1555,15 @@ class VPEVisualizationDialog(QDialog):
         legend = self.plot_widget.addLegend()
         
         # Plot individual VPEs
-        for i, vpe_2d in enumerate(vpes_2d[:len(vpe_arrays)]):
+        for i, (vpe_tuple, vpe_2d) in enumerate(zip(self.vpe_list_with_source, vpes_2d[:num_vpes])):
+            source_char = 'I' if vpe_tuple[1] == 'Import' else 'R'
             color = pg.mkColor(colors[i])
             scatter = pg.ScatterPlotItem(
                 x=[vpe_2d[0]], 
                 y=[vpe_2d[1]], 
                 brush=color, 
                 size=15,
-                name=f"VPE {i+1}"
+                name=f"VPE {i+1} ({source_char})"
             )
             self.plot_widget.addItem(scatter)
         
@@ -1591,7 +1581,7 @@ class VPEVisualizationDialog(QDialog):
             self.plot_widget.addItem(scatter)
         
         # Update the information label
-        orig_dim = self.vpe_list[0].shape[-1]
+        orig_dim = self.vpe_list_with_source[0][0].shape[-1]
         explained_variance = sum(pca.explained_variance_ratio_)
         self.info_label.setText(
             f"Original dimension: {orig_dim} → Reduced to 2D\n"
