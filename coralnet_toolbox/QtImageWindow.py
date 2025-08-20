@@ -1,19 +1,17 @@
 import warnings
 
 import os
-import gc
 from contextlib import contextmanager
 
 import rasterio
 
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
-                             QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
-                             QStyle, QFormLayout, QFrame)
+                             QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
+                             QFormLayout, QFrame)
 
-from coralnet_toolbox.Rasters import Raster, RasterManager, ImageFilter, RasterTableModel
+from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -30,11 +28,24 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class NoArrowKeyTableView(QTableView):
+    # Custom signal to be emitted only on a left-click
+    leftClicked = pyqtSignal(QModelIndex)
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Up, Qt.Key_Down):
             event.ignore()
             return
         super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        # On a left mouse press, emit our custom signal
+        if event.button() == Qt.LeftButton:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                self.leftClicked.emit(index)
+        # Call the base class implementation to handle standard behavior
+        # like row selection and context menu triggers.
+        super().mousePressEvent(event)
         
 
 class ImageWindow(QWidget):
@@ -271,7 +282,7 @@ class ImageWindow(QWidget):
         """)
         
         # Connect signals for clicking
-        self.tableView.pressed.connect(self.on_table_pressed)
+        self.tableView.leftClicked.connect(self.on_table_pressed)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
         
         # Add table view to the layout
@@ -413,59 +424,62 @@ class ImageWindow(QWidget):
     #
     
     def on_table_pressed(self, index):
-        """Handle a single click on the table view."""
+        """Handle a single left-click on the table view with complex modifier support."""
         if not index.isValid():
             return
         
-        # Get the path at the clicked row
         path = self.table_model.get_path_at_row(index.row())
         if not path:
             return
         
-        # Get keyboard modifiers
         modifiers = QApplication.keyboardModifiers()
+        current_row = index.row()
+
+        # Define conditions for modifiers
+        has_ctrl = bool(modifiers & Qt.ControlModifier)
+        has_shift = bool(modifiers & Qt.ShiftModifier)
+
+        if has_shift:
+            # This block handles both Shift+Click and Ctrl+Shift+Click.
+            # First, determine the paths in the selection range.
+            range_paths = []
+            if self.last_highlighted_row >= 0:
+                start = min(self.last_highlighted_row, current_row)
+                end = max(self.last_highlighted_row, current_row)
+                for r in range(start, end + 1):
+                    p = self.table_model.get_path_at_row(r)
+                    if p:
+                        range_paths.append(p)
+            else:
+                # If there's no anchor, the range is just the clicked item.
+                range_paths.append(path)
+
+            if not has_ctrl:
+                # Case 1: Simple Shift+Click. Clears previous highlights 
+                # and selects only the new range.
+                self.table_model.set_highlighted_paths(range_paths)
+            else:
+                # Case 2: Ctrl+Shift+Click. Adds the new range to the
+                # existing highlighted rows without clearing them.
+                for p in range_paths:
+                    self.table_model.highlight_path(p, True)
         
-        # Handle highlighting logic
-        if modifiers & Qt.ControlModifier:
-            # Ctrl+Click: Toggle highlight for the clicked row
+        elif has_ctrl:
+            # Case 3: Ctrl+Click. Toggles a single row's highlight state
+            # and sets it as the new anchor for future shift-clicks.
             raster = self.raster_manager.get_raster(path)
             if raster:
                 self.table_model.highlight_path(path, not raster.is_highlighted)
-                # Update highlighted count
-                self.update_highlighted_count_label()
-                
-        elif modifiers & Qt.ShiftModifier:
-            # Shift+Click: Highlight range from last highlighted to current
-            if self.last_highlighted_row >= 0:
-                # Get the current row and last highlighted row
-                current_row = index.row()
-                
-                # Calculate range (handle both directions)
-                start_row = min(self.last_highlighted_row, current_row)
-                end_row = max(self.last_highlighted_row, current_row)
-                
-                # Highlight the range
-                for row in range(start_row, end_row + 1):
-                    path_to_highlight = self.table_model.get_path_at_row(row)
-                    if path_to_highlight:
-                        self.table_model.highlight_path(path_to_highlight, True)
-            else:
-                # No previous selection, just highlight the current row
-                self.table_model.highlight_path(path, True)
-                
-            # Update the last highlighted row
-            self.last_highlighted_row = index.row()
-            
-            # Update highlighted count
-            self.update_highlighted_count_label()
+            self.last_highlighted_row = current_row
+        
         else:
-            # Regular click: Clear all highlights and highlight only this row
-            self.table_model.clear_highlights()
-            self.table_model.highlight_path(path, True)
-            self.last_highlighted_row = index.row()
-            
-            # Update highlighted count
-            self.update_highlighted_count_label()
+            # Case 4: Plain Click. Clears everything and highlights only
+            # the clicked row, setting it as the new anchor.
+            self.table_model.set_highlighted_paths([path])
+            self.last_highlighted_row = current_row
+        
+        # Finally, update the count label after any changes.
+        self.update_highlighted_count_label()
 
     def on_table_double_clicked(self, index):
         """Handle double click on table view (selects image and loads it)."""
@@ -960,26 +974,30 @@ class ImageWindow(QWidget):
         
     def show_context_menu(self, position):
         """
-        Show the context menu for the table.
+        Show the context menu for the table, preserving highlight state.
         
         Args:
             position (QPoint): Position to show the menu
         """
+        # Get the path corresponding to the right-clicked row
+        index = self.tableView.indexAt(position)
+        path_at_cursor = self.table_model.get_path_at_row(index.row()) if index.isValid() else None
+
+        # Get the currently highlighted paths from the model
         highlighted_paths = self.table_model.get_highlighted_paths()
-        if not highlighted_paths:
-            # If no highlights, highlight the row under the cursor only
-            index = self.tableView.indexAt(position)
-            if index.isValid():
-                path = self.table_model.get_path_at_row(index.row())
-                if path:
-                    self.table_model.set_highlighted_paths([path])
-                    self.last_highlighted_row = index.row()
-                    highlighted_paths = [path]
-        else:
-            # If any highlights, ensure all highlighted rows are used (no change needed)
-            self.table_model.set_highlighted_paths(highlighted_paths)
+
+        # If the user right-clicked on a row that wasn't already highlighted,
+        # then we assume they want to act on this row alone.
+        # Clear previous highlights and highlight only the clicked row.
+        if path_at_cursor and path_at_cursor not in highlighted_paths:
+            self.table_model.set_highlighted_paths([path_at_cursor])
+            self.last_highlighted_row = index.row()
+            highlighted_paths = [path_at_cursor]
+        
+        # If no rows are highlighted (neither before the click nor after), do nothing.
         if not highlighted_paths:
             return
+
         context_menu = QMenu(self)
         count = len(highlighted_paths)
         delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
