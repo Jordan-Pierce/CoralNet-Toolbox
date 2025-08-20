@@ -1551,8 +1551,8 @@ class VPEVisualizationDialog(QDialog):
         num_vpes = len(vpe_arrays)
         colors = self.generate_distinct_colors(num_vpes)
         
-        # Create a legend
-        legend = self.plot_widget.addLegend()
+        # Create a legend with 3 columns to keep it compact
+        legend = self.plot_widget.addLegend(colCount=3)
         
         # Plot individual VPEs
         for i, (vpe_tuple, vpe_2d) in enumerate(zip(self.vpe_list_with_source, vpes_2d[:num_vpes])):
