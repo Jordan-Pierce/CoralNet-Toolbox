@@ -485,7 +485,19 @@ class LabelWindow(QWidget):
         self.scroll_content.setFixedWidth(self.labels_per_row * self.label_width)
 
     def reorganize_labels(self):
-        """Rearrange labels in the grid layout based on the current order and labels_per_row."""
+        """
+        Rearrange labels in the grid layout based on the current order and labels_per_row.
+        """
+        # First, clear the existing layout to remove any lingering widgets.
+        # This prevents references to deleted widgets from persisting in the layout.
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                # Setting the parent to None removes the widget from the layout's control.
+                widget.setParent(None)
+
+        # Now, add the current labels from the model back into the clean layout.
         for i, label in enumerate(self.labels):
             row = i // self.labels_per_row
             col = i % self.labels_per_row
