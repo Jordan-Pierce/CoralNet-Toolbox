@@ -283,6 +283,8 @@ class DeployGeneratorDialog(QDialog):
     def accept(self):
         """
         Validate selections and store them before closing the dialog.
+        A prediction is valid if a model and label are selected, and the user
+        has provided either reference images or an imported VPE file.
         """
         if not self.loaded_model:
             QMessageBox.warning(self, 
@@ -298,25 +300,20 @@ class DeployGeneratorDialog(QDialog):
                                 "A reference label must be selected.")
             return
 
-        # Get highlighted paths from our internal image window to use as targets
-        highlighted_paths = self.image_selection_window.table_model.get_highlighted_paths()
-        
-        if not highlighted_paths:
-            # Check if we already have stored paths from previous interactions
-            if not hasattr(self, 'reference_image_paths') or not self.reference_image_paths:
-                QMessageBox.warning(self, 
-                                    "No Reference Images", 
-                                    "You must highlight at least one image in the list to process.")
-                return
-            # Otherwise, keep using the stored paths
-        else:
-            # Update stored paths with new selections
-            self.reference_image_paths = highlighted_paths
+        # Stash the current UI selection before validating.
+        self.update_stashed_references_from_ui()
 
-        # Now we're guaranteed to have reference_image_paths populated with valid selections
-        print(f"Accepted dialog with {len(self.reference_image_paths)} reference images")
+        # Check for a valid VPE source using the now-stashed list.
+        has_reference_images = bool(self.reference_image_paths)
+        has_imported_vpes = bool(self.imported_vpes)
 
-        # Do not call self.predict here; just close the dialog and let the caller handle prediction
+        if not has_reference_images and not has_imported_vpes:
+            QMessageBox.warning(self, 
+                                "No VPE Source Provided", 
+                                "You must highlight at least one reference image or load a VPE file to proceed.")
+            return
+
+        # If validation passes, close the dialog.
         super().accept()
 
     def setup_info_layout(self):
@@ -599,6 +596,10 @@ class DeployGeneratorDialog(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        
+    def update_stashed_references_from_ui(self):
+        """Updates the internal reference path list from the current UI selection."""
+        self.reference_image_paths = self.image_selection_window.table_model.get_highlighted_paths()
 
     def get_max_detections(self):
         """Get the maximum number of detections to return."""
@@ -661,39 +662,26 @@ class DeployGeneratorDialog(QDialog):
 
     def update_reference_labels(self):
         """
-        Updates the reference label combo box with labels that are associated with
-        valid reference annotations (Polygons or Rectangles), using the fast cache.
-        Excludes the special "Review" label with id "-1".
+        Updates the reference label combo box with ALL available project labels.
+        This dropdown now serves as the "Output Label" for all predictions.
+        The "Review" label with id "-1" is excluded.
         """
         self.reference_label_combo_box.blockSignals(True)
         
         try:
             self.reference_label_combo_box.clear()
 
-            dialog_manager = self.image_selection_window.raster_manager
-            valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
-            valid_labels = set()  # This will store the full Label objects
+            # Get all labels from the main label window
+            all_project_labels = self.main_window.label_window.labels
 
-            # Create a lookup map to get full label objects from their codes
-            all_project_labels = {lbl.short_label_code: lbl for lbl in self.main_window.label_window.labels}
-
-            # Use the cached data to find all labels that have valid reference types.
-            for raster in dialog_manager.rasters.values():
-                # raster.label_to_types_map is like: {'coral': {'Point'}, 'rock': {'Polygon'}}
-                for label_code, types_for_label in raster.label_to_types_map.items():
-                    # Check if the set of types for this specific label
-                    # has any overlap with our valid reference types.
-                    if not valid_types.isdisjoint(types_for_label):
-                        # This label is a valid reference label.
-                        # Add its full Label object to our set of valid labels.
-                        if label_code in all_project_labels:
-                            label_obj = all_project_labels[label_code]
-                            # Exclude the special "Review" label with id "-1"
-                            if not (label_obj.short_label_code == "Review" and str(label_obj.id) == "-1"):
-                                valid_labels.add(label_obj)
+            # Filter out the special "Review" label and create a list of valid labels
+            valid_labels = [
+                label_obj for label_obj in all_project_labels
+                if not (label_obj.short_label_code == "Review" and str(label_obj.id) == "-1")
+            ]
 
             # Add the valid labels to the combo box, sorted alphabetically.
-            sorted_valid_labels = sorted(list(valid_labels), key=lambda x: x.short_label_code)
+            sorted_valid_labels = sorted(valid_labels, key=lambda x: x.short_label_code)
             for label_obj in sorted_valid_labels:
                 self.reference_label_combo_box.addItem(label_obj.short_label_code, label_obj)
 
@@ -705,10 +693,9 @@ class DeployGeneratorDialog(QDialog):
         finally:
             self.reference_label_combo_box.blockSignals(False)
         
-        # Manually trigger the filtering now that the combo box is stable.
+        # Manually trigger the image filtering now that the combo box is stable.
+        # This will still filter the image list to help find references if needed.
         self.filter_images_by_label_and_type()
-
-        return True
 
     def get_reference_annotations(self, reference_label, reference_image_path):
         """
@@ -814,6 +801,9 @@ class DeployGeneratorDialog(QDialog):
         """
         Save the combined collection of VPEs (imported and reference-generated) to disk.
         """
+        # Always sync with the live UI selection before saving.
+        self.update_stashed_references_from_ui()
+
         # Create a list to hold all VPEs
         all_vpes = []
         
@@ -1046,46 +1036,40 @@ class DeployGeneratorDialog(QDialog):
         return work_areas_data
     
     def _get_references(self):
-            """
-            Get the reference annotations for the selected reference images by always
-            using the currently highlighted rows in the UI as the source of truth.
-            
-            Returns:
-                dict: Dictionary mapping image paths to annotation data, or empty dict if no valid references.
-            """
-            # Always get the latest highlighted paths from the UI. This ensures the
-            # state is never stale and reflects exactly what the user has selected.
-            reference_paths = self.image_selection_window.table_model.get_highlighted_paths()
+        """
+        Get the reference annotations using the stashed list of reference images
+        that was saved when the user accepted the dialog.
+        
+        Returns:
+            dict: Dictionary mapping image paths to annotation data, or empty dict if no valid references.
+        """
+        # Use the "stashed" list of paths. Do NOT query the table_model again,
+        # as the UI's highlight state may have been cleared by other actions.
+        reference_paths = self.reference_image_paths
 
-            # Update the dialog's internal state to match the current UI selection.
-            self.reference_image_paths = reference_paths
+        if not reference_paths:
+            print("No reference image paths were stashed to use for prediction.")
+            return {}
 
-            if not reference_paths:
-                print("No reference images highlighted in the list")
-                return {}
+        # Get the reference label that was also stashed
+        reference_label = self.reference_label
+        if not reference_label:
+            # This check is a safeguard; the accept() method should prevent this.
+            print("No reference label was selected.")
+            return {}
+        
+        # Create a dictionary of reference annotations from the stashed paths
+        reference_annotations_dict = {}
+        for path in reference_paths:
+            bboxes, masks = self.get_reference_annotations(reference_label, path)
+            if bboxes.size > 0:
+                reference_annotations_dict[path] = {
+                    'bboxes': bboxes,
+                    'masks': masks,
+                    'cls': np.zeros(len(bboxes))
+                }
 
-            # Get the reference label - using stored value or current selection
-            reference_label = self.reference_label
-            if not reference_label:
-                reference_label = self.reference_label_combo_box.currentData()
-                if reference_label:
-                    self.reference_label = reference_label
-                else:
-                    print("No reference label selected")
-                    return {}
-            
-            # Create a dictionary of reference annotations, with image path as the key.
-            reference_annotations_dict = {}
-            for path in reference_paths:
-                bboxes, masks = self.get_reference_annotations(reference_label, path)
-                if bboxes.size > 0:
-                    reference_annotations_dict[path] = {
-                        'bboxes': bboxes,
-                        'masks': masks,
-                        'cls': np.zeros(len(bboxes))
-                    }
-
-            return reference_annotations_dict
+        return reference_annotations_dict
 
     def _apply_model_using_images(self, inputs, reference_dict):
         """
@@ -1411,14 +1395,17 @@ class DeployGeneratorDialog(QDialog):
         Show a visualization of the VPEs using PyQtGraph.
         This method now always recalculates VPEs from the currently highlighted reference images.
         """
+        # Always sync with the live UI selection before visualizing.
+        self.update_stashed_references_from_ui()
+
         vpes_with_source = []
 
-        # 1. Add imported VPEs with their source type
+        # 1. Add any VPEs that were loaded from a file
         if self.imported_vpes:
             for vpe in self.imported_vpes:
                 vpes_with_source.append((vpe, "Import"))
 
-        # 2. Get the currently selected reference images
+        # 2. Get the currently selected reference images from the stashed list
         references_dict = self._get_references()
 
         # 3. If there are reference images, calculate their VPEs and add with source type
@@ -1429,7 +1416,7 @@ class DeployGeneratorDialog(QDialog):
                 for vpe in new_reference_vpes:
                     vpes_with_source.append((vpe, "Reference"))
 
-        # 4. Check if we have anything to visualize
+        # 4. Check if there is anything to visualize
         if not vpes_with_source:
             QMessageBox.warning(
                 self,
@@ -1488,6 +1475,9 @@ class VPEVisualizationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("VPE Visualization")
         self.resize(1000, 1000)
+        
+        # Add a maximize button to the dialog's title bar
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
         
         # Store the VPEs and their sources
         self.vpe_list_with_source = vpe_list_with_source

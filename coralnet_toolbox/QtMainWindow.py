@@ -2290,34 +2290,10 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
         
-        if not self.annotation_window.annotations_dict:
+        if len(self.label_window.labels) <= 1:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE)",
-                                "No annotations are present in the project.")
-            return
-        
-        valid_reference_types = {"PolygonAnnotation", "RectangleAnnotation"}
-        has_valid_reference = False
-
-        # Iterate through the rasters in the main manager.
-        for raster in self.image_window.raster_manager.rasters.values():
-            # The values of our map are sets of annotation type names.
-            # e.g., [{'PointAnnotation'}, {'PolygonAnnotation', 'RectangleAnnotation'}]
-            for types_for_a_label in raster.label_to_types_map.values():
-                # Check if the set of types for this specific label
-                # has any overlap with our valid reference types.
-                if not valid_reference_types.isdisjoint(types_for_a_label):
-                    # A valid reference type was found for at least one label on this raster.
-                    has_valid_reference = True
-                    break  # Exit the inner loop (over types)
-            
-            if has_valid_reference:
-                break  # Exit the outer loop (over rasters)
-
-        if not has_valid_reference:
-            QMessageBox.warning(self,
-                                "No Valid Reference Annotations",
-                                "No images have polygon or rectangle annotations to use as a reference.")
+                                "At least one reference label is required for reference.")
             return
 
         try:
@@ -2518,7 +2494,9 @@ class MainWindow(QMainWindow):
             msg.setWindowIcon(self.coral_icon)
             msg.setWindowTitle("GDI Limit Reached")
             msg.setText(
-                "The GDI limit has been reached! Please immediately save your work, close, and reopen the application!"
+                "The GDI limit is getting dangerously close to being reached (this is a known issue). "
+                "Please immediately save your progress, close, and re-open the application. Failure to do so may "
+                "result in data loss."
             )
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec_()
