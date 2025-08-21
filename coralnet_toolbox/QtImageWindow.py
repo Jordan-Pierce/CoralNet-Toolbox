@@ -476,24 +476,31 @@ class ImageWindow(QWidget):
         if not path:
             return
 
-        # Handle the special case for bulk-checking first.
+        # If the click is on the checkbox column, handle all checkbox logic here.
         if index.column() == self.table_model.CHECKBOX_COL:
             raster = self.raster_manager.get_raster(path)
             if not raster:
                 return
 
             highlighted_paths = self.table_model.get_highlighted_paths()
+            new_state = not raster.checkbox_state
+
             # If the clicked row is part of a highlighted selection, perform the bulk action.
             if path in highlighted_paths:
-                new_state = not raster.checkbox_state
                 self.table_model.set_checkbox_state_for_paths(highlighted_paths, new_state)
-                # After a bulk action, we don't want to change the highlighting, so we stop here.
-                return
+            # Otherwise, just toggle the single checkbox.
+            else:
+                raster.checkbox_state = new_state
+                # Notify the view that this specific cell's data has changed.
+                self.table_model.dataChanged.emit(index, index, [Qt.CheckStateRole])
+            
+            # After handling any checkbox action, stop further processing.
+            return
 
-        # --- For all other clicks (or non-bulk checkbox clicks), run the standard highlighting logic ---
+        # --- For all OTHER clicks, run the standard highlighting logic ---
         modifiers = QApplication.keyboardModifiers()
         current_row = index.row()
-
+        
         # Define conditions for modifiers
         has_ctrl = bool(modifiers & Qt.ControlModifier)
         has_shift = bool(modifiers & Qt.ShiftModifier)
@@ -514,7 +521,7 @@ class ImageWindow(QWidget):
                 range_paths.append(path)
 
             if not has_ctrl:
-                # Case 1: Simple Shift+Click. Clears previous highlights
+                # Case 1: Simple Shift+Click. Clears previous highlights 
                 # and selects only the new range.
                 self.table_model.set_highlighted_paths(range_paths)
             else:
@@ -522,7 +529,7 @@ class ImageWindow(QWidget):
                 # existing highlighted rows without clearing them.
                 for p in range_paths:
                     self.table_model.highlight_path(p, True)
-
+        
         elif has_ctrl:
             # Case 3: Ctrl+Click. Toggles a single row's highlight state
             # and sets it as the new anchor for future shift-clicks.
@@ -530,13 +537,13 @@ class ImageWindow(QWidget):
             if raster:
                 self.table_model.highlight_path(path, not raster.is_highlighted)
             self.last_highlighted_row = current_row
-
+        
         else:
             # Case 4: Plain Click. Clears everything and highlights only
             # the clicked row, setting it as the new anchor.
             self.table_model.set_highlighted_paths([path])
             self.last_highlighted_row = current_row
-
+        
         # Finally, update the count label after any changes.
         self.update_highlighted_count_label()
 
