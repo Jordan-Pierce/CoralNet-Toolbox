@@ -946,7 +946,8 @@ class DownloadDialog(QDialog):
 
                 try:
                     # Check if there is a next page button and it's enabled
-                    element_text = 'form.no-padding [type="submit"][value=">"]'
+                    # ---- THIS IS THE MODIFIED LINE ----
+                    element_text = 'a[title="Next page"]'
 
                     try:
                         next_button = self.driver.find_element(By.CSS_SELECTOR, element_text)
