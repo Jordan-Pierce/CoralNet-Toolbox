@@ -242,7 +242,7 @@ class AnnotationSettingsWidget(QGroupBox):
         self.setup_ui()
 
     def setup_ui(self):
-        # The main layout is vertical, to hold the top columns, the stretch, and the bottom buttons
+        # The main layout is vertical, to hold the top columns and the bottom buttons
         layout = QVBoxLayout(self)
 
         # A horizontal layout to contain the filter columns
@@ -256,7 +256,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.images_list.setMaximumHeight(50)
+        self.images_list.setMinimumHeight(100)
 
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
@@ -284,7 +284,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.annotation_type_list.setMaximumHeight(50)
+        self.annotation_type_list.setMinimumHeight(100)
         self.annotation_type_list.addItems(["PatchAnnotation",
                                             "RectangleAnnotation",
                                             "PolygonAnnotation",
@@ -312,7 +312,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.label_list.setMaximumHeight(50)
+        self.label_list.setMinimumHeight(100)
 
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
@@ -335,9 +335,6 @@ class AnnotationSettingsWidget(QGroupBox):
         # Add the horizontal layout of columns to the main vertical layout
         layout.addLayout(conditions_layout)
 
-        # Add a stretch item to push the columns to the top
-        layout.addStretch(1)
-
         # Bottom buttons layout with Apply and Clear buttons on the right
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()  # Push buttons to the right
@@ -350,8 +347,11 @@ class AnnotationSettingsWidget(QGroupBox):
         self.clear_button.clicked.connect(self.clear_all_conditions)
         bottom_layout.addWidget(self.clear_button)
 
-        # Add the bottom buttons layout to the main layout, keeping it at the bottom
+        # Add the bottom buttons layout to the main layout
         layout.addLayout(bottom_layout)
+
+        # Add a stretch item to push all content to the top
+        layout.addStretch(1)
 
         # Set defaults
         self.set_defaults()
@@ -435,68 +435,66 @@ class AnnotationSettingsWidget(QGroupBox):
 
 
 class ModelSettingsWidget(QGroupBox):
-    """Widget containing model selection with tabs for different model sources."""
+    """Widget containing a structured, hierarchical model selection system."""
     selection_changed = pyqtSignal()
 
     def __init__(self, main_window, parent=None):
         super(ModelSettingsWidget, self).__init__("Model Settings", parent)
         self.main_window = main_window
         self.explorer_window = parent
+
+        # --- Data for hierarchical selection ---
+        self.standard_models_map = {
+            'YOLOv8': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
+            'YOLOv11': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
+            'YOLOv12': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'}
+        }
+        self.community_configs = get_available_configs(task='classify')
+
         self.setup_ui()
 
     def setup_ui(self):
         """Set up the UI with a tabbed interface for model selection."""
         main_layout = QVBoxLayout(self)
-
-        # --- Tabbed Interface for Model Selection ---
         self.tabs = QTabWidget()
 
-        # Tab 1: Select Model
+        # === Tab 1: Select Pre-defined Model ===
         model_select_tab = QWidget()
-        model_select_layout = QFormLayout(model_select_tab)
-        model_select_layout.setContentsMargins(5, 10, 5, 5)  # Add some top margin
+        self.model_select_layout = QFormLayout(model_select_tab)
+        self.model_select_layout.setContentsMargins(5, 10, 5, 5)
 
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(["Color Features"])
-        self.model_combo.insertSeparator(1)  # Add a separator
+        # 1. Main Category ComboBox
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(["Color Features", "Standard Model", "Community Model"])
+        self.model_select_layout.addRow("Category:", self.category_combo)
 
-        standard_models = [
-            'yolov8n-cls.pt',
-            'yolov8s-cls.pt',
-            'yolov8m-cls.pt',
-            'yolov8l-cls.pt',
-            'yolov8x-cls.pt',
-            'yolo11n-cls.pt',
-            'yolo11s-cls.pt',
-            'yolo11m-cls.pt',
-            'yolo11l-cls.pt',
-            'yolo11x-cls.pt',
-            'yolo12n-cls.pt',
-            'yolo12s-cls.pt',
-            'yolo12m-cls.pt',
-            'yolo12l-cls.pt',
-            'yolo12x-cls.pt'
-        ]
+        # 2. Standard Model Options (initially hidden)
+        self.family_combo = QComboBox()
+        self.family_combo.addItems(self.standard_models_map.keys())
+        self.size_combo = QComboBox()
+        self.family_combo.currentTextChanged.connect(self._update_size_combo)
+        self._update_size_combo(self.family_combo.currentText())
+        
+        self.standard_model_widgets = [QLabel("Family:"), self.family_combo, QLabel("Size:"), self.size_combo]
+        self.model_select_layout.addRow(self.standard_model_widgets[0], self.standard_model_widgets[1])
+        self.model_select_layout.addRow(self.standard_model_widgets[2], self.standard_model_widgets[3])
 
-        self.model_combo.addItems(standard_models)
-
-        community_configs = get_available_configs(task='classify')
-        if community_configs:
-            self.model_combo.insertSeparator(len(standard_models) + 2)
-            self.model_combo.addItems(list(community_configs.keys()))
-
-        self.model_combo.setCurrentText('Color Features')
-        model_select_layout.addRow("Model:", self.model_combo)
+        # 3. Community Model Options (initially hidden)
+        self.community_combo = QComboBox()
+        if self.community_configs:
+            self.community_combo.addItems(list(self.community_configs.keys()))
+        self.community_model_widgets = [QLabel("Model:"), self.community_combo]
+        self.model_select_layout.addRow(self.community_model_widgets[0], self.community_model_widgets[1])
         
         self.tabs.addTab(model_select_tab, "Select Model")
 
-        # Tab 2: Existing Model from File
+        # === Tab 2: Existing Model from File ===
         model_existing_tab = QWidget()
         model_existing_layout = QFormLayout(model_existing_tab)
         model_existing_layout.setContentsMargins(5, 10, 5, 5)
 
         self.model_path_edit = QLineEdit()
-        self.model_path_edit.setPlaceholderText("Path to a existing .pt model file...")
+        self.model_path_edit.setPlaceholderText("Path to a compatible .pt model file...")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_for_model)
 
@@ -505,82 +503,116 @@ class ModelSettingsWidget(QGroupBox):
         path_layout.addWidget(browse_button)
         model_existing_layout.addRow("Model Path:", path_layout)
         
+        help_label = QLabel("Note: Select an Ultralytics model (.pt).")
+        help_label.setStyleSheet("color: gray; font-style: italic;")
+        model_existing_layout.addRow("", help_label)
+
         self.tabs.addTab(model_existing_tab, "Use Existing Model")
 
         main_layout.addWidget(self.tabs)
-        
-        # Connect all relevant widgets to a single slot that emits the new signal
-        self.model_combo.currentTextChanged.connect(self._on_selection_changed)
-        self.tabs.currentChanged.connect(self._on_selection_changed)
-        self.model_path_edit.textChanged.connect(self._on_selection_changed)
-        
-        # Add feature extraction mode selection outside of tabs
+
+        # === Feature Extraction Mode (Reverted to bottom) ===
         feature_mode_layout = QFormLayout()
         self.feature_mode_combo = QComboBox()
         self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
-        self.feature_mode_combo.currentTextChanged.connect(self._on_selection_changed)
         feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
         main_layout.addLayout(feature_mode_layout)
+
+        # --- Connect Signals ---
+        self.category_combo.currentTextChanged.connect(self._on_category_changed)
+        self.tabs.currentChanged.connect(self._on_selection_changed)
+        for widget in [self.category_combo, self.family_combo, self.size_combo, 
+                       self.community_combo, self.model_path_edit, self.feature_mode_combo]:
+            if isinstance(widget, QComboBox):
+                widget.currentTextChanged.connect(self._on_selection_changed)
+            elif isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._on_selection_changed)
         
-        # Initialize the feature mode state and emit the first signal
+        # --- Initial State ---
+        self._on_category_changed(self.category_combo.currentText())
+        self._on_selection_changed()
+
+    @pyqtSlot(str)
+    def _update_size_combo(self, family):
+        """Populate the size combo box based on the selected family."""
+        self.size_combo.clear()
+        if family in self.standard_models_map:
+            self.size_combo.addItems(self.standard_models_map[family].keys())
+
+    @pyqtSlot(str)
+    def _on_category_changed(self, category):
+        """Show or hide sub-option widgets based on the selected category."""
+        is_standard = (category == "Standard Model")
+        is_community = (category == "Community Model")
+        
+        for widget in self.standard_model_widgets:
+            widget.setVisible(is_standard)
+        for widget in self.community_model_widgets:
+            widget.setVisible(is_community)
+        
         self._on_selection_changed()
 
     def browse_for_model(self):
         """Open a file dialog to browse for model files."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Model File",
-            "",
-            "PyTorch Models (*.pt);;All Files (*)",
-            options=options
-        )
+            self, "Select Model File", "", "PyTorch Models (*.pt);;All Files (*)", options=options)
         if file_path:
             self.model_path_edit.setText(file_path)
             
     @pyqtSlot()
     def _on_selection_changed(self):
-        """Central slot to handle any change in model selection and emit a single signal."""
+        """Central slot to handle any change and emit a single signal."""
         self._update_feature_mode_state()
         self.selection_changed.emit()
 
-    def _update_feature_mode_state(self, *args):
-        """Update the enabled state of the feature mode field based on the current model selection."""
-        current_tab_index = self.tabs.currentIndex()
+    def _update_feature_mode_state(self):
+        """Update the enabled state and tooltip of the feature mode field."""
         is_color_features = False
+        current_tab_index = self.tabs.currentIndex()
         
         if current_tab_index == 0:
-            # Select Model tab - check if Color Features is selected
-            current_model = self.model_combo.currentText()
-            is_color_features = current_model == "Color Features"
-        elif current_tab_index == 1:
-            # Use Existing Model tab - feature mode should always be enabled
-            is_color_features = False
+            is_color_features = (self.category_combo.currentText() == "Color Features")
         
-        # Enable feature mode only if not Color Features
         self.feature_mode_combo.setEnabled(not is_color_features)
         
-        # Update the tooltip based on state
         if is_color_features:
-            self.feature_mode_combo.setToolTip("Feature Mode is not available for Color Features")
+            self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
         else:
-            self.feature_mode_combo.setToolTip("Select the feature extraction mode")
+            self.feature_mode_combo.setToolTip(
+                "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
+                "or 'Embed Features' for a general-purpose feature vector."
+            )
     
     def get_selected_model(self):
         """Get the currently selected model name/path and feature mode."""
         current_tab_index = self.tabs.currentIndex()
+        model_name = ""
         
-        # Get model name/path and feature mode based on the active tab
         if current_tab_index == 0:
-            model_name = self.model_combo.currentText()
+            category = self.category_combo.currentText()
+            if category == "Color Features":
+                model_name = "Color Features"
+            elif category == "Standard Model":
+                family_text = self.family_combo.currentText()
+                size_text = self.size_combo.currentText()
+                
+                # Add a guard clause to prevent crashing if a combo is empty.
+                if not family_text or not size_text:
+                    return "", "N/A"  # Return a safe default
+                
+                family_key = family_text.lower().replace('-', '')
+                size_key = self.standard_models_map[family_text][size_text]
+                model_name = f"{family_key}{size_key}-cls.pt"
+
+            elif category == "Community Model":
+                model_name = self.community_combo.currentText()
         elif current_tab_index == 1:
             model_name = self.model_path_edit.text()
-        else:
-            return "", None
         
         feature_mode = self.feature_mode_combo.currentText() if self.feature_mode_combo.isEnabled() else "N/A"
         return model_name, feature_mode
-
+    
 
 class EmbeddingSettingsWidget(QGroupBox):
     """Widget containing settings with tabs for models and embedding."""
