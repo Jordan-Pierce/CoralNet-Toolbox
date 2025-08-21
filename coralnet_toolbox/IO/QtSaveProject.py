@@ -96,10 +96,9 @@ class SaveProject(QDialog):
 
         try:
             project_data = {
-                'image_paths': self.get_images(),
+                'images': self.get_images(),
                 'labels': self.get_labels(),
-                'annotations': self.get_annotations(),
-                'workareas': self.get_workareas()
+                'annotations': self.get_annotations()
             }
 
             with open(file_path, 'w') as file:
@@ -125,10 +124,10 @@ class SaveProject(QDialog):
         self.accept()
 
     def get_images(self):
-        """Get the list of image paths to export."""
+        """Get the list of image objects, including paths, states, and work areas."""
         # Start the progress bar
         total_images = len(self.image_window.raster_manager.image_paths)
-        progress_bar = ProgressBar(self.label_window, "Exporting Images")
+        progress_bar = ProgressBar(self.label_window, "Exporting Image Data")
         progress_bar.show()
         progress_bar.start_progress(total_images)
 
@@ -137,7 +136,19 @@ class SaveProject(QDialog):
 
             # Loop through all of the image paths
             for image_path in self.image_window.raster_manager.image_paths:
-                export_images.append(image_path)
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster:
+                    # Get work areas for this raster
+                    work_areas_list = [wa.to_dict() for wa in raster.get_work_areas()]
+
+                    image_data = {
+                        'path': image_path,
+                        'state': {
+                            'checkbox_state': raster.checkbox_state
+                        },
+                        'work_areas': work_areas_list
+                    }
+                    export_images.append(image_data)
                 progress_bar.update_progress()
 
         except Exception as e:
@@ -233,42 +244,6 @@ class SaveProject(QDialog):
             progress_bar.close()
 
         return export_annotations
-
-    def get_workareas(self):
-        """Get the work areas to export."""
-        # Start progress bar
-        total_rasters = len(self.image_window.raster_manager.image_paths)
-        progress_bar = ProgressBar(self.annotation_window, title="Exporting Work Areas")
-        progress_bar.show()
-        progress_bar.start_progress(total_rasters)
-
-        try:
-            export_workareas = {}
-
-            # Loop through all rasters to get their work areas
-            for image_path in self.image_window.raster_manager.image_paths:
-                raster = self.image_window.raster_manager.get_raster(image_path)
-                if raster and raster.has_work_areas():
-                    work_areas_list = []
-                    for work_area in raster.get_work_areas():
-                        work_areas_list.append(work_area.to_dict())
-                    
-                    if work_areas_list:  # Only add if there are work areas
-                        export_workareas[image_path] = work_areas_list
-                
-                progress_bar.update_progress()
-
-        except Exception as e:
-            QMessageBox.warning(self.annotation_window,
-                                "Error Exporting Work Areas",
-                                f"An error occurred while exporting work areas: {str(e)}")
-
-        finally:
-            # Stop the progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-        return export_workareas
 
     def get_project_path(self):
         """Get the current project path."""

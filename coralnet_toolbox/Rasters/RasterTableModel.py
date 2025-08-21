@@ -42,10 +42,19 @@ class RasterTableModel(QAbstractTableModel):
         # We'll remove this separate tracking mechanism to avoid inconsistency
         # self.highlighted_paths: Set[str] = set()
         
-        self.column_headers = ["Image Name", "Annotations"]
+        # Column indices
+        self.CHECKBOX_COL = 0
+        self.FILENAME_COL = 1
+        self.ANNOTATION_COUNT_COL = 2
+        
+        # Row colors
+        self.HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
+        self.SELECTED_COLOR = QColor(144, 238, 144)     # Light green
+        
+        self.column_headers = ["\u2713", "Image Name", "Annotations"]
         
         # Column widths
-        self.column_widths = [-1, 120]  # -1 means stretch
+        self.column_widths = [30, -1, 120]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -86,8 +95,13 @@ class RasterTableModel(QAbstractTableModel):
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
                 return str(raster.annotation_count)
+        
+        elif role == Qt.CheckStateRole:
+            if index.column() == self.CHECKBOX_COL:
+                return Qt.Checked if raster.checkbox_state else Qt.Unchecked
                 
         elif role == Qt.TextAlignmentRole:
+            # Center the content of all columns
             return Qt.AlignCenter
         
         elif role == Qt.FontRole:
@@ -142,13 +156,59 @@ class RasterTableModel(QAbstractTableModel):
                 return tooltip_text
                 
         return None
+    
+    def setData(self, index: QModelIndex, value: Any, role: int = Qt.EditRole) -> bool:
+        """Set data for the given index and role."""
+        if not index.isValid() or role != Qt.CheckStateRole or index.column() != self.CHECKBOX_COL:
+            return False
+
+        path = self.get_path_at_row(index.row())
+        raster = self.raster_manager.get_raster(path)
+        if raster:
+            # Update the checkbox state in the raster object
+            raster.checkbox_state = (value == Qt.Checked)
+            
+            # Emit dataChanged signal to notify the view
+            self.dataChanged.emit(index, index, [role])
+            return True
+            
+        return False
         
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:
         """Return flags for the given index."""
         if not index.isValid():
             return Qt.NoItemFlags
             
-        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        flags = super().flags(index)
+        if index.column() == self.CHECKBOX_COL:
+            flags |= Qt.ItemIsUserCheckable
+        
+        return flags
+    
+    def set_checkbox_state_for_paths(self, paths: List[str], checked: bool):
+        """
+        Set the checkbox state for a list of paths.
+        
+        Args:
+            paths (List[str]): A list of image paths to update.
+            checked (bool): The new checked state to set.
+        """
+        # Find the rows that need to be updated
+        rows_to_update = []
+        for path in paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster and raster.checkbox_state != checked:
+                raster.checkbox_state = checked
+                row = self.get_row_for_path(path)
+                if row >= 0:
+                    rows_to_update.append(row)
+        
+        # Emit a dataChanged signal for each affected row
+        # This is generally safer than emitting a single large signal if rows are not contiguous
+        if rows_to_update:
+            for row in rows_to_update:
+                index = self.index(row, self.CHECKBOX_COL)
+                self.dataChanged.emit(index, index, [Qt.CheckStateRole])
             
     def highlight_path(self, path: str, highlighted: bool = True):
         """
