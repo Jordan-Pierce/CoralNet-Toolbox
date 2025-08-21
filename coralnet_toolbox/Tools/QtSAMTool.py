@@ -374,7 +374,10 @@ class SAMTool(Tool):
             top1_index = np.argmax(results.boxes.conf)
             mask_tensor = results[top1_index].masks.data
 
-            # Polygonize the mask using the new method to get the exterior and holes
+            # Check if holes are allowed from the SAM dialog
+            allow_holes = self.sam_dialog.get_allow_holes()
+
+            # Polygonize the mask to get the exterior and holes
             exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
 
             # Safety check: need at least 3 points for a valid polygon
@@ -390,14 +393,15 @@ class SAMTool(Tool):
             simplified_exterior = simplify_polygon(exterior_coords, 0.1)
             self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
 
-            # Simplify, offset, and convert each hole
+            # Simplify, offset, and convert each hole only if allowed
             final_holes = []
-            for hole_coords in holes_coords_list:
-                if len(hole_coords) >= 3:  # Ensure holes are also valid polygons
-                    simplified_hole = simplify_polygon(hole_coords, 0.1)
-                    final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
+            if allow_holes:
+                for hole_coords in holes_coords_list:
+                    if len(hole_coords) >= 3:  # Ensure holes are also valid polygons
+                        simplified_hole = simplify_polygon(hole_coords, 0.1)
+                        final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
 
-            # Create the temporary annotation, now with holes
+            # Create the temporary annotation, now with holes (or not)
             self.temp_annotation = PolygonAnnotation(
                 points=self.points,
                 holes=final_holes,
@@ -736,6 +740,9 @@ class SAMTool(Tool):
         top1_index = np.argmax(results.boxes.conf)
         mask_tensor = results[top1_index].masks.data
 
+        # Check if holes are allowed from the SAM dialog
+        allow_holes = self.sam_dialog.get_allow_holes()
+
         # Polygonize the mask using the new method to get the exterior and holes
         exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
 
@@ -752,12 +759,13 @@ class SAMTool(Tool):
         simplified_exterior = simplify_polygon(exterior_coords, 0.1)
         self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
 
-        # Simplify, offset, and convert each hole
+        # Simplify, offset, and convert each hole only if allowed
         final_holes = []
-        for hole_coords in holes_coords_list:
-            if len(hole_coords) >= 3:
-                simplified_hole = simplify_polygon(hole_coords, 0.1)
-                final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
+        if allow_holes:
+            for hole_coords in holes_coords_list:
+                if len(hole_coords) >= 3:
+                    simplified_hole = simplify_polygon(hole_coords, 0.1)
+                    final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
 
         # Require at least 3 points for valid polygon
         if len(self.points) < 3:

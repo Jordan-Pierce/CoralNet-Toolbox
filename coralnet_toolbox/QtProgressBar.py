@@ -139,7 +139,7 @@ class ProgressBar(QDialog):
             self.set_value(new_value)
             QApplication.processEvents()
             
-    def finish_progress(self, duration_ms=500):
+    def finish_progress(self, duration_ms=1):
         """
         Animate the progress bar to its maximum value regardless of current value.
         This creates a visual effect of the progress bar completing over a short duration.

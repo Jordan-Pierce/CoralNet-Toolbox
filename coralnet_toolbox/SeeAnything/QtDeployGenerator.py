@@ -902,7 +902,9 @@ class DeployGeneratorDialog(QDialog):
             else:
                 message = "Model loaded with default VPE"
                 self.status_bar.setText("Model loaded with default VPE")
-                
+
+            # Finish progress bar
+            progress_bar.finish_progress()
             QMessageBox.information(self.annotation_window, "Model Loaded", message)
 
         except Exception as e:
@@ -1395,43 +1397,51 @@ class DeployGeneratorDialog(QDialog):
         Show a visualization of the VPEs using PyQtGraph.
         This method now always recalculates VPEs from the currently highlighted reference images.
         """
-        # Always sync with the live UI selection before visualizing.
-        self.update_stashed_references_from_ui()
+        # Set cursor to busy while loading VPEs
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            # Always sync with the live UI selection before visualizing.
+            self.update_stashed_references_from_ui()
 
-        vpes_with_source = []
+            vpes_with_source = []
 
-        # 1. Add any VPEs that were loaded from a file
-        if self.imported_vpes:
-            for vpe in self.imported_vpes:
-                vpes_with_source.append((vpe, "Import"))
+            # 1. Add any VPEs that were loaded from a file
+            if self.imported_vpes:
+                for vpe in self.imported_vpes:
+                    vpes_with_source.append((vpe, "Import"))
 
-        # 2. Get the currently selected reference images from the stashed list
-        references_dict = self._get_references()
+            # 2. Get the currently selected reference images from the stashed list
+            references_dict = self._get_references()
 
-        # 3. If there are reference images, calculate their VPEs and add with source type
-        if references_dict:
-            self.reload_model()
-            new_reference_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
-            if new_reference_vpes:
-                for vpe in new_reference_vpes:
-                    vpes_with_source.append((vpe, "Reference"))
+            # 3. If there are reference images, calculate their VPEs and add with source type
+            if references_dict:
+                self.reload_model()
+                new_reference_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
+                if new_reference_vpes:
+                    for vpe in new_reference_vpes:
+                        vpes_with_source.append((vpe, "Reference"))
 
-        # 4. Check if there is anything to visualize
-        if not vpes_with_source:
-            QMessageBox.warning(
-                self,
-                "No VPEs Available",
-                "No VPEs available to visualize. Please either load a VPE file or select reference images."
-            )
-            return
+            # 4. Check if there is anything to visualize
+            if not vpes_with_source:
+                QMessageBox.warning(
+                    self,
+                    "No VPEs Available",
+                    "No VPEs available to visualize. Please either load a VPE file or select reference images."
+                )
+                return
 
-        # 5. Create the visualization dialog, passing the list of tuples
-        all_vpe_tensors = [vpe for vpe, source in vpes_with_source]
-        averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
-        final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
+            # 5. Create the visualization dialog, passing the list of tuples
+            all_vpe_tensors = [vpe for vpe, source in vpes_with_source]
+            averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
+            final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
 
-        dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
-        dialog.exec_()
+            dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
+            dialog.exec_()
+            
+        finally:
+            # Always restore cursor, even if an exception occurs
+            QApplication.restoreOverrideCursor()
         
     def deactivate_model(self):
         """
