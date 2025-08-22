@@ -1705,37 +1705,27 @@ class ExplorerWindow(QMainWindow):
             if child.widget():
                 child.widget().setParent(None)
 
-        # Lazily initialize the settings and viewer widgets if they haven't been created yet.
-        # This ensures that the widgets are only created once per ExplorerWindow instance.
-
-        # Annotation settings panel (filters by image, type, label)
+        # Lazily initialize the settings and viewer widgets
         if self.annotation_settings_widget is None:
             self.annotation_settings_widget = AnnotationSettingsWidget(self.main_window, self)
-
-        # Model selection panel (choose feature extraction model)
         if self.model_settings_widget is None:
             self.model_settings_widget = ModelSettingsWidget(self.main_window, self)
-
-        # Embedding settings panel (choose dimensionality reduction method)
         if self.embedding_settings_widget is None:
             self.embedding_settings_widget = EmbeddingSettingsWidget(self.main_window, self)
-
-        # Annotation viewer (shows annotation image crops in a grid)
         if self.annotation_viewer is None:
             self.annotation_viewer = AnnotationViewer(self)
-
-        # Embedding viewer (shows 2D embedding scatter plot)
         if self.embedding_viewer is None:
             self.embedding_viewer = EmbeddingViewer(self)
 
+        # Horizontal layout for the three settings panels (original horizontal layout)
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.annotation_settings_widget, 2)
         top_layout.addWidget(self.model_settings_widget, 1)
         top_layout.addWidget(self.embedding_settings_widget, 1)
         top_container = QWidget()
         top_container.setLayout(top_layout)
-        self.main_layout.addWidget(top_container)
 
+        # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
         annotation_group = QGroupBox("Annotation Viewer")
         annotation_layout = QVBoxLayout(annotation_group)
@@ -1747,7 +1737,19 @@ class ExplorerWindow(QMainWindow):
         embedding_layout.addWidget(self.embedding_viewer)
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
-        self.main_layout.addWidget(middle_splitter, 1)
+
+        # Create a VERTICAL splitter to manage the height between the settings and viewers.
+        # This makes the top settings panel vertically resizable.
+        main_splitter = QSplitter(Qt.Vertical)
+        main_splitter.addWidget(top_container)
+        main_splitter.addWidget(middle_splitter)
+        
+        # Set initial heights to give the settings panel a bit more space by default
+        main_splitter.setSizes([250, 750]) 
+
+        # Add the new main splitter to the layout instead of the individual components
+        self.main_layout.addWidget(main_splitter, 1)
+
         self.main_layout.addWidget(self.label_window)
 
         self.buttons_layout = QHBoxLayout()

@@ -151,10 +151,6 @@ class OpenProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
 
-            QMessageBox.information(self.annotation_window, 
-                                    "Project Loaded",
-                                    "Project has been successfully loaded.")
-
         except Exception as e:
             QMessageBox.warning(self.annotation_window, 
                                 "Error Loading Project", 

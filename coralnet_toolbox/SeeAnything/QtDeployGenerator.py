@@ -10,7 +10,7 @@ import torch
 from torch.cuda import empty_cache
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtGui
+from pyqtgraph.Qt import QtGui
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
@@ -89,7 +89,9 @@ class DeployGeneratorDialog(QDialog):
         # New separate VPE collections
         self.imported_vpes = []  # VPEs loaded from file
         self.reference_vpes = []  # VPEs created from reference images
-        
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         # Main vertical layout for the dialog
         self.layout = QVBoxLayout(self)
 
@@ -164,6 +166,9 @@ class DeployGeneratorDialog(QDialog):
         iw.search_bar_images.setEnabled(False)
         iw.search_bar_labels.setEnabled(False)
         iw.top_k_combo.setEnabled(False)
+        
+        # Hide the "Current" label as it is not applicable in this dialog
+        iw.current_image_index_label.hide()
 
         # Set Top-K to Top1
         iw.top_k_combo.setCurrentText("Top1")
@@ -279,6 +284,12 @@ class DeployGeneratorDialog(QDialog):
             if valid_selections:
                 # Highlight previously selected paths that are still valid
                 self.image_selection_window.table_model.set_highlighted_paths(valid_selections)
+
+        # After filtering, update all labels with the correct counts.
+        dialog_iw = self.image_selection_window
+        dialog_iw.update_image_count_label(len(final_filtered_paths)) # Set "Total" to filtered count
+        dialog_iw.update_current_image_index_label()
+        dialog_iw.update_highlighted_count_label()
                 
     def accept(self):
         """
@@ -752,19 +763,19 @@ class DeployGeneratorDialog(QDialog):
             # Load the VPE file
             loaded_data = torch.load(file_path)
             
-            # Move tensors to the appropriate device
-            device = self.main_window.device
+            # TODO Move tensors to the appropriate device
+            # device = self.main_window.device
             
             # Check format type and handle appropriately
             if isinstance(loaded_data, list):
                 # New format: list of VPE tensors
-                self.imported_vpes = [vpe.to(device) for vpe in loaded_data]
+                self.imported_vpes = [vpe.to(self.device) for vpe in loaded_data]
                 vpe_count = len(self.imported_vpes)
                 self.status_bar.setText(f"Loaded {vpe_count} VPE tensors from file")
                 
             elif isinstance(loaded_data, torch.Tensor):
                 # Legacy format: single tensor - convert to list for consistency
-                loaded_vpe = loaded_data.to(device)
+                loaded_vpe = loaded_data.to(self.device)
                 # Store as a single-item list
                 self.imported_vpes = [loaded_vpe]
                 self.status_bar.setText("Loaded 1 VPE tensor from file (legacy format)")
@@ -937,7 +948,7 @@ class DeployGeneratorDialog(QDialog):
         self.model_path = self.model_combo.currentText()
 
         # Load model using registry
-        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.main_window.device)
+        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.device)  # TODO
 
         # Create a dummy visual dictionary for standard model loading
         visual_prompts = dict(

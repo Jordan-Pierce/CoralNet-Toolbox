@@ -1,22 +1,18 @@
 import warnings
 
 import os
-from typing import List
 from contextlib import contextmanager
 
 import rasterio
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, 
-                             QApplication, QMenu, QButtonGroup, QGroupBox, QPushButton,
-                             QStyle, QFormLayout, QFrame, QStyledItemDelegate, QStyleOptionButton,
-                             QApplication, QStyledItemDelegate, QStyle, QStyleOptionButton)
+                             QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
+                             QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
+                             QFormLayout, QFrame)
 
 from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -25,7 +21,7 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Custom Table View
+# Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
@@ -49,43 +45,6 @@ class NoArrowKeyTableView(QTableView):
         # like row selection and context menu triggers.
         super().mousePressEvent(event)
         
-        
-class CenteredCheckboxDelegate(QStyledItemDelegate):
-    """
-    A custom delegate to draw a checkbox in the center of a table cell.
-    """
-    def paint(self, painter, option, index):
-        # We only want to affect the checkbox column (column 0)
-        if index.column() == 0:
-            # Get the state of the checkbox from the model
-            check_state = index.data(Qt.CheckStateRole)
-
-            # Create a style option for a checkbox
-            check_option = QStyleOptionButton()
-            check_option.state |= QStyle.State_Enabled
-            if check_state == Qt.Checked:
-                check_option.state |= QStyle.State_On
-            else:
-                check_option.state |= QStyle.State_Off
-
-            # Get the rect for just the checkbox indicator (the square)
-            check_rect = QApplication.style().subElementRect(QStyle.SE_CheckBoxIndicator, check_option, None)
-            
-            # Calculate the centered position
-            check_option.rect = option.rect
-            check_option.rect.setLeft(option.rect.x() + (option.rect.width() - check_rect.width()) // 2)
-
-            # Draw the checkbox
-            QApplication.style().drawControl(QStyle.CE_CheckBox, check_option, painter)
-        else:
-            # For all other columns, draw them normally
-            super().paint(painter, option, index)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
 
 class ImageWindow(QWidget):
     # Signals
@@ -306,12 +265,8 @@ class ImageWindow(QWidget):
         self.table_model = RasterTableModel(self.raster_manager, self)
         self.tableView.setModel(self.table_model)
         
-        # Create and set the custom delegate for the checkbox column
-        self.checkbox_delegate = CenteredCheckboxDelegate(self.tableView)
-        self.tableView.setItemDelegateForColumn(0, self.checkbox_delegate)
-        
         # Set column widths
-        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Checkbox column
+        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Checkmark column
         self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Filename column
         self.tableView.setColumnWidth(2, 120)  # Annotation column
         self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
@@ -475,32 +430,10 @@ class ImageWindow(QWidget):
         path = self.table_model.get_path_at_row(index.row())
         if not path:
             return
-
-        # If the click is on the checkbox column, handle all checkbox logic here.
-        if index.column() == self.table_model.CHECKBOX_COL:
-            raster = self.raster_manager.get_raster(path)
-            if not raster:
-                return
-
-            highlighted_paths = self.table_model.get_highlighted_paths()
-            new_state = not raster.checkbox_state
-
-            # If the clicked row is part of a highlighted selection, perform the bulk action.
-            if path in highlighted_paths:
-                self.table_model.set_checkbox_state_for_paths(highlighted_paths, new_state)
-            # Otherwise, just toggle the single checkbox.
-            else:
-                raster.checkbox_state = new_state
-                # Notify the view that this specific cell's data has changed.
-                self.table_model.dataChanged.emit(index, index, [Qt.CheckStateRole])
-            
-            # After handling any checkbox action, stop further processing.
-            return
-
-        # --- For all OTHER clicks, run the standard highlighting logic ---
+        
         modifiers = QApplication.keyboardModifiers()
         current_row = index.row()
-        
+
         # Define conditions for modifiers
         has_ctrl = bool(modifiers & Qt.ControlModifier)
         has_shift = bool(modifiers & Qt.ShiftModifier)
@@ -601,31 +534,24 @@ class ImageWindow(QWidget):
         """Handler for when an image is loaded."""
         self.selected_image_path = path
         
-    def set_checkbox_state_for_paths(self, paths: List[str], checked: bool):
-        """
-        Set the checkbox state for a list of paths.
-        
-        Args:
-            paths (List[str]): A list of image paths to update.
-            checked (bool): The new checked state to set.
-        """
-        # Find the rows that need to be updated
-        rows_to_update = []
-        for path in paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster and raster.checkbox_state != checked:
-                raster.checkbox_state = checked
-                row = self.get_row_for_path(path)
-                if row >= 0:
-                    rows_to_update.append(row)
-        
-        # Emit a dataChanged signal for each affected row
-        # This is generally safer than emitting a single large signal if rows are not contiguous
-        if rows_to_update:
-            for row in rows_to_update:
-                index = self.index(row, self.CHECKBOX_COL)
-                self.dataChanged.emit(index, index, [Qt.CheckStateRole])
-        
+    def on_toggle(self, new_state: bool):
+            """
+            Sets the checked state for all currently highlighted rows.
+
+            Args:
+                new_state (bool): The new state to set (True for checked, False for unchecked).
+            """
+            highlighted_paths = self.table_model.get_highlighted_paths()
+            if not highlighted_paths:
+                return
+
+            for path in highlighted_paths:
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    raster.checkbox_state = new_state
+                    # Notify the model to update the view for this specific raster
+                    self.table_model.update_raster_data(path)
+            
     #
     # Public methods
     #
@@ -1065,7 +991,7 @@ class ImageWindow(QWidget):
         
     def show_context_menu(self, position):
         """
-        Show the context menu for the table, preserving highlight state.
+        Show the context menu for the table, including the toggle check state action.
         
         Args:
             position (QPoint): Position to show the menu
@@ -1079,18 +1005,32 @@ class ImageWindow(QWidget):
 
         # If the user right-clicked on a row that wasn't already highlighted,
         # then we assume they want to act on this row alone.
-        # Clear previous highlights and highlight only the clicked row.
         if path_at_cursor and path_at_cursor not in highlighted_paths:
             self.table_model.set_highlighted_paths([path_at_cursor])
             self.last_highlighted_row = index.row()
             highlighted_paths = [path_at_cursor]
         
-        # If no rows are highlighted (neither before the click nor after), do nothing.
+        # If no rows are highlighted, do nothing.
         if not highlighted_paths:
             return
 
         context_menu = QMenu(self)
         count = len(highlighted_paths)
+        
+        # Add the check/uncheck action
+        raster_under_cursor = self.raster_manager.get_raster(path_at_cursor)
+        if raster_under_cursor:
+            is_checked = raster_under_cursor.checkbox_state
+            if is_checked:
+                action_text = f"Uncheck {count} Highlighted Image{'s' if count > 1 else ''}"
+            else:
+                action_text = f"Check {count} Highlighted Image{'s' if count > 1 else ''}"
+            toggle_check_action = context_menu.addAction(action_text)
+            toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
+
+        context_menu.addSeparator()
+
+        # Add existing delete actions
         delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
