@@ -166,6 +166,9 @@ class DeployGeneratorDialog(QDialog):
         iw.search_bar_images.setEnabled(False)
         iw.search_bar_labels.setEnabled(False)
         iw.top_k_combo.setEnabled(False)
+        
+        # Hide the "Current" label as it is not applicable in this dialog
+        iw.current_image_index_label.hide()
 
         # Set Top-K to Top1
         iw.top_k_combo.setCurrentText("Top1")
@@ -281,6 +284,12 @@ class DeployGeneratorDialog(QDialog):
             if valid_selections:
                 # Highlight previously selected paths that are still valid
                 self.image_selection_window.table_model.set_highlighted_paths(valid_selections)
+
+        # After filtering, update all labels with the correct counts.
+        dialog_iw = self.image_selection_window
+        dialog_iw.update_image_count_label(len(final_filtered_paths)) # Set "Total" to filtered count
+        dialog_iw.update_current_image_index_label()
+        dialog_iw.update_highlighted_count_label()
                 
     def accept(self):
         """
