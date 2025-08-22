@@ -109,6 +109,19 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         QImage: Scaled image
     """
     try:
+        # Check if the dataset is closed
+        if not rasterio_src or getattr(rasterio_src, 'closed', True):
+            # Attempt to reopen the dataset if we can get the path
+            if hasattr(rasterio_src, 'name'):
+                try:
+                    rasterio_src = rasterio.open(rasterio_src.name)
+                except Exception as reopen_error:
+                    print(f"Error reopening dataset: {str(reopen_error)}")
+                    return QImage()
+            else:
+                print("Cannot read from closed dataset without path information")
+                return QImage()
+                
         # Get the original size of the image
         original_width = rasterio_src.width
         original_height = rasterio_src.height
@@ -190,7 +203,7 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
 
-        # Convert to uint8 if not already
+        # Convert to uint8 if image is not already
         if image.dtype != np.uint8:
             if image.max() > 0:  # Avoid division by zero
                 image = image.astype(float) * (255.0 / image.max())
@@ -222,6 +235,19 @@ def rasterio_to_cropped_image(rasterio_src, window):
         QImage: Cropped image as a QImage
     """
     try:
+        # Check if the dataset is closed
+        if not rasterio_src or getattr(rasterio_src, 'closed', True):
+            # Attempt to reopen the dataset if we can get the path
+            if hasattr(rasterio_src, 'name'):
+                try:
+                    rasterio_src = rasterio.open(rasterio_src.name)
+                except Exception as reopen_error:
+                    print(f"Error reopening dataset: {str(reopen_error)}")
+                    return QImage()
+            else:
+                print("Cannot read from closed dataset without path information")
+                return QImage()
+
         # Check for single-band image with colormap
         has_colormap = False
         if rasterio_src.count == 1:
@@ -305,6 +331,19 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         numpy.ndarray: Image as a numpy array in format (h, w, c) for RGB or (h, w) for grayscale
     """
     try:
+        # Check if the dataset is closed
+        if not rasterio_src or getattr(rasterio_src, 'closed', True):
+            # Attempt to reopen the dataset if we can get the path
+            if hasattr(rasterio_src, 'name'):
+                try:
+                    rasterio_src = rasterio.open(rasterio_src.name)
+                except Exception as reopen_error:
+                    print(f"Error reopening dataset: {str(reopen_error)}")
+                    return np.zeros((100, 100, 3), dtype=np.uint8)
+            else:
+                print("Cannot read from closed dataset without path information")
+                return np.zeros((100, 100, 3), dtype=np.uint8)
+                
         # Get the original size of the image
         original_width = rasterio_src.width
         original_height = rasterio_src.height
@@ -412,6 +451,19 @@ def work_area_to_numpy(rasterio_src, work_area):
     """
     if not rasterio_src:
         return None
+        
+    # Check if the dataset is closed
+    if getattr(rasterio_src, 'closed', True):
+        # Attempt to reopen the dataset if we can get the path
+        if hasattr(rasterio_src, 'name'):
+            try:
+                rasterio_src = rasterio.open(rasterio_src.name)
+            except Exception as reopen_error:
+                print(f"Error reopening dataset: {str(reopen_error)}")
+                return None
+        else:
+            print("Cannot read from closed dataset without path information")
+            return None
 
     # If we got a WorkArea object, use its rect
     if hasattr(work_area, 'rect'):

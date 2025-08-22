@@ -1,8 +1,6 @@
 import warnings
 
-import time
-
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
 from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -112,16 +110,35 @@ class ProgressBar(QDialog):
     def update_progress(self, new_title=None):
         """
         Increment the progress by one step.
-        Updates the UI and checks if progress is complete.
+        Updates the UI intermittently to improve performance and checks if progress is complete.
         """
         if new_title is not None:
             self.setWindowTitle(new_title)
             
-        if not self.canceled:
-            self.value += 1
+        if self.canceled:
+            return
+
+        self.value += 1
+
+        # --- Performance Improvement ---
+        # To avoid excessive UI repaints that slow down the process, we only update
+        # the visual progress bar periodically. This aims for about 100 updates
+        # over the entire range, ensuring a smooth look without bogging down the main task.
+        # 'max(1, ...)' ensures we always have an interval of at least 1.
+        update_interval = max(1, self.max_value // 100)
+
+        # We update the bar visually only under two conditions:
+        # 1. It's the very last step, to ensure it always finishes at 100%.
+        # 2. The current value is a multiple of our calculated interval.
+        is_last_step = self.value >= self.max_value
+        is_update_step = self.value % update_interval == 0
+
+        if is_update_step or is_last_step:
             self.progress_bar.setValue(self.value)
-            if self.value >= self.max_value:
-                self.stop_progress()
+            
+            # This is crucial. It processes pending events, allowing the GUI to
+            # redraw with the new progress value and to respond to user input,
+            # like clicking the 'Cancel' button.
             QApplication.processEvents()
             
     def update_progress_percentage(self, percentage):
@@ -141,30 +158,38 @@ class ProgressBar(QDialog):
             
     def finish_progress(self, duration_ms=500):
         """
-        Animate the progress bar to its maximum value regardless of current value.
-        This creates a visual effect of the progress bar completing over a short duration.
+        Animate the progress bar to its maximum value using a non-blocking animation.
+        This creates a smooth visual effect of completion without freezing the UI.
         
         Args:
             duration_ms: The duration in milliseconds for the animation (default: 500)
         """
-        
-        # Calculate the steps and delay
-        start_value = self.value
-        steps_needed = self.max_value - start_value
-        if steps_needed <= 0:
-            self.progress_bar.setValue(self.max_value)
-            QApplication.processEvents()
+        # If the progress is already complete, just set the final value and exit.
+        if self.value >= self.max_value:
+            self.stop_progress()
             return
-            
-        # Calculate delay between steps (minimum 1ms)
-        delay = max(duration_ms / steps_needed / 1000, 0.001)
-        
-        # Animate the progress
-        for current in range(start_value + 1, self.max_value + 1):
-            self.value = current
-            self.progress_bar.setValue(current)
-            QApplication.processEvents()
-            time.sleep(delay)
+
+        # --- Non-Blocking Animation using QPropertyAnimation ---
+        # QPropertyAnimation is the standard Qt way to animate widget properties.
+        # It runs on the main event loop, so it does not freeze the application
+        # like the previous time.sleep() implementation. The property name "value"
+        # is passed as a bytes object (b"value").
+        self.animation = QPropertyAnimation(self.progress_bar, b"value")
+        self.animation.setDuration(duration_ms)
+        self.animation.setStartValue(self.value)
+        self.animation.setEndValue(self.max_value)
+        self.animation.start()
+
+        # We run a local event loop that waits for the animation's 'finished'
+        # signal. This ensures that the animation completes visually before
+        # this method returns control to the calling code, which is often
+        # the desired behavior for a "finishing" step.
+        loop = QEventLoop()
+        self.animation.finished.connect(loop.quit)
+        loop.exec_()
+
+        # Finally, update our internal state variable to match the final progress.
+        self.value = self.max_value
 
     def stop_progress(self):
         """

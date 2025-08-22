@@ -142,6 +142,12 @@ class DeployPredictorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
+        
+        # Allow holes dropdown
+        self.allow_holes_dropdown = QComboBox()
+        self.allow_holes_dropdown.addItems(["True", "False"])
+        self.allow_holes_dropdown.setCurrentIndex(1)  # Default to False
+        layout.addRow("Allow Holes:", self.allow_holes_dropdown)
 
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
@@ -236,6 +242,10 @@ class DeployPredictorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
+    def get_allow_holes(self):
+        """Return the current setting for allowing holes."""
+        return self.allow_holes_dropdown.currentText() == "True"
+    
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
         current_value = self.main_window.get_uncertainty_thresh()

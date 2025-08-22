@@ -35,7 +35,7 @@ class DatasetProcessor(QObject):
     """
     status_changed = pyqtSignal(str, int)
     progress_updated = pyqtSignal(int)
-    processing_complete = pyqtSignal(list, list)
+    processing_complete = pyqtSignal(list, list, list)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
@@ -47,6 +47,7 @@ class DatasetProcessor(QObject):
         self.import_as = import_as  # 'rectangle' or 'polygon' (target format)
         self.rename_on_conflict = rename_on_conflict
         self.is_running = True
+        self.parsing_errors = []  # To collect errors instead of printing
 
     def stop(self):
         self.is_running = False
@@ -81,7 +82,7 @@ class DatasetProcessor(QObject):
 
             # Step 4: Emit results for GUI to consume
             image_paths = list(image_label_paths.keys())
-            self.processing_complete.emit(raw_annotations, image_paths)
+            self.processing_complete.emit(raw_annotations, image_paths, self.parsing_errors)
 
         except Exception as e:
             # Catch-all for any error during processing
@@ -146,7 +147,7 @@ class DatasetProcessor(QObject):
             with open(label_path, 'r') as file:
                 lines = file.readlines()
 
-            for line in lines:
+            for line_num, line in enumerate(lines):
                 try:
                     parts = list(map(float, line.split()))
                     class_id = int(parts[0])
@@ -195,8 +196,11 @@ class DatasetProcessor(QObject):
 
                     all_raw_annotations.append(raw_ann_data)
                 except (ValueError, IndexError) as e:
-                    # Skip malformed lines and print a warning
-                    print(f"Skipping malformed line in {label_path}: {line.strip()} ({e})")
+                    # Log the malformed line error instead of printing
+                    error_msg = (f"In file '{os.path.basename(label_path)}' on line {line_num + 1}:\n"
+                                 f"Skipped malformed content: '{line.strip()}'\nReason: {e}\n")
+                    self.parsing_errors.append(error_msg)
+
 
             # Update progress after each image
             self.progress_updated.emit(i + 1)
@@ -290,11 +294,14 @@ class Base(QDialog):
         )
         if file_path:
             self.yaml_path_label.setText(file_path)
-            # Auto-fill output directory and folder name if not set
+            # Auto-fill output directory to be the PARENT of the yaml's directory
             if not self.output_dir_label.text():
-                self.output_dir_label.setText(os.path.dirname(file_path))
+                parent_dir = os.path.dirname(os.path.dirname(file_path))
+                self.output_dir_label.setText(parent_dir)
             if not self.output_folder_name.text():
-                self.output_folder_name.setText("project")
+                # Suggest a folder name based on the yaml file's parent folder
+                project_name = os.path.basename(os.path.dirname(file_path))
+                self.output_folder_name.setText(f"{project_name}_imported")
 
     def browse_output_dir(self):
         """Open a dialog to select the output directory."""
@@ -309,6 +316,16 @@ class Base(QDialog):
         if not all([self.yaml_path_label.text(), self.output_dir_label.text(), self.output_folder_name.text()]):
             QMessageBox.warning(self, "Error", "Please fill in all fields.")
             return
+        
+        # This check for existing output is still relevant
+        self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
+        if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
+            reply = QMessageBox.question(self,
+                                         'Directory Not Empty',
+                                         f"The directory '{self.output_folder}' is not empty. Continue?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
 
         # Pre-scan for duplicates
         yaml_path = self.yaml_path_label.text()
@@ -358,16 +375,7 @@ class Base(QDialog):
                 rename_files = False
             else:  # User closed the dialog
                 return
-
-        self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
-        if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
-            reply = QMessageBox.question(self,
-                                         'Directory Not Empty',
-                                         f"The directory '{self.output_folder}' is not empty. Continue?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                return
-
+        
         self.button_box.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -393,6 +401,7 @@ class Base(QDialog):
         self.worker.error.connect(self.on_error)
         self.worker.status_changed.connect(self.on_status_changed)
         self.worker.progress_updated.connect(self.on_progress_update)
+        # Connect to the updated signal
         self.worker.processing_complete.connect(self.on_processing_complete)
         self.thread.start()
 
@@ -403,7 +412,7 @@ class Base(QDialog):
     def on_progress_update(self, value):
         self.progress_bar.set_value(value)
 
-    def on_processing_complete(self, raw_annotations, image_paths):
+    def on_processing_complete(self, raw_annotations, image_paths, parsing_errors):
         added_paths = []
         for path in image_paths:
             if self.image_window.add_image(path):
@@ -447,9 +456,20 @@ class Base(QDialog):
             self.image_window.update_image_annotations(added_paths[-1])
             self.annotation_window.load_annotations()
 
-        QMessageBox.information(self, 
-                                "Dataset Imported",
-                                "Dataset has been successfully imported.")
+        # --- Display a summary message, including any parsing errors ---
+        summary_message = "Dataset has been successfully imported."
+        if parsing_errors:
+            # If there were errors, show a more detailed dialog
+            QMessageBox.warning(self, 
+                                "Import Complete with Warnings",
+                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found "
+                                "in the label files. Please review them below.",
+                                details='\n'.join(parsing_errors))
+        else:
+            # Otherwise, show a simple info box
+            QMessageBox.information(self, 
+                                    "Dataset Imported",
+                                    summary_message)
 
     def export_annotations_to_json(self, annotations_list, output_dir):
         """

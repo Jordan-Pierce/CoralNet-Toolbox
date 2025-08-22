@@ -20,8 +20,9 @@ class RasterTableModel(QAbstractTableModel):
     Custom table model for displaying a list of Raster objects.
     """
     # Column indices
-    FILENAME_COL = 0
-    ANNOTATION_COUNT_COL = 1
+    CHECKBOX_COL = 0
+    FILENAME_COL = 1
+    ANNOTATION_COUNT_COL = 2
     
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
@@ -39,13 +40,10 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        # We'll remove this separate tracking mechanism to avoid inconsistency
-        # self.highlighted_paths: Set[str] = set()
-        
-        self.column_headers = ["Image Name", "Annotations"]
+        self.column_headers = ["\u2713", "Image Name", "Annotations"]
         
         # Column widths
-        self.column_widths = [-1, 120]  # -1 means stretch
+        self.column_widths = [30, -1, 120]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -82,7 +80,9 @@ class RasterTableModel(QAbstractTableModel):
         raster.set_display_name(max_length=25)
         
         if role == Qt.DisplayRole:
-            if index.column() == self.FILENAME_COL:
+            if index.column() == self.CHECKBOX_COL:
+                return "\u2713" if raster.checkbox_state else ""
+            elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
                 return str(raster.annotation_count)

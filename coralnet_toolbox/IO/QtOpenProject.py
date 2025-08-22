@@ -12,16 +12,12 @@ from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLa
                              QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
-
 from coralnet_toolbox.QtWorkArea import WorkArea
-
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
-
 from coralnet_toolbox.Common.QtUpdateImagePaths import UpdateImagePaths
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -143,18 +139,17 @@ class OpenProject(QDialog):
             with open(file_path, 'r') as file:
                 project_data = json.load(file)
 
+            # Handle both new and old project formats for images and work areas
+            images_data = project_data.get('images', project_data.get('image_paths'))
+            legacy_workareas = project_data.get('workareas') # For backward compatibility
+
             # Update main window with loaded project data
-            self.import_images(project_data.get('image_paths'))
-            self.import_workareas(project_data.get('workareas'))
+            self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
             self.import_annotations(project_data.get('annotations'))
             
             # Update current project path
             self.current_project_path = file_path
-
-            QMessageBox.information(self.annotation_window, 
-                                    "Project Loaded",
-                                    "Project has been successfully loaded.")
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window, 
@@ -168,10 +163,15 @@ class OpenProject(QDialog):
         # Exit
         self.accept()
 
-    def import_images(self, image_paths):
-        """Import images from the given paths."""
-        if not image_paths:
+    def import_images(self, images_data, legacy_workareas=None):
+        """Import images, states, and work areas from the given data."""
+        if not images_data:
             return
+
+        # Determine if the format is old (list of strings) or new (list of dicts)
+        is_new_format = isinstance(images_data[0], dict)
+        
+        image_paths = [img['path'] for img in images_data] if is_new_format else images_data
         
         if not all([os.path.exists(path) for path in image_paths]):
             image_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
@@ -183,15 +183,46 @@ class OpenProject(QDialog):
         progress_bar.start_progress(total_images)
 
         try:
+            # Create a map for quick data lookup if using the new format
+            image_data_map = {img['path']: img for img in images_data} if is_new_format else {}
+
             # Add images to the image window's raster manager one by one
             for path in image_paths:
-                # Use the improved add_image method which handles both
-                # adding to raster_manager and updating filtered_paths
                 self.image_window.add_image(path)
+                raster = self.image_window.raster_manager.get_raster(path)
+                if not raster:
+                    continue
+
+                # If using the new format, apply saved state and work areas
+                if is_new_format and path in image_data_map:
+                    data = image_data_map[path]
+                    state = data.get('state', {})
+                    work_areas_list = data.get('work_areas', [])
+
+                    # Apply raster state
+                    raster.checkbox_state = state.get('checkbox_state', False)
+                    
+                    # Import work areas for this image
+                    for work_area_data in work_areas_list:
+                        try:
+                            work_area = WorkArea.from_dict(work_area_data, path)
+                            raster.add_work_area(work_area)
+                        except Exception as e:
+                            print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
                 
                 # Update the progress bar
                 progress_bar.update_progress()
             
+            # Handle backward compatibility for old, top-level work areas
+            if legacy_workareas:
+                for image_path, work_areas_list in legacy_workareas.items():
+                    current_path = self.updated_paths.get(image_path, image_path)
+                    raster = self.image_window.raster_manager.get_raster(current_path)
+                    if raster:
+                        for work_area_data in work_areas_list:
+                            work_area = WorkArea.from_dict(work_area_data, current_path)
+                            raster.add_work_area(work_area)
+
             # Show the last image if any were imported
             if self.image_window.raster_manager.image_paths:
                 self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
@@ -200,69 +231,6 @@ class OpenProject(QDialog):
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Image(s)",
                                 f"An error occurred while importing image(s): {str(e)}")
-        finally:
-            # Close progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
-            
-    def import_workareas(self, workareas):
-        """Import work areas for each image."""
-        if not workareas:
-            return
-        
-        # Start the progress bar
-        total_images = len(workareas)
-        progress_bar = ProgressBar(self.annotation_window, title="Importing Work Areas")
-        progress_bar.show()
-        progress_bar.start_progress(total_images)
-
-        try:
-            # Loop through each image's work areas
-            for image_path, work_areas_list in workareas.items():
-                
-                # Check if the image path was updated (moved)
-                updated_path = False
-                
-                if image_path not in self.image_window.raster_manager.image_paths:
-                    # Check if the path was updated
-                    if image_path in self.updated_paths:
-                        image_path = self.updated_paths[image_path]
-                        updated_path = True
-                    else:
-                        print(f"Warning: Image not found for work areas: {image_path}")
-                        continue
-                
-                # Get the raster for this image
-                raster = self.image_window.raster_manager.get_raster(image_path)
-                if not raster:
-                    print(f"Warning: Could not get raster for image: {image_path}")
-                    continue
-                
-                # Import each work area for this image
-                for work_area_data in work_areas_list:
-                    try:
-                        # Update image path if it was changed
-                        if updated_path:
-                            work_area_data['image_path'] = image_path
-                        
-                        # Create WorkArea from dictionary
-                        work_area = WorkArea.from_dict(work_area_data, image_path)
-                        
-                        # Add work area to the raster
-                        raster.add_work_area(work_area)
-                        
-                    except Exception as e:
-                        print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
-                        continue
-                
-                # Update the progress bar
-                progress_bar.update_progress()
-
-        except Exception as e:
-            QMessageBox.warning(self.annotation_window,
-                                "Error Importing Work Areas",
-                                f"An error occurred while importing work areas: {str(e)}")
-
         finally:
             # Close progress bar
             progress_bar.stop_progress()
