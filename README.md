@@ -54,7 +54,9 @@ pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
-> **🎉 That's it!** The toolbox will open and you're ready to start annotating.
+> **🎉 That's it!** The toolbox will open and you're ready to start annotating! 
+
+For a complete installation guide (including CUDA setup), see the [Installation Documentation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation).
 
 ---
 
@@ -94,8 +96,9 @@ coralnet-toolbox
 
 The toolbox integrates state-of-the-art models for efficient annotation workflows:
 
-### 🏋️ **Trainable Detection Models**
 <div align="center">
+
+### 🏋️ **Trainable Models**
 
 | **YOLO Family** | **Versions Available** |
 |:---:|:---:|
@@ -103,10 +106,13 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 | 🚀 **Modern** | YOLOv6 • YOLOv7 • YOLOv8 |
 | ⚡ **Latest** | YOLOv9 • YOLOv10 • YOLO11 • YOLO12 |
 
+*Powered by the [Ultralytics](https://ultralytics.com/) ecosystem*
+
 </div>
 
-### 🎯 **Segment Anything Models**
 <div align="center">
+
+### 🎯 **Segment Anything Models**
 
 | **Model** | **Specialty** | **Use Case** |
 |:---:|:---:|:---:|
@@ -117,10 +123,13 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 | ✂️ **EdgeSAM** | Efficient | Resource-constrained |
 | 🔍 **RepViT-SAM** | Vision transformers | Advanced features |
 
+*Powered by our [xSAM](https://Github.com/Jordan-Pierce/xSAM) integration*
+
 </div>
 
-### 👁️ **Visual Prompting & Foundation Models**
 <div align="center">
+
+### 👁️ **Visual Prompting & Foundation Models**
 
 | **Framework** | **Models** | **Capability** |
 |:---:|:---:|:---:|
@@ -157,7 +166,8 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 
 ### 🌟 **Specialized Features**
 
-| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" alt="YOLOE" width="250" style="border-radius: 8px;"/><br>**👁️ See Anything (YOLOE)** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" alt="LAI Classification" width="250" style="border-radius: 8px;"/><br>**🗺️ LAI Classification** | |
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" alt="YOLOE" width="400" style="border-radius: 8px;"/><br>**👁️ See Anything (YOLOE)** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" alt="LAI Classification" width="400" style="border-radius: 8px;"/><br>**🗺️ LAI Classification** |
+|:---:|:---:|
 
 ### 📊 **Analysis & Exploration**
 
@@ -169,8 +179,6 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 ---
 
 ## 🔧 Complete Workflow Pipeline
-
-<div align="center">
 
 ### 📥 **Data Input**
 - **🔥 CoralNet Download**: Retrieve source data and annotations
@@ -193,7 +201,11 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 - **🎥 Video Analysis**: Real-time processing with analytics
 - **📋 Multi-format Export**: CoralNet, Viscore, TagLab, GeoJSON
 
-</div>
+---
+
+## 📋 Roadmap
+
+*See the current tickets and planned features on the [GitHub Issues Page](https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues)*
 
 ---
 
@@ -239,7 +251,7 @@ coralnet-toolbox
 - **🚀** Multiple GPUs  
 - **🍎** Mac Metal (Apple Silicon)
 
-*Click the icon to see detailed device information*
+*Click the icon in the bottom-left to see available devices*
 
 ### 🔄 **Upgrading**
 ```bash
@@ -249,14 +261,11 @@ uv pip install -U coralnet-toolbox==[latest_version]
 
 ---
 
-## 📋 Roadmap
+### 🏗️ **Repository Structure**
 
-### ✅ **Current Features**
-- Complete annotation toolkit with AI assistance
-- Multiple AI model integrations
-- Video processing and analytics
-- Data exploration and clustering
-- Multi-format import/export
+<div align="center">
+![Visualization of the codebase](./diagram.svg)
+</div>
 
 ---
 
