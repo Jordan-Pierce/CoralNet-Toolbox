@@ -55,18 +55,23 @@ class DatasetProcessor(QObject):
     def run(self):
         """Main processing method executed in the thread."""
         try:
-            # Step 1: Read YAML and discover files
-            self.status_changed.emit("Discovering and copying files...", 0)
+            # Step 1: Read YAML and discover files (this is fast)
             with open(self.yaml_path, 'r') as file:
                 data = yaml.safe_load(file)
             class_names = data.get('names', [])
 
-            # Step 2: Find and copy image/label pairs to output folder
-            image_label_paths = self._find_and_copy_files(self.output_folder)
-            if not image_label_paths:
+            # This method now only finds files, it doesn't copy them yet.
+            source_image_label_map = self._find_source_files()
+
+            if not source_image_label_map:
                 self.error.emit("No valid image/label pairs found in the dataset.")
                 self.finished.emit()
                 return
+
+            # --- Step 2: Copy files with progress reporting ---
+            self.status_changed.emit("Copying image files...", len(source_image_label_map))
+            # The 'image_label_paths' now maps the *destination* path to the source label path
+            image_label_paths = self._copy_files_with_progress(source_image_label_map)
 
             if not self.is_running:
                 self.finished.emit()
@@ -80,7 +85,12 @@ class DatasetProcessor(QObject):
                 self.finished.emit()
                 return
 
-            # Step 4: Emit results for GUI to consume
+            # --- Step 4: Export JSON in the background thread ---
+            self.status_changed.emit("Exporting annotations.json...", 1)
+            self._export_annotations_to_json(raw_annotations, self.output_folder)
+            self.progress_updated.emit(1)
+
+            # Step 5: Emit results for GUI to consume
             image_paths = list(image_label_paths.keys())
             self.processing_complete.emit(raw_annotations, image_paths, self.parsing_errors)
 
@@ -92,45 +102,49 @@ class DatasetProcessor(QObject):
             # Always emit finished signal
             self.finished.emit()
 
-    def _find_and_copy_files(self, output_folder):
-        """
-        Finds, copies, and optionally renames image files.
-        Returns a mapping of output image paths to original label paths.
-        """
-        img_out_dir = os.path.join(output_folder, "images")
-        os.makedirs(img_out_dir, exist_ok=True)
-
+    def _find_source_files(self):
+        """Finds all source image and label paths without copying."""
         dir_path = os.path.dirname(self.yaml_path)
-        # Find all images and labels recursively
         image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
         label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
-        # Map from base name (no extension) to image path
         image_basenames_map = {os.path.splitext(os.path.basename(p))[0]: p for p in image_paths}
 
-        image_label_map = {}
+        source_map = {}
         for label_path in label_paths:
-            if not self.is_running:
-                break
-            label_basename_no_ext = os.path.splitext(
-                os.path.basename(label_path))[0]
+            label_basename_no_ext = os.path.splitext(os.path.basename(label_path))[0]
             if label_basename_no_ext in image_basenames_map:
                 src_image_path = image_basenames_map[label_basename_no_ext]
-                original_img_basename = os.path.basename(src_image_path)
+                source_map[src_image_path] = label_path
+        return source_map
 
-                # Optionally rename to avoid conflicts
-                if self.rename_on_conflict:
-                    base, ext = os.path.splitext(original_img_basename)
-                    unique_id = str(uuid.uuid4())[:8]
-                    new_img_basename = f"{base}_{unique_id}{ext}"
-                else:
-                    new_img_basename = original_img_basename
+    def _copy_files_with_progress(self, source_image_label_map):
+        """Copies files and reports progress for each file."""
+        img_out_dir = os.path.join(self.output_folder, "images")
+        os.makedirs(img_out_dir, exist_ok=True)
 
-                dest_image_path = os.path.join(img_out_dir, new_img_basename)
-                shutil.copy(src_image_path, dest_image_path)
-                # Store mapping with normalized (forward slash) paths - output image path to original label path
-                image_label_map[dest_image_path.replace("\\", "/")] = label_path.replace("\\", "/")
+        dest_label_map = {}
+        for i, (src_image_path, label_path) in enumerate(source_image_label_map.items()):
+            if not self.is_running:
+                break
 
-        return image_label_map
+            original_img_basename = os.path.basename(src_image_path)
+
+            if self.rename_on_conflict:
+                base, ext = os.path.splitext(original_img_basename)
+                unique_id = str(uuid.uuid4())[:8]
+                new_img_basename = f"{base}_{unique_id}{ext}"
+            else:
+                new_img_basename = original_img_basename
+
+            dest_image_path = os.path.join(img_out_dir, new_img_basename)
+            shutil.copy(src_image_path, dest_image_path)
+
+            # Map destination image path to original label path
+            dest_label_map[dest_image_path.replace("\\", "/")] = label_path.replace("\\", "/")
+
+            self.progress_updated.emit(i + 1)
+
+        return dest_label_map
 
     def _create_raw_annotations(self, image_label_paths, class_names):
         """
@@ -201,11 +215,58 @@ class DatasetProcessor(QObject):
                                  f"Skipped malformed content: '{line.strip()}'\nReason: {e}\n")
                     self.parsing_errors.append(error_msg)
 
-
             # Update progress after each image
             self.progress_updated.emit(i + 1)
         return all_raw_annotations
-    
+
+    def _export_annotations_to_json(self, raw_annotations, output_dir):
+        """
+        Creates or merges annotations into annotations.json from raw data.
+        This runs in the worker thread to avoid blocking the GUI.
+        """
+        export_dict = {}
+        json_path = os.path.join(output_dir, "annotations.json")
+
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r') as file:
+                    export_dict = json.load(file)
+                if not isinstance(export_dict, dict):
+                    export_dict = {}
+            except (json.JSONDecodeError, TypeError, IOError):
+                export_dict = {}  # Start fresh if file is corrupt
+
+        # Merge new annotations
+        for raw_ann in raw_annotations:
+            image_path = raw_ann["image_path"]
+            export_dict.setdefault(image_path, [])
+
+            # This dictionary is now built from raw data, not Qt objects
+            annotation_dict = {
+                'type': raw_ann["type"],
+                'class_name': raw_ann["class_name"]
+            }
+            if raw_ann["type"] == "RectangleAnnotation":
+                tl = raw_ann["top_left"]
+                br = raw_ann["bottom_right"]
+                annotation_dict['points'] = [
+                    {'x': tl[0], 'y': tl[1]},
+                    {'x': br[0], 'y': br[1]}
+                ]
+            else: # Polygon
+                annotation_dict['points'] = [{'x': p[0], 'y': p[1]} for p in raw_ann["points"]]
+
+            export_dict[image_path].append(annotation_dict)
+
+        # Write the final dictionary back to the file
+        try:
+            with open(json_path, 'w') as file:
+                json.dump(export_dict, file, indent=4)
+        except Exception as e:
+            # Since this is in a thread, we can't show a QMessageBox easily.
+            # We can append it to parsing_errors to be shown later.
+            self.parsing_errors.append(f"CRITICAL: Failed to write annotations.json: {e}")
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dialog Classes
@@ -294,20 +355,18 @@ class Base(QDialog):
         )
         if file_path:
             self.yaml_path_label.setText(file_path)
-            # Auto-fill output directory to be the PARENT of the yaml's directory
-            if not self.output_dir_label.text():
-                parent_dir = os.path.dirname(os.path.dirname(file_path))
-                self.output_dir_label.setText(parent_dir)
-            if not self.output_folder_name.text():
-                # Suggest a folder name based on the yaml file's parent folder
-                project_name = os.path.basename(os.path.dirname(file_path))
-                self.output_folder_name.setText(f"{project_name}_imported")
+            
+            # Auto-fill output directory to be the same as the yaml's directory
+            yaml_dir = os.path.dirname(file_path)
+            self.output_dir_label.setText(yaml_dir)
+            
+            # Set the default output folder name to "data"
+            self.output_folder_name.setText("data")
 
     def browse_output_dir(self):
         """Open a dialog to select the output directory."""
         # Directory dialog for selecting output directory
-        dir_path = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory")
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_label.setText(dir_path)
 
@@ -316,7 +375,7 @@ class Base(QDialog):
         if not all([self.yaml_path_label.text(), self.output_dir_label.text(), self.output_folder_name.text()]):
             QMessageBox.warning(self, "Error", "Please fill in all fields.")
             return
-        
+
         # This check for existing output is still relevant
         self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
         if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
@@ -375,7 +434,7 @@ class Base(QDialog):
                 rename_files = False
             else:  # User closed the dialog
                 return
-        
+
         self.button_box.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -413,121 +472,71 @@ class Base(QDialog):
         self.progress_bar.set_value(value)
 
     def on_processing_complete(self, raw_annotations, image_paths, parsing_errors):
+        # This new progress bar handles the final import into the application's state.
+        progress_bar = ProgressBar(self, title="Adding Data to Project...")
+        progress_bar.show()
+
+        # --- Step 1: Add Images to the application ---
         added_paths = []
+        progress_bar.set_title(f"Adding {len(image_paths)} images...")
+        progress_bar.start_progress(len(image_paths))
         for path in image_paths:
             if self.image_window.add_image(path):
                 added_paths.append(path)
+            progress_bar.update_progress()
 
-        newly_created_annotations = []
+        # --- Step 2: Create and add annotation objects ---
+        progress_bar.set_title(f"Adding {len(raw_annotations)} annotations...")
+        progress_bar.start_progress(len(raw_annotations))
         for raw_ann in raw_annotations:
             label = self.main_window.label_window.add_label_if_not_exists(
                 raw_ann["class_name"])
             if raw_ann["type"] == "RectangleAnnotation":
                 tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
-                annotation = RectangleAnnotation(QPointF(tl[0], tl[1]), 
+                annotation = RectangleAnnotation(QPointF(tl[0], tl[1]),
                                                  QPointF(br[0], br[1]),
-                                                 label.short_label_code, 
-                                                 label.long_label_code, 
+                                                 label.short_label_code,
+                                                 label.long_label_code,
                                                  label.color,
-                                                 raw_ann["image_path"], 
-                                                 label.id, 
+                                                 raw_ann["image_path"],
+                                                 label.id,
                                                  self.main_window.get_transparency_value())
             else:  # PolygonAnnotation
                 points = [QPointF(p[0], p[1]) for p in raw_ann["points"]]
                 annotation = PolygonAnnotation(points,
                                                label.short_label_code,
-                                               label.long_label_code, 
+                                               label.long_label_code,
                                                label.color,
-                                               raw_ann["image_path"], 
-                                               label.id, 
+                                               raw_ann["image_path"],
+                                               label.id,
                                                self.main_window.get_transparency_value())
-                
+
             self.annotation_window.add_annotation_to_dict(annotation)
-            newly_created_annotations.append(annotation)  # Add to our list
+            progress_bar.update_progress()
 
-        # --- Now, export the fully created objects to JSON ---
-        self.progress_bar.set_title("Exporting to annotations.json...")
-        self.export_annotations_to_json(newly_created_annotations, self.output_folder)
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()  # Close the progress bar before showing the final dialogs
 
+        # --- Step 3: Update UI ---
         self.image_window.filter_images()
-        
+
         if added_paths:
             self.image_window.load_image_by_path(added_paths[-1])
             self.image_window.update_image_annotations(added_paths[-1])
             self.annotation_window.load_annotations()
 
-        # --- Display a summary message, including any parsing errors ---
+        # --- Step 4: Display a summary message, including any parsing errors ---
         summary_message = "Dataset has been successfully imported."
         if parsing_errors:
-            # If there were errors, show a more detailed dialog
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Import Complete with Warnings",
-                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found "
-                                "in the label files. Please review them below.",
+                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. "
+                                "Please review them below.",
                                 details='\n'.join(parsing_errors))
         else:
-            # Otherwise, show a simple info box
-            QMessageBox.information(self, 
-                                    "Dataset Imported",
-                                    summary_message)
+            QMessageBox.information(self, "Dataset Imported", summary_message)
 
-    def export_annotations_to_json(self, annotations_list, output_dir):
-        """
-        Merges the list of annotation objects into an existing annotations.json file,
-        or creates a new one if it doesn't exist.
-        The output is a dictionary mapping image paths to lists of annotation dicts.
-        """
-        export_dict = {}
-        json_path = os.path.join(output_dir, "annotations.json")
-
-        # Step 1: Check for the existing file and load it if present.
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r') as file:
-                    export_dict = json.load(file)
-                # Ensure the loaded data is a dictionary
-                if not isinstance(export_dict, dict):
-                    raise TypeError("annotations.json is not in the expected format (dict).")
-            except (json.JSONDecodeError, TypeError, IOError) as e:
-                # If file is corrupt, unreadable, or has wrong format, warn the user and start fresh.
-                QMessageBox.warning(self, 
-                                    "Read Error",
-                                    f"Could not read or parse existing annotations.json:\n{e}\n\n"
-                                    "A new file will be created, overwriting the old one.")
-                export_dict = {}  # Reset to be safe
-
-        # Step 2: Iterate through new annotations and merge them into the dictionary.
-        for annotation in annotations_list:
-            image_path = annotation.image_path
-            
-            # Use setdefault to initialize a list for a new image path or get the existing one.
-            export_dict.setdefault(image_path, [])
-            
-            # Create the dictionary for the annotation using its own method
-            if isinstance(annotation, RectangleAnnotation):
-                annotation_dict = {
-                    'type': 'RectangleAnnotation',
-                    **annotation.to_dict()
-                }
-            elif isinstance(annotation, PolygonAnnotation):
-                annotation_dict = {
-                    'type': 'PolygonAnnotation',
-                    **annotation.to_dict()
-                }
-            else:
-                warnings.warn(f"Unknown annotation type skipped during export: {type(annotation)}")
-                continue
-
-            export_dict[image_path].append(annotation_dict)
-
-        # Step 3: Write the final, merged dictionary back to the JSON file.
-        try:
-            with open(json_path, 'w') as file:
-                json.dump(export_dict, file, indent=4)
-                file.flush()
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", f"Failed to write annotations.json:\n{e}")
-            
     def on_error(self, message):
         QMessageBox.warning(self, "Error", message)
 
