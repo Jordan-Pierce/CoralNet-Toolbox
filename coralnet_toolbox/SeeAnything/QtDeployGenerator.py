@@ -1408,9 +1408,6 @@ class DeployGeneratorDialog(QDialog):
         Show a visualization of the VPEs using PyQtGraph.
         This method now always recalculates VPEs from the currently highlighted reference images.
         """
-        # Set cursor to busy while loading VPEs
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
         try:
             # Always sync with the live UI selection before visualizing.
             self.update_stashed_references_from_ui()
@@ -1447,12 +1444,17 @@ class DeployGeneratorDialog(QDialog):
             averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
             final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
 
+            # Set cursor to busy only before launching the dialog
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
             dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
+            QApplication.restoreOverrideCursor()  # Restore cursor before showing dialog
+            
             dialog.exec_()
             
-        finally:
-            # Always restore cursor, even if an exception occurs
-            QApplication.restoreOverrideCursor()
+        except Exception as e:
+            QApplication.restoreOverrideCursor()  # Ensure cursor is restored if an exception occurs
+            QMessageBox.critical(self, "Error Visualizing VPE", f"An error occurred: {str(e)}")
         
     def deactivate_model(self):
         """
