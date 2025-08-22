@@ -56,10 +56,12 @@ class DatasetProcessor(QObject):
     def stop(self):
         self.is_running = False
 
+    # In class DatasetProcessor, update this method:
+
     def run(self):
         """Main processing method executed in the thread."""
         try:
-            # Step 1: Read YAML and discover files (this is fast)
+            # Step 1: Read YAML and discover files
             with open(self.yaml_path, 'r') as file:
                 data = yaml.safe_load(file)
             class_names = data.get('names', [])
@@ -87,10 +89,7 @@ class DatasetProcessor(QObject):
                 self.finished.emit()
                 return
 
-            # --- Step 4: Export JSON in the background thread ---
-            self.status_changed.emit("Exporting annotations.json...", 1)
-            self._export_annotations_to_json(raw_annotations, self.output_folder)
-            self.progress_updated.emit(1)
+            # Step 4 (REMOVED): The JSON export is no longer done here.
 
             # Step 5: Emit results for GUI to consume
             image_paths = list(image_label_paths.keys())
@@ -232,62 +231,6 @@ class DatasetProcessor(QObject):
             self.progress_updated.emit(i + 1)
         return all_raw_annotations
 
-    def _export_annotations_to_json(self, annotations_list, output_dir):
-        """
-        Merges the list of annotation objects into an existing annotations.json file,
-        or creates a new one if it doesn't exist.
-        The output is a dictionary mapping image paths to lists of annotation dicts.
-        """
-        export_dict = {}
-        json_path = os.path.join(output_dir, "annotations.json")
-
-        # Step 1: Check for the existing file and load it if present.
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r') as file:
-                    export_dict = json.load(file)
-                # Ensure the loaded data is a dictionary
-                if not isinstance(export_dict, dict):
-                    raise TypeError("annotations.json is not in the expected format (dict).")
-            except (json.JSONDecodeError, TypeError, IOError) as e:
-                # If file is corrupt, unreadable, or has wrong format, warn the user and start fresh.
-                QMessageBox.warning(self, 
-                                    "Read Error",
-                                    f"Could not read or parse existing annotations.json:\n{e}\n\n"
-                                    "A new file will be created, overwriting the old one.")
-                export_dict = {}  # Reset to be safe
-
-        # Step 2: Iterate through new annotations and merge them into the dictionary.
-        for annotation in annotations_list:
-            image_path = annotation.image_path
-            
-            # Use setdefault to initialize a list for a new image path or get the existing one.
-            export_dict.setdefault(image_path, [])
-            
-            # Create the dictionary for the annotation using its own method
-            if isinstance(annotation, RectangleAnnotation):
-                annotation_dict = {
-                    'type': 'RectangleAnnotation',
-                    **annotation.to_dict()
-                }
-            elif isinstance(annotation, PolygonAnnotation):
-                annotation_dict = {
-                    'type': 'PolygonAnnotation',
-                    **annotation.to_dict()
-                }
-            else:
-                warnings.warn(f"Unknown annotation type skipped during export: {type(annotation)}")
-                continue
-
-            export_dict[image_path].append(annotation_dict)
-
-        # Step 3: Write the final, merged dictionary back to the JSON file.
-        try:
-            with open(json_path, 'w') as file:
-                json.dump(export_dict, file, indent=4)
-                file.flush()
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", f"Failed to write annotations.json:\n{e}")
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dialog Classes
@@ -555,36 +498,54 @@ class Base(QDialog):
         self.progress_bar.set_value(value)
 
     def on_processing_complete(self, raw_annotations, image_paths, parsing_errors):
-        import_progress = ProgressBar(self, title="Adding Data to Project...")
-        total_items = len(image_paths) + len(raw_annotations)
-        import_progress.start_progress(total_items)
-        import_progress.show()
-        current_progress = 0
+        progress_bar = ProgressBar(self, title="Adding Data to Project...")
+        progress_bar.show()
 
         added_paths = []
-        import_progress.set_title(f"Adding {len(image_paths)} images...")
+        progress_bar.set_title(f"Adding {len(image_paths)} images...")
+        progress_bar.start_progress(len(image_paths))
         for path in image_paths:
             if self.image_window.add_image(path):
                 added_paths.append(path)
-            current_progress += 1
-            import_progress.set_value(current_progress)
-            QApplication.processEvents()
+            progress_bar.update_progress()
 
-        import_progress.set_title(f"Adding {len(raw_annotations)} annotations...")
+        newly_created_annotations = []
+        progress_bar.set_title(f"Adding {len(raw_annotations)} annotations...")
+        progress_bar.start_progress(len(raw_annotations))
         for raw_ann in raw_annotations:
             label = self.main_window.label_window.add_label_if_not_exists(raw_ann["class_name"])
             if raw_ann["type"] == "RectangleAnnotation":
                 tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
-                annotation = RectangleAnnotation(QPointF(tl[0], tl[1]), QPointF(br[0], br[1]), label.short_label_code, label.long_label_code, label.color, raw_ann["image_path"], label.id, self.main_window.get_transparency_value())
+                annotation = RectangleAnnotation(QPointF(tl[0], tl[1]), 
+                                                 QPointF(br[0], br[1]), 
+                                                 label.short_label_code, 
+                                                 label.long_label_code, 
+                                                 label.color, 
+                                                 raw_ann["image_path"], 
+                                                 label.id, 
+                                                 self.main_window.get_transparency_value())
             else:
                 points = [QPointF(p[0], p[1]) for p in raw_ann["points"]]
-                annotation = PolygonAnnotation(points, label.short_label_code, label.long_label_code, label.color, raw_ann["image_path"], label.id, self.main_window.get_transparency_value())
-            self.annotation_window.add_annotation_to_dict(annotation)
-            current_progress += 1
-            import_progress.set_value(current_progress)
-            QApplication.processEvents()
+                annotation = PolygonAnnotation(points, 
+                                               label.short_label_code, 
+                                               label.long_label_code,
+                                               label.color, 
+                                               raw_ann["image_path"], 
+                                               label.id, 
+                                               self.main_window.get_transparency_value())
 
-        import_progress.close()
+            self.annotation_window.add_annotation_to_dict(annotation)
+            newly_created_annotations.append(annotation)  # Collect created objects
+            
+            progress_bar.update_progress()
+
+        # --- Call the restored, correct export function ---
+        progress_bar.set_title("Exporting annotations.json...")
+        self._export_annotations_to_json(newly_created_annotations, self.output_folder)
+        
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
         self.image_window.filter_images()
         if added_paths:
@@ -596,9 +557,68 @@ class Base(QDialog):
         if parsing_errors:
             QMessageBox.warning(self, 
                                 "Import Complete with Warnings", 
-                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. Please review them below.", details='\n'.join(parsing_errors))
+                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. "
+                                "Please review them below.", 
+                                details='\n'.join(parsing_errors))
         else:
             QMessageBox.information(self, "Dataset Imported", summary_message)
+            
+    def _export_annotations_to_json(self, annotations_list, output_dir):
+        """
+        Merges the list of annotation objects into an existing annotations.json file,
+        or creates a new one if it doesn't exist.
+        The output is a dictionary mapping image paths to lists of annotation dicts.
+        """
+        export_dict = {}
+        json_path = os.path.join(output_dir, "annotations.json")
+
+        # Step 1: Check for the existing file and load it if present.
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r') as file:
+                    export_dict = json.load(file)
+                # Ensure the loaded data is a dictionary
+                if not isinstance(export_dict, dict):
+                    raise TypeError("annotations.json is not in the expected format (dict).")
+            except (json.JSONDecodeError, TypeError, IOError) as e:
+                # If file is corrupt, unreadable, or has wrong format, warn the user and start fresh.
+                QMessageBox.warning(self, 
+                                    "Read Error",
+                                    f"Could not read or parse existing annotations.json:\n{e}\n\n"
+                                    "A new file will be created, overwriting the old one.")
+                export_dict = {}  # Reset to be safe
+
+        # Step 2: Iterate through new annotations and merge them into the dictionary.
+        for annotation in annotations_list:
+            image_path = annotation.image_path
+            
+            # Use setdefault to initialize a list for a new image path or get the existing one.
+            export_dict.setdefault(image_path, [])
+            
+            # Create the dictionary for the annotation using its own method
+            if isinstance(annotation, RectangleAnnotation):
+                annotation_dict = {
+                    'type': 'RectangleAnnotation',
+                    **annotation.to_dict()
+                }
+            elif isinstance(annotation, PolygonAnnotation):
+                annotation_dict = {
+                    'type': 'PolygonAnnotation',
+                    **annotation.to_dict()
+                }
+            else:
+                warnings.warn(f"Unknown annotation type skipped during export: {type(annotation)}")
+                continue
+
+            export_dict[image_path].append(annotation_dict)
+
+        # Step 3: Write the final, merged dictionary back to the JSON file.
+        try:
+            with open(json_path, 'w') as file:
+                json.dump(export_dict, file, indent=4)
+                file.flush()
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to write annotations.json:\n{e}")
 
     def on_error(self, message):
         QMessageBox.warning(self, "Error", message)
