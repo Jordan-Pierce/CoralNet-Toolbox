@@ -264,7 +264,9 @@ uv pip install -U coralnet-toolbox==[latest_version]
 ### 🏗️ **Repository Structure**
 
 <div align="center">
-![Visualization of the codebase](./diagram.svg)
+  <a href="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/diagram.svg">
+    <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/diagram.svg" alt="Visualization of the codebase" width="80%">
+  </a>
 </div>
 
 ---
