@@ -193,7 +193,17 @@ class DatasetProcessor(QObject):
                         parsed_data['bottom_right'] = (x + width / 2, y + height / 2)
                     else:  # Source is polygon: class, x1, y1, x2, y2, ...
                         points_norm = parts[1:]
-                        points = [(x * image_width, y * image_height) for x, y in zip(points_norm[::2], points_norm[1::2])]
+                        # Convert normalized coordinates to pixel coordinates
+                        # Extract x and y coordinates from the flattened list
+                        x_coords = points_norm[::2]  # Every even index (0, 2, 4...)
+                        y_coords = points_norm[1::2]  # Every odd index (1, 3, 5...)
+                        
+                        # Scale coordinates by image dimensions
+                        points = []
+                        for x, y in zip(x_coords, y_coords):
+                            pixel_x = x * image_width
+                            pixel_y = y * image_height
+                            points.append((pixel_x, pixel_y))
                         parsed_data['points'] = points
 
                     if self.import_as == 'rectangle':
@@ -222,40 +232,62 @@ class DatasetProcessor(QObject):
             self.progress_updated.emit(i + 1)
         return all_raw_annotations
 
-    def _export_annotations_to_json(self, raw_annotations, output_dir):
+    def _export_annotations_to_json(self, annotations_list, output_dir):
         """
-        Creates or merges annotations into annotations.json from raw data.
-        This runs in the worker thread to avoid blocking the GUI.
+        Merges the list of annotation objects into an existing annotations.json file,
+        or creates a new one if it doesn't exist.
+        The output is a dictionary mapping image paths to lists of annotation dicts.
         """
         export_dict = {}
         json_path = os.path.join(output_dir, "annotations.json")
 
+        # Step 1: Check for the existing file and load it if present.
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r') as file:
                     export_dict = json.load(file)
+                # Ensure the loaded data is a dictionary
                 if not isinstance(export_dict, dict):
-                    export_dict = {}
-            except (json.JSONDecodeError, TypeError, IOError):
-                export_dict = {}
+                    raise TypeError("annotations.json is not in the expected format (dict).")
+            except (json.JSONDecodeError, TypeError, IOError) as e:
+                # If file is corrupt, unreadable, or has wrong format, warn the user and start fresh.
+                QMessageBox.warning(self, 
+                                    "Read Error",
+                                    f"Could not read or parse existing annotations.json:\n{e}\n\n"
+                                    "A new file will be created, overwriting the old one.")
+                export_dict = {}  # Reset to be safe
 
-        for raw_ann in raw_annotations:
-            image_path = raw_ann["image_path"]
+        # Step 2: Iterate through new annotations and merge them into the dictionary.
+        for annotation in annotations_list:
+            image_path = annotation.image_path
+            
+            # Use setdefault to initialize a list for a new image path or get the existing one.
             export_dict.setdefault(image_path, [])
-            annotation_dict = {'type': raw_ann["type"], 'class_name': raw_ann["class_name"]}
-            if raw_ann["type"] == "RectangleAnnotation":
-                tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
-                annotation_dict['points'] = [{'x': tl[0], 'y': tl[1]}, {'x': br[0], 'y': br[1]}]
+            
+            # Create the dictionary for the annotation using its own method
+            if isinstance(annotation, RectangleAnnotation):
+                annotation_dict = {
+                    'type': 'RectangleAnnotation',
+                    **annotation.to_dict()
+                }
+            elif isinstance(annotation, PolygonAnnotation):
+                annotation_dict = {
+                    'type': 'PolygonAnnotation',
+                    **annotation.to_dict()
+                }
             else:
-                annotation_dict['points'] = [{'x': p[0], 'y': p[1]} for p in raw_ann["points"]]
+                warnings.warn(f"Unknown annotation type skipped during export: {type(annotation)}")
+                continue
+
             export_dict[image_path].append(annotation_dict)
 
+        # Step 3: Write the final, merged dictionary back to the JSON file.
         try:
             with open(json_path, 'w') as file:
                 json.dump(export_dict, file, indent=4)
+                file.flush()
         except Exception as e:
-            self.parsing_errors.append(f"CRITICAL: Failed to write annotations.json: {e}")
-
+            QMessageBox.critical(self, "Export Error", f"Failed to write annotations.json:\n{e}")
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dialog Classes
@@ -424,7 +456,10 @@ class Base(QDialog):
 
         self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
         if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
-            reply = QMessageBox.question(self, 'Directory Not Empty', f"The directory '{self.output_folder}' is not empty. Continue?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            reply = QMessageBox.question(self, 
+                                         'Directory Not Empty', 
+                                         f"The directory '{self.output_folder}' is not empty. Continue?", 
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.No: return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -446,16 +481,38 @@ class Base(QDialog):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle('Duplicate Filenames Found')
-            msg_box.setText("Images with the same base name exist in different subdirectories.\nThis can cause files to be overwritten in the output directory.")
+            msg_box.setText(
+                "Images with the same base name exist in different subdirectories.\n"
+                "This can cause files to be overwritten in the output directory."
+            )
             msg_box.setInformativeText("How would you like to handle these conflicts?")
-            rename_button, overwrite_button, cancel_button = msg_box.addButton("Rename Files (Safe)", QMessageBox.AcceptRole), msg_box.addButton("Overwrite", QMessageBox.DestructiveRole), msg_box.addButton("Cancel", QMessageBox.RejectRole)
+
+            # Add buttons with proper line breaks
+            rename_button = msg_box.addButton(
+                "Rename Files (Safe)", 
+                QMessageBox.AcceptRole
+            )
+            overwrite_button = msg_box.addButton(
+                "Overwrite", 
+                QMessageBox.DestructiveRole
+            )
+            cancel_button = msg_box.addButton(
+                "Cancel", 
+                QMessageBox.RejectRole
+            )
+
             msg_box.setDefaultButton(rename_button)
             msg_box.exec_()
+
             clicked_button = msg_box.clickedButton()
-            if clicked_button == cancel_button: return
-            elif clicked_button == rename_button: rename_files = True
-            elif clicked_button == overwrite_button: rename_files = False
-            else: return
+            if clicked_button == cancel_button:
+                return
+            elif clicked_button == rename_button:
+                rename_files = True
+            elif clicked_button == overwrite_button:
+                rename_files = False
+            else:
+                return
 
         excluded_classes = set()
         if self.advanced_options_toggle.isEnabled():
@@ -537,7 +594,9 @@ class Base(QDialog):
 
         summary_message = "Dataset has been successfully imported."
         if parsing_errors:
-            QMessageBox.warning(self, "Import Complete with Warnings", f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. Please review them below.", details='\n'.join(parsing_errors))
+            QMessageBox.warning(self, 
+                                "Import Complete with Warnings", 
+                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. Please review them below.", details='\n'.join(parsing_errors))
         else:
             QMessageBox.information(self, "Dataset Imported", summary_message)
 
