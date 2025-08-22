@@ -812,60 +812,71 @@ class DeployGeneratorDialog(QDialog):
         """
         Save the combined collection of VPEs (imported and reference-generated) to disk.
         """
-        # Always sync with the live UI selection before saving.
-        self.update_stashed_references_from_ui()
-
-        # Create a list to hold all VPEs
-        all_vpes = []
-        
-        # Add imported VPEs if available
-        if self.imported_vpes:
-            all_vpes.extend(self.imported_vpes)
-        
-        # Check if we should generate new VPEs from reference images
-        references_dict = self._get_references()
-        if references_dict:
-            # Reload the model to ensure clean state
-            self.reload_model()
-            
-            # Convert references to VPEs without updating self.reference_vpes yet
-            new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=False)
-            
-            if new_vpes:
-                # Add new VPEs to collection
-                all_vpes.extend(new_vpes)
-                # Update reference_vpes with the new ones
-                self.reference_vpes = new_vpes
-        else:
-            # Include existing reference VPEs if we have them
-            if self.reference_vpes:
-                all_vpes.extend(self.reference_vpes)
-        
-        # Check if we have any VPEs to save
-        if not all_vpes:
-            QMessageBox.warning(
-                self,
-                "No VPEs Available",
-                "No VPEs available to save. Please either load a VPE file or select reference images."
-            )
-            return
-        
-        # Open file dialog to select save location
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save VPE Collection",
-            "",
-            "PyTorch Tensor (*.pt);;All Files (*)"
-        )
-        
-        if not file_path:
-            return  # User canceled the dialog
-        
-        # Add .pt extension if not present
-        if not file_path.endswith('.pt'):
-            file_path += '.pt'
+        # Set cursor to busy before starting the operation
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
+            # Always sync with the live UI selection before saving.
+            self.update_stashed_references_from_ui()
+
+            # Create a list to hold all VPEs
+            all_vpes = []
+            
+            # Add imported VPEs if available
+            if self.imported_vpes:
+                all_vpes.extend(self.imported_vpes)
+            
+            # Check if we should generate new VPEs from reference images
+            references_dict = self._get_references()
+            if references_dict:
+                # Reload the model to ensure clean state
+                self.reload_model()
+                
+                # Convert references to VPEs without updating self.reference_vpes yet
+                new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=False)
+                
+                if new_vpes:
+                    # Add new VPEs to collection
+                    all_vpes.extend(new_vpes)
+                    # Update reference_vpes with the new ones
+                    self.reference_vpes = new_vpes
+            else:
+                # Include existing reference VPEs if we have them
+                if self.reference_vpes:
+                    all_vpes.extend(self.reference_vpes)
+            
+            # Check if we have any VPEs to save
+            if not all_vpes:
+                # Restore cursor before showing message box
+                QApplication.restoreOverrideCursor()
+                QMessageBox.warning(
+                    self,
+                    "No VPEs Available",
+                    "No VPEs available to save. Please either load a VPE file or select reference images."
+                )
+                return
+            
+            # Restore cursor before showing file dialog (important for better UX)
+            QApplication.restoreOverrideCursor()
+            
+            # Open file dialog to select save location
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save VPE Collection",
+                "",
+                "PyTorch Tensor (*.pt);;All Files (*)"
+            )
+            
+            if not file_path:
+                return  # User canceled the dialog
+            
+            # Set cursor back to busy for the saving operation
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            # Add .pt extension if not present
+            if not file_path.endswith('.pt'):
+                file_path += '.pt'
+            
             # Move tensors to CPU before saving
             vpe_list_cpu = [vpe.cpu() for vpe in all_vpes]
             
@@ -873,17 +884,29 @@ class DeployGeneratorDialog(QDialog):
             torch.save(vpe_list_cpu, file_path)
             
             self.status_bar.setText(f"Saved {len(all_vpes)} VPE tensors to {os.path.basename(file_path)}")
+            
+            # Restore cursor before showing message box
+            QApplication.restoreOverrideCursor()
             QMessageBox.information(
                 self,
                 "VPE Saved",
                 f"Saved {len(all_vpes)} VPE tensors to {file_path}"
             )
+            
         except Exception as e:
+            # Restore cursor before showing error message
+            QApplication.restoreOverrideCursor()
             QMessageBox.critical(
                 self,
                 "Error Saving VPE",
                 f"Failed to save VPE: {str(e)}"
             )
+        finally:
+            # Ensure cursor is restored even if an unexpected error occurs
+            try:
+                QApplication.restoreOverrideCursor()
+            except:
+                pass
 
     def load_model(self):
         """
