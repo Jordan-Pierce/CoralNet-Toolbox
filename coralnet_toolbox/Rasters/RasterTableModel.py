@@ -149,6 +149,26 @@ class RasterTableModel(QAbstractTableModel):
             return Qt.NoItemFlags
             
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+    
+    def add_path(self, path: str):
+        """
+        Efficiently add a single path by signaling a row insertion.
+        
+        Args:
+            path (str): The image path to add.
+        """
+        if path in self.raster_manager.image_paths and path not in self.filtered_paths:
+            # The position for the new row is at the end of the current list
+            row_position = len(self.filtered_paths)
+            
+            # Signal that we are about to insert one row at this position
+            self.beginInsertRows(QModelIndex(), row_position, row_position)
+            
+            # Add the data
+            self.filtered_paths.append(path)
+            
+            # Signal that the insertion is complete
+            self.endInsertRows()
             
     def highlight_path(self, path: str, highlighted: bool = True):
         """
