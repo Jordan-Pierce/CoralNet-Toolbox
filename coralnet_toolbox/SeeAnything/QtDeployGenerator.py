@@ -502,8 +502,13 @@ class DeployGeneratorDialog(QDialog):
 
         main_layout.addLayout(button_row)
 
-        # Second row: Save VPE button + Show VPE button side by side
+        # Second row: VPE action buttons
         vpe_row = QHBoxLayout()
+        
+        generate_vpe_button = QPushButton("Generate VPEs")
+        generate_vpe_button.clicked.connect(self.generate_vpes_from_references)
+        vpe_row.addWidget(generate_vpe_button)
+
         save_vpe_button = QPushButton("Save VPE")
         save_vpe_button.clicked.connect(self.save_vpe)
         vpe_row.addWidget(save_vpe_button)
@@ -810,56 +815,35 @@ class DeployGeneratorDialog(QDialog):
             
     def save_vpe(self):
         """
-        Save the combined collection of VPEs (imported and reference-generated) to disk.
+        Saves the combined collection of VPEs (imported and pre-generated from references) to disk.
         """
-        # Set cursor to busy before starting the operation
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
-            # Always sync with the live UI selection before saving.
-            self.update_stashed_references_from_ui()
-
-            # Create a list to hold all VPEs
+            # Create a list to hold all VPEs to be saved
             all_vpes = []
             
             # Add imported VPEs if available
             if self.imported_vpes:
                 all_vpes.extend(self.imported_vpes)
             
-            # Check if we should generate new VPEs from reference images
-            references_dict = self._get_references()
-            if references_dict:
-                # Reload the model to ensure clean state
-                self.reload_model()
-                
-                # Convert references to VPEs without updating self.reference_vpes yet
-                new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=False)
-                
-                if new_vpes:
-                    # Add new VPEs to collection
-                    all_vpes.extend(new_vpes)
-                    # Update reference_vpes with the new ones
-                    self.reference_vpes = new_vpes
-            else:
-                # Include existing reference VPEs if we have them
-                if self.reference_vpes:
-                    all_vpes.extend(self.reference_vpes)
+            # Add pre-generated reference VPEs if available
+            if self.reference_vpes:
+                all_vpes.extend(self.reference_vpes)
             
             # Check if we have any VPEs to save
             if not all_vpes:
-                # Restore cursor before showing message box
                 QApplication.restoreOverrideCursor()
                 QMessageBox.warning(
                     self,
                     "No VPEs Available",
-                    "No VPEs available to save. Please either load a VPE file or select reference images."
+                    "No VPEs available to save. "
+                    "Please either load a VPE file or generate VPEs from reference images first."
                 )
                 return
             
-            # Restore cursor before showing file dialog (important for better UX)
             QApplication.restoreOverrideCursor()
             
-            # Open file dialog to select save location
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save VPE Collection",
@@ -868,24 +852,19 @@ class DeployGeneratorDialog(QDialog):
             )
             
             if not file_path:
-                return  # User canceled the dialog
+                return
             
-            # Set cursor back to busy for the saving operation
             QApplication.setOverrideCursor(Qt.WaitCursor)
             
-            # Add .pt extension if not present
             if not file_path.endswith('.pt'):
                 file_path += '.pt'
             
-            # Move tensors to CPU before saving
             vpe_list_cpu = [vpe.cpu() for vpe in all_vpes]
             
-            # Save the list of tensors
             torch.save(vpe_list_cpu, file_path)
             
             self.status_bar.setText(f"Saved {len(all_vpes)} VPE tensors to {os.path.basename(file_path)}")
             
-            # Restore cursor before showing message box
             QApplication.restoreOverrideCursor()
             QMessageBox.information(
                 self,
@@ -894,7 +873,6 @@ class DeployGeneratorDialog(QDialog):
             )
             
         except Exception as e:
-            # Restore cursor before showing error message
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(
                 self,
@@ -902,7 +880,6 @@ class DeployGeneratorDialog(QDialog):
                 f"Failed to save VPE: {str(e)}"
             )
         finally:
-            # Ensure cursor is restored even if an unexpected error occurs
             try:
                 QApplication.restoreOverrideCursor()
             except:
@@ -1179,6 +1156,59 @@ class DeployGeneratorDialog(QDialog):
         
         return [[combined_results]]
     
+    def generate_vpes_from_references(self):
+        """
+        Calculates VPEs from the currently highlighted reference images and
+        stores them in self.reference_vpes, overwriting any previous ones.
+        """
+        if not self.loaded_model:
+            QMessageBox.warning(self, "No Model Loaded", "A model must be loaded before generating VPEs.")
+            return
+
+        # Always sync with the live UI selection before generating.
+        self.update_stashed_references_from_ui()
+        references_dict = self._get_references()
+
+        if not references_dict:
+            QMessageBox.information(
+                self,
+                "No References Selected",
+                "Please highlight one or more reference images in the table to generate VPEs."
+            )
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Generating VPEs")
+        progress_bar.show()
+
+        try:
+            # Make progress bar busy
+            progress_bar.set_busy_mode("Generating VPEs...")
+            # Reload the model to ensure a clean state for VPE generation
+            self.reload_model()
+
+            # The references_to_vpe method will calculate and update self.reference_vpes
+            new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
+
+            if new_vpes:
+                num_vpes = len(new_vpes)
+                num_images = len(references_dict)
+                message = f"Successfully generated {num_vpes} VPEs from {num_images} reference image(s)."
+                self.status_bar.setText(message)
+                QMessageBox.information(self, "VPEs Generated", message)
+            else:
+                message = "Could not generate VPEs. Ensure annotations are valid."
+                self.status_bar.setText(message)
+                QMessageBox.warning(self, "Generation Failed", message)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error Generating VPEs", f"An unexpected error occurred: {str(e)}")
+            self.status_bar.setText("Error during VPE generation.")
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
+    
     def references_to_vpe(self, reference_dict, update_reference_vpes=True):
         """
         Converts the contents of a reference dictionary to VPEs (Visual Prompt Embeddings).
@@ -1220,14 +1250,13 @@ class DeployGeneratorDialog(QDialog):
             
         return vpe_list
 
-    def _apply_model_using_vpe(self, inputs, references_dict):
+    def _apply_model_using_vpe(self, inputs):
         """
-        Apply the model to the inputs using combined VPEs from both imported files
-        and reference annotations.
+        Apply the model to the inputs using pre-calculated VPEs from imported files
+        and/or generated from reference annotations.
         
         Args:
             inputs (list): List of input images.
-            references_dict (dict): Dictionary containing reference annotations for each image.
             
         Returns:
             list: List of prediction results.
@@ -1242,23 +1271,17 @@ class DeployGeneratorDialog(QDialog):
         if self.imported_vpes:
             combined_vpes.extend(self.imported_vpes)
             
-        # Process reference images to VPEs if any exist
-        if references_dict:
-            # Only update reference_vpes if references_dict is not empty
-            reference_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
-            if reference_vpes:
-                combined_vpes.extend(reference_vpes)
-        else:
-            # Use existing reference_vpes if we have them
-            if self.reference_vpes:
-                combined_vpes.extend(self.reference_vpes)
+        # Add pre-generated reference VPEs if available
+        if self.reference_vpes:
+            combined_vpes.extend(self.reference_vpes)
         
         # Check if we have any VPEs to use
         if not combined_vpes:
             QMessageBox.warning(
                 self,
                 "No VPEs Available",
-                "No VPEs available for prediction. Please either load a VPE file or select reference images."
+                "No VPEs are available for prediction. "
+                "Please either load a VPE file or generate VPEs from reference images."
             )
             return []
         
@@ -1283,7 +1306,7 @@ class DeployGeneratorDialog(QDialog):
                                             retina_masks=self.task == "segment")
 
         return [results]
-        
+
     def _apply_model(self, inputs):
         """
         Apply the model to the target inputs. This method handles both image-based 
@@ -1301,21 +1324,9 @@ class DeployGeneratorDialog(QDialog):
         
         # Check if the user is using VPE or Reference Images
         if self.reference_method_combo_box.currentText() == "VPE":
-            # Check if we have any VPEs available (imported or reference-generated)
-            has_vpes = bool(self.imported_vpes or self.reference_vpes)
-            
-            # If we have reference images selected but no imported VPEs yet,
-            # warn the user only if we also don't have any reference images
-            if not has_vpes and not references_dict:
-                QMessageBox.warning(
-                    self,
-                    "No VPEs Available",
-                    "No VPEs available for prediction. Please either load a VPE file or select reference images."
-                )
-                return []
-                
-            # Use the VPE method, which will combine imported and reference VPEs
-            results = self._apply_model_using_vpe(inputs, references_dict)
+            # The VPE method will use pre-loaded/pre-generated VPEs.
+            # The internal checks for whether any VPEs exist are now inside _apply_model_using_vpe.
+            results = self._apply_model_using_vpe(inputs)
         else:  
             # Use Reference Images method - requires reference images
             if not references_dict:
@@ -1428,13 +1439,9 @@ class DeployGeneratorDialog(QDialog):
         
     def show_vpe(self):
         """
-        Show a visualization of the VPEs using PyQtGraph.
-        This method now always recalculates VPEs from the currently highlighted reference images.
+        Show a visualization of the currently stored VPEs using PyQtGraph.
         """
         try:
-            # Always sync with the live UI selection before visualizing.
-            self.update_stashed_references_from_ui()
-
             vpes_with_source = []
 
             # 1. Add any VPEs that were loaded from a file
@@ -1442,41 +1449,34 @@ class DeployGeneratorDialog(QDialog):
                 for vpe in self.imported_vpes:
                     vpes_with_source.append((vpe, "Import"))
 
-            # 2. Get the currently selected reference images from the stashed list
-            references_dict = self._get_references()
+            # 2. Add any pre-generated VPEs from reference images
+            if self.reference_vpes:
+                for vpe in self.reference_vpes:
+                    vpes_with_source.append((vpe, "Reference"))
 
-            # 3. If there are reference images, calculate their VPEs and add with source type
-            if references_dict:
-                self.reload_model()
-                new_reference_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
-                if new_reference_vpes:
-                    for vpe in new_reference_vpes:
-                        vpes_with_source.append((vpe, "Reference"))
-
-            # 4. Check if there is anything to visualize
+            # 3. Check if there is anything to visualize
             if not vpes_with_source:
                 QMessageBox.warning(
                     self,
                     "No VPEs Available",
-                    "No VPEs available to visualize. Please either load a VPE file or select reference images."
+                    "No VPEs available to visualize. Please load a VPE file or generate VPEs from references first."
                 )
                 return
 
-            # 5. Create the visualization dialog, passing the list of tuples
+            # 4. Create the visualization dialog
             all_vpe_tensors = [vpe for vpe, source in vpes_with_source]
             averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
             final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
 
-            # Set cursor to busy only before launching the dialog
             QApplication.setOverrideCursor(Qt.WaitCursor)
             
             dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
-            QApplication.restoreOverrideCursor()  # Restore cursor before showing dialog
+            QApplication.restoreOverrideCursor()
             
             dialog.exec_()
             
         except Exception as e:
-            QApplication.restoreOverrideCursor()  # Ensure cursor is restored if an exception occurs
+            QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Visualizing VPE", f"An error occurred: {str(e)}")
         
     def deactivate_model(self):

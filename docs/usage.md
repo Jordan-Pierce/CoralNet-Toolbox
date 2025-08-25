@@ -60,38 +60,38 @@ The main window consists of several components:
   - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
 
 - **Explorer**:
-  - **Annotation Settings**: Select images, annotation types, and labels to include / filter; press apply.
+  - **Annotation Settings**: Select images, annotation types, and labels to include / filter press apply.
   - **Model Settings**: Use Color Features, a pre-trained, or existing classification model.
     - **Feature Mode**: Embeddings (before classification), or Predictions (after classification).
   - **Embedding Settings**: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.
   - **Annotation Viewer**: View, select, modify labels of annotations.
     - **Controls**:
-      - **Left-Click**: Select an annotation;
-      - **Ctrl + Left-Click**: Select multiple annotations;
-      - **Shift + Left-Click**: Select in-between annotations;
-      - **Double Left Click**: Unselect all annotations, exit from Isolation View;
+      - **Left-Click**: Select an annotation
+      - **Ctrl + Left-Click**: Select multiple annotations
+      - **Shift + Left-Click**: Select in-between annotations
+      - **Double Left Click**: Unselect all annotations, exit from Isolation View
       - **Ctrl + Right-Click**: Update Annotation Window view, zoomed and centered on selected annotation.
     - **Toolbar**:
-      - **Isolate Selection**: Subset view;
-      - **Sort By**: Sort annotations by image name, label, confidence;
-      - **Find Similar**: Selects and isolates N nearest annotations to currently selected;
+      - **Isolate Selection**: Subset view
+      - **Sort By**: Sort annotations by image name, label, confidence
+      - **Find Similar**: Selects and isolates N nearest annotations to currently selected
       - **Size**: Slider-bar to control annotation size in Annotation Viewer.
   - **Embedding Viewer**: Selected, modify labels of annotations.
     - **Controls**:
-      - **Left-Click**: Select an annotation;
-      - **Ctrl + Left-Click**: Select multiple annotations;
-      - **Ctrl + Left-Click + Drag**: Select multiple annotations within a draw rectangle;
-      - **Double Left Click**: Unselect all annotations, exit from Isolation View;
-      - **Right-Click + Drag**: Pan around Embedding Viewer;
+      - **Left-Click**: Select an annotation
+      - **Ctrl + Left-Click**: Select multiple annotations
+      - **Ctrl + Left-Click + Drag**: Select multiple annotations within a draw rectangle
+      - **Double Left Click**: Unselect all annotations, exit from Isolation View
+      - **Right-Click + Drag**: Pan around Embedding Viewer
       - **Scroll-wheel**: Zoom in and out of Embedding Viewer.
     - **Toolbar**:
-      - **Isolate Selection**: Subset view;
-      - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location;
-      - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions);
-      - **Find Duplicates**: Select annotations that are likely duplicates of another (only selects the duplicates); 
+      - **Isolate Selection**: Subset view
+      - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location
+      - **Review Uncertain**: Select annotations with lower Top-1 confidence scores (requires Predictions)
+      - **Find Duplicates**: Select annotations that are likely duplicates of another (only selects the duplicates) 
       - **Home**: Resets the Embedding Viewer zoom level.
   **Tip**: 
-    - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;
+    - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window
 
 - **Sample**:
   - **Sample Annotations**: Automatically generate Patch annotations.
@@ -144,11 +144,12 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferencing using `FastSAM`.
 
 - **See Anything (YOLOE)**:
-  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image;
-  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor; reference other images and labels;
-    - Select the `YOLOE` model, parameters, and load it;
-    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons);
-    - Use the loaded model on images, or work areas, and with batch inferencing;
+  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image
+  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor reference other images and labels
+    - Select the `YOLOE` model, parameters, and load it
+    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)
+    - Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)
+    - Use the loaded model w/ VPEs on new images, or work areas, and with batch inferencing
   - **Batch Inference**: Perform batch inferencing using loaded `YOLOE` generator.
 
 - **AutoDistill**:
@@ -158,7 +159,7 @@ The main window consists of several components:
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool
-  - **Left-Click**: Select an annotation; drag to move it.
+  - **Left-Click**: Select an annotation drag to move it.
   - **Ctrl + Left-Click**: Add/remove annotation to current selection.
   - **Ctrl + Delete / Backspace**: Remove selected annotation(s).
   - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
@@ -191,37 +192,37 @@ The main window consists of several components:
   - **Mouse Movement**: Shows a semi-transparent preview of the patch at the cursor position.
 
 - **Rectangle Tool**: After selecting the tool
-  - **Left-Click**: Start drawing a rectangle; click again to finish.
+  - **Left-Click**: Start drawing a rectangle click again to finish.
   - **Mouse Movement**: Shows a preview of the rectangle while drawing.
   - **Backspace**: Cancel the current rectangle annotation.
 
 - **Polygon Tool**: After selecting the tool
   - **Left-Click (first)**: Start drawing a polygon.
-  - **Left-Click (subsequent)**: Add points to the polygon; click near the first point to close.
-  - **Ctrl + Left-Click**: Enable straight line mode; click to add straight line segments.
+  - **Left-Click (subsequent)**: Add points to the polygon click near the first point to close.
+  - **Ctrl + Left-Click**: Enable straight line mode click to add straight line segments.
   - **Mouse Movement**: Shows a preview of the polygon as you draw.
   - **Backspace**: Cancel the current polygon annotation.
 
 - **SAM Tool**: After a model is loaded
-  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Left-Click**: Start drawing a work area click again to finish drawing.
   - **Backspace**: Cancel drawing the current work area.
   - **Space**: Create a work area from the current view.
-    - **Space**: Set working area; confirm prediction; finalize predictions and exit working area.
-    - **Left-Click**: Start a box; press again to end a box.
+    - **Space**: Set working area confirm prediction finalize predictions and exit working area.
+    - **Left-Click**: Start a box press again to end a box.
     - **Ctrl + Left-Click**: Add positive point.
     - **Ctrl + Right-Click**: Add negative point.
     - **Backspace**: Discard unfinalized predictions.
 
 - **See Anything (YOLOE) Tool**: After a model is loaded
-  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Left-Click**: Start drawing a work area click again to finish drawing.
   - **Backspace**: Cancel drawing the current work area.
   - **Space**: Create a work area from the current view.
-    - **Space**: Set working area; run prediction; finalize predictions and exit working area.
-    - **Left-Click**: Start a box; press again to end a box.
+    - **Space**: Set working area run prediction finalize predictions and exit working area.
+    - **Left-Click**: Start a box press again to end a box.
     - **Backspace**: Discard unfinalized predictions.
 
 - **Work Area Tool**: For creating restricted areas for model prediction
-  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Left-Click**: Start drawing a work area click again to finish drawing.
   - **Backspace**: Cancel drawing the current work area.
   - **Space**: Create a work area from the current view.
   - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released / pressed again).

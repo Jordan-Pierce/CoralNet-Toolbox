@@ -358,8 +358,6 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
-        self.accept()
-
     def resize_image(self, image):
         """
         Resize the image to the specified size.

@@ -189,6 +189,21 @@ Examples:
         help='Filter by specific class IDs (e.g., --classes 0 1 2 for persons, bicycles, cars)'
     )
     
+    # Frame range parameters
+    parser.add_argument(
+        '--start_at',
+        type=int,
+        default=0,
+        help='Start processing at this frame number (0-based)'
+    )
+    parser.add_argument(
+        '--end_at',
+        type=int,
+        default=None,
+        help='End processing at this frame number (inclusive, 0-based). If not provided, '
+             'process until the end of the video.'
+    )
+    
     # Device settings
     parser.add_argument(
         '--device',
@@ -222,6 +237,8 @@ Examples:
         action='store_true',
         help='Show all visualization windows (result, depth, detection). By default, only the result frame is shown.'
     )
+    
+    
     return parser.parse_args()
 
 
@@ -271,19 +288,25 @@ def main():
     enable_bev = not args.no_bev
     enable_display = not args.no_display
     show_all_frames = args.yes_display
+    
+    # Frame range parameters
+    start_frame = args.start_at
+    end_frame = args.end_at
+    
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
     # ===============================================
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"Input source: {source}")
     print(f"Output path: {output_path}")
     if target_size is not None:
         print(f"Target size: {target_size}px (longest edge)")
     else:
-        print(f"Using original resolution (no scaling)")
+        print("Using original resolution (no scaling)")
     print(f"YOLO model: {'Custom path: ' + yolo_model_path if yolo_model_path else 'Size: ' + yolo_model_size}")
     print(f"Depth model size: {depth_model_size}")
     print(f"Device: {device}")
+    print(f"Frame range: {start_frame} to {end_frame if end_frame is not None else 'end'}")
     print(f"Tracking: {'enabled' if enable_tracking else 'disabled'}")
     print(f"Bird's Eye View: {'enabled' if enable_bev else 'disabled'}")
     print(f"Display: {'enabled' if enable_display else 'disabled'}")
@@ -382,9 +405,52 @@ def main():
         # Use a scale that works well for the 1-5 meter range
         bev = BirdEyeView(image_shape=(width, height), scale=100)  # Increased scale to spread objects out
     
-    # Initialize video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    # Initialize video writer - use a more reliable codec and check output path
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # On Windows, try different codec options
+    if sys.platform == 'win32':
+        try:
+            # First try H264 codec
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            # Check if writer was successfully initialized
+            if not out.isOpened():
+                # Fallback to XVID codec
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                
+                if not out.isOpened():
+                    # Last resort, try MJPG
+                    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                    
+                    if not out.isOpened():
+                        print(f"Warning: Could not create output video with standard codecs. Trying AVI format.")
+                        # Try changing extension to .avi
+                        output_path = os.path.splitext(output_path)[0] + '.avi'
+                        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        except Exception as e:
+            print(f"Error initializing video writer: {e}")
+            # Last fallback to MP4V
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    else:
+        # For other platforms, use mp4v codec
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    # Check if writer was successfully initialized
+    if not out.isOpened():
+        print(f"Error: Could not create output video file at {output_path}")
+        print("Continuing without saving output video.")
+        out = None
+    else:
+        print(f"Successfully opened output video file: {output_path}")
     
     # Initialize variables for FPS calculation
     frame_count = 0
@@ -394,6 +460,7 @@ def main():
     print("Starting processing...")
     
     # Main loop
+    current_frame = 0
     while True:
         # Check for key press at the beginning of each loop
         if enable_display:
@@ -401,11 +468,22 @@ def main():
             if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
                 print("Exiting program...")
                 break
-        try:            # Read frame
+        try:            
+            # Read frame
             ret, frame = cap.read()
             if not ret:
                 break
             
+            # Skip frames before start_frame
+            if current_frame < start_frame:
+                current_frame += 1
+                continue
+                
+            # Stop if we've processed the end_frame
+            if end_frame is not None and current_frame > end_frame:
+                print(f"Reached end frame {end_frame}, stopping processing.")
+                break
+                
             # Apply resizing if needed
             if target_size is not None:
                 frame = cv2.resize(frame, (width, height))
@@ -543,7 +621,7 @@ def main():
                 fps_display = f"FPS: {fps_value:.1f}"
 
             # Add FPS and device info to the result frame (top-right corner)
-            text = f"{fps_display} | Device: {device}"
+            text = f"{fps_display} | Device: {device} | Frame: {current_frame}"
 
             # Calculate text size for right alignment
             (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -584,8 +662,9 @@ def main():
             except Exception as e:
                 print(f"Error adding depth map to result: {e}")
             
-            # Write frame to output video
-            out.write(result_frame)
+            # Write frame to output video (only if writer is valid)
+            if out is not None and out.isOpened():
+                out.write(result_frame)
             
             # Display frames only if display is enabled
             if enable_display:
@@ -594,12 +673,15 @@ def main():
                     cv2.imshow("Depth Map", depth_colored)
                     cv2.imshow("Object Detection", detection_frame)
                     
-                # Check for key press again at the end of the loop
-                key = cv2.waitKey(1)
-                if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
-                    print("Exiting program...")
-                    break
-        
+            # Check for key press again at the end of the loop
+            key = cv2.waitKey(1)
+            if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
+                print("Exiting program...")
+                break
+                
+            # Increment frame counter
+            current_frame += 1
+            
         except Exception as e:
             print(f"Error processing frame: {e}")
             # Also check for key press during exception handling
@@ -608,12 +690,16 @@ def main():
                 if key == ord('q') or key == 27 or (key & 0xFF) == ord('q') or (key & 0xFF) == 27:
                     print("Exiting program...")
                     break
+            
+            # Still increment frame counter even if there was an error
+            current_frame += 1
             continue
     
     # Clean up
     print("Cleaning up resources...")
     cap.release()
-    out.release()
+    if out is not None:
+        out.release()
     cv2.destroyAllWindows()
     
     print(f"Processing complete. Output saved to {output_path}")

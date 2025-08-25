@@ -372,7 +372,9 @@ class DeployPredictorDialog(QDialog):
                 imgsz=640,
                 conf=0.99,
             )
-
+            # Finish the progress bar
+            progress_bar.finish_progress()
+            # Update the status bar
             self.status_bar.setText(f"Loaded ({self.model_path}")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
@@ -388,7 +390,7 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
-
+            
     def resize_image(self, image):
         """
         Resize the image to the specified size.
