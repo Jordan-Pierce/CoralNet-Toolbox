@@ -168,7 +168,7 @@ class DeployGeneratorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 65536)
+        self.imgsz_spinbox.setRange(1024, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
@@ -459,9 +459,6 @@ class DeployGeneratorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-
-        # Exit the dialog box
-        self.accept()
 
     def get_imgsz(self):
         """Get the image size for the model."""

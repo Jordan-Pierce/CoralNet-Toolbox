@@ -171,7 +171,7 @@ class DeployPredictorDialog(QDialog):
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
-        self.imgsz_spinbox.setSingleStep(256)
+        self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz)", self.imgsz_spinbox)
 
@@ -322,6 +322,7 @@ class DeployPredictorDialog(QDialog):
     def is_sam_model_deployed(self):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
+        If SAM is enabled for polygons, sync and disable the imgsz spinbox.
 
         :return: Boolean indicating whether the SAM model is deployed
         """
@@ -334,8 +335,47 @@ class DeployPredictorDialog(QDialog):
             self.use_sam_dropdown.setCurrentText("False")
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
+        
+        # Check if SAM polygons are enabled
+        if self.use_sam_dropdown.currentText() == "True":
+            # Sync the imgsz spinbox with SAM's value
+            self.imgsz_spinbox.setValue(self.sam_dialog.imgsz_spinbox.value())
+            # Disable the spinbox
+            self.imgsz_spinbox.setEnabled(False)
+            
+            # Connect SAM's imgsz_spinbox valueChanged signal to update our value
+            # First disconnect any existing connection to avoid duplicates
+            try:
+                self.sam_dialog.imgsz_spinbox.valueChanged.disconnect(self.update_from_sam_imgsz)
+            except TypeError:
+                # No connection exists yet
+                pass
+            
+            # Connect the signal
+            self.sam_dialog.imgsz_spinbox.valueChanged.connect(self.update_from_sam_imgsz)
+        else:
+            # Re-enable the spinbox when SAM polygons are disabled
+            self.imgsz_spinbox.setEnabled(True)
+            
+            # Disconnect the signal when SAM is disabled
+            try:
+                self.sam_dialog.imgsz_spinbox.valueChanged.disconnect(self.update_from_sam_imgsz)
+            except TypeError:
+                # No connection exists
+                pass
 
         return True
+
+    def update_from_sam_imgsz(self, value):
+        """
+        Update the SeeAnything image size when SAM's image size changes.
+        Only takes effect when SAM polygons are enabled.
+        
+        Args:
+            value (int): The new image size value from SAM dialog
+        """
+        if self.use_sam_dropdown.currentText() == "True":
+            self.imgsz_spinbox.setValue(value)
 
     def load_model(self):
         """
