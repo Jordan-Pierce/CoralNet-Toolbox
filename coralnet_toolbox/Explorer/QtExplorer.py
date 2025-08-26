@@ -1206,14 +1206,15 @@ class AnnotationViewer(QWidget):
 
             for data_item in group_data_items:
                 ann_id = data_item.annotation.id
-                # Get or create widget to determine its size
                 if ann_id in self.annotation_widgets_by_id:
                     widget = self.annotation_widgets_by_id[ann_id]
-                    widget.update_height(self.current_widget_size)  # Ensure size is up-to-date
+                    # Make sure this is present:
+                    widget.update_height(self.current_widget_size)
                 else:
                     widget = AnnotationImageWidget(data_item, self.current_widget_size, self, self.content_widget)
+                    # Ensure aspect ratio is calculated on creation:
+                    widget.recalculate_aspect_ratio() 
                     self.annotation_widgets_by_id[ann_id] = widget
-                    widget.hide()  # Hide by default
 
                 widget_size = widget.size()
                 if x > spacing and x + widget_size.width() > available_width:

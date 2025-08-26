@@ -133,12 +133,51 @@ class PolygonTool(Tool):
             return None
 
         # Create the annotation with current points
-        # The polygon simplification is now handled inside the PolygonAnnotation class
         if finished and len(self.points) > 2:
             # Close the polygon
             self.points.append(self.points[0])
+            
+            # --- Validation for polygon size and shape ---
+            # Step 1: Remove duplicate or near-duplicate points
+            filtered_points = []
+            MIN_DISTANCE = 2.0  # Minimum distance between points in pixels
+            
+            for i, point in enumerate(self.points):
+                # Skip if this point is too close to the previous one
+                if i > 0:
+                    prev_point = filtered_points[-1]
+                    distance = ((point.x() - prev_point.x())**2 + (point.y() - prev_point.y())**2)**0.5
+                    if distance < MIN_DISTANCE:
+                        continue
+                filtered_points.append(point)
+            
+            # Step 2: Ensure we have enough points for a valid polygon
+            if len(filtered_points) < 4:  # Need at least 3 + 1 closing point
+                # Create a small triangle/square if we don't have enough points
+                if len(filtered_points) > 0:
+                    center_x = sum(p.x() for p in filtered_points) / len(filtered_points)
+                    center_y = sum(p.y() for p in filtered_points) / len(filtered_points)
+                    
+                    # Create a small polygon centered on the average of existing points
+                    MIN_SIZE = 5.0
+                    filtered_points = [
+                        QPointF(center_x - MIN_SIZE, center_y - MIN_SIZE),
+                        QPointF(center_x + MIN_SIZE, center_y - MIN_SIZE),
+                        QPointF(center_x + MIN_SIZE, center_y + MIN_SIZE),
+                        QPointF(center_x - MIN_SIZE, center_y + MIN_SIZE),
+                        QPointF(center_x - MIN_SIZE, center_y - MIN_SIZE)  # Close the polygon
+                    ]
+                    
+                    QMessageBox.information(
+                        self.annotation_window, 
+                        "Polygon Adjusted",
+                        "The polygon had too few unique points and has been adjusted to a minimum size."
+                    )
+            
+            # Use the filtered points list instead of the original
+            self.points = filtered_points
 
-        # Create the annotation - will be simplified in the constructor
+        # Create the annotation with validated points
         annotation = PolygonAnnotation(self.points,
                                        self.annotation_window.selected_label.short_label_code,
                                        self.annotation_window.selected_label.long_label_code,
