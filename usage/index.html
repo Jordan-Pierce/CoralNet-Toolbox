@@ -22,7 +22,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.17">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.18">
     
     
       
@@ -780,7 +780,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Explorer</strong>:</p>
 </li>
-<li><strong>Annotation Settings</strong>: Select images, annotation types, and labels to include / filter; press apply.</li>
+<li><strong>Annotation Settings</strong>: Select images, annotation types, and labels to include / filter press apply.</li>
 <li><strong>Model Settings</strong>: Use Color Features, a pre-trained, or existing classification model.<ul>
 <li><strong>Feature Mode</strong>: Embeddings (before classification), or Predictions (after classification).</li>
 </ul>
@@ -788,15 +788,15 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Embedding Settings</strong>: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.</li>
 <li><strong>Annotation Viewer</strong>: View, select, modify labels of annotations.<ul>
 <li><strong>Controls</strong>:</li>
-<li><strong>Left-Click</strong>: Select an annotation;</li>
-<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations;</li>
-<li><strong>Shift + Left-Click</strong>: Select in-between annotations;</li>
-<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View;</li>
+<li><strong>Left-Click</strong>: Select an annotation</li>
+<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations</li>
+<li><strong>Shift + Left-Click</strong>: Select in-between annotations</li>
+<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View</li>
 <li><strong>Ctrl + Right-Click</strong>: Update Annotation Window view, zoomed and centered on selected annotation.</li>
 <li><strong>Toolbar</strong>:</li>
-<li><strong>Isolate Selection</strong>: Subset view;</li>
-<li><strong>Sort By</strong>: Sort annotations by image name, label, confidence;</li>
-<li><strong>Find Similar</strong>: Selects and isolates N nearest annotations to currently selected;</li>
+<li><strong>Isolate Selection</strong>: Subset view</li>
+<li><strong>Sort By</strong>: Sort annotations by image name, label, confidence</li>
+<li><strong>Find Similar</strong>: Selects and isolates N nearest annotations to currently selected</li>
 <li><strong>Size</strong>: Slider-bar to control annotation size in Annotation Viewer.</li>
 </ul>
 </li>
@@ -804,20 +804,20 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Embedding Viewer</strong>: Selected, modify labels of annotations.</p>
 <ul>
 <li><strong>Controls</strong>:</li>
-<li><strong>Left-Click</strong>: Select an annotation;</li>
-<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations;</li>
-<li><strong>Ctrl + Left-Click + Drag</strong>: Select multiple annotations within a draw rectangle;</li>
-<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View;</li>
-<li><strong>Right-Click + Drag</strong>: Pan around Embedding Viewer;</li>
+<li><strong>Left-Click</strong>: Select an annotation</li>
+<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations</li>
+<li><strong>Ctrl + Left-Click + Drag</strong>: Select multiple annotations within a draw rectangle</li>
+<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View</li>
+<li><strong>Right-Click + Drag</strong>: Pan around Embedding Viewer</li>
 <li><strong>Scroll-wheel</strong>: Zoom in and out of Embedding Viewer.</li>
 <li><strong>Toolbar</strong>:</li>
-<li><strong>Isolate Selection</strong>: Subset view;</li>
-<li><strong>Find Potential Mislabels</strong>: Select potentially incorrectly labeled annotations, based on location;</li>
-<li><strong>Review Uncertain</strong>: Select annotations with lower Top-1 confidence scores (requires Predictions);</li>
-<li><strong>Find Duplicates</strong>: Select annotations that are likely duplicates of another (only selects the duplicates); </li>
+<li><strong>Isolate Selection</strong>: Subset view</li>
+<li><strong>Find Potential Mislabels</strong>: Select potentially incorrectly labeled annotations, based on location</li>
+<li><strong>Review Uncertain</strong>: Select annotations with lower Top-1 confidence scores (requires Predictions)</li>
+<li><strong>Find Duplicates</strong>: Select annotations that are likely duplicates of another (only selects the duplicates) </li>
 <li><strong>Home</strong>: Resets the Embedding Viewer zoom level.
   <strong>Tip</strong>: </li>
-<li>Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window;</li>
+<li>Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window</li>
 </ul>
 </li>
 <li>
@@ -894,11 +894,12 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>See Anything (YOLOE)</strong>:</p>
 </li>
-<li><strong>Deploy Predictor</strong>: Deploy a <code>YOLOE</code> model to use interactively within the same image;</li>
-<li><strong>Deploy Generator</strong>: Deploy a <code>YOLOE</code> model to use like a detector / segmentor; reference other images and labels;<ul>
-<li>Select the <code>YOLOE</code> model, parameters, and load it;</li>
-<li>Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons);</li>
-<li>Use the loaded model on images, or work areas, and with batch inferencing;</li>
+<li><strong>Deploy Predictor</strong>: Deploy a <code>YOLOE</code> model to use interactively within the same image</li>
+<li><strong>Deploy Generator</strong>: Deploy a <code>YOLOE</code> model to use like a detector / segmentor reference other images and labels<ul>
+<li>Select the <code>YOLOE</code> model, parameters, and load it</li>
+<li>Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)</li>
+<li>Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)</li>
+<li>Use the loaded model w/ VPEs on new images, or work areas, and with batch inferencing</li>
 </ul>
 </li>
 <li>
@@ -916,7 +917,7 @@ This guide provides instructions on how to use the application, including key fu
 <h2 id="tool-bar-tools">Tool Bar Tools<a class="headerlink" href="#tool-bar-tools" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Select Tool</strong>: After selecting the tool</li>
-<li><strong>Left-Click</strong>: Select an annotation; drag to move it.</li>
+<li><strong>Left-Click</strong>: Select an annotation drag to move it.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add/remove annotation to current selection.</li>
 <li><strong>Ctrl + Delete / Backspace</strong>: Remove selected annotation(s).</li>
 <li><strong>Ctrl + Drag</strong>: Create rectangle selection to select multiple annotations.</li>
@@ -965,7 +966,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Rectangle Tool</strong>: After selecting the tool</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a rectangle; click again to finish.</li>
+<li><strong>Left-Click</strong>: Start drawing a rectangle click again to finish.</li>
 <li><strong>Mouse Movement</strong>: Shows a preview of the rectangle while drawing.</li>
 <li>
 <p><strong>Backspace</strong>: Cancel the current rectangle annotation.</p>
@@ -974,8 +975,8 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Polygon Tool</strong>: After selecting the tool</p>
 </li>
 <li><strong>Left-Click (first)</strong>: Start drawing a polygon.</li>
-<li><strong>Left-Click (subsequent)</strong>: Add points to the polygon; click near the first point to close.</li>
-<li><strong>Ctrl + Left-Click</strong>: Enable straight line mode; click to add straight line segments.</li>
+<li><strong>Left-Click (subsequent)</strong>: Add points to the polygon click near the first point to close.</li>
+<li><strong>Ctrl + Left-Click</strong>: Enable straight line mode click to add straight line segments.</li>
 <li><strong>Mouse Movement</strong>: Shows a preview of the polygon as you draw.</li>
 <li>
 <p><strong>Backspace</strong>: Cancel the current polygon annotation.</p>
@@ -983,13 +984,13 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>SAM Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
 <li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li>
 <p><strong>Space</strong>: Create a work area from the current view.</p>
 <ul>
-<li><strong>Space</strong>: Set working area; confirm prediction; finalize predictions and exit working area.</li>
-<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Space</strong>: Set working area confirm prediction finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start a box press again to end a box.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
 <li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
 <li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
@@ -998,20 +999,20 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>See Anything (YOLOE) Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
 <li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li>
 <p><strong>Space</strong>: Create a work area from the current view.</p>
 <ul>
-<li><strong>Space</strong>: Set working area; run prediction; finalize predictions and exit working area.</li>
-<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Space</strong>: Set working area run prediction finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start a box press again to end a box.</li>
 <li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
 </ul>
 </li>
 <li>
 <p><strong>Work Area Tool</strong>: For creating restricted areas for model prediction</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
 <li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li><strong>Space</strong>: Create a work area from the current view.</li>
 <li><strong>Ctrl + Alt</strong>: Create temporary work area from current view (disappears when keys released / pressed again).</li>
@@ -1149,7 +1150,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="August 18, 2025 18:04:11 UTC"><span class="timeago" datetime="2025-08-18T18:04:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="August 18, 2025 18:04:11 UTC">2025-08-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="August 25, 2025 22:21:49 UTC"><span class="timeago" datetime="2025-08-25T22:21:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="August 25, 2025 22:21:49 UTC">2025-08-25</span>
   </span>
 
     
