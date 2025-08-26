@@ -1,4 +1,5 @@
 import warnings
+import logging
 
 import os
 
@@ -29,6 +30,7 @@ from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import DuplicateSettingsWidget
+from coralnet_toolbox.Explorer.transformer_models import is_transformer_model
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
@@ -2701,6 +2703,127 @@ class ExplorerWindow(QMainWindow):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    def _extract_transformer_features(self, data_items, model_name, progress_bar=None):
+        """
+        Extract features using transformer models from HuggingFace.
+        
+        Args:
+            data_items: List of AnnotationDataItem objects
+            model_name: Name of the transformer model to use
+            progress_bar: Optional progress bar for tracking
+            
+        Returns:
+            tuple: (features array, valid data items list)
+        """
+        try:
+            # Lazy import to avoid unnecessary dependencies
+            from transformers import pipeline
+            from transformers.image_utils import load_image
+            from PIL import Image
+            
+            # Initialize the feature extractor pipeline
+            if progress_bar:
+                progress_bar.set_busy_mode(f"Loading {model_name}...")
+            
+            feature_extractor = pipeline(
+                model=model_name,
+                task="image-feature-extraction",
+                device=0 if torch.cuda.is_available() else -1
+            )
+            
+            features_list = []
+            valid_data_items = []
+            
+            total_items = len(data_items)
+            for i, item in enumerate(data_items):
+                if progress_bar:
+                    progress_bar.update_progress(int((i / total_items) * 100),
+                                                f"Extracting features: {i + 1}/{total_items}")
+                
+                try:
+                    # Convert pixmap to numpy array
+                    image_np = pixmap_to_numpy(item.annotation.pixmap)
+                    
+                    # Convert to PIL Image (transformers expects PIL images)
+                    if len(image_np.shape) == 2:  # Grayscale
+                        pil_image = Image.fromarray(image_np, mode='L').convert('RGB')
+                    else:
+                        pil_image = Image.fromarray(image_np, mode='RGB')
+                    
+                    # Extract features
+                    features = feature_extractor(pil_image)
+                    
+                    # Handle different output formats from transformers
+                    if isinstance(features, list):
+                        feature_tensor = features[0] if len(features) > 0 else features
+                    else:
+                        feature_tensor = features
+                    
+                    # Convert to numpy array, handling GPU tensors properly
+                    if hasattr(feature_tensor, 'cpu'):
+                        # Move tensor to CPU before converting to numpy
+                        feature_vector = feature_tensor.cpu().numpy().flatten()
+                    else:
+                        # Already numpy array or other CPU-compatible format
+                        feature_vector = np.array(feature_tensor).flatten()
+                    
+                    features_list.append(feature_vector)
+                    valid_data_items.append(item)
+                    
+                except Exception as e:
+                    logging.warning(f"Error processing item {item.annotation.id}, it will be skipped: {e}")
+                    continue
+            
+            if not features_list:
+                return np.array([]), []
+            
+            # Verify that all feature vectors have the same dimension
+            first_feature_dim = len(features_list[0])
+            inconsistent_items = []
+            for i, f in enumerate(features_list):
+                if len(f) != first_feature_dim:
+                    inconsistent_items.append((i, len(f)))
+            
+            if inconsistent_items:
+                # Log warning with details about inconsistent dimensions
+                logging.warning(f"Inconsistent feature dimensions detected. Expected dimension: {first_feature_dim}")
+                for idx, dim in inconsistent_items:
+                    logging.warning(f"  Item {valid_data_items[idx].annotation.id}: {dim} dimensions")
+                
+                # Filter out items with inconsistent dimensions
+                consistent_features = []
+                consistent_items = []
+                for i, (f, item) in enumerate(zip(features_list, valid_data_items)):
+                    if len(f) == first_feature_dim:
+                        consistent_features.append(f)
+                        consistent_items.append(item)
+                
+                if not consistent_features:
+                    logging.error("No features with consistent dimensions found.")
+                    return np.array([]), []
+                
+                logging.info(f"Proceeding with {len(consistent_features)} items with consistent dimensions.")
+                features_array = np.array(consistent_features)
+                return features_array, consistent_items
+            
+            # All dimensions are consistent
+            features_array = np.array(features_list)
+            return features_array, valid_data_items
+            
+        except ImportError as e:
+            logging.error(f"transformers library not installed. Please install with: pip install transformers")
+            if progress_bar:
+                progress_bar.close()
+            return np.array([]), []
+        except Exception as e:
+            logging.error(f"Error in transformer feature extraction: {e}")
+            if progress_bar:
+                progress_bar.close()
+            return np.array([]), []
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     def _extract_features(self, data_items, progress_bar=None):
         """Dispatcher to call the appropriate feature extraction function."""
         # Get the selected model and feature mode from the model settings widget
@@ -2717,6 +2840,10 @@ class ExplorerWindow(QMainWindow):
 
         elif ".pt" in model_name:
             return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
+        
+        # Check if it's a transformer model using the shared utility function
+        elif is_transformer_model(model_name):
+            return self._extract_transformer_features(data_items, model_name, progress_bar=progress_bar)
 
         return np.array([]), []
 

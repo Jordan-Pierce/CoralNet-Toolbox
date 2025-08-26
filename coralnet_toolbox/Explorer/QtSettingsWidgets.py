@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, Q
                              QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox)
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
+from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -450,6 +451,9 @@ class ModelSettingsWidget(QGroupBox):
             'YOLOv12': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'}
         }
         self.community_configs = get_available_configs(task='classify')
+        
+        # --- Transformer models for feature extraction ---
+        self.transformer_models = TRANSFORMER_MODELS
 
         self.setup_ui()
 
@@ -465,7 +469,7 @@ class ModelSettingsWidget(QGroupBox):
 
         # 1. Main Category ComboBox
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["Color Features", "Standard Model", "Community Model"])
+        self.category_combo.addItems(["Color Features", "Standard Model", "Community Model", "Transformer Model"])
         self.model_select_layout.addRow("Category:", self.category_combo)
 
         # 2. Standard Model Options (initially hidden)
@@ -485,6 +489,12 @@ class ModelSettingsWidget(QGroupBox):
             self.community_combo.addItems(list(self.community_configs.keys()))
         self.community_model_widgets = [QLabel("Model:"), self.community_combo]
         self.model_select_layout.addRow(self.community_model_widgets[0], self.community_model_widgets[1])
+        
+        # 4. Transformer Model Options (initially hidden)
+        self.transformer_combo = QComboBox()
+        self.transformer_combo.addItems(list(self.transformer_models.keys()))
+        self.transformer_model_widgets = [QLabel("Model:"), self.transformer_combo]
+        self.model_select_layout.addRow(self.transformer_model_widgets[0], self.transformer_model_widgets[1])
         
         self.tabs.addTab(model_select_tab, "Select Model")
 
@@ -522,7 +532,7 @@ class ModelSettingsWidget(QGroupBox):
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.tabs.currentChanged.connect(self._on_selection_changed)
         for widget in [self.category_combo, self.family_combo, self.size_combo, 
-                       self.community_combo, self.model_path_edit, self.feature_mode_combo]:
+                       self.community_combo, self.transformer_combo, self.model_path_edit, self.feature_mode_combo]:
             if isinstance(widget, QComboBox):
                 widget.currentTextChanged.connect(self._on_selection_changed)
             elif isinstance(widget, QLineEdit):
@@ -544,11 +554,14 @@ class ModelSettingsWidget(QGroupBox):
         """Show or hide sub-option widgets based on the selected category."""
         is_standard = (category == "Standard Model")
         is_community = (category == "Community Model")
+        is_transformer = (category == "Transformer Model")
         
         for widget in self.standard_model_widgets:
             widget.setVisible(is_standard)
         for widget in self.community_model_widgets:
             widget.setVisible(is_community)
+        for widget in self.transformer_model_widgets:
+            widget.setVisible(is_transformer)
         
         self._on_selection_changed()
 
@@ -569,15 +582,22 @@ class ModelSettingsWidget(QGroupBox):
     def _update_feature_mode_state(self):
         """Update the enabled state and tooltip of the feature mode field."""
         is_color_features = False
+        is_transformer = False
         current_tab_index = self.tabs.currentIndex()
         
         if current_tab_index == 0:
-            is_color_features = (self.category_combo.currentText() == "Color Features")
+            category = self.category_combo.currentText()
+            is_color_features = (category == "Color Features")
+            is_transformer = (category == "Transformer Model")
         
-        self.feature_mode_combo.setEnabled(not is_color_features)
+        # Disable feature mode for Color Features and Transformer Models
+        # (Transformers always output embeddings)
+        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
         
         if is_color_features:
             self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
+        elif is_transformer:
+            self.feature_mode_combo.setToolTip("Transformer models always output embedding features.")
         else:
             self.feature_mode_combo.setToolTip(
                 "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
@@ -607,6 +627,10 @@ class ModelSettingsWidget(QGroupBox):
 
             elif category == "Community Model":
                 model_name = self.community_combo.currentText()
+            elif category == "Transformer Model":
+                # Get the HuggingFace model ID from the transformer models map
+                selected_display_name = self.transformer_combo.currentText()
+                model_name = self.transformer_models.get(selected_display_name, selected_display_name)
         elif current_tab_index == 1:
             model_name = self.model_path_edit.text()
         
