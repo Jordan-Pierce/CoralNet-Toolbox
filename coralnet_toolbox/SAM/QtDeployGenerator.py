@@ -460,9 +460,6 @@ class DeployGeneratorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
-        # Exit the dialog box
-        self.accept()
-
     def get_imgsz(self):
         """Get the image size for the model."""
         self.imgsz = self.imgsz_spinbox.value()
