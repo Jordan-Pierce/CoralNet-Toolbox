@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoralNet-Toolbox Keyboard Shortcuts</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .keyboard-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            background-color: #1f2937;
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .keyboard-body {
+            display: flex;
+            gap: 2rem; /* Space between main keys and nav keys */
+            align-items: flex-end;
+        }
+        .main-keys {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .nav-keys {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .key-row {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        kbd {
+            background-color: #4b5563;
+            color: #ffffff;
+            border: 1px solid #6b7280;
+            border-radius: 0.375rem;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            font-weight: 600;
+            min-width: 3.5rem;
+            height: 3.5rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.2s ease-in-out;
+        }
+        kbd:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .hotkey {
+            background-color: #3b82f6;
+            color: #ffffff;
+            border-color: #2563eb;
+            font-weight: 700;
+        }
+        .long-key {
+            flex-grow: 1;
+        }
+        .space-key {
+            flex-grow: 5;
+        }
+        .title {
+            color: #ffffff;
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        .empty-key {
+            visibility: hidden;
+        }
+    </style>
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="keyboard-layout">
+        <h1 class="title">CoralNet-Toolbox Shortcuts</h1>
+        <div class="keyboard-body">
+            <div class="main-keys">
+                <!-- Function Keys -->
+                <div class="key-row">
+                    <kbd class="hotkey">Esc</kbd>
+                    <kbd>F1</kbd>
+                    <kbd>F2</kbd>
+                    <kbd>F3</kbd>
+                    <kbd>F4</kbd>
+                    <kbd>F5</kbd>
+                    <kbd>F6</kbd>
+                    <kbd>F7</kbd>
+                    <kbd>F8</kbd>
+                    <kbd>F9</kbd>
+                    <kbd>F10</kbd>
+                    <kbd>F11</kbd>
+                    <kbd>F12</kbd>
+                    <kbd class="hotkey">Delete</kbd>
+                </div>
+                <!-- Number Row -->
+                <div class="key-row">
+                    <kbd>~<br>`</kbd>
+                    <kbd class="hotkey">!<br>1</kbd>
+                    <kbd class="hotkey">@<br>2</kbd>
+                    <kbd class="hotkey">#<br>3</kbd>
+                    <kbd class="hotkey">$<br>4</kbd>
+                    <kbd class="hotkey">%<br>5</kbd>
+                    <kbd class="hotkey">^<br>6</kbd>
+                    <kbd>&<br>7</kbd>
+                    <kbd>*<br>8</kbd>
+                    <kbd>(<br>9</kbd>
+                    <kbd>)<br>0</kbd>
+                    <kbd>_<br>-</kbd>
+                    <kbd>+<br>=</kbd>
+                    <kbd class="hotkey long-key">Backspace</kbd>
+                </div>
+                <!-- Top Letter Row -->
+                <div class="key-row">
+                    <kbd class="long-key">Tab</kbd>
+                    <kbd>Q</kbd>
+                    <kbd class="hotkey">W</kbd>
+                    <kbd>E</kbd>
+                    <kbd>R</kbd>
+                    <kbd>T</kbd>
+                    <kbd>Y</kbd>
+                    <kbd>U</kbd>
+                    <kbd>I</kbd>
+                    <kbd>O</kbd>
+                    <kbd>P</kbd>
+                    <kbd>{<br>[</kbd>
+                    <kbd>}<br>]</kbd>
+                    <kbd>|<br>\</kbd>
+                </div>
+                <!-- Home Row -->
+                <div class="key-row">
+                    <kbd class="long-key">Caps Lock</kbd>
+                    <kbd class="hotkey">A</kbd>
+                    <kbd class="hotkey">S</kbd>
+                    <kbd class="hotkey">D</kbd>
+                    <kbd>F</kbd>
+                    <kbd>G</kbd>
+                    <kbd>H</kbd>
+                    <kbd>J</kbd>
+                    <kbd>K</kbd>
+                    <kbd>L</kbd>
+                    <kbd>:<br>;</kbd>
+                    <kbd>"<br>'</kbd>
+                    <kbd class="long-key">Enter</kbd>
+                </div>
+                <!-- Bottom Letter Row -->
+                <div class="key-row">
+                    <kbd class="hotkey long-key">Shift</kbd>
+                    <kbd>Z</kbd>
+                    <kbd class="hotkey">X</kbd>
+                    <kbd class="hotkey">C</kbd>
+                    <kbd>V</kbd>
+                    <kbd>B</kbd>
+                    <kbd>N</kbd>
+                    <kbd>M</kbd>
+                    <kbd class="hotkey">&lt;<br>,</kbd>
+                    <kbd class="hotkey">&gt;<br>.</kbd>
+                    <kbd>?<br>/</kbd>
+                    <kbd class="hotkey long-key">Shift</kbd>
+                </div>
+                <!-- Bottom Row -->
+                <div class="key-row">
+                    <kbd class="hotkey long-key">Ctrl</kbd>
+                    <kbd>Win</kbd>
+                    <kbd class="hotkey">Alt</kbd>
+                    <kbd class="hotkey space-key">Space</kbd>
+                    <kbd class="hotkey">Alt</kbd>
+                    <kbd>Win</kbd>
+                    <kbd>Menu</kbd>
+                    <kbd class="hotkey long-key">Ctrl</kbd>
+                </div>
+            </div>
+            <div class="nav-keys">
+                 <!-- Up Arrow -->
+                <div class="key-row">
+                    <kbd class="empty-key"></kbd>
+                    <kbd class="hotkey">↑</kbd>
+                    <kbd class="empty-key"></kbd>
+                </div>
+                 <!-- Left, Down, Right Arrows -->
+                <div class="key-row">
+                    <kbd class="hotkey">←</kbd>
+                    <kbd class="hotkey">↓</kbd>
+                    <kbd class="hotkey">→</kbd>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
