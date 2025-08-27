@@ -522,6 +522,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../hot-keys.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Hot Keys
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues" class="md-nav__link">
         
   
@@ -788,11 +810,11 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Embedding Settings</strong>: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.</li>
 <li><strong>Annotation Viewer</strong>: View, select, modify labels of annotations.<ul>
 <li><strong>Controls</strong>:</li>
-<li><strong>Left-Click</strong>: Select an annotation</li>
-<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations</li>
-<li><strong>Shift + Left-Click</strong>: Select in-between annotations</li>
-<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View</li>
-<li><strong>Ctrl + Right-Click</strong>: Update Annotation Window view, zoomed and centered on selected annotation.</li>
+<li><kbd>Left-Click</kbd>: Select an annotation</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple annotations</li>
+<li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select in-between annotations</li>
+<li><kbd>Double Left Click</kbd>: Unselect all annotations, exit from Isolation View</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Update Annotation Window view, zoomed and centered on selected annotation.</li>
 <li><strong>Toolbar</strong>:</li>
 <li><strong>Isolate Selection</strong>: Subset view</li>
 <li><strong>Sort By</strong>: Sort annotations by image name, label, confidence</li>
@@ -804,12 +826,12 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Embedding Viewer</strong>: Selected, modify labels of annotations.</p>
 <ul>
 <li><strong>Controls</strong>:</li>
-<li><strong>Left-Click</strong>: Select an annotation</li>
-<li><strong>Ctrl + Left-Click</strong>: Select multiple annotations</li>
-<li><strong>Ctrl + Left-Click + Drag</strong>: Select multiple annotations within a draw rectangle</li>
-<li><strong>Double Left Click</strong>: Unselect all annotations, exit from Isolation View</li>
-<li><strong>Right-Click + Drag</strong>: Pan around Embedding Viewer</li>
-<li><strong>Scroll-wheel</strong>: Zoom in and out of Embedding Viewer.</li>
+<li><kbd>Left-Click</kbd>: Select an annotation</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple annotations</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Select multiple annotations within a draw rectangle</li>
+<li><kbd>Double Left Click</kbd>: Unselect all annotations, exit from Isolation View</li>
+<li><kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan around Embedding Viewer</li>
+<li><kbd>Scroll-wheel</kbd>: Zoom in and out of Embedding Viewer.</li>
 <li><strong>Toolbar</strong>:</li>
 <li><strong>Isolate Selection</strong>: Subset view</li>
 <li><strong>Find Potential Mislabels</strong>: Select potentially incorrectly labeled annotations, based on location</li>
@@ -917,23 +939,23 @@ This guide provides instructions on how to use the application, including key fu
 <h2 id="tool-bar-tools">Tool Bar Tools<a class="headerlink" href="#tool-bar-tools" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Select Tool</strong>: After selecting the tool</li>
-<li><strong>Left-Click</strong>: Select an annotation drag to move it.</li>
-<li><strong>Ctrl + Left-Click</strong>: Add/remove annotation to current selection.</li>
-<li><strong>Ctrl + Delete / Backspace</strong>: Remove selected annotation(s).</li>
-<li><strong>Ctrl + Drag</strong>: Create rectangle selection to select multiple annotations.</li>
-<li><strong>Ctrl + Mouse Wheel</strong>: Change size of the selected annotation.</li>
-<li><strong>Ctrl + Shift</strong>: Show resize handles for the selected annotation.</li>
-<li><strong>Ctrl + Shift + Mouse Wheel</strong>: Change the number of vertices for a polygon annotation.</li>
-<li><strong>Ctrl + Space</strong>: Confirm prediction for selected annotation with top machine confidence.</li>
-<li><strong>Ctrl + X</strong>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.<ul>
+<li><kbd>Left-Click</kbd>: Select an annotation drag to move it.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s).</li>
+<li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for the selected annotation.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence.</li>
+<li><kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.<ul>
 <li><strong>Cutting Rules</strong>:<ul>
 <li>Only a single annotation can be selected.</li>
-<li>Press Ctrl-X to enter cutting mode, left-click to start, draw line, left-click to end.</li>
-<li>Press Backspace or Delete to cancel the current cutting line without making changes.</li>
+<li>Press <kbd>Ctrl</kbd>-<kbd>X</kbd> to enter cutting mode, <kbd>Left-Click</kbd> to start, draw line, <kbd>Left-Click</kbd> to end.</li>
+<li>Press <kbd>Backspace</kbd> or <kbd>Delete</kbd> to cancel the current cutting line without making changes.</li>
 </ul>
 </li>
 <li><strong>Exploding Rules</strong>:<ul>
-<li>Select a MultiPolygonAnnotation, press Ctrl + X to explode it into multiple PolygonAnnotations.</li>
+<li>Select a MultiPolygonAnnotation, press <kbd>Ctrl</kbd> + <kbd>X</kbd> to explode it into multiple PolygonAnnotations.</li>
 </ul>
 </li>
 <li><strong>Subtraction Rules</strong>:<ul>
@@ -944,7 +966,7 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 </li>
 <li>
-<p><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label).</p>
+<p><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label).</p>
 <ul>
 <li><strong>Combining Rules</strong>: </li>
 <li>All selected annotations must have the same label.</li>
@@ -958,66 +980,66 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Patch Tool</strong>: After selecting the tool</p>
 </li>
-<li><strong>Left-Click</strong>: Add a patch annotation at the clicked position.</li>
-<li><strong>Ctrl + Mouse Wheel</strong>: Adjust the patch size up or down.</li>
+<li><kbd>Left-Click</kbd>: Add a patch annotation at the clicked position.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the patch size up or down.</li>
 <li>
-<p><strong>Mouse Movement</strong>: Shows a semi-transparent preview of the patch at the cursor position.</p>
+<p><kbd>Mouse Movement</kbd>: Shows a semi-transparent preview of the patch at the cursor position.</p>
 </li>
 <li>
 <p><strong>Rectangle Tool</strong>: After selecting the tool</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a rectangle click again to finish.</li>
-<li><strong>Mouse Movement</strong>: Shows a preview of the rectangle while drawing.</li>
+<li><kbd>Left-Click</kbd>: Start drawing a rectangle click again to finish.</li>
+<li><kbd>Mouse Movement</kbd>: Shows a preview of the rectangle while drawing.</li>
 <li>
-<p><strong>Backspace</strong>: Cancel the current rectangle annotation.</p>
+<p><kbd>Backspace</kbd>: Cancel the current rectangle annotation.</p>
 </li>
 <li>
 <p><strong>Polygon Tool</strong>: After selecting the tool</p>
 </li>
-<li><strong>Left-Click (first)</strong>: Start drawing a polygon.</li>
-<li><strong>Left-Click (subsequent)</strong>: Add points to the polygon click near the first point to close.</li>
-<li><strong>Ctrl + Left-Click</strong>: Enable straight line mode click to add straight line segments.</li>
-<li><strong>Mouse Movement</strong>: Shows a preview of the polygon as you draw.</li>
+<li><kbd>Left-Click</kbd> (first): Start drawing a polygon.</li>
+<li><kbd>Left-Click</kbd> (subsequent): Add points to the polygon click near the first point to close.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Enable straight line mode click to add straight line segments.</li>
+<li><kbd>Mouse Movement</kbd>: Shows a preview of the polygon as you draw.</li>
 <li>
-<p><strong>Backspace</strong>: Cancel the current polygon annotation.</p>
+<p><kbd>Backspace</kbd>: Cancel the current polygon annotation.</p>
 </li>
 <li>
 <p><strong>SAM Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
-<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
+<li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.</li>
+<li><kbd>Backspace</kbd>: Cancel drawing the current work area.</li>
 <li>
-<p><strong>Space</strong>: Create a work area from the current view.</p>
+<p><kbd>Space</kbd>: Create a work area from the current view.</p>
 <ul>
-<li><strong>Space</strong>: Set working area confirm prediction finalize predictions and exit working area.</li>
-<li><strong>Left-Click</strong>: Start a box press again to end a box.</li>
-<li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
-<li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
-<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+<li><kbd>Space</kbd>: Set working area confirm prediction finalize predictions and exit working area.</li>
+<li><kbd>Left-Click</kbd>: Start a box press again to end a box.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point.</li>
+<li><kbd>Backspace</kbd>: Discard unfinalized predictions.</li>
 </ul>
 </li>
 <li>
 <p><strong>See Anything (YOLOE) Tool</strong>: After a model is loaded</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
-<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
+<li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.</li>
+<li><kbd>Backspace</kbd>: Cancel drawing the current work area.</li>
 <li>
-<p><strong>Space</strong>: Create a work area from the current view.</p>
+<p><kbd>Space</kbd>: Create a work area from the current view.</p>
 <ul>
-<li><strong>Space</strong>: Set working area run prediction finalize predictions and exit working area.</li>
-<li><strong>Left-Click</strong>: Start a box press again to end a box.</li>
-<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+<li><kbd>Space</kbd>: Set working area run prediction finalize predictions and exit working area.</li>
+<li><kbd>Left-Click</kbd>: Start a box press again to end a box.</li>
+<li><kbd>Backspace</kbd>: Discard unfinalized predictions.</li>
 </ul>
 </li>
 <li>
 <p><strong>Work Area Tool</strong>: For creating restricted areas for model prediction</p>
 </li>
-<li><strong>Left-Click</strong>: Start drawing a work area click again to finish drawing.</li>
-<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
-<li><strong>Space</strong>: Create a work area from the current view.</li>
-<li><strong>Ctrl + Alt</strong>: Create temporary work area from current view (disappears when keys released / pressed again).</li>
-<li><strong>Ctrl + Shift</strong>: Show removal buttons on existing work areas (click the "X" to remove).</li>
-<li><strong>Ctrl + Shift + Backspace</strong>: Remove all work areas in the current image.</li>
+<li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.</li>
+<li><kbd>Backspace</kbd>: Cancel drawing the current work area.</li>
+<li><kbd>Space</kbd>: Create a work area from the current view.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (disappears when keys released / pressed again).</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas (click the "X" to remove).</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image.</li>
 <li><strong>Practical Use</strong>:<ul>
 <li>Define specific regions where models should make predictions.</li>
 <li>Useful for processing only relevant parts of large images.</li>
@@ -1039,12 +1061,12 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h2 id="annotation-window">Annotation Window<a class="headerlink" href="#annotation-window" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Zoom</strong>: Use the mouse wheel to zoom in and out.</li>
-<li><strong>Pan</strong>: Right-click and hold the mouse button to pan the image.</li>
+<li><strong>Zoom</strong>: Use the <kbd>Mouse Wheel</kbd> to zoom in and out.</li>
+<li><strong>Pan</strong>: <kbd>Right-Click</kbd> and hold the mouse button to pan the image.</li>
 </ul>
 <h2 id="label-window">Label Window<a class="headerlink" href="#label-window" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Move Label</strong>: Right-click and drag to move labels.</li>
+<li><strong>Move Label</strong>: <kbd>Right-Click</kbd> and drag to move labels.</li>
 <li><strong>Add Label</strong>: Click the "Add Label" button to add a new label.</li>
 <li><strong>Delete Label</strong>: Click the "Delete Label" button to delete the selected label.</li>
 <li><strong>Edit Label</strong>: Click the "Edit Label" button to edit the selected label.</li>
@@ -1059,13 +1081,13 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Select Image</strong>: Double-click on a row to select and load the image in the annotation window.</li>
-<li><strong>Highlight Image</strong>: Single-click on a row to highlight one or more rows in the image window.</li>
-<li><strong>Ctrl + Left-click</strong>: Select multiple, non-adjacent rows.</li>
-<li><strong>Shift + Left-click</strong>: Select multiple, adjacent rows.</li>
+<li><strong>Select Image</strong>: <kbd>Double-Click</kbd> on a row to select and load the image in the annotation window.</li>
+<li><strong>Highlight Image</strong>: <kbd>Single-Click</kbd> on a row to highlight one or more rows in the image window.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows.</li>
+<li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows.</li>
 <li><strong>Open Context Menu</strong>:</li>
-<li><strong>Right-click on a single highlighted row</strong>: Delete images / annotations for the highlighted row.</li>
-<li><strong>Shift + Right-click on multiple highlighted rows</strong>: Delete images / annotations for highlighted rows.</li>
+<li><kbd>Right-Click</kbd> on a single highlighted row: Delete images / annotations for the highlighted row.</li>
+<li><kbd>Shift</kbd> + <kbd>Right-Click</kbd> on multiple highlighted rows: Delete images / annotations for highlighted rows.</li>
 <li><strong>Search / Filter</strong>:</li>
 <li><strong>By Image</strong>: Filter for images by name or sub-string.</li>
 <li><strong>By Label</strong>: Filter images by labels they contain.</li>
@@ -1079,7 +1101,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Unhighlight All</strong>: Unhighlight all images in the current filtered view.</li>
 <li><strong>Image Preview</strong>:</li>
 <li><strong>Tool Tip</strong>: Hover over a row to show image metadata.</li>
-<li><strong>Thumbnail</strong>: Hold Ctrl while hovering over a row to show a thumbnail.</li>
+<li><strong>Thumbnail</strong>: Hold <kbd>Ctrl</kbd> while hovering over a row to show a thumbnail.</li>
 </ul>
 <h2 id="confidence-window">Confidence Window<a class="headerlink" href="#confidence-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1089,7 +1111,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Confidence Chart</strong>: Displays a bar chart with confidence scores.</li>
 <li><strong>Top 5 Predictions</strong>: Shows up to 5 predictions with their confidence scores.</li>
 <li><strong>Prediction Selection</strong>: Click on any confidence bar to change the annotation's label.</li>
-<li><strong>Numerical Keys</strong>: Press keys 1-5 to quickly select from the top 5 predictions.</li>
+<li><strong>Numerical Keys</strong>: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions.</li>
 <li><strong>Confidence Mode Toggle</strong>: </li>
 <li>Click the icon button next to the dimensions to toggle between user and machine confidence views.</li>
 <li>User icon shows user-assigned confidence scores.</li>
@@ -1102,13 +1124,13 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="hotkeys">Hotkeys<a class="headerlink" href="#hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Escape</strong>: Exit the program.</li>
-<li><strong>Alt + Up/Down</strong>: Cycle through images.</li>
-<li><strong>Ctrl + W/A/S/D</strong>: Cycle through labels.</li>
-<li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
-<li><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</li>
-<li><strong>Ctrl + Shift + &gt;</strong>: Unselect all annotations.</li>
-<li><strong>Ctrl + Alt</strong>: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation (example below)</li>
+<li><kbd>Escape</kbd>: Exit the program.</li>
+<li><kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images.</li>
+<li><kbd>Ctrl</kbd> + <kbd>W</kbd>/<kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd>: Cycle through labels.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>&lt;</kbd>: Select all annotations.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>&gt;</kbd>: Unselect all annotations.</li>
+<li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation (example below)</li>
 <li>When a PatchAnnotation is selected, this switches back to the PatchTool</li>
 <li>
 <p>When the PatchTool is active, this switches back to the SelectTool</p>
@@ -1116,19 +1138,18 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Machine Learning, SAM, and AutoDistill</strong>: After a model is loaded</p>
 </li>
-<li><strong>Ctrl + 1</strong>: Make prediction on selected Patch annotation, else all in the image with Review label.</li>
-<li><strong>Ctrl + 2</strong>: Make predictions using Object Detection model.</li>
-<li><strong>Ctrl + 3</strong>: Make predictions using Instance Segmentation model.</li>
-<li><strong>Ctrl + 4</strong>: Make predictions using FastSAM model.</li>
-<li><strong>Ctrl + 5</strong>: Make predictions using YOLOE model.</li>
+<li><kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label.</li>
+<li><kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model.</li>
+<li><kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model.</li>
+<li><kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using FastSAM model.</li>
+<li><kbd>Ctrl</kbd> + <kbd>5</kbd>: Make predictions using YOLOE model.</li>
 <li>
-<p><strong>Ctrl + 6</strong>: Make predictions using AutoDistill model.</p>
+<p><kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using AutoDistill model.</p>
 </li>
 <li>
 <p><strong>Tooltips</strong>: Hover over tool buttons, image / annotation rows for information about them.</p>
 </li>
 </ul>
-<iframe src="keyboard-diagram.html" style="width: 100%; height: 750px; border: none; overflow: hidden;" scrolling="no"></iframe>
 
 
 
@@ -1151,7 +1172,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="August 27, 2025 23:08:34 UTC"><span class="timeago" datetime="2025-08-27T23:08:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="August 27, 2025 23:08:34 UTC">2025-08-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="August 27, 2025 23:41:37 UTC"><span class="timeago" datetime="2025-08-27T23:41:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="August 27, 2025 23:41:37 UTC">2025-08-27</span>
   </span>
 
     
