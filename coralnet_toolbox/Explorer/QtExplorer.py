@@ -7,16 +7,13 @@ import torch
 
 from ultralytics import YOLO
 
-from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
-
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
                              QGraphicsScene, QPushButton, QComboBox, QLabel, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QSlider, QMessageBox,
                              QApplication, QGraphicsRectItem, QRubberBand, QMenu,
-                             QWidgetAction, QToolButton, QAction, QDoubleSpinBox)
+                             QWidgetAction, QToolButton, QAction)
 
 from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
@@ -32,6 +29,10 @@ from coralnet_toolbox.Explorer.QtSettingsWidgets import DuplicateSettingsWidget
 from coralnet_toolbox.Explorer.transformer_models import is_transformer_model
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+
+from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
+
+from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -2482,13 +2483,14 @@ class ExplorerWindow(QMainWindow):
         # Model already loaded and cached, return it and its image size
         return self.loaded_model, self.loaded_model_imgsz
 
-    def _prepare_images_from_data_items(self, data_items, progress_bar=None):
+    def _prepare_images_from_data_items(self, data_items, progress_bar=None, format='numpy'):
         """
         Prepare images from data items for model prediction.
         
         Args:
             data_items (list): List of AnnotationDataItem objects
             progress_bar (ProgressBar, optional): Progress bar for UI updates
+            format (str, optional): Output format, either 'numpy' or 'pil'. Default is 'numpy'.
         
         Returns:
             tuple: (image_list, valid_data_items)
@@ -2501,7 +2503,10 @@ class ExplorerWindow(QMainWindow):
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
-                image_list.append(pixmap_to_numpy(pixmap))
+                if format.lower() == 'pil':
+                    image_list.append(pixmap_to_pil(pixmap))
+                else:  # default to numpy
+                    image_list.append(pixmap_to_numpy(pixmap))
                 valid_data_items.append(item)
             
             if progress_bar:
@@ -2715,19 +2720,18 @@ class ExplorerWindow(QMainWindow):
             tuple: (features array, valid data items list)
         """
         try:
+            if progress_bar:
+                progress_bar.set_busy_mode(f"Importing libraries...")
+                
             # Lazy import to avoid unnecessary dependencies
             from transformers import pipeline
-            from transformers.image_utils import load_image
             from huggingface_hub import snapshot_download
             
-            # Use the device selected by the user from QtMainWindow
-            # Convert device string to appropriate format for transformers pipeline:
-            # QtMainWindow format: 'cuda:0', 'mps', 'cpu'
-            # Transformers format: 0 (int), 'mps' (str), -1 (int)
-            if self.explorer_window.device.startswith('cuda'):
+            # Convert device string to appropriate format for transformers pipeline
+            if self.device.startswith('cuda'):
                 # Extract device number from 'cuda:0' format for CUDA GPUs
-                device_num = int(self.explorer_window.device.split(':')[-1]) if ':' in self.explorer_window.device else 0
-            elif self.explorer_window.device == 'mps':
+                device_num = int(self.device.split(':')[-1]) if ':' in self.device else 0
+            elif self.device == 'mps':
                 # MPS (Metal Performance Shaders) - Apple's GPU acceleration for macOS
                 device_num = 'mps'
             else:
@@ -2736,13 +2740,13 @@ class ExplorerWindow(QMainWindow):
             
             # Check if model needs to be downloaded first
             if progress_bar:
-                progress_bar.set_busy_mode(f"Checking/downloading {model_name}...")
+                progress_bar.set_busy_mode(f"Downloading {model_name}...")
                 
             try:
                 # Pre-download the model to show progress if it's not cached
                 # This will only download if the model isn't already cached locally
                 model_path = snapshot_download(repo_id=model_name, 
-                                             allow_patterns=["*.json", "*.bin", "*.safetensors", "*.txt"])
+                                               allow_patterns=["*.json", "*.bin", "*.safetensors", "*.txt"])
                 
                 if progress_bar:
                     progress_bar.set_busy_mode(f"Loading {model_name}...")
@@ -2755,34 +2759,28 @@ class ExplorerWindow(QMainWindow):
                 )
                 
             except Exception as download_error:
-                print(f"Failed to pre-download model, trying direct pipeline load: {download_error}")
-                # Fallback to direct pipeline loading (original behavior)
-                if progress_bar:
-                    progress_bar.set_busy_mode(f"Loading {model_name}...")
-                    
-                feature_extractor = pipeline(
-                    model=model_name,
-                    task="image-feature-extraction",
-                    device=device_num
-                )
+                print(f"Failed to pre-download model: {download_error}")
+                # Return early if model download/initialization fails
+                return np.array([]), []
             
-            features_list = []
-            valid_data_items = []
+            # Prepare images from data items - get PIL images directly
+            image_list, valid_data_items = self._prepare_images_from_data_items(data_items, progress_bar, format='pil')
+            
+            if not image_list:
+                return np.array([]), []
             
             if progress_bar:
-                progress_bar.set_title("Extracting transformer features...")
-                progress_bar.start_progress(len(data_items))
+                progress_bar.set_title("Extracting features...")
+                progress_bar.start_progress(len(valid_data_items))
             
-            for i, item in enumerate(data_items):
-                if progress_bar:
-                    progress_bar.setWindowTitle(f"Extracting features: {i + 1}/{len(data_items)}")
-                    progress_bar.update_progress()
-                
+            features_list = []
+            valid_items = []
+            
+            # Process images in batches or individually
+            for i, image in enumerate(image_list):
                 try:
-                    pil_image = pixmap_to_pil(item.annotation.pixmap)
-                    
                     # Extract features
-                    features = feature_extractor(pil_image)
+                    features = feature_extractor(image)
                     
                     # Handle different output formats from transformers
                     if isinstance(features, list):
@@ -2799,59 +2797,32 @@ class ExplorerWindow(QMainWindow):
                         feature_vector = np.array(feature_tensor).flatten()
                     
                     features_list.append(feature_vector)
-                    valid_data_items.append(item)
+                    valid_items.append(valid_data_items[i])
                     
                 except Exception as e:
-                    print(f"Error processing item {item.annotation.id}, it will be skipped: {e}")
-                    continue
-            
-            if not features_list:
-                return np.array([]), []
-            
-            # Verify that all feature vectors have the same dimension
-            first_feature_dim = len(features_list[0])
-            inconsistent_items = []
-            for i, f in enumerate(features_list):
-                if len(f) != first_feature_dim:
-                    inconsistent_items.append((i, len(f)))
-            
-            if inconsistent_items:
-                # Print warning with details about inconsistent dimensions
-                print(f"Inconsistent feature dimensions detected. Expected dimension: {first_feature_dim}")
-                for idx, dim in inconsistent_items:
-                    print(f"  Item {valid_data_items[idx].annotation.id}: {dim} dimensions")
-                
-                # Filter out items with inconsistent dimensions
-                consistent_features = []
-                consistent_items = []
-                for i, (f, item) in enumerate(zip(features_list, valid_data_items)):
-                    if len(f) == first_feature_dim:
-                        consistent_features.append(f)
-                        consistent_items.append(item)
-                
-                if not consistent_features:
-                    print("No features with consistent dimensions found.")
+                    print(f"Error extracting features for item {i}: {e}")
+                    # Return early if feature extraction fails
                     return np.array([]), []
-                
-                print(f"Proceeding with {len(consistent_features)} items with consistent dimensions.")
-                features_array = np.array(consistent_features)
-                return features_array, consistent_items
-            
-            # All dimensions are consistent
-            features_array = np.array(features_list)
-            return features_array, valid_data_items
-            
-        except ImportError as e:
-            print(f"transformers library not installed. Please install with: pip install transformers")
-            if progress_bar:
-                progress_bar.close()
-            return np.array([]), []
+                    
+                finally:
+                    if progress_bar:
+                        progress_bar.update_progress()
+
+            # Make sure we have consistent feature dimensions
+            if features_list:
+                features_array = np.array(features_list)
+                return features_array, valid_items
+            else:
+                return np.array([]), []
+        
         except Exception as e:
-            print(f"Error in transformer feature extraction: {e}")
+            print(f"Error in feature extraction: {e}")
+            return np.array([]), []
+        
+        finally:
             if progress_bar:
                 progress_bar.close()
-            return np.array([]), []
-        finally:
+                
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -2866,13 +2837,15 @@ class ExplorerWindow(QMainWindow):
         if not model_name:
             return np.array([]), []
 
+        # Check if it's Color Features first
         if model_name == "Color Features":
             return self._extract_color_features(data_items, progress_bar=progress_bar)
 
+        # Then check if it's a YOLO model (file path with .pt)
         elif ".pt" in model_name:
             return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
         
-        # Check if it's a transformer model using the shared utility function
+        # Finally check if it's a transformer model using the shared utility function
         elif is_transformer_model(model_name):
             return self._extract_transformer_features(data_items, model_name, progress_bar=progress_bar)
 
