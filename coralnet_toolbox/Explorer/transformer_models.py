@@ -14,7 +14,6 @@ TRANSFORMER_MODELS = {
     'CLIP (Base)': 'openai/clip-vit-base-patch32',
     'CLIP (Large)': 'openai/clip-vit-large-patch14',
     'BioCLIP': 'imageomics/bioclip',
-    'MariCLIP': 'adriansaavedraa/MariCLIP',
     'ResNet-50': 'microsoft/resnet-50',
     'ResNet-101': 'microsoft/resnet-101',
     'Swin Transformer (Tiny)': 'microsoft/swin-tiny-patch4-window7-224',
