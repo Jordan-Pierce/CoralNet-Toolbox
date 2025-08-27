@@ -571,6 +571,27 @@ def pixmap_to_numpy(pixmap):
     return numpy_array
 
 
+def pixmap_to_pil(pixmap):
+    """
+    Convert a QPixmap to a PIL Image.
+    
+    :param pixmap: QPixmap to convert
+    :return: PIL Image in RGB format
+    """
+    from PIL import Image
+    
+    # Convert pixmap to numpy array first
+    image_np = pixmap_to_numpy(pixmap)
+    
+    # Convert numpy array to PIL Image
+    if len(image_np.shape) == 2:  # Grayscale
+        pil_image = Image.fromarray(image_np, mode='L').convert('RGB')
+    else:  # RGB
+        pil_image = Image.fromarray(image_np, mode='RGB')
+    
+    return pil_image
+
+
 def scale_pixmap(pixmap, max_size):
     """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
     width = pixmap.width()

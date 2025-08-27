@@ -9,7 +9,7 @@ import torch
 from ultralytics import YOLO
 
 from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
 
 from PyQt5.QtGui import QIcon, QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
@@ -2719,36 +2719,45 @@ class ExplorerWindow(QMainWindow):
             # Lazy import to avoid unnecessary dependencies
             from transformers import pipeline
             from transformers.image_utils import load_image
-            from PIL import Image
             
             # Initialize the feature extractor pipeline
             if progress_bar:
                 progress_bar.set_busy_mode(f"Loading {model_name}...")
             
+            # Use the device selected by the user from QtMainWindow
+            # Convert device string to appropriate format for transformers pipeline:
+            # QtMainWindow format: 'cuda:0', 'mps', 'cpu'
+            # Transformers format: 0 (int), 'mps' (str), -1 (int)
+            if self.explorer_window.device.startswith('cuda'):
+                # Extract device number from 'cuda:0' format for CUDA GPUs
+                device_num = int(self.explorer_window.device.split(':')[-1]) if ':' in self.explorer_window.device else 0
+            elif self.explorer_window.device == 'mps':
+                # MPS (Metal Performance Shaders) - Apple's GPU acceleration for macOS
+                device_num = 'mps'
+            else:
+                # Default to CPU for any other device string
+                device_num = -1
+            
             feature_extractor = pipeline(
                 model=model_name,
                 task="image-feature-extraction",
-                device=0 if torch.cuda.is_available() else -1
+                device=device_num
             )
             
             features_list = []
             valid_data_items = []
             
-            total_items = len(data_items)
+            if progress_bar:
+                progress_bar.set_title("Extracting transformer features...")
+                progress_bar.start_progress(len(data_items))
+            
             for i, item in enumerate(data_items):
                 if progress_bar:
-                    progress_bar.update_progress(int((i / total_items) * 100),
-                                                f"Extracting features: {i + 1}/{total_items}")
+                    progress_bar.setWindowTitle(f"Extracting features: {i + 1}/{len(data_items)}")
+                    progress_bar.update_progress()
                 
                 try:
-                    # Convert pixmap to numpy array
-                    image_np = pixmap_to_numpy(item.annotation.pixmap)
-                    
-                    # Convert to PIL Image (transformers expects PIL images)
-                    if len(image_np.shape) == 2:  # Grayscale
-                        pil_image = Image.fromarray(image_np, mode='L').convert('RGB')
-                    else:
-                        pil_image = Image.fromarray(image_np, mode='RGB')
+                    pil_image = pixmap_to_pil(item.annotation.pixmap)
                     
                     # Extract features
                     features = feature_extractor(pil_image)
