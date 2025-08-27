@@ -377,16 +377,25 @@ class AnnotationDataItem:
         return "<br>".join(tooltip_parts)
 
     def get_effective_confidence(self):
-        """Get the effective confidence value."""
+        """
+        Get the effective confidence value, handling scalar, array, and vector predictions.
+        """
         # First check if prediction probabilities are available from model predictions
         if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
-            if len(self.prediction_probabilities) > 0:
-                # Use the maximum probability for confidence sorting
-                return float(np.max(self.prediction_probabilities))
-        
+            probs = self.prediction_probabilities
+            try:
+                # This will succeed for lists and multi-element numpy arrays
+                if len(probs) > 0:
+                    return float(np.max(probs))
+            except TypeError:
+                # This will catch the error if `len()` is called on a scalar or 0-D array.
+                # In this case, the value of `probs` itself is the confidence score.
+                return float(probs)
+
         # Fallback to existing confidence values
         if self.annotation.verified and hasattr(self.annotation, 'user_confidence') and self.annotation.user_confidence:
             return list(self.annotation.user_confidence.values())[0]
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
             return list(self.annotation.machine_confidence.values())[0]
+            
         return 0.0

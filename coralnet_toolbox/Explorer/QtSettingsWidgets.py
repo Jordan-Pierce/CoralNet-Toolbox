@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, Q
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
+from coralnet_toolbox.Explorer.yolo_models import YOLO_MODELS
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -445,17 +446,53 @@ class ModelSettingsWidget(QGroupBox):
         self.explorer_window = parent
 
         # --- Data for hierarchical selection ---
-        self.standard_models_map = {
-            'YOLOv8': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
-            'YOLOv11': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
-            'YOLOv12': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'}
-        }
+        # Convert YOLO_MODELS to a hierarchical structure for the UI
+        self.standard_models_map = self._create_hierarchical_model_map()
         self.community_configs = get_available_configs(task='classify')
         
-        # --- Transformer models for feature extraction ---
+        # --- Models for feature extraction ---
         self.transformer_models = TRANSFORMER_MODELS
+        self.yolo_models = YOLO_MODELS
 
         self.setup_ui()
+
+    def _create_hierarchical_model_map(self):
+        """Convert the flat YOLO_MODELS dictionary to a hierarchical structure."""
+        hierarchical_map = {}
+        
+        # Process each model in YOLO_MODELS
+        for display_name, model_file in YOLO_MODELS.items():
+            # Parse the family and size from the display name
+            # Expected format: "YOLOvX (Size)"
+            parts = display_name.split(' ')
+            if len(parts) >= 2:
+                family = parts[0]  # "YOLOv8", "YOLOv11", etc.
+                size = parts[1].strip('()')  # "Nano", "Small", etc.
+                
+                # Create the family entry if it doesn't exist
+                if family not in hierarchical_map:
+                    hierarchical_map[family] = {}
+                
+                # Extract the size code from the model filename
+                # For example, get 'n' from 'yolov8n-cls.pt'
+                if model_file.startswith(family.lower()):
+                    size_code = model_file[len(family.lower())]
+                else:
+                    # Default fallback if parsing fails
+                    size_code = size[0].lower()
+                
+                # Add the size entry to the family
+                hierarchical_map[family][size] = size_code
+        
+        # If no models were processed, fallback to the default structure
+        if not hierarchical_map:
+            hierarchical_map = {
+                'YOLOv8': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
+                'YOLOv11': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'},
+                'YOLOv12': {'Nano': 'n', 'Small': 's', 'Medium': 'm', 'Large': 'l', 'X-Large': 'x'}
+            }
+            
+        return hierarchical_map
 
     def setup_ui(self):
         """Set up the UI with a tabbed interface for model selection."""
@@ -584,25 +621,28 @@ class ModelSettingsWidget(QGroupBox):
         """Update the enabled state and tooltip of the feature mode field."""
         is_color_features = False
         is_transformer = False
+        is_community = False  # Add a new flag for community models
         current_tab_index = self.tabs.currentIndex()
         
         if current_tab_index == 0:
             category = self.category_combo.currentText()
             is_color_features = (category == "Color Features")
             is_transformer = (category == "Transformer Model")
+            is_community = (category == "Community Model")  # Check for Community Model
         
-        # Disable feature mode for Color Features and Transformer Models
-        # (Transformers always output embeddings)
-        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
+        # Disable feature mode for Color Features, Transformer Models, and Community Models
+        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer or is_community))
         
         # If disabled categories are selected, force the combo to "Embed Features"
-        if is_color_features or is_transformer:
+        if is_color_features or is_transformer or is_community:
             self.feature_mode_combo.setCurrentText("Embed Features")
         
         if is_color_features:
             self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
         elif is_transformer:
             self.feature_mode_combo.setToolTip("Transformer models always output embedding features.")
+        elif is_community:
+            self.feature_mode_combo.setToolTip("Community models always output embedding features.")
         else:
             self.feature_mode_combo.setToolTip(
                 "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
@@ -614,10 +654,13 @@ class ModelSettingsWidget(QGroupBox):
         current_tab_index = self.tabs.currentIndex()
         model_name = ""
         
+        # Standard Model Tab
         if current_tab_index == 0:
             category = self.category_combo.currentText()
+            
             if category == "Color Features":
                 model_name = "Color Features"
+                
             elif category == "Standard Model":
                 family_text = self.family_combo.currentText()
                 size_text = self.size_combo.currentText()
@@ -626,20 +669,34 @@ class ModelSettingsWidget(QGroupBox):
                 if not family_text or not size_text:
                     return "", "N/A"  # Return a safe default
                 
-                family_key = family_text.lower().replace('-', '')
-                size_key = self.standard_models_map[family_text][size_text]
-                model_name = f"{family_key}{size_key}-cls.pt"
+                # Create the display name format to look up in YOLO_MODELS
+                display_name = f"{family_text} ({size_text})"
+                if display_name in self.yolo_models:
+                    model_name = self.yolo_models[display_name]
+                else:
+                    # Fallback to the old method if not found
+                    family_key = family_text.lower().replace('-', '')
+                    size_key = self.standard_models_map[family_text][size_text]
+                    model_name = f"{family_key}{size_key}-cls.pt"
 
             elif category == "Community Model":
-                model_name = self.community_combo.currentText()
+                model_display_name = self.community_combo.currentText()
+                # Use the path (value) instead of the name (key) for community models
+                if self.community_configs and model_display_name in self.community_configs:
+                    model_name = self.community_configs[model_display_name]
+                else:
+                    model_name = model_display_name  # Fallback to using the display name
+                    
             elif category == "Transformer Model":
                 # Get the HuggingFace model ID from the transformer models map
                 selected_display_name = self.transformer_combo.currentText()
                 model_name = self.transformer_models.get(selected_display_name, selected_display_name)
+        
+        # Custom Model Tab
         elif current_tab_index == 1:
             model_name = self.model_path_edit.text()
         
-        feature_mode = self.feature_mode_combo.currentText() if self.feature_mode_combo.isEnabled() else "N/A"
+        feature_mode = self.feature_mode_combo.currentText()
         return model_name, feature_mode
     
 
