@@ -1,5 +1,4 @@
 import warnings
-import logging
 
 import os
 
@@ -2719,7 +2718,6 @@ class ExplorerWindow(QMainWindow):
             from transformers import pipeline
             from transformers.image_utils import load_image
             from huggingface_hub import snapshot_download
-            import os
             
             # Use the device selected by the user from QtMainWindow
             # Convert device string to appropriate format for transformers pipeline:
@@ -2756,7 +2754,7 @@ class ExplorerWindow(QMainWindow):
                 )
                 
             except Exception as download_error:
-                logging.warning(f"Failed to pre-download model, trying direct pipeline load: {download_error}")
+                print(f"Failed to pre-download model, trying direct pipeline load: {download_error}")
                 # Fallback to direct pipeline loading (original behavior)
                 if progress_bar:
                     progress_bar.set_busy_mode(f"Loading {model_name}...")
@@ -2803,7 +2801,7 @@ class ExplorerWindow(QMainWindow):
                     valid_data_items.append(item)
                     
                 except Exception as e:
-                    logging.warning(f"Error processing item {item.annotation.id}, it will be skipped: {e}")
+                    print(f"Error processing item {item.annotation.id}, it will be skipped: {e}")
                     continue
             
             if not features_list:
@@ -2817,10 +2815,10 @@ class ExplorerWindow(QMainWindow):
                     inconsistent_items.append((i, len(f)))
             
             if inconsistent_items:
-                # Log warning with details about inconsistent dimensions
-                logging.warning(f"Inconsistent feature dimensions detected. Expected dimension: {first_feature_dim}")
+                # Print warning with details about inconsistent dimensions
+                print(f"Inconsistent feature dimensions detected. Expected dimension: {first_feature_dim}")
                 for idx, dim in inconsistent_items:
-                    logging.warning(f"  Item {valid_data_items[idx].annotation.id}: {dim} dimensions")
+                    print(f"  Item {valid_data_items[idx].annotation.id}: {dim} dimensions")
                 
                 # Filter out items with inconsistent dimensions
                 consistent_features = []
@@ -2831,10 +2829,10 @@ class ExplorerWindow(QMainWindow):
                         consistent_items.append(item)
                 
                 if not consistent_features:
-                    logging.error("No features with consistent dimensions found.")
+                    print("No features with consistent dimensions found.")
                     return np.array([]), []
                 
-                logging.info(f"Proceeding with {len(consistent_features)} items with consistent dimensions.")
+                print(f"Proceeding with {len(consistent_features)} items with consistent dimensions.")
                 features_array = np.array(consistent_features)
                 return features_array, consistent_items
             
@@ -2843,12 +2841,12 @@ class ExplorerWindow(QMainWindow):
             return features_array, valid_data_items
             
         except ImportError as e:
-            logging.error(f"transformers library not installed. Please install with: pip install transformers")
+            print(f"transformers library not installed. Please install with: pip install transformers")
             if progress_bar:
                 progress_bar.close()
             return np.array([]), []
         except Exception as e:
-            logging.error(f"Error in transformer feature extraction: {e}")
+            print(f"Error in transformer feature extraction: {e}")
             if progress_bar:
                 progress_bar.close()
             return np.array([]), []
