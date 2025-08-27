@@ -525,6 +525,7 @@ class ModelSettingsWidget(QGroupBox):
         feature_mode_layout = QFormLayout()
         self.feature_mode_combo = QComboBox()
         self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
+        self.feature_mode_combo.setCurrentText("Embed Features")  # Set default to Embed Features
         feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
         main_layout.addLayout(feature_mode_layout)
 
@@ -593,6 +594,10 @@ class ModelSettingsWidget(QGroupBox):
         # Disable feature mode for Color Features and Transformer Models
         # (Transformers always output embeddings)
         self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
+        
+        # If disabled categories are selected, force the combo to "Embed Features"
+        if is_color_features or is_transformer:
+            self.feature_mode_combo.setCurrentText("Embed Features")
         
         if is_color_features:
             self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")

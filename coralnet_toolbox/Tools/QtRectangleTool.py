@@ -113,6 +113,36 @@ class RectangleTool(Tool):
         # Ensure top_left and bottom_right are correctly calculated
         top_left = QPointF(min(self.start_point.x(), end_point.x()), min(self.start_point.y(), end_point.y()))
         bottom_right = QPointF(max(self.start_point.x(), end_point.x()), max(self.start_point.y(), end_point.y()))
+        
+        # Calculate width and height of the rectangle
+        width = bottom_right.x() - top_left.x()
+        height = bottom_right.y() - top_left.y()
+        
+        # Define minimum dimensions for a valid rectangle (e.g., 3x3 pixels)
+        MIN_DIMENSION = 3.0
+        
+        # If rectangle is too small and we're finalizing it, enforce minimum size
+        if finished and (width < MIN_DIMENSION or height < MIN_DIMENSION):
+            if width < MIN_DIMENSION:
+                # Expand width while maintaining center
+                center_x = (top_left.x() + bottom_right.x()) / 2
+                top_left.setX(center_x - MIN_DIMENSION / 2)
+                bottom_right.setX(center_x + MIN_DIMENSION / 2)
+                
+            if height < MIN_DIMENSION:
+                # Expand height while maintaining center
+                center_y = (top_left.y() + bottom_right.y()) / 2
+                top_left.setY(center_y - MIN_DIMENSION / 2)
+                bottom_right.setY(center_y + MIN_DIMENSION / 2)
+            
+            # Show a message if we had to adjust a very small rectangle
+            if width < 1 or height < 1:
+                QMessageBox.information(
+                    self.annotation_window, 
+                    "Rectangle Adjusted",
+                    f"The rectangle was too small and has been adjusted to a minimum size of "
+                    f"{MIN_DIMENSION}x{MIN_DIMENSION} pixels."
+                )
 
         # Create the rectangle annotation
         annotation = RectangleAnnotation(top_left,

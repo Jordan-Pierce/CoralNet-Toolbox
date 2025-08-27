@@ -578,13 +578,9 @@ class ImageWindow(QWidget):
                 
             # Immediately update filtered paths to include the new image
             # This ensures the image will be visible in the table right away
-            if self.table_model.filtered_paths == self.raster_manager.image_paths[:-1]:
-                # No filters are active, so just add the new path
-                self.table_model.filtered_paths.append(image_path)
-                self.table_model.dataChanged.emit(
-                    self.table_model.index(0, 0),
-                    self.table_model.index(len(self.table_model.filtered_paths) - 1, 
-                                           self.table_model.columnCount() - 1))
+            if len(self.table_model.filtered_paths) == len(self.raster_manager.image_paths) - 1:
+                # No filters are active, so efficiently add the new path to the model
+                self.table_model.add_path(image_path)
             else:
                 # Filters are active, so run filtering again
                 self.filter_images()

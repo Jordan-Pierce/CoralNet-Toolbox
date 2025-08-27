@@ -158,7 +158,7 @@ class DeployPredictorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 65536)
+        self.imgsz_spinbox.setRange(1024, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
@@ -357,8 +357,6 @@ class DeployPredictorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-
-        self.accept()
 
     def resize_image(self, image):
         """

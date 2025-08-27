@@ -47,10 +47,15 @@ def is_transformer_model(model_name):
     # Models from HuggingFace typically contain '/' in their names
     if "/" in model_name:
         # Check for known organization prefixes
-        known_prefixes = ("facebook/", "microsoft/", "google/", "openai/", 
-                         "imageomics/", "adriansaavedraa/")
+        known_prefixes = ("facebook/", 
+                          "microsoft/", 
+                          "google/", 
+                          "openai/", 
+                          "imageomics/")
+        
         if model_name.startswith(known_prefixes):
             return True
+        
         # Any model with '/' is likely a HuggingFace model
         return True
     

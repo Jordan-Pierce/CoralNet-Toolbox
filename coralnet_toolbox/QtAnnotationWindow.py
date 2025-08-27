@@ -492,9 +492,6 @@ class AnnotationWindow(QGraphicsView):
             relative_area = 1.0  # fallback, treat as full image
 
         # Step 3: Map ratio to padding factor (smaller annotation = more padding)
-        # Example: padding_factor = clamp(0.5 * (1/relative_area)**0.5, 0.1, 0.5)
-        # - For very small annotations, padding approaches 0.5 (50%)
-        # - For large annotations, padding approaches 0.1 (10%)
         import math
         min_padding = 0.1  # 10%
         max_padding = 0.5  # 50%
@@ -503,23 +500,32 @@ class AnnotationWindow(QGraphicsView):
         else:
             padding_factor = min_padding
 
-        # Step 4: Apply dynamic padding
-        padding_x = annotation_rect.width() * padding_factor
-        padding_y = annotation_rect.height() * padding_factor
+        # Step 4: Apply dynamic padding with minimum values to prevent zero width/height
+        min_padding_absolute = 1.0  # Minimum padding in pixels
+        padding_x = max(annotation_rect.width() * padding_factor, min_padding_absolute)
+        padding_y = max(annotation_rect.height() * padding_factor, min_padding_absolute)
         padded_rect = annotation_rect.adjusted(-padding_x, -padding_y, padding_x, padding_y)
 
         # Fit the padded annotation rect in the view
         self.fitInView(padded_rect, Qt.KeepAspectRatio)
 
-        # Update the zoom factor based on the new view transformation
+        # Update the zoom factor based on the new view transformation with safety checks
         view_rect = self.viewport().rect()
-        zoom_x = view_rect.width() / padded_rect.width()
-        zoom_y = view_rect.height() / padded_rect.height()
+        if padded_rect.width() > 0:
+            zoom_x = view_rect.width() / padded_rect.width()
+        else:
+            zoom_x = 1.0  # Default zoom if width is zero
+        
+        if padded_rect.height() > 0:
+            zoom_y = view_rect.height() / padded_rect.height()
+        else:
+            zoom_y = 1.0  # Default zoom if height is zero
+            
         self.zoom_factor = min(zoom_x, zoom_y)
 
         # Signal that the view has changed
         self.viewChanged.emit(*self.get_image_dimensions())
-
+    
     def cycle_annotations(self, direction):
         """Cycle through annotations in the specified direction."""
         # Get the annotations for the current image
