@@ -303,7 +303,7 @@ The main window consists of several components:
   - Numbered indicators (1-5) show the rank of each prediction.
   - Hover over confidence bars to see a pointing hand cursor when selection is possible.
 
-### Hotkeys
+### [Hotkeys](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys)
 
 - <kbd>Escape</kbd>: Exit the program.
 - <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images.

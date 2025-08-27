@@ -69,8 +69,8 @@ For a complete installation guide (including CUDA setup), see the [Installation 
 | **Overview** | Get the big picture | [📋 Read More](https://jordan-pierce.github.io/CoralNet-Toolbox/overview) |
 | **Installation** | Detailed setup instructions | [⚙️ Setup Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) |
 | **Usage** | Learn the tools | [🛠️ User Manual](https://jordan-pierce.github.io/CoralNet-Toolbox/usage) |
-| **Classification** | Community tutorial | [🧠 AI Tutorial](https://jordan-pierce.github.io/CoralNet-Toolbox/classify) |
 | **Hot Keys** | Keyboard shortcuts | [⌨️ Shortcuts](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys) |
+| **Classification** | Community tutorial | [🧠 AI Tutorial](https://jordan-pierce.github.io/CoralNet-Toolbox/classify) |
 
 </div>
 
