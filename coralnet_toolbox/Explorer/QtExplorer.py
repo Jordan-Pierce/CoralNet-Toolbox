@@ -66,7 +66,7 @@ class ExplorerWindow(QMainWindow):
 
         self.device = main_window.device
         self.loaded_model = None
-        self.loaded_model_imgsz = 128
+        self.imgsz = 128
 
         self.feature_store = FeatureStore()
         
@@ -813,15 +813,20 @@ class ExplorerWindow(QMainWindow):
         model_name, feature_mode = model_info
         
         # Load the model
-        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        model = self._load_yolo_model(model_name, feature_mode)
         if model is None:
             QMessageBox.warning(self, 
                                 "Model Load Error",
                                 f"Could not load YOLO model '{model_name}'.")
             return None
         
-        # Prepare images from data items
-        image_list, valid_data_items = self._prepare_images_from_data_items(data_items)
+        # Prepare images from data items with proper resizing
+        image_list, valid_data_items = self._prepare_images_from_data_items(
+            data_items,
+            format='numpy',
+            target_size=(self.imgsz, self.imgsz)
+        )
+        
         if not image_list:
             return None
         
@@ -829,7 +834,7 @@ class ExplorerWindow(QMainWindow):
             # We need probabilities for uncertainty analysis, so we always use predict
             results = model.predict(image_list, 
                                     stream=False,  # Use batch processing for uncertainty
-                                    imgsz=imgsz, 
+                                    imgsz=self.imgsz, 
                                     half=True, 
                                     device=self.device, 
                                     verbose=False)
@@ -910,7 +915,7 @@ class ExplorerWindow(QMainWindow):
                     # On failure, reset the model cache
                     self.loaded_model = None
                     self.current_feature_generating_model = None
-                    return None, None
+                    return None
 
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
@@ -918,23 +923,23 @@ class ExplorerWindow(QMainWindow):
                 
                 # Get the imgsz, but if it's larger than 128, default to 128
                 imgsz = min(getattr(model.model.args, 'imgsz', 128), 128)
-                self.loaded_model_imgsz = imgsz
+                self.imgsz = imgsz
                 
                 # Warm up the model
                 dummy_image = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
                 model.predict(dummy_image, imgsz=imgsz, half=True, device=self.device, verbose=False)
                 
-                return model, self.loaded_model_imgsz
+                return model
                 
             except Exception as e:
                 print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
                 # On failure, reset the model cache
                 self.loaded_model = None
                 self.current_feature_generating_model = None
-                return None, None
+                return None
         
         # Model already loaded and cached, return it and its image size
-        return self.loaded_model, self.loaded_model_imgsz
+        return self.loaded_model
 
     def _load_transformer_model(self, model_name):
         """
@@ -976,29 +981,26 @@ class ExplorerWindow(QMainWindow):
                 feature_extractor = pipeline(
                     model=model_path,
                     task="image-feature-extraction",
-                    device=device_num
+                    device=device_num,
                 )
                 
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
                 self.loaded_model = feature_extractor
                 
-                # Most transformer vision models use 224×224 input size
-                self.loaded_model_imgsz = 224
-                
-                return feature_extractor, self.loaded_model_imgsz
+                return feature_extractor
                 
             except Exception as e:
                 print(f"ERROR: Could not load transformer model '{model_name}': {e}")
                 # On failure, reset the model cache
                 self.loaded_model = None
                 self.current_feature_generating_model = None
-                return None, None
+                return None
         
         # Model already loaded and cached, return it and its image size
-        return self.loaded_model, self.loaded_model_imgsz
+        return self.loaded_model
 
-    def _prepare_images_from_data_items(self, data_items, progress_bar=None, format='numpy'):
+    def _prepare_images_from_data_items(self, data_items, progress_bar=None, format='numpy', target_size=None):
         """
         Prepare images from data items for model prediction.
         
@@ -1006,6 +1008,7 @@ class ExplorerWindow(QMainWindow):
             data_items (list): List of AnnotationDataItem objects
             progress_bar (ProgressBar, optional): Progress bar for UI updates
             format (str, optional): Output format, either 'numpy' or 'pil'. Default is 'numpy'.
+            target_size (tuple, optional): Target size for resizing (width, height). If None, no resizing is performed.
         
         Returns:
             tuple: (image_list, valid_data_items)
@@ -1018,10 +1021,20 @@ class ExplorerWindow(QMainWindow):
         for item in data_items:
             pixmap = item.annotation.get_cropped_image()
             if pixmap and not pixmap.isNull():
+                # Always convert to PIL first for easier resizing
+                pil_img = pixmap_to_pil(pixmap)
+                
+                # Resize if target size is specified
+                if target_size and isinstance(target_size, (tuple, list)) and len(target_size) == 2:
+                    pil_img = pil_img.resize(target_size, resample=2)  # 2 = PIL.Image.BILINEAR
+                
+                # Convert to the requested format
                 if format.lower() == 'pil':
-                    image_list.append(pixmap_to_pil(pixmap))
-                else:  # default to numpy
-                    image_list.append(pixmap_to_numpy(pixmap))
+                    image_list.append(pil_img)
+                else:  # Convert to numpy
+                    img_array = np.array(pil_img)
+                    image_list.append(img_array)
+                    
                 valid_data_items.append(item)
             
             if progress_bar:
@@ -1182,19 +1195,25 @@ class ExplorerWindow(QMainWindow):
         model_name, feature_mode = model_info
         
         # Load the model
-        model, imgsz = self._load_yolo_model(model_name, feature_mode)
+        model = self._load_yolo_model(model_name, feature_mode)
         if model is None:
             return np.array([]), []
         
-        # Prepare images from data items
-        image_list, valid_data_items = self._prepare_images_from_data_items(data_items, progress_bar)
+        # Prepare images from data items with proper resizing
+        image_list, valid_data_items = self._prepare_images_from_data_items(
+            data_items, 
+            progress_bar, 
+            format='numpy',
+            target_size=(self.imgsz, self.imgsz)
+        )
+        
         if not valid_data_items:
             return np.array([]), []
         
         # Set up prediction parameters
         kwargs = {
             'stream': True,
-            'imgsz': imgsz,
+            'imgsz': self.imgsz,
             'half': True,
             'device': self.device,
             'verbose': False
@@ -1239,14 +1258,19 @@ class ExplorerWindow(QMainWindow):
                 progress_bar.set_busy_mode(f"Loading model {model_name}...")
                 
             # Load the model with caching support
-            feature_extractor, imgsz = self._load_transformer_model(model_name)
+            feature_extractor = self._load_transformer_model(model_name)
             
             if feature_extractor is None:
                 print(f"Failed to load transformer model: {model_name}")
                 return np.array([]), []
             
-            # Prepare images from data items - get PIL images directly
-            image_list, valid_data_items = self._prepare_images_from_data_items(data_items, progress_bar, format='pil')
+            # Prepare images from data items - get PIL images directly with proper sizing
+            image_list, valid_data_items = self._prepare_images_from_data_items(
+                data_items, 
+                progress_bar, 
+                format='pil', 
+                target_size=(self.imgsz, self.imgsz)
+            )
             
             if not image_list:
                 return np.array([]), []
