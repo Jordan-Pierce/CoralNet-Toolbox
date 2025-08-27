@@ -20,9 +20,12 @@ from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
+
+from coralnet_toolbox.Explorer.yolo_models import is_yolo_model
 from coralnet_toolbox.Explorer.transformer_models import is_transformer_model
 
-from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
+from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import pixmap_to_pil
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -932,7 +935,10 @@ class ExplorerWindow(QMainWindow):
                 return model
                 
             except Exception as e:
-                print(f"ERROR: Could not load YOLO model '{model_name}': {e}")
+                QMessageBox.critical(self, 
+                                     "Model Load Error",
+                                     f"Could not load the YOLO model '{model_name}'.\n\nError: {e}")
+                
                 # On failure, reset the model cache
                 self.loaded_model = None
                 self.current_feature_generating_model = None
@@ -1002,7 +1008,10 @@ class ExplorerWindow(QMainWindow):
                 return feature_extractor
                 
             except Exception as e:
-                print(f"ERROR: Could not load transformer model '{model_name}': {e}")
+                QMessageBox.critical(self, 
+                                     "Model Load Error",
+                                     f"Could not load the transformer model '{model_name}'.\n\nError: {e}")
+                
                 # On failure, reset the model cache
                 self.loaded_model = None
                 self.current_feature_generating_model = None
@@ -1085,25 +1094,35 @@ class ExplorerWindow(QMainWindow):
                 features_list.append(embedding)
                 
             elif hasattr(result, 'probs') and result.probs is not None:
-                probs = result.probs.data.cpu().numpy().squeeze()
-                features_list.append(probs)
-                probabilities_dict[ann_id] = probs
-                
-                # Store the probabilities directly on the data item for confidence sorting
-                item.prediction_probabilities = probs
-                
-                # Format and store prediction details for tooltips
-                if len(probs) > 0:
-                    # Get top 5 predictions
-                    top_indices = probs.argsort()[::-1][:5]
-                    top_probs = probs[top_indices]
-                    
-                    formatted_preds = ["<b>Top Predictions:</b>"]
-                    for idx, prob in zip(top_indices, top_probs):
-                        class_name = class_names.get(int(idx), f"Class {idx}")
-                        formatted_preds.append(f"{class_name}: {prob*100:.1f}%")
-                    
-                    item.prediction_details = "<br>".join(formatted_preds)
+                try:
+                    probs = result.probs.data.cpu().numpy().squeeze()
+                    features_list.append(probs)
+                    probabilities_dict[ann_id] = probs
+
+                    # Store the probabilities directly on the data item for confidence sorting
+                    item.prediction_probabilities = probs
+
+                    # Format and store prediction details for tooltips
+                    # This check will fail with a TypeError if probs is a scalar (unsized)
+                    if len(probs) > 0:
+                        # Get top 5 predictions
+                        top_indices = probs.argsort()[::-1][:5]
+                        top_probs = probs[top_indices]
+
+                        formatted_preds = ["<b>Top Predictions:</b>"]
+                        for idx, prob in zip(top_indices, top_probs):
+                            class_name = class_names.get(int(idx), f"Class {idx}")
+                            formatted_preds.append(f"{class_name}: {prob*100:.1f}%")
+
+                        item.prediction_details = "<br>".join(formatted_preds)
+                        
+                except TypeError:
+                    # This error is raised if len(probs) fails on a scalar value.
+                    raise TypeError(
+                        "The selected model is not compatible with 'Predictions' mode. "
+                        "Its output does not appear to be a list of class probabilities. "
+                        "Try using 'Embed Features' mode instead."
+                    )
             else:
                 raise TypeError(
                     "The 'Predictions' feature mode requires a classification model "
@@ -1241,13 +1260,17 @@ class ExplorerWindow(QMainWindow):
             progress_bar.start_progress(len(valid_data_items))
         
         try:
-            features_list, _ = self._process_model_results(results_generator, 
-                                                           valid_data_items, 
+            features_list, _ = self._process_model_results(results_generator,
+                                                           valid_data_items,
                                                            feature_mode,
                                                            progress_bar=progress_bar)
-            
+
             return np.array(features_list), valid_data_items
-            
+
+        except TypeError as e:
+            QMessageBox.warning(self, "Model Incompatibility Error", str(e))
+            return np.array([]), []  # Return empty results to safely stop the pipeline
+
         finally:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -1331,7 +1354,10 @@ class ExplorerWindow(QMainWindow):
                 return np.array([]), []
         
         except Exception as e:
-            print(f"Error in feature extraction: {e}")
+            QMessageBox.warning(self, 
+                                "Feature Extraction Error",
+                                f"An error occurred during transformer feature extraction.\n\nError: {e}")
+            
             return np.array([]), []
         
         finally:
@@ -1354,7 +1380,7 @@ class ExplorerWindow(QMainWindow):
             return self._extract_color_features(data_items, progress_bar=progress_bar)
 
         # Then check if it's a YOLO model (file path with .pt)
-        elif ".pt" in model_name:
+        elif is_yolo_model(model_name):
             return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
         
         # Finally check if it's a transformer model using the shared utility function
@@ -1426,7 +1452,10 @@ class ExplorerWindow(QMainWindow):
             return reducer.fit_transform(features_scaled)
 
         except Exception as e:
-            print(f"Error during {technique} dimensionality reduction: {e}")
+            QMessageBox.warning(self, 
+                                "Embedding Error",
+                                f"An error occurred during dimensionality reduction with {technique}.\n\nError: {e}")
+            
             return None
 
     def _update_data_items_with_embedding(self, data_items, embedded_features):
@@ -1635,7 +1664,9 @@ class ExplorerWindow(QMainWindow):
             self.annotation_window.load_annotations()
 
         except Exception as e:
-            print(f"Error during item deletion: {e}")
+            QMessageBox.warning(self, 
+                                "Deletion Error",
+                                f"An error occurred while deleting annotations.\n\nError: {e}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -1710,7 +1741,9 @@ class ExplorerWindow(QMainWindow):
             print("Applied changes successfully.")
 
         except Exception as e:
-            print(f"Error applying modifications: {e}")
+            QMessageBox.warning(self, 
+                                "Apply Error",
+                                f"An error occurred while applying changes.\n\nError: {e}")
         finally:
             QApplication.restoreOverrideCursor()
             
