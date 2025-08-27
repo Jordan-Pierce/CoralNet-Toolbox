@@ -66,11 +66,11 @@ The main window consists of several components:
   - **Embedding Settings**: Map high-dimensional features to 2D space using PCA, TSNE, or UMAP.
   - **Annotation Viewer**: View, select, modify labels of annotations.
     - **Controls**:
-      - **Left-Click**: Select an annotation
-      - **Ctrl + Left-Click**: Select multiple annotations
-      - **Shift + Left-Click**: Select in-between annotations
-      - **Double Left Click**: Unselect all annotations, exit from Isolation View
-      - **Ctrl + Right-Click**: Update Annotation Window view, zoomed and centered on selected annotation.
+      - <kbd>Left-Click</kbd>: Select an annotation
+      - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple annotations
+      - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select in-between annotations
+      - <kbd>Double Left Click</kbd>: Unselect all annotations, exit from Isolation View
+      - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Update Annotation Window view, zoomed and centered on selected annotation.
     - **Toolbar**:
       - **Isolate Selection**: Subset view
       - **Sort By**: Sort annotations by image name, label, confidence
@@ -78,12 +78,12 @@ The main window consists of several components:
       - **Size**: Slider-bar to control annotation size in Annotation Viewer.
   - **Embedding Viewer**: Selected, modify labels of annotations.
     - **Controls**:
-      - **Left-Click**: Select an annotation
-      - **Ctrl + Left-Click**: Select multiple annotations
-      - **Ctrl + Left-Click + Drag**: Select multiple annotations within a draw rectangle
-      - **Double Left Click**: Unselect all annotations, exit from Isolation View
-      - **Right-Click + Drag**: Pan around Embedding Viewer
-      - **Scroll-wheel**: Zoom in and out of Embedding Viewer.
+      - <kbd>Left-Click</kbd>: Select an annotation
+      - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple annotations
+      - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Select multiple annotations within a draw rectangle
+      - <kbd>Double Left Click</kbd>: Unselect all annotations, exit from Isolation View
+      - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan around Embedding Viewer
+      - <kbd>Scroll-wheel</kbd>: Zoom in and out of Embedding Viewer.
     - **Toolbar**:
       - **Isolate Selection**: Subset view
       - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location
@@ -159,25 +159,25 @@ The main window consists of several components:
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool
-  - **Left-Click**: Select an annotation drag to move it.
-  - **Ctrl + Left-Click**: Add/remove annotation to current selection.
-  - **Ctrl + Delete / Backspace**: Remove selected annotation(s).
-  - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
-  - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
-  - **Ctrl + Shift**: Show resize handles for the selected annotation.
-  - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
-  - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-  - **Ctrl + X**: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.
+  - <kbd>Left-Click</kbd>: Select an annotation drag to move it.
+  - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection.
+  - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s).
+  - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations.
+  - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation.
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for the selected annotation.
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation.
+  - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence.
+  - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations.
      - **Cutting Rules**:
          - Only a single annotation can be selected.
-         - Press Ctrl-X to enter cutting mode, left-click to start, draw line, left-click to end.
-         - Press Backspace or Delete to cancel the current cutting line without making changes.
+         - Press <kbd>Ctrl</kbd>-<kbd>X</kbd> to enter cutting mode, <kbd>Left-Click</kbd> to start, draw line, <kbd>Left-Click</kbd> to end.
+         - Press <kbd>Backspace</kbd> or <kbd>Delete</kbd> to cancel the current cutting line without making changes.
      - **Exploding Rules**:
-         - Select a MultiPolygonAnnotation, press Ctrl + X to explode it into multiple PolygonAnnotations.
+         - Select a MultiPolygonAnnotation, press <kbd>Ctrl</kbd> + <kbd>X</kbd> to explode it into multiple PolygonAnnotations.
      - **Subtraction Rules**:
          - Multiple overlapping annotations must be selected one-by-one.
          - The first annotations will be used as the cutters, the last polygon will be used as the base.   
-  - **Ctrl + C**: Combine multiple selected annotations (if same type and label).
+  - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label).
     - **Combining Rules**: 
       - All selected annotations must have the same label.
       - All selected annotations must be verified (not machine predictions).
@@ -187,47 +187,47 @@ The main window consists of several components:
       - MultiPolygonAnnotations can be made with multiple non-overlapping polygons.
 
 - **Patch Tool**: After selecting the tool
-  - **Left-Click**: Add a patch annotation at the clicked position.
-  - **Ctrl + Mouse Wheel**: Adjust the patch size up or down.
-  - **Mouse Movement**: Shows a semi-transparent preview of the patch at the cursor position.
+  - <kbd>Left-Click</kbd>: Add a patch annotation at the clicked position.
+  - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the patch size up or down.
+  - <kbd>Mouse Movement</kbd>: Shows a semi-transparent preview of the patch at the cursor position.
 
 - **Rectangle Tool**: After selecting the tool
-  - **Left-Click**: Start drawing a rectangle click again to finish.
-  - **Mouse Movement**: Shows a preview of the rectangle while drawing.
-  - **Backspace**: Cancel the current rectangle annotation.
+  - <kbd>Left-Click</kbd>: Start drawing a rectangle click again to finish.
+  - <kbd>Mouse Movement</kbd>: Shows a preview of the rectangle while drawing.
+  - <kbd>Backspace</kbd>: Cancel the current rectangle annotation.
 
 - **Polygon Tool**: After selecting the tool
-  - **Left-Click (first)**: Start drawing a polygon.
-  - **Left-Click (subsequent)**: Add points to the polygon click near the first point to close.
-  - **Ctrl + Left-Click**: Enable straight line mode click to add straight line segments.
-  - **Mouse Movement**: Shows a preview of the polygon as you draw.
-  - **Backspace**: Cancel the current polygon annotation.
+  - <kbd>Left-Click</kbd> (first): Start drawing a polygon.
+  - <kbd>Left-Click</kbd> (subsequent): Add points to the polygon click near the first point to close.
+  - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Enable straight line mode click to add straight line segments.
+  - <kbd>Mouse Movement</kbd>: Shows a preview of the polygon as you draw.
+  - <kbd>Backspace</kbd>: Cancel the current polygon annotation.
 
 - **SAM Tool**: After a model is loaded
-  - **Left-Click**: Start drawing a work area click again to finish drawing.
-  - **Backspace**: Cancel drawing the current work area.
-  - **Space**: Create a work area from the current view.
-    - **Space**: Set working area confirm prediction finalize predictions and exit working area.
-    - **Left-Click**: Start a box press again to end a box.
-    - **Ctrl + Left-Click**: Add positive point.
-    - **Ctrl + Right-Click**: Add negative point.
-    - **Backspace**: Discard unfinalized predictions.
+  - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.
+  - <kbd>Backspace</kbd>: Cancel drawing the current work area.
+  - <kbd>Space</kbd>: Create a work area from the current view.
+    - <kbd>Space</kbd>: Set working area confirm prediction finalize predictions and exit working area.
+    - <kbd>Left-Click</kbd>: Start a box press again to end a box.
+    - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point.
+    - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point.
+    - <kbd>Backspace</kbd>: Discard unfinalized predictions.
 
 - **See Anything (YOLOE) Tool**: After a model is loaded
-  - **Left-Click**: Start drawing a work area click again to finish drawing.
-  - **Backspace**: Cancel drawing the current work area.
-  - **Space**: Create a work area from the current view.
-    - **Space**: Set working area run prediction finalize predictions and exit working area.
-    - **Left-Click**: Start a box press again to end a box.
-    - **Backspace**: Discard unfinalized predictions.
+  - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.
+  - <kbd>Backspace</kbd>: Cancel drawing the current work area.
+  - <kbd>Space</kbd>: Create a work area from the current view.
+    - <kbd>Space</kbd>: Set working area run prediction finalize predictions and exit working area.
+    - <kbd>Left-Click</kbd>: Start a box press again to end a box.
+    - <kbd>Backspace</kbd>: Discard unfinalized predictions.
 
 - **Work Area Tool**: For creating restricted areas for model prediction
-  - **Left-Click**: Start drawing a work area click again to finish drawing.
-  - **Backspace**: Cancel drawing the current work area.
-  - **Space**: Create a work area from the current view.
-  - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released / pressed again).
-  - **Ctrl + Shift**: Show removal buttons on existing work areas (click the "X" to remove).
-  - **Ctrl + Shift + Backspace**: Remove all work areas in the current image.
+  - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing.
+  - <kbd>Backspace</kbd>: Cancel drawing the current work area.
+  - <kbd>Space</kbd>: Create a work area from the current view.
+  - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (disappears when keys released / pressed again).
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas (click the "X" to remove).
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image.
   - **Practical Use**:
     - Define specific regions where models should make predictions.
     - Useful for processing only relevant parts of large images.
@@ -245,11 +245,11 @@ The main window consists of several components:
 - **Parameters**: Adjust parameters including uncertainty, IoU, and area thresholds.
 
 ## Annotation Window
-- **Zoom**: Use the mouse wheel to zoom in and out.
-- **Pan**: Right-click and hold the mouse button to pan the image.
+- **Zoom**: Use the <kbd>Mouse Wheel</kbd> to zoom in and out.
+- **Pan**: <kbd>Right-Click</kbd> and hold the mouse button to pan the image.
 
 ## Label Window
-- **Move Label**: Right-click and drag to move labels.
+- **Move Label**: <kbd>Right-Click</kbd> and drag to move labels.
 - **Add Label**: Click the "Add Label" button to add a new label.
 - **Delete Label**: Click the "Delete Label" button to delete the selected label.
 - **Edit Label**: Click the "Edit Label" button to edit the selected label.
@@ -263,13 +263,13 @@ The main window consists of several components:
   - Can be edited (when in select mode) to navigate to a specific annotation by index.
 
 ## Image Window
-- **Select Image**: Double-click on a row to select and load the image in the annotation window.
-- **Highlight Image**: Single-click on a row to highlight one or more rows in the image window.
-  - **Ctrl + Left-click**: Select multiple, non-adjacent rows.
-  - **Shift + Left-click**: Select multiple, adjacent rows.
+- **Select Image**: <kbd>Double-Click</kbd> on a row to select and load the image in the annotation window.
+- **Highlight Image**: <kbd>Single-Click</kbd> on a row to highlight one or more rows in the image window.
+  - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows.
+  - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows.
 - **Open Context Menu**:
-  - **Right-click on a single highlighted row**: Delete images / annotations for the highlighted row.
-  - **Shift + Right-click on multiple highlighted rows**: Delete images / annotations for highlighted rows.
+  - <kbd>Right-Click</kbd> on a single highlighted row: Delete images / annotations for the highlighted row.
+  - <kbd>Shift</kbd> + <kbd>Right-Click</kbd> on multiple highlighted rows: Delete images / annotations for highlighted rows.
 - **Search / Filter**:
   - **By Image**: Filter for images by name or sub-string.
   - **By Label**: Filter images by labels they contain.
@@ -283,7 +283,7 @@ The main window consists of several components:
   - **Unhighlight All**: Unhighlight all images in the current filtered view.
 - **Image Preview**:
   - **Tool Tip**: Hover over a row to show image metadata.
-  - **Thumbnail**: Hold Ctrl while hovering over a row to show a thumbnail.
+  - **Thumbnail**: Hold <kbd>Ctrl</kbd> while hovering over a row to show a thumbnail.
 
 ## Confidence Window
 - **Display Cropped Image**: Shows the cropped image of the selected annotation.
@@ -292,7 +292,7 @@ The main window consists of several components:
 - **Confidence Chart**: Displays a bar chart with confidence scores.
   - **Top 5 Predictions**: Shows up to 5 predictions with their confidence scores.
   - **Prediction Selection**: Click on any confidence bar to change the annotation's label.
-  - **Numerical Keys**: Press keys 1-5 to quickly select from the top 5 predictions.
+  - **Numerical Keys**: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions.
 - **Confidence Mode Toggle**: 
   - Click the icon button next to the dimensions to toggle between user and machine confidence views.
   - User icon shows user-assigned confidence scores.
@@ -305,26 +305,24 @@ The main window consists of several components:
 
 ### Hotkeys
 
-- **Escape**: Exit the program.
-- **Alt + Up/Down**: Cycle through images.
-- **Ctrl + W/A/S/D**: Cycle through labels.
-- **Ctrl + Left/Right**: Cycle through annotations.
-- **Ctrl + Shift + <**: Select all annotations.
-- **Ctrl + Shift + >**: Unselect all annotations.
-- **Ctrl + Alt**: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation (example below)
+- <kbd>Escape</kbd>: Exit the program.
+- <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images.
+- <kbd>Ctrl</kbd> + <kbd>W</kbd>/<kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd>: Cycle through labels.
+- <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations.
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd><</kbd>: Select all annotations.
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>></kbd>: Unselect all annotations.
+- <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation (example below)
   - When a PatchAnnotation is selected, this switches back to the PatchTool
   - When the PatchTool is active, this switches back to the SelectTool
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded
-  - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
-  - **Ctrl + 2**: Make predictions using Object Detection model.
-  - **Ctrl + 3**: Make predictions using Instance Segmentation model.
-  - **Ctrl + 4**: Make predictions using FastSAM model.
-  - **Ctrl + 5**: Make predictions using YOLOE model.
-  - **Ctrl + 6**: Make predictions using AutoDistill model.
+  - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label.
+  - <kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model.
+  - <kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model.
+  - <kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using FastSAM model.
+  - <kbd>Ctrl</kbd> + <kbd>5</kbd>: Make predictions using YOLOE model.
+  - <kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using AutoDistill model.
 
 - **Tooltips**: Hover over tool buttons, image / annotation rows for information about them.
-
-<iframe src="keyboard-diagram.html" style="width: 100%; height: 750px; border: none; overflow: hidden;" scrolling="no"></iframe>
 
 
