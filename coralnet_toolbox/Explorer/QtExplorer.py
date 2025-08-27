@@ -1037,7 +1037,7 @@ class ExplorerWindow(QMainWindow):
                 
                 # Resize if target size is specified
                 if target_size and isinstance(target_size, (tuple, list)) and len(target_size) == 2:
-                    pil_img = pil_img.resize(target_size, resample=Image.Resampling.BILINEAR)
+                    pil_img = pil_img.resize(target_size, resample=2)  # 2 = PIL.Image.BILINEAR
                 
                 # Convert to the requested format
                 if format.lower() == 'pil':
