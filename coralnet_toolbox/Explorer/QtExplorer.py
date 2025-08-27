@@ -891,7 +891,7 @@ class ExplorerWindow(QMainWindow):
             feature_mode (str): Mode for feature extraction ("Embed Features" or "Predictions")
         
         Returns:
-            tuple: (model, image_size) or (None, None) if loading fails
+            ultralytics.yolo.engine.model.Model: The loaded YOLO model object, or None if loading fails.
         """
         current_run_key = (model_name, feature_mode)
         
@@ -949,7 +949,7 @@ class ExplorerWindow(QMainWindow):
             model_name (str): Name of the transformer model to use (e.g., "google/vit-base-patch16-224")
         
         Returns:
-            tuple: (feature_extractor, image_size) or (None, None) if loading fails
+            transformers.pipelines.base.Pipeline: The feature extractor pipeline object, or None if loading fails.
         """
         current_run_key = (model_name, "transformer")
         
@@ -983,7 +983,18 @@ class ExplorerWindow(QMainWindow):
                     task="image-feature-extraction",
                     device=device_num,
                 )
-                
+                try:
+                    image_processor = feature_extractor.image_processor
+                    if hasattr(image_processor, 'size'):
+                        # For older transformers versions
+                        self.imgsz = image_processor.size['height']
+                    else:
+                        # For newer transformers versions
+                        self.imgsz = image_processor.crop_size['height']
+                        
+                except Exception:
+                    self.imgsz = 128
+                                    
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
                 self.loaded_model = feature_extractor
@@ -1026,7 +1037,7 @@ class ExplorerWindow(QMainWindow):
                 
                 # Resize if target size is specified
                 if target_size and isinstance(target_size, (tuple, list)) and len(target_size) == 2:
-                    pil_img = pil_img.resize(target_size, resample=2)  # 2 = PIL.Image.BILINEAR
+                    pil_img = pil_img.resize(target_size, resample=Image.Resampling.BILINEAR)
                 
                 # Convert to the requested format
                 if format.lower() == 'pil':
