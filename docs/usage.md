@@ -145,7 +145,7 @@ The main window consists of several components:
 
 - **See Anything (YOLOE)**:
   - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image
-  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor reference other images and labels
+  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor, referencing other images' annotations
     - Select the `YOLOE` model, parameters, and load it
     - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)
     - Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)
@@ -303,7 +303,8 @@ The main window consists of several components:
   - Numbered indicators (1-5) show the rank of each prediction.
   - Hover over confidence bars to see a pointing hand cursor when selection is possible.
 
-### Secret Hotkeys
+### Hotkeys
+
 - **Escape**: Exit the program.
 - **Alt + Up/Down**: Cycle through images.
 - **Ctrl + W/A/S/D**: Cycle through labels.
@@ -323,3 +324,7 @@ The main window consists of several components:
   - **Ctrl + 6**: Make predictions using AutoDistill model.
 
 - **Tooltips**: Hover over tool buttons, image / annotation rows for information about them.
+
+<iframe src="keyboard-diagram.html" style="width: 100%; height: 750px; border: none; overflow: hidden;" scrolling="no"></iframe>
+
+
