@@ -2718,10 +2718,8 @@ class ExplorerWindow(QMainWindow):
             # Lazy import to avoid unnecessary dependencies
             from transformers import pipeline
             from transformers.image_utils import load_image
-            
-            # Initialize the feature extractor pipeline
-            if progress_bar:
-                progress_bar.set_busy_mode(f"Loading {model_name}...")
+            from huggingface_hub import snapshot_download
+            import os
             
             # Use the device selected by the user from QtMainWindow
             # Convert device string to appropriate format for transformers pipeline:
@@ -2737,11 +2735,37 @@ class ExplorerWindow(QMainWindow):
                 # Default to CPU for any other device string
                 device_num = -1
             
-            feature_extractor = pipeline(
-                model=model_name,
-                task="image-feature-extraction",
-                device=device_num
-            )
+            # Check if model needs to be downloaded first
+            if progress_bar:
+                progress_bar.set_busy_mode(f"Checking/downloading {model_name}...")
+                
+            try:
+                # Pre-download the model to show progress if it's not cached
+                # This will only download if the model isn't already cached locally
+                model_path = snapshot_download(repo_id=model_name, 
+                                             allow_patterns=["*.json", "*.bin", "*.safetensors", "*.txt"])
+                
+                if progress_bar:
+                    progress_bar.set_busy_mode(f"Loading {model_name}...")
+                    
+                # Initialize the feature extractor pipeline with local model path
+                feature_extractor = pipeline(
+                    model=model_path,
+                    task="image-feature-extraction",
+                    device=device_num
+                )
+                
+            except Exception as download_error:
+                logging.warning(f"Failed to pre-download model, trying direct pipeline load: {download_error}")
+                # Fallback to direct pipeline loading (original behavior)
+                if progress_bar:
+                    progress_bar.set_busy_mode(f"Loading {model_name}...")
+                    
+                feature_extractor = pipeline(
+                    model=model_name,
+                    task="image-feature-extraction",
+                    device=device_num
+                )
             
             features_list = []
             valid_data_items = []
