@@ -24,3 +24,5 @@ beautifulsoup4>=4.12.2
 webdriver_manager
 dill
 seaborn
+GPUtil
+psutil
