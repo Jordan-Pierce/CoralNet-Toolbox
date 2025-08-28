@@ -87,20 +87,21 @@
         .empty-key {
             visibility: hidden;
         }
+        
         /* Tooltip Styles */
         .hotkey .tooltiptext {
             visibility: hidden;
-            width: 300px;
+            width: 320px;
             background-color: #111827;
             color: #fff;
             text-align: left;
             border-radius: 6px;
-            padding: 10px;
+            padding: 12px;
             position: absolute;
-            z-index: 1;
+            z-index: 10;
             bottom: 125%;
             left: 50%;
-            margin-left: -150px; /* Use half of the width to center */
+            margin-left: -160px; /* Use half of the width to center */
             opacity: 0;
             transition: opacity 0.3s;
             font-size: 0.875rem;
@@ -137,8 +138,24 @@
         .hotkey .tooltiptext li:last-child {
             margin-bottom: 0;
         }
-
-        .hotkey .tooltiptext b {
+        
+        /* Heading style for tooltip categories */
+        .hotkey .tooltiptext > b {
+            display: block;
+            color: #9ca3af; /* Lighter gray for category titles */
+            font-weight: 600;
+            margin-top: 0.75rem;
+            margin-bottom: 0.25rem;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .hotkey .tooltiptext > b:first-child {
+            margin-top: 0;
+        }
+        
+        /* Style for key combos inside list items */
+        .hotkey .tooltiptext li b {
             color: #60a5fa; /* Light blue for key combo */
         }
 
@@ -217,28 +234,61 @@
                     <kbd>F11</kbd>
                     <kbd>F12</kbd>
                     <kbd class="hotkey">Delete
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Delete / Backspace</b>: Remove selected annotation(s).</li><li><b>Delete</b>: Cancel the current cutting line without making changes.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Annotation Editing</b>
+                            <ul><li><b>Ctrl + Delete</b>: Remove selected annotation(s).</li></ul>
+                            <b>Drawing</b>
+                            <ul><li><b>Delete</b>: Cancel the current cutting line.</li></ul>
+                        </span>
                     </kbd>
                 </div>
                 <div class="key-row">
                     <kbd>~<br>`</kbd>
                     <kbd class="hotkey">!<br>1
-                        <span class="tooltiptext"><ul><li><b>1-5</b>: Quickly select from the top 5 predictions in Confidence Window.</li><li><b>Ctrl + 1</b>: Make prediction on selected Patch annotation.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 1</b>: Predict on a selected Patch annotation.</li></ul>
+                             <b>Confidence Window</b>
+                            <ul><li><b>1-5</b>: Quickly select from the top 5 predictions.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">@<br>2
-                        <span class="tooltiptext"><ul><li><b>1-5</b>: Quickly select from the top 5 predictions in Confidence Window.</li><li><b>Ctrl + 2</b>: Make predictions using an Object Detection model.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 2</b>: Predict using an Object Detection model.</li></ul>
+                             <b>Confidence Window</b>
+                            <ul><li><b>1-5</b>: Quickly select from the top 5 predictions.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">#<br>3
-                        <span class="tooltiptext"><ul><li><b>1-5</b>: Quickly select from the top 5 predictions in Confidence Window.</li><li><b>Ctrl + 3</b>: Make predictions using an Instance Segmentation model.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 3</b>: Predict using an Instance Segmentation model.</li></ul>
+                             <b>Confidence Window</b>
+                            <ul><li><b>1-5</b>: Quickly select from the top 5 predictions.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">$<br>4
-                        <span class="tooltiptext"><ul><li><b>1-5</b>: Quickly select from the top 5 predictions in Confidence Window.</li><li><b>Ctrl + 4</b>: Make predictions using a FastSAM model.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 4</b>: Predict using a FastSAM model.</li></ul>
+                             <b>Confidence Window</b>
+                            <ul><li><b>1-5</b>: Quickly select from the top 5 predictions.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">%<br>5
-                        <span class="tooltiptext"><ul><li><b>1-5</b>: Quickly select from the top 5 predictions in Confidence Window.</li><li><b>Ctrl + 5</b>: Make predictions using a YOLOE model.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 5</b>: Predict using a YOLOE model.</li></ul>
+                             <b>Confidence Window</b>
+                            <ul><li><b>1-5</b>: Quickly select from the top 5 predictions.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">^<br>6
-                        <span class="tooltiptext"><ul><li><b>Ctrl + 6</b>: Make predictions using an AutoDistill model.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + 6</b>: Predict using an AutoDistill model.</li></ul>
+                        </span>
                     </kbd>
                     <kbd>&<br>7</kbd>
                     <kbd>*<br>8</kbd>
@@ -247,14 +297,25 @@
                     <kbd>_<br>-</kbd>
                     <kbd>+<br>=</kbd>
                     <kbd class="hotkey long-key">Backspace
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Backspace / Delete</b>: Remove selected annotation(s).</li><li><b>Backspace</b>: Cancel drawing (rectangle, polygon, work area).</li><li><b>Backspace</b>: Discard unfinalized predictions (SAM/YOLOE).</li><li><b>Backspace</b>: Cancel the current cutting line.</li><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the current image.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Annotation Editing</b>
+                             <ul><li><b>Ctrl + Backspace</b>: Remove selected annotation(s).</li></ul>
+                            <b>Drawing</b>
+                            <ul>
+                                <li><b>Backspace</b>: Cancel drawing (rectangle, polygon, work area).</li>
+                                <li><b>Backspace</b>: Discard unfinalized predictions (SAM/YOLOE).</li>
+                                <li><b>Backspace</b>: Cancel the current cutting line.</li>
+                            </ul>
+                             <b>Work Areas</b>
+                             <ul><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the image.</li></ul>
+                        </span>
                     </kbd>
                 </div>
                 <div class="key-row">
                     <kbd class="long-key">Tab</kbd>
                     <kbd>Q</kbd>
                     <kbd class="hotkey">W
-                        <span class="tooltiptext"><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
                     </kbd>
                     <kbd>E</kbd>
                     <kbd>R</kbd>
@@ -271,13 +332,13 @@
                 <div class="key-row">
                     <kbd class="long-key">Caps Lock</kbd>
                     <kbd class="hotkey">A
-                        <span class="tooltiptext"><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">S
-                        <span class="tooltiptext"><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">D
-                        <span class="tooltiptext"><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li></ul></span>
                     </kbd>
                     <kbd>F</kbd>
                     <kbd>G</kbd>
@@ -291,48 +352,153 @@
                 </div>
                 <div class="key-row">
                     <kbd class="hotkey long-key">Shift
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li><li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li><li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li><li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li><li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the current image.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Annotation Editing</b>
+                            <ul>
+                                <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
+                                <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
+                            </ul>
+                            <b>Selection</b>
+                            <ul>
+                                <li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li>
+                                <li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li>
+                            </ul>
+                            <b>Work Areas</b>
+                            <ul>
+                                <li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li>
+                                <li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the image.</li>
+                            </ul>
+                        </span>
                     </kbd>
                     <kbd>Z</kbd>
                     <kbd class="hotkey">X
-                        <span class="tooltiptext"><ul><li><b>Ctrl + X</b>: Cut a polygon, explode a multi-polygon, or subtract polygons.</li></ul></span>
+                        <span class="tooltiptext"><b>Annotation Editing</b><ul><li><b>Ctrl + X</b>: Cut a polygon, explode a multi-polygon, or subtract polygons.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">C
-                        <span class="tooltiptext"><ul><li><b>Ctrl + C</b>: Combine multiple selected annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Annotation Editing</b><ul><li><b>Ctrl + C</b>: Combine multiple selected annotations.</li></ul></span>
                     </kbd>
                     <kbd>V</kbd>
                     <kbd>B</kbd>
                     <kbd>N</kbd>
                     <kbd>M</kbd>
                     <kbd class="hotkey">&lt;<br>,
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + Shift + &lt;</b>: Select all annotations in the current image.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">&gt;<br>.
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations in the current image.</li></ul></span>
                     </kbd>
                     <kbd>?<br>/</kbd>
                     <kbd class="hotkey long-key">Shift
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li><li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li><li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li><li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li><li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the current image.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Annotation Editing</b>
+                            <ul>
+                                <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
+                                <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
+                            </ul>
+                            <b>Selection</b>
+                            <ul>
+                                <li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li>
+                                <li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li>
+                            </ul>
+                            <b>Work Areas</b>
+                            <ul>
+                                <li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li>
+                                <li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the image.</li>
+                            </ul>
+                        </span>
                     </kbd>
                 </div>
                 <div class="key-row">
                     <kbd class="hotkey long-key">Ctrl
-                         <span class="tooltiptext"><ul><li><b>Ctrl + Click</b>: Add/remove annotation to/from selection.</li><li><b>Ctrl + Drag</b>: Rectangle-select multiple annotations.</li><li><b>Ctrl + Mouse Wheel</b>: Change selected annotation size.</li><li><b>Ctrl + Backspace/Delete</b>: Remove selected annotation(s).</li><li><b>Ctrl + Space</b>: Confirm prediction for selected annotation.</li><li><b>Ctrl + X/C</b>: Cut/Combine annotations.</li><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li><li><b>Ctrl + Shift + &lt;/&gt;</b>: Select/Unselect all annotations.</li><li><b>Ctrl + Alt</b>: Switch tool / Create temporary work area.</li><li><b>Ctrl + 1-6</b>: Run various prediction models.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Selection</b>
+                            <ul>
+                                <li><b>+ Click</b>: Add/remove annotation to/from selection.</li>
+                                <li><b>+ Drag</b>: Rectangle-select multiple annotations.</li>
+                                <li><b>+ Shift + &lt;/&gt;</b>: Select/Unselect all annotations.</li>
+                            </ul>
+                            <b>Navigation</b>
+                             <ul>
+                                <li><b>+ Left/Right</b>: Cycle through annotations.</li>
+                                <li><b>+ W/A/S/D</b>: Cycle through labels.</li>
+                            </ul>
+                             <b>Annotation Editing</b>
+                             <ul>
+                                <li><b>+ Mouse Wheel</b>: Change selected annotation size.</li>
+                                <li><b>+ Backspace/Delete</b>: Remove selected annotation(s).</li>
+                                <li><b>+ X/C</b>: Cut/Combine annotations.</li>
+                            </ul>
+                             <b>Model Interaction</b>
+                             <ul>
+                                <li><b>+ Space</b>: Confirm prediction for selected annotation.</li>
+                                <li><b>+ 1-6</b>: Run various prediction models.</li>
+                            </ul>
+                             <b>Tool Control</b>
+                             <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
+                        </span>
                     </kbd>
                     <kbd>Win</kbd>
                     <kbd class="hotkey">Alt
-                        <span class="tooltiptext"><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li><li><b>Ctrl + Alt</b>: Switch from SelectTool to the active annotation tool.</li><li><b>Ctrl + Alt</b>: Create a temporary work area from the current view.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Navigation</b>
+                            <ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul>
+                            <b>Tool Control</b>
+                             <ul>
+                                <li><b>Ctrl + Alt</b>: Switch from SelectTool to the active annotation tool.</li>
+                                <li><b>Ctrl + Alt</b>: Create a temporary work area from the current view.</li>
+                            </ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey space-key">Space
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Space</b>: Confirm prediction for selected annotation.</li><li><b>Space</b>: Create a work area from the current view.</li><li><b>Space (SAM/YOLOE Tool)</b>: Set work area, run prediction, finalize, and exit.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Model Interaction</b>
+                            <ul><li><b>Ctrl + Space</b>: Confirm prediction for a selected annotation.</li></ul>
+                            <b>Work Areas</b>
+                            <ul><li><b>Space</b>: Create a work area from the current view.</li></ul>
+                             <b>SAM / YOLOE Tools</b>
+                             <ul><li><b>Space</b>: Set work area, run prediction, finalize, and exit.</li></ul>
+                        </span>
                     </kbd>
                     <kbd class="hotkey">Alt
-                        <span class="tooltiptext"><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li><li><b>Ctrl + Alt</b>: Switch from SelectTool to the active annotation tool.</li><li><b>Ctrl + Alt</b>: Create a temporary work area from the current view.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Navigation</b>
+                            <ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul>
+                            <b>Tool Control</b>
+                             <ul>
+                                <li><b>Ctrl + Alt</b>: Switch from SelectTool to the active annotation tool.</li>
+                                <li><b>Ctrl + Alt</b>: Create a temporary work area from the current view.</li>
+                            </ul>
+                        </span>
                     </kbd>
                     <kbd>Win</kbd>
                     <kbd>Menu</kbd>
                     <kbd class="hotkey long-key">Ctrl
-                         <span class="tooltiptext"><ul><li><b>Ctrl + Click</b>: Add/remove annotation to/from selection.</li><li><b>Ctrl + Drag</b>: Rectangle-select multiple annotations.</li><li><b>Ctrl + Mouse Wheel</b>: Change selected annotation size.</li><li><b>Ctrl + Backspace/Delete</b>: Remove selected annotation(s).</li><li><b>Ctrl + Space</b>: Confirm prediction for selected annotation.</li><li><b>Ctrl + X/C</b>: Cut/Combine annotations.</li><li><b>Ctrl + W/A/S/D</b>: Cycle through labels.</li><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li><li><b>Ctrl + Shift + &lt;/&gt;</b>: Select/Unselect all annotations.</li><li><b>Ctrl + Alt</b>: Switch tool / Create temporary work area.</li><li><b>Ctrl + 1-6</b>: Run various prediction models.</li></ul></span>
+                         <span class="tooltiptext">
+                            <b>Selection</b>
+                            <ul>
+                                <li><b>+ Click</b>: Add/remove annotation to/from selection.</li>
+                                <li><b>+ Drag</b>: Rectangle-select multiple annotations.</li>
+                                <li><b>+ Shift + &lt;/&gt;</b>: Select/Unselect all annotations.</li>
+                            </ul>
+                            <b>Navigation</b>
+                             <ul>
+                                <li><b>+ Left/Right</b>: Cycle through annotations.</li>
+                                <li><b>+ W/A/S/D</b>: Cycle through labels.</li>
+                            </ul>
+                             <b>Annotation Editing</b>
+                             <ul>
+                                <li><b>+ Mouse Wheel</b>: Change selected annotation size.</li>
+                                <li><b>+ Backspace/Delete</b>: Remove selected annotation(s).</li>
+                                <li><b>+ X/C</b>: Cut/Combine annotations.</li>
+                            </ul>
+                             <b>Model Interaction</b>
+                             <ul>
+                                <li><b>+ Space</b>: Confirm prediction for selected annotation.</li>
+                                <li><b>+ 1-6</b>: Run various prediction models.</li>
+                            </ul>
+                             <b>Tool Control</b>
+                             <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
+                        </span>
                     </kbd>
                 </div>
             </div>
@@ -340,32 +506,68 @@
                  <div class="mouse-container">
                     <div class="mouse">
                         <div class="mouse-left-button hotkey">
-                            <span class="tooltiptext"><ul><li><b>Click</b>: Select item, add annotation point, start/end box.</li><li><b>Drag</b>: Move selected annotation.</li><li><b>Double Click</b>: Load image (Image Window); Unselect all (Explorer).</li><li><b>Ctrl + Click</b>: Add/remove item to selection; Add positive point (SAM).</li><li><b>Ctrl + Drag</b>: Rectangle-select multiple annotations.</li><li><b>Shift + Click</b>: Select multiple adjacent items.</li></ul></span>
+                            <span class="tooltiptext">
+                                <b>Selection</b>
+                                <ul>
+                                    <li><b>Click</b>: Select an item.</li>
+                                    <li><b>Ctrl + Click</b>: Add/remove item to selection.</li>
+                                    <li><b>Shift + Click</b>: Select a range of items.</li>
+                                    <li><b>Ctrl + Drag</b>: Box-select multiple items.</li>
+                                </ul>
+                                <b>Drawing & Editing</b>
+                                <ul>
+                                    <li><b>Click</b>: Add point or start/end shape.</li>
+                                    <li><b>Drag</b>: Move a selected annotation.</li>
+                                    <li><b>Ctrl + Click</b>: Add positive point (SAM Tool).</li>
+                                </ul>
+                                <b>Window Specific</b>
+                                 <ul>
+                                    <li><b>Double Click</b>: Load image (Image Window).</li>
+                                </ul>
+                            </span>
                         </div>
                         <div class="mouse-scroll-wheel hotkey">
-                             <span class="tooltiptext"><ul><li><b>Scroll</b>: Zoom in/out in Annotation Window & Embedding Viewer.</li><li><b>Ctrl + Scroll</b>: Change selected annotation's size; Adjust patch preview size.</li><li><b>Ctrl + Shift + Scroll</b>: Change a polygon's vertex count.</li></ul></span>
+                             <span class="tooltiptext">
+                                <b>Navigation</b>
+                                <ul><li><b>Scroll</b>: Zoom view in/out.</li></ul>
+                                <b>Annotation Editing</b>
+                                <ul>
+                                    <li><b>Ctrl + Scroll</b>: Resize annotation or patch preview.</li>
+                                    <li><b>Ctrl + Shift + Scroll</b>: Change polygon vertex count.</li>
+                                </ul>
+                            </span>
                         </div>
                         <div class="mouse-right-button hotkey">
-                            <span class="tooltiptext"><ul><li><b>Click & Drag</b>: Pan the image in the Annotation Window.</li><li><b>Click</b>: Open context menu (Image Window).</li><li><b>Ctrl + Click</b>: Add negative point (SAM).</li><li><b>Ctrl + Right-Click</b>: Center & zoom view on annotation (Annotation Viewer).</li></ul></span>
+                            <span class="tooltiptext">
+                                <b>Navigation</b>
+                                <ul><li><b>Click & Drag</b>: Pan the main image viewer.</li></ul>
+                                <b>Context Actions</b>
+                                <ul>
+                                    <li><b>Click</b>: Open context menu (Image Window).</li>
+                                     <li><b>Ctrl + Click</b>: Center view on annotation (Annotation Viewer).</li>
+                                </ul>
+                                <b>Model Interaction</b>
+                                <ul><li><b>Ctrl + Click</b>: Add negative point (SAM Tool).</li></ul>
+                            </span>
                         </div>
                     </div>
                 </div>
                  <div class="key-row">
                     <kbd class="empty-key"></kbd>
                     <kbd class="hotkey">↑
-                        <span class="tooltiptext"><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul></span>
                     </kbd>
                     <kbd class="empty-key"></kbd>
                 </div>
                  <div class="key-row">
                     <kbd class="hotkey">←
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">↓
-                        <span class="tooltiptext"><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Alt + Up/Down</b>: Cycle through images.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">→
-                        <span class="tooltiptext"><ul><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li></ul></span>
+                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + Left/Right</b>: Cycle through annotations.</li></ul></span>
                     </kbd>
                 </div>
             </div>
