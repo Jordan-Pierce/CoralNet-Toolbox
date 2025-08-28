@@ -2,10 +2,11 @@ import psutil
 import GPUtil
 import collections
 import time
+import platform
 
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QMainWindow, QGridLayout, QWidget, QLabel
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 
 from coralnet_toolbox.Icons import get_icon
@@ -27,7 +28,7 @@ class SystemMonitor(QMainWindow):
         # --- Window Properties ---
         self.setWindowTitle("System Monitor")
         self.setWindowIcon(get_icon("system_monitor.png"))
-        self.setGeometry(100, 100, 1200, 900)
+        self.setGeometry(100, 100, 800, 900)
 
         # --- Data Storage ---
         # Use collections.deque for efficient, fixed-size data storage
@@ -77,67 +78,93 @@ class SystemMonitor(QMainWindow):
         layout.setVerticalSpacing(20)  # Add more vertical spacing between plots
 
         # --- Styling ---
-        pg.setConfigOption('background', '#1F1F1F')
-        pg.setConfigOption('foreground', 'w')
-        label_style = {"color": "#CCCCCC", "font-size": "14pt"}
-        title_style = {"color": "#FFFFFF", "font-size": "16pt", "font-weight": "bold"}
+        pg.setConfigOption('background', 'w')  # White background for graphs
+        pg.setConfigOption('foreground', '#000000')  # Black foreground elements in graphs
+        plot_label_style = {"color": "#000000", "font-size": "14pt"}  # Black text for plot labels
+        title_style = {"color": "#000000", "font-size": "16pt", "font-weight": "bold"}  # Black text
 
-        # --- Stats Labels ---
+        # --- Stats Labels - Only Hardware Info ---
         self.stats_widget = QWidget()
         stats_layout = QGridLayout(self.stats_widget)
+        stats_layout.setHorizontalSpacing(20)  # Add horizontal spacing between items
+        stats_layout.setContentsMargins(10, 10, 10, 20)  # Add margins around the widget
+
+        # Get system hardware information
+        cpu_info = platform.processor() or "CPU"
+        total_memory = round(psutil.virtual_memory().total / (1024**3), 1)
         
-        # CPU absolute values
-        self.cpu_label = QLabel("CPU: N/A")
-        self.cpu_label.setStyleSheet("color: white; font-size: 12pt;")
-        stats_layout.addWidget(self.cpu_label, 0, 0)
+        try:
+            gpus = GPUtil.getGPUs()
+            gpu_info = gpus[0].name if gpus else "No GPU detected"
+        except Exception:
+            gpu_info = "GPU information unavailable"
         
-        # Memory absolute values
-        self.mem_label = QLabel("Memory: N/A")
-        self.mem_label.setStyleSheet("color: white; font-size: 12pt;")
-        stats_layout.addWidget(self.mem_label, 0, 1)
+        # Hardware info labels with consistent styling and alignment
+        info_label_style = "color: black; font-size: 11pt; font-weight: bold; padding: 5px;"
+
+        self.cpu_info_label = QLabel(f"CPU: {cpu_info}")
+        self.cpu_info_label.setStyleSheet(info_label_style)
+        self.cpu_info_label.setAlignment(Qt.AlignCenter)
+        stats_layout.addWidget(self.cpu_info_label, 0, 0)
         
-        # GPU absolute values
-        self.gpu_label = QLabel("GPU: N/A")
-        self.gpu_label.setStyleSheet("color: white; font-size: 12pt;")
-        stats_layout.addWidget(self.gpu_label, 0, 2)
+        self.mem_info_label = QLabel(f"Memory: {total_memory:.1f} GB")
+        self.mem_info_label.setStyleSheet(info_label_style)
+        self.mem_info_label.setAlignment(Qt.AlignCenter)
+        stats_layout.addWidget(self.mem_info_label, 0, 1)
         
+        self.gpu_info_label = QLabel(f"GPU: {gpu_info}")
+        self.gpu_info_label.setStyleSheet(info_label_style)
+        self.gpu_info_label.setAlignment(Qt.AlignCenter)
+        stats_layout.addWidget(self.gpu_info_label, 0, 2)
+        
+        # Set column stretching to distribute space evenly
+        stats_layout.setColumnStretch(0, 1)
+        stats_layout.setColumnStretch(1, 1)
+        stats_layout.setColumnStretch(2, 1)
+
         layout.addWidget(self.stats_widget, 0, 0, 1, 2)
 
-        # Helper function to add bottom space for x-axis
-        def configure_plot(plot_widget):
+        # Helper function to add bottom space for x-axis and enable auto-range
+        def configure_plot(plot_widget, fixed_y_range=None):
             plot_widget.getPlotItem().getAxis('bottom').setHeight(40)
             plot_widget.getPlotItem().layout.setContentsMargins(10, 10, 10, 30)
+            
+            # If fixed_y_range is None, enable auto-ranging, otherwise set fixed range
+            if fixed_y_range is None:
+                plot_widget.enableAutoRange(axis='y')
+            else:
+                min_val, max_val = fixed_y_range
+                plot_widget.setYRange(min_val, max_val, padding=0.05)
+                
             return plot_widget
             
         # Helper function to create a value label for a plot
         def create_value_label(plot_widget, initial_text="Current: N/A"):
-            text_item = pg.TextItem(text=initial_text, color='w', anchor=(0, 0))
+            text_item = pg.TextItem(text=initial_text, color='#000000', anchor=(0, 0))
             font = QFont()
             font.setBold(True)
             text_item.setFont(font)
             plot_widget.addItem(text_item)
-            # Position at top-right corner with some margin
-            text_item.setPos(80, 10)
+            # Position at top-left corner with some margin
+            text_item.setPos(10, 10)
             return text_item
 
-        # --- CPU Plot ---
+        # --- CPU Plot --- (fixed 0-100 range)
         self.cpu_plot_widget = pg.PlotWidget()
         self.cpu_plot_widget.setTitle("CPU Usage (%)", **title_style)
-        self.cpu_plot_widget.setLabel("left", "Usage", units="%", **label_style)
-        self.cpu_plot_widget.setLabel("bottom", "Time (s)", **label_style)
-        self.cpu_plot_widget.setYRange(0, 100, padding=0.05)
+        self.cpu_plot_widget.setLabel("left", "Usage", units="%", **plot_label_style)
+        self.cpu_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.cpu_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.cpu_curve = self.cpu_plot_widget.plot(self.x_axis, list(self.cpu_data), pen=pg.mkPen('#00A3FF', width=3))
         self.cpu_value_label = create_value_label(self.cpu_plot_widget, "Current: 0%")
-        configure_plot(self.cpu_plot_widget)
+        configure_plot(self.cpu_plot_widget, fixed_y_range=(0, 100))
         layout.addWidget(self.cpu_plot_widget, 1, 0)
 
-        # --- Per-Core CPU Plot ---
+        # --- Per-Core CPU Plot --- (fixed 0-100 range)
         self.core_plot_widget = pg.PlotWidget()
         self.core_plot_widget.setTitle("Per-Core CPU Usage (%)", **title_style)
-        self.core_plot_widget.setLabel("left", "Usage", units="%", **label_style)
-        self.core_plot_widget.setLabel("bottom", "Time (s)", **label_style)
-        self.core_plot_widget.setYRange(0, 100, padding=0.05)
+        self.core_plot_widget.setLabel("left", "Usage", units="%", **plot_label_style)
+        self.core_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.core_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
         self.per_core_curves = []
@@ -147,98 +174,76 @@ class SystemMonitor(QMainWindow):
                 self.core_plot_widget.plot(
                     self.x_axis, 
                     list(self.per_core_data[i]), 
-                    pen=pg.mkPen(color, width=2), 
-                    name=f"Core {i}"
+                    pen=pg.mkPen(color, width=2)
                 )
             )
-        # Add a legend for core numbers
-        legend = self.core_plot_widget.addLegend()
-        for i, curve in enumerate(self.per_core_curves):
-            legend.addItem(curve, f"Core {i}")
-            
-        configure_plot(self.core_plot_widget)
+        configure_plot(self.core_plot_widget, fixed_y_range=(0, 100))
         layout.addWidget(self.core_plot_widget, 1, 1)
 
-        # --- Memory Plot ---
+        # --- Memory Plot --- (fixed 0-100 range)
         self.mem_plot_widget = pg.PlotWidget()
         self.mem_plot_widget.setTitle("Memory Usage (%)", **title_style)
-        self.mem_plot_widget.setLabel("left", "Usage", units="%", **label_style)
-        self.mem_plot_widget.setLabel("bottom", "Time (s)", **label_style)
-        self.mem_plot_widget.setYRange(0, 100, padding=0.05)
+        self.mem_plot_widget.setLabel("left", "Usage", units="%", **plot_label_style)
+        self.mem_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.mem_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.mem_curve = self.mem_plot_widget.plot(self.x_axis, list(self.mem_data), pen=pg.mkPen('#FF5733', width=3))
-        self.mem_value_label = create_value_label(self.mem_plot_widget, "Current: 0 GB")
-        configure_plot(self.mem_plot_widget)
+        self.mem_value_label = create_value_label(self.mem_plot_widget, "Current: 0%")
+        configure_plot(self.mem_plot_widget, fixed_y_range=(0, 100))
         layout.addWidget(self.mem_plot_widget, 2, 0)
 
-        # --- Disk I/O Plot ---
+        # --- Disk I/O Plot --- (auto-ranging)
         self.disk_plot_widget = pg.PlotWidget()
         self.disk_plot_widget.setTitle("Disk I/O (MB/s)", **title_style)
-        self.disk_plot_widget.setLabel("left", "Transfer Rate", units="MB/s", **label_style)
-        self.disk_plot_widget.setLabel("bottom", "Time (s)", **label_style)
+        self.disk_plot_widget.setLabel("left", "Transfer Rate", units="MB/s", **plot_label_style)
+        self.disk_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.disk_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
         self.disk_read_curve = self.disk_plot_widget.plot(
             self.x_axis, 
             list(self.disk_read_data), 
-            pen=pg.mkPen('#FFDD33', width=3), 
-            name="Read"
+            pen=pg.mkPen('#FFDD33', width=3)
         )
         self.disk_write_curve = self.disk_plot_widget.plot(
             self.x_axis, 
             list(self.disk_write_data), 
-            pen=pg.mkPen('#33DDFF', width=3), 
-            name="Write"
+            pen=pg.mkPen('#33DDFF', width=3)
         )
         
-        # Add a legend
-        legend = self.disk_plot_widget.addLegend()
-        legend.addItem(self.disk_read_curve, "Read")
-        legend.addItem(self.disk_write_curve, "Write")
-        
         self.disk_value_label = create_value_label(self.disk_plot_widget, "R: 0 MB/s, W: 0 MB/s")
-        configure_plot(self.disk_plot_widget)
+        configure_plot(self.disk_plot_widget, fixed_y_range=None)  # Auto-range
         layout.addWidget(self.disk_plot_widget, 2, 1)
 
-        # --- GPU Plot ---
+        # --- GPU Plot --- (fixed 0-100 range)
         self.gpu_plot_widget = pg.PlotWidget()
         self.gpu_plot_widget.setTitle("GPU Usage (%)", **title_style)
-        self.gpu_plot_widget.setLabel("left", "Usage", units="%", **label_style)
-        self.gpu_plot_widget.setLabel("bottom", "Time (s)", **label_style)
-        self.gpu_plot_widget.setYRange(0, 100, padding=0.05)
+        self.gpu_plot_widget.setLabel("left", "Usage", units="%", **plot_label_style)
+        self.gpu_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.gpu_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.gpu_curve = self.gpu_plot_widget.plot(self.x_axis, list(self.gpu_data), pen=pg.mkPen('#33FF57', width=3))
         self.gpu_value_label = create_value_label(self.gpu_plot_widget, "Current: 0%")
-        configure_plot(self.gpu_plot_widget)
+        configure_plot(self.gpu_plot_widget, fixed_y_range=(0, 100))
         layout.addWidget(self.gpu_plot_widget, 3, 0)
 
-        # --- Network Traffic Plot ---
+        # --- Network Traffic Plot --- (auto-ranging)
         self.net_plot_widget = pg.PlotWidget()
         self.net_plot_widget.setTitle("Network Traffic (MB/s)", **title_style)
-        self.net_plot_widget.setLabel("left", "Transfer Rate", units="MB/s", **label_style)
-        self.net_plot_widget.setLabel("bottom", "Time (s)", **label_style)
+        self.net_plot_widget.setLabel("left", "Transfer Rate", units="MB/s", **plot_label_style)
+        self.net_plot_widget.setLabel("bottom", "Time (s)", **plot_label_style)
         self.net_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
         self.net_sent_curve = self.net_plot_widget.plot(
             self.x_axis, 
             list(self.net_sent_data), 
-            pen=pg.mkPen('#FF33DD', width=3), 
-            name="Upload"
+            pen=pg.mkPen('#FF33DD', width=3)
         )
         self.net_recv_curve = self.net_plot_widget.plot(
             self.x_axis, 
             list(self.net_recv_data), 
-            pen=pg.mkPen('#DD33FF', width=3), 
-            name="Download"
+            pen=pg.mkPen('#DD33FF', width=3)
         )
         
-        # Add a legend
-        net_legend = self.net_plot_widget.addLegend()
-        net_legend.addItem(self.net_sent_curve, "Upload")
-        net_legend.addItem(self.net_recv_curve, "Download")
-        
         self.net_value_label = create_value_label(self.net_plot_widget, "Up: 0 MB/s, Down: 0 MB/s")
-        configure_plot(self.net_plot_widget)
+        configure_plot(self.net_plot_widget, fixed_y_range=None)  # Auto-range
         layout.addWidget(self.net_plot_widget, 3, 1)
 
     def update_plots(self):
@@ -249,73 +254,37 @@ class SystemMonitor(QMainWindow):
         curr_time = time.time()
         time_delta = curr_time - self.prev_time
         
-        # --- Absolute Value Updates ---
-        # CPU absolute values
-        cpu_count = psutil.cpu_count(logical=True)
-        cpu_freq = psutil.cpu_freq()
-        if cpu_freq:
-            cpu_freq_current = cpu_freq.current
-        else:
-            cpu_freq_current = 0
-        
-        # Memory absolute values (in GB)
-        mem_info = psutil.virtual_memory()
-        total_mem = mem_info.total / (1024**3)  # Convert to GB
-        used_mem = mem_info.used / (1024**3)
-        
-        # GPU info
-        try:
-            gpus = GPUtil.getGPUs()
-            if gpus:
-                gpu_name = gpus[0].name
-                gpu_temp = gpus[0].temperature
-                gpu_mem_total = gpus[0].memoryTotal / 1024  # Convert to GB
-                gpu_mem_used = gpus[0].memoryUsed / 1024  # Convert to GB
-                gpu_info_str = f"GPU: {gpu_name} | "
-                gpu_info_str += f"Temp: {gpu_temp}°C | "
-                gpu_info_str += f"Memory: {gpu_mem_used:.1f}/{gpu_mem_total:.1f} GB"
-            else:
-                gpu_info_str = "GPU: Not available"
-        except Exception:
-            gpu_info_str = "GPU: Not available"
-        
-        # Update info labels
-        self.cpu_label.setText(f"CPU: {cpu_count} cores | {cpu_freq_current:.0f} MHz")
-        self.mem_label.setText(f"Memory: {used_mem:.1f}/{total_mem:.1f} GB ({mem_info.percent:.1f}%)")
-        self.gpu_label.setText(gpu_info_str)
-        
-        # --- Get New Data ---
+        # --- Get CPU, Memory and GPU percentages ---
         # CPU usage
         cpu_percent = psutil.cpu_percent()
         self.cpu_data.append(cpu_percent)
-        self.cpu_value_label.setText(f"Current: {cpu_percent:.1f}% ({cpu_freq_current:.0f} MHz)")
+        self.cpu_value_label.setText(f"Current: {cpu_percent:.1f}%")
         
         # Per-core CPU usage
         per_core = psutil.cpu_percent(percpu=True)
         for i, usage in enumerate(per_core):
-            if i < len(self.per_core_data):  # Ensure we don't exceed array bounds
+            if i < len(self.per_core_data):
                 self.per_core_data[i].append(usage)
                 self.per_core_curves[i].setData(self.x_axis, list(self.per_core_data[i]))
 
         # Memory usage
         mem_percent = psutil.virtual_memory().percent
         self.mem_data.append(mem_percent)
-        self.mem_value_label.setText(f"Current: {mem_percent:.1f}% ({used_mem:.1f} GB)")
+        self.mem_value_label.setText(f"Current: {mem_percent:.1f}%")
 
-        # GPU usage (handle cases where no NVIDIA GPU is found)
+        # GPU usage
         try:
             gpus = GPUtil.getGPUs()
             if gpus:
-                gpu_percent = gpus[0].load * 100  # Get load of the first GPU
-                gpu_mem_used = gpus[0].memoryUsed / 1024  # Convert to GB
-                self.gpu_value_label.setText(f"Current: {gpu_percent:.1f}% ({gpu_mem_used:.1f} GB)")
+                gpu_percent = gpus[0].load * 100
+                self.gpu_value_label.setText(f"Current: {gpu_percent:.1f}%")
             else:
-                gpu_percent = 0  # Default to 0 if no GPU found
-                self.gpu_value_label.setText("Current: 0% (No GPU)")
+                gpu_percent = 0
+                self.gpu_value_label.setText("Current: 0%")
         except Exception:
-            gpu_percent = 0  # Default to 0 on error
-            self.gpu_value_label.setText("Current: 0% (No GPU)")
-        
+            gpu_percent = 0
+            self.gpu_value_label.setText("Current: 0%")
+
         self.gpu_data.append(gpu_percent)
         
         # Disk I/O
@@ -334,11 +303,9 @@ class SystemMonitor(QMainWindow):
             # Update the value label with current values
             self.disk_value_label.setText(f"R: {read_mb_per_sec:.1f} MB/s, W: {write_mb_per_sec:.1f} MB/s")
             
-            # Auto-scale Y-axis based on max value
-            max_io = max(max(self.disk_read_data), max(self.disk_write_data)) * 1.2
-            if max_io > 0:
-                self.disk_plot_widget.setYRange(0, max_io)
-        
+            # Let pyqtgraph handle auto-ranging automatically
+            self.disk_plot_widget.enableAutoRange(axis='y')
+    
         self.prev_disk_io = curr_disk_io
         
         # Network traffic
@@ -356,11 +323,9 @@ class SystemMonitor(QMainWindow):
             # Update the value label with current values
             self.net_value_label.setText(f"Up: {sent_mb_per_sec:.1f} MB/s, Down: {recv_mb_per_sec:.1f} MB/s")
             
-            # Auto-scale Y-axis based on max value
-            max_net = max(max(self.net_sent_data), max(self.net_recv_data)) * 1.2
-            if max_net > 0:
-                self.net_plot_widget.setYRange(0, max_net)
-        
+            # Let pyqtgraph handle auto-ranging automatically
+            self.net_plot_widget.enableAutoRange(axis='y')
+    
         self.prev_net_io = curr_net_io
 
         # --- Update Plot Curves ---
