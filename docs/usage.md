@@ -315,7 +315,7 @@ The main window consists of several components:
   - When a PatchAnnotation is selected, this switches back to the PatchTool
   - When the PatchTool is active, this switches back to the SelectTool
 
-- **Machine Learning, SAM, and AutoDistill**: After a model is loaded
+- **Machine Learning, SAM, See Anything (YOLOE), and AutoDistill**: After a model is loaded
   - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label.
   - <kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model.
   - <kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model.
