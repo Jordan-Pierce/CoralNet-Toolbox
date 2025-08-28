@@ -164,6 +164,7 @@
             height: 45%;
             position: absolute;
             top: 0;
+            cursor: pointer;
         }
 
         .mouse-left-button {
@@ -186,6 +187,7 @@
             left: 50%;
             transform: translateX(-50%);
             top: 1rem;
+            cursor: pointer;
         }
 
     </style>
@@ -337,9 +339,15 @@
             <div class="nav-keys">
                  <div class="mouse-container">
                     <div class="mouse">
-                        <div class="mouse-left-button"></div>
-                        <div class="mouse-scroll-wheel"></div>
-                        <div class="mouse-right-button"></div>
+                        <div class="mouse-left-button hotkey">
+                            <span class="tooltiptext"><ul><li><b>Click</b>: Select item, add annotation point, start/end box.</li><li><b>Drag</b>: Move selected annotation.</li><li><b>Double Click</b>: Load image (Image Window); Unselect all (Explorer).</li><li><b>Ctrl + Click</b>: Add/remove item to selection; Add positive point (SAM).</li><li><b>Ctrl + Drag</b>: Rectangle-select multiple annotations.</li><li><b>Shift + Click</b>: Select multiple adjacent items.</li></ul></span>
+                        </div>
+                        <div class="mouse-scroll-wheel hotkey">
+                             <span class="tooltiptext"><ul><li><b>Scroll</b>: Zoom in/out in Annotation Window & Embedding Viewer.</li><li><b>Ctrl + Scroll</b>: Change selected annotation's size; Adjust patch preview size.</li><li><b>Ctrl + Shift + Scroll</b>: Change a polygon's vertex count.</li></ul></span>
+                        </div>
+                        <div class="mouse-right-button hotkey">
+                            <span class="tooltiptext"><ul><li><b>Click & Drag</b>: Pan the image in the Annotation Window.</li><li><b>Click</b>: Open context menu (Image Window).</li><li><b>Ctrl + Click</b>: Add negative point (SAM).</li><li><b>Ctrl + Right-Click</b>: Center & zoom view on annotation (Annotation Viewer).</li></ul></span>
+                        </div>
                     </div>
                 </div>
                  <div class="key-row">
