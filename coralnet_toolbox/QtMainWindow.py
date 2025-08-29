@@ -9,6 +9,7 @@ import requests
 
 from packaging import version
 
+from PyQt5 import sip
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
@@ -2380,7 +2381,7 @@ class MainWindow(QMainWindow):
             
     def open_system_monitor_dialog(self):
         """Open the system system monitor window."""
-        if not self.system_monitor:
+        if self.system_monitor is None or sip.isdeleted(self.system_monitor):
             self.system_monitor = SystemMonitor()
         
         # Show the monitor window

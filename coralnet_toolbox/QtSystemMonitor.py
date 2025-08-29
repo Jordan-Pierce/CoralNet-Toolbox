@@ -47,7 +47,7 @@ class SystemMonitor(QMainWindow):
         self.disk_read_data = collections.deque([0] * self.history_size, maxlen=self.history_size)
         self.disk_write_data = collections.deque([0] * self.history_size, maxlen=self.history_size)
         self.prev_disk_io = psutil.disk_io_counters()
-        self.prev_time = time.time()
+        self.prev_time = time.monotonic()
         
         # Network traffic data
         self.net_sent_data = collections.deque([0] * self.history_size, maxlen=self.history_size)
@@ -251,7 +251,7 @@ class SystemMonitor(QMainWindow):
         Fetches new system stats and updates the plot data.
         This method is called by the QTimer.
         """
-        curr_time = time.time()
+        curr_time = time.monotonic()
         time_delta = curr_time - self.prev_time
         
         # --- Get CPU, Memory and GPU percentages ---
