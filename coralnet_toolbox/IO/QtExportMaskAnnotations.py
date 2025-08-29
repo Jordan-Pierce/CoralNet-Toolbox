@@ -31,6 +31,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class ExportMaskAnnotations(QDialog):
     def __init__(self, main_window):
         super().__init__(main_window)
@@ -41,38 +42,41 @@ class ExportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Export Masks")
-        self.resize(500, 250)
+        self.resize(1000, 750)
 
         self.selected_labels = []
         self.annotation_types = []
         self.class_mapping = {}
 
-    # Main horizontal layout for two columns
-    self.main_layout = QVBoxLayout(self)
+        # Main layout for the dialog
+        self.main_layout = QVBoxLayout(self)
 
-    # Two columns: left and right
-    columns_layout = QHBoxLayout()
-    left_col = QVBoxLayout()
-    right_col = QVBoxLayout()
+        # Top section - Add information, output, and mask format sections
+        top_section = QVBoxLayout()
+        self.setup_info_layout(parent_layout=top_section)
+        self.setup_output_layout(parent_layout=top_section)
+        self.setup_mask_format_layout(parent_layout=top_section)
+        self.main_layout.addLayout(top_section)
 
-    # Add left-side widgets
-    self.setup_info_layout(parent_layout=left_col)
-    self.setup_output_layout(parent_layout=left_col)
-    self.setup_image_selection_layout(parent_layout=left_col)
+        # Middle section - Two columns layout for annotations and labels
+        columns_layout = QHBoxLayout()
+        left_col = QVBoxLayout()
+        right_col = QVBoxLayout()
 
-    # Add right-side widgets
-    self.setup_annotation_layout(parent_layout=right_col)
-    self.setup_label_layout(parent_layout=right_col)
-    self.setup_mask_format_layout(parent_layout=right_col)
+        # Add bottom-left widgets - annotations and apply to
+        self.setup_annotation_layout(parent_layout=left_col)
+        self.setup_image_selection_layout(parent_layout=left_col)
 
-    # Add columns to the main columns_layout
-    columns_layout.addLayout(left_col, 1)
-    columns_layout.addLayout(right_col, 2)
+        # Add bottom-right widgets - label selection
+        self.setup_label_layout(parent_layout=right_col)
 
-    self.main_layout.addLayout(columns_layout)
+        # Add columns to the middle section layout
+        columns_layout.addLayout(left_col, 1)
+        columns_layout.addLayout(right_col, 2)
+        self.main_layout.addLayout(columns_layout)
 
-    # Buttons at the bottom-right
-    self.setup_buttons_layout(parent_layout=self.main_layout)
+        # Buttons at the bottom
+        self.setup_buttons_layout(parent_layout=self.main_layout)
 
     def showEvent(self, event):
         """Handle the show event"""
@@ -90,7 +94,6 @@ class ExportMaskAnnotations(QDialog):
         # Create a QLabel with more comprehensive explanatory text
         info_text = (
             "<b>Export Annotations to Masks</b><br><br>"
-            "This tool creates masks from your annotations for two common applications:<br><br>"
             "<b>Semantic Segmentation:</b> Create masks where each class has a different value "
             "(0 is typically reserved for background). These masks are used for training "
             "segmentation models or analyzing area coverage.<br><br>"
@@ -238,8 +241,7 @@ class ExportMaskAnnotations(QDialog):
         order_note = QLabel(
             "<b>Layer Order is Important:</b><br>"
             "Use the up/down buttons to change the rasterization order. "
-            "Labels lower in the list will be drawn on top of labels higher in the list.<br><br>"
-            "<b>Why this matters:</b><br>"
+            "Labels lower in the list will be drawn on top of labels higher in the list.<br>"
             "• For overlapping annotations, only the topmost class will appear in that area<br>"
             "• Example: If coral growing on rock is drawn after the rock layer, the coral will be visible<br>"
             "• For semantic segmentation training, proper ordering ensures accurate class boundaries<br>"
