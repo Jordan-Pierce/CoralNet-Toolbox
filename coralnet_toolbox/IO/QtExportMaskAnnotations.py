@@ -47,23 +47,32 @@ class ExportMaskAnnotations(QDialog):
         self.annotation_types = []
         self.class_mapping = {}
 
-        # Create the layout
-        self.layout = QVBoxLayout(self)
+    # Main horizontal layout for two columns
+    self.main_layout = QVBoxLayout(self)
 
-        # Setup the information layout
-        self.setup_info_layout()
-        # Setup the output directory and file format layout
-        self.setup_output_layout()
-        # Setup image selection layout
-        self.setup_image_selection_layout()
-        # Setup the annotation layout
-        self.setup_annotation_layout()
-        # Setup the label layout
-        self.setup_label_layout()
-        # Setup the mask format layout
-        self.setup_mask_format_layout()
-        # Setup the buttons layout
-        self.setup_buttons_layout()
+    # Two columns: left and right
+    columns_layout = QHBoxLayout()
+    left_col = QVBoxLayout()
+    right_col = QVBoxLayout()
+
+    # Add left-side widgets
+    self.setup_info_layout(parent_layout=left_col)
+    self.setup_output_layout(parent_layout=left_col)
+    self.setup_image_selection_layout(parent_layout=left_col)
+
+    # Add right-side widgets
+    self.setup_annotation_layout(parent_layout=right_col)
+    self.setup_label_layout(parent_layout=right_col)
+    self.setup_mask_format_layout(parent_layout=right_col)
+
+    # Add columns to the main columns_layout
+    columns_layout.addLayout(left_col, 1)
+    columns_layout.addLayout(right_col, 2)
+
+    self.main_layout.addLayout(columns_layout)
+
+    # Buttons at the bottom-right
+    self.setup_buttons_layout(parent_layout=self.main_layout)
 
     def showEvent(self, event):
         """Handle the show event"""
@@ -71,7 +80,7 @@ class ExportMaskAnnotations(QDialog):
         # Update the labels in the label selection list
         self.update_label_selection_list()
 
-    def setup_info_layout(self):
+    def setup_info_layout(self, parent_layout=None):
         """
         Set up the layout and widgets for the info layout.
         """
@@ -97,9 +106,12 @@ class ExportMaskAnnotations(QDialog):
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        if parent_layout is not None:
+            parent_layout.addWidget(group_box)
+        else:
+            self.layout.addWidget(group_box)
 
-    def setup_output_layout(self):
+    def setup_output_layout(self, parent_layout=None):
         """Setup the output directory and file format layout."""
         groupbox = QGroupBox("Output Directory and File Format")
         layout = QFormLayout()
@@ -118,9 +130,12 @@ class ExportMaskAnnotations(QDialog):
         layout.addRow("Folder Name:", self.output_name_edit)
 
         groupbox.setLayout(layout)
-        self.layout.addWidget(groupbox)
+        if parent_layout is not None:
+            parent_layout.addWidget(groupbox)
+        else:
+            self.layout.addWidget(groupbox)
 
-    def setup_image_selection_layout(self):
+    def setup_image_selection_layout(self, parent_layout=None):
         """Setup the image selection layout."""
         group_box = QGroupBox("Apply To")
         layout = QVBoxLayout()
@@ -143,9 +158,12 @@ class ExportMaskAnnotations(QDialog):
         self.apply_group.setExclusive(True)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        if parent_layout is not None:
+            parent_layout.addWidget(group_box)
+        else:
+            self.layout.addWidget(group_box)
 
-    def setup_annotation_layout(self):
+    def setup_annotation_layout(self, parent_layout=None):
         """Setup the annotation types layout."""
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
@@ -168,9 +186,12 @@ class ExportMaskAnnotations(QDialog):
         layout.addWidget(self.include_negative_samples_checkbox)
 
         groupbox.setLayout(layout)
-        self.layout.addWidget(groupbox)
+        if parent_layout is not None:
+            parent_layout.addWidget(groupbox)
+        else:
+            self.layout.addWidget(groupbox)
 
-    def setup_label_layout(self):
+    def setup_label_layout(self, parent_layout=None):
         """Setup the label selection and reordering layout."""
         groupbox = QGroupBox("Labels to Include / Rasterization Order")
         layout = QVBoxLayout()
@@ -229,7 +250,10 @@ class ExportMaskAnnotations(QDialog):
         layout.addWidget(order_note)
         
         groupbox.setLayout(layout)
-        self.layout.addWidget(groupbox)
+        if parent_layout is not None:
+            parent_layout.addWidget(groupbox)
+        else:
+            self.layout.addWidget(groupbox)
 
     def move_row_up(self):
         """Move the selected row up in the table."""
@@ -287,7 +311,7 @@ class ExportMaskAnnotations(QDialog):
         row2_item.setData(Qt.UserRole, row1_data)
         row2_spinbox.setValue(row1_value)
 
-    def setup_mask_format_layout(self):
+    def setup_mask_format_layout(self, parent_layout=None):
         """Setup the mask format layout."""
         groupbox = QGroupBox("Mask Format")
         layout = QFormLayout()
@@ -312,14 +336,18 @@ class ExportMaskAnnotations(QDialog):
         layout.addRow("", self.georef_note)
 
         groupbox.setLayout(layout)
-        self.layout.addWidget(groupbox)
+        if parent_layout is not None:
+            parent_layout.addWidget(groupbox)
+        else:
+            self.layout.addWidget(groupbox)
 
         # Initial update based on default format
         self.update_georef_availability()
 
-    def setup_buttons_layout(self):
-        """Setup the buttons layout."""
+    def setup_buttons_layout(self, parent_layout=None):
+        """Setup the buttons layout at the bottom-right."""
         button_layout = QHBoxLayout()
+        button_layout.addStretch(1)  # Push buttons to the right
 
         self.export_button = QPushButton("Export")
         self.export_button.clicked.connect(self.export_masks)
@@ -329,7 +357,10 @@ class ExportMaskAnnotations(QDialog):
         button_layout.addWidget(self.export_button)
         button_layout.addWidget(self.cancel_button)
 
-        self.layout.addLayout(button_layout)
+        if parent_layout is not None:
+            parent_layout.addLayout(button_layout)
+        else:
+            self.layout.addLayout(button_layout)
 
     def browse_output_dir(self):
         """Open a file dialog to select the output directory."""
@@ -479,8 +510,6 @@ class ExportMaskAnnotations(QDialog):
                                 "Please select at least one annotation type.")
             return
 
-        # --- MODIFIED SECTION START ---
-
         self.labels_to_render = []
         self.background_value = 0  # Default background value is 0
         used_mask_values = {}
@@ -548,9 +577,6 @@ class ExportMaskAnnotations(QDialog):
                 "index": mask_value
             }
             
-        # --- MODIFIED SECTION END ---
-
-        # ... (the rest of the function for creating directories and looping through images remains the same) ...
         output_dir = self.output_dir_edit.text()
         folder_name = self.output_name_edit.text().strip()
         file_format = self.file_format_combo.currentText()
