@@ -39,6 +39,7 @@ class ProgressBar(QDialog):
 
         # Create cancel button
         self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
 
         # Setup layout

@@ -9,6 +9,7 @@ import requests
 
 from packaging import version
 
+from PyQt5 import sip
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
@@ -18,6 +19,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QGroupBox)
 
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
+
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
@@ -114,6 +116,8 @@ from coralnet_toolbox.BreakTime import (
     BreakoutGame
 )
 
+from coralnet_toolbox.QtSystemMonitor import SystemMonitor
+
 from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.utilities import get_available_device
@@ -155,6 +159,7 @@ class MainWindow(QMainWindow):
         self.opaque_icon = get_icon("opaque.png")
         self.all_icon = get_icon("all.png")
         self.parameters_icon = get_icon("parameters.png")
+        self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
         self.remove_icon = get_icon("remove.png")
         self.edit_icon = get_icon("edit.png")
@@ -192,6 +197,8 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
+        
+        self.system_monitor = None
         
         self.explorer_window = None  # Initialized in open_explorer_window
 
@@ -659,9 +666,13 @@ class MainWindow(QMainWindow):
         self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
         self.help_menu.addAction(self.check_for_updates_action)
         # Usage
-        self.usage_action = QAction("Usage", self)
+        self.usage_action = QAction("Usage / Hotkeys", self)
         self.usage_action.triggered.connect(self.open_usage_dialog)
         self.help_menu.addAction(self.usage_action)
+        # System Monitor
+        self.system_monitor_action = QAction("System Monitor", self)
+        self.system_monitor_action.triggered.connect(self.open_system_monitor_dialog)
+        self.help_menu.addAction(self.system_monitor_action)
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
@@ -1028,9 +1039,9 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.annotation_window, 85)
         self.left_layout.addWidget(self.label_window, 15)
 
-        # Add widgets to right layout
-        self.right_layout.addWidget(self.image_window, 54)
-        self.right_layout.addWidget(self.confidence_window, 46)
+        # Adjust the right layout with new proportions
+        self.right_layout.addWidget(self.image_window, 54)  # 54% for image window
+        self.right_layout.addWidget(self.confidence_window, 46)  # 46% for confidence window
 
         # Add left and right layouts to main layout
         self.main_layout.addLayout(self.left_layout, 85)
@@ -1054,12 +1065,17 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure the explorer window is closed when the main window closes."""
+        """Ensure the explorer window and system monitor are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
             self.explorer_window.setParent(None)
             self.explorer_window.close()
+        
+        # Close the system monitor if it exists
+        if self.system_monitor:
+            self.system_monitor.close()
+            
         super().closeEvent(event)
 
     def changeEvent(self, event):
@@ -2362,6 +2378,16 @@ class MainWindow(QMainWindow):
             self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_system_monitor_dialog(self):
+        """Open the system system monitor window."""
+        if self.system_monitor is None or sip.isdeleted(self.system_monitor):
+            self.system_monitor = SystemMonitor()
+        
+        # Show the monitor window
+        self.system_monitor.show()
+        self.system_monitor.activateWindow()
+        self.system_monitor.raise_()
             
     def open_usage_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
