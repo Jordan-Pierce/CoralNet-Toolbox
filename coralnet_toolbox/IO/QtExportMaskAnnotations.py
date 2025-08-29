@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import ujson as json
@@ -12,9 +11,9 @@ from PIL import Image
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
                              QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
-                             QApplication, QMessageBox, QLabel, QProgressDialog,
-                             QGroupBox, QListWidget, QAbstractItemView, QListWidgetItem,
-                             QButtonGroup, QScrollArea, QWidget)
+                             QApplication, QMessageBox, QLabel, QTableWidgetItem,
+                             QButtonGroup, QWidget, QTableWidget, QHeaderView,
+                             QAbstractItemView, QSpinBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -25,11 +24,12 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
 
 class ExportMaskAnnotations(QDialog):
     def __init__(self, main_window):
@@ -40,7 +40,7 @@ class ExportMaskAnnotations(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Export Segmentation Masks")
+        self.setWindowTitle("Export Masks")
         self.resize(500, 250)
 
         self.selected_labels = []
@@ -78,9 +78,20 @@ class ExportMaskAnnotations(QDialog):
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
 
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Export Annotations to Segmentation Masks")
-
+        # Create a QLabel with more comprehensive explanatory text
+        info_text = (
+            "<b>Export Annotations to Masks</b><br><br>"
+            "This tool creates masks from your annotations for two common applications:<br><br>"
+            "<b>Semantic Segmentation:</b> Create masks where each class has a different value "
+            "(0 is typically reserved for background). These masks are used for training "
+            "segmentation models or analyzing area coverage.<br><br>"
+            "<b>Structure from Motion (SfM):</b> Create binary masks where 0 is background "
+            "(areas to be masked out during reconstruction) and 255 is for objects of interest "
+            "(areas to retain in reconstruction). These masks can be used with SfM software "
+            "like Metashape or COLMAP."
+        )
+        
+        info_label = QLabel(info_text)
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -160,32 +171,121 @@ class ExportMaskAnnotations(QDialog):
         self.layout.addWidget(groupbox)
 
     def setup_label_layout(self):
-        """Setup the label selection layout."""
-        groupbox = QGroupBox("Labels to Include")
+        """Setup the label selection and reordering layout."""
+        groupbox = QGroupBox("Labels to Include / Rasterization Order")
         layout = QVBoxLayout()
+        
+        # Create a standard QTableWidget
+        self.label_table = QTableWidget()
+        self.label_table.setColumnCount(3)
+        self.label_table.setHorizontalHeaderLabels(["Include", "Label Name", "Mask Value"])
+        self.label_table.setMinimumHeight(200)
+        self.label_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.label_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        
+        # Configure table properties for a better user experience
+        header = self.label_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        
+        # Add the table to the layout
+        layout.addWidget(self.label_table)
+        
+        # Create horizontal layout for buttons below the table (instead of on the right)
+        button_layout = QHBoxLayout()
+        
+        # Add stretch before buttons to push them toward the center
+        button_layout.addStretch(1)
 
-        # Label selection
-        self.label_selection_label = QLabel("Select Labels:")
-        layout.addWidget(self.label_selection_label)
+        self.move_up_button = QPushButton("▲ Move Up")
+        self.move_down_button = QPushButton("▼ Move Down")
 
-        # Create a scroll area for the labels
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
+        self.move_up_button.clicked.connect(self.move_row_up)
+        self.move_down_button.clicked.connect(self.move_row_down)
 
-        # Create a widget to hold the checkboxes
-        self.label_container = QWidget()
-        self.label_container.setMinimumHeight(200)  # Set a minimum height for the container
-        self.label_layout = QVBoxLayout(self.label_container)
-        self.label_layout.setSizeConstraint(QVBoxLayout.SetMinAndMaxSize)  # Respect widget sizes
+        button_layout.addWidget(self.move_up_button)
+        button_layout.addWidget(self.move_down_button)
 
-        scroll_area.setWidget(self.label_container)
-        layout.addWidget(scroll_area)
-
-        # Store the checkbox references
-        self.label_checkboxes = []
-
+        # Add another stretch after buttons with equal weight to center them
+        button_layout.addStretch(1)
+        
+        # Add the button layout to the main layout
+        layout.addLayout(button_layout)
+        
+        # Add a note about the rasterization order with more detailed explanation
+        order_note = QLabel(
+            "<b>Layer Order is Important:</b><br>"
+            "Use the up/down buttons to change the rasterization order. "
+            "Labels lower in the list will be drawn on top of labels higher in the list.<br><br>"
+            "<b>Why this matters:</b><br>"
+            "• For overlapping annotations, only the topmost class will appear in that area<br>"
+            "• Example: If coral growing on rock is drawn after the rock layer, the coral will be visible<br>"
+            "• For semantic segmentation training, proper ordering ensures accurate class boundaries<br>"
+            "• For SfM masks, important objects should be placed lower in the list to ensure they're included"
+        )
+        order_note.setStyleSheet("color: #666;")
+        order_note.setWordWrap(True)
+        layout.addWidget(order_note)
+        
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
+
+    def move_row_up(self):
+        """Move the selected row up in the table."""
+        current_row = self.label_table.currentRow()
+        if current_row <= 0:  # Can't move up if it's the first row
+            return
+            
+        # Remember selection
+        self.swap_rows(current_row, current_row - 1)
+        self.label_table.selectRow(current_row - 1)
+
+    def move_row_down(self):
+        """Move the selected row down in the table."""
+        current_row = self.label_table.currentRow()
+        if current_row >= self.label_table.rowCount() - 1 or current_row < 0:  # Can't move down if it's the last row
+            return
+            
+        # Remember selection
+        self.swap_rows(current_row, current_row + 1)
+        self.label_table.selectRow(current_row + 1)
+
+    def swap_rows(self, row1, row2):
+        """Swap two rows in the table."""
+        # Store data from row1
+        row1_checkbox = self.label_table.cellWidget(row1, 0).findChild(QCheckBox)
+        row1_checked = row1_checkbox.isChecked() if row1_checkbox else True
+        
+        row1_item = self.label_table.item(row1, 1)
+        row1_text = row1_item.text()
+        row1_data = row1_item.data(Qt.UserRole)
+        
+        row1_spinbox = self.label_table.cellWidget(row1, 2)
+        row1_value = row1_spinbox.value() if row1_spinbox else 0
+        
+        # Store data from row2
+        row2_checkbox = self.label_table.cellWidget(row2, 0).findChild(QCheckBox)
+        row2_checked = row2_checkbox.isChecked() if row2_checkbox else True
+        
+        row2_item = self.label_table.item(row2, 1)
+        row2_text = row2_item.text()
+        row2_data = row2_item.data(Qt.UserRole)
+        
+        row2_spinbox = self.label_table.cellWidget(row2, 2)
+        row2_value = row2_spinbox.value() if row2_spinbox else 0
+        
+        # Update row1 with row2 data
+        row1_checkbox.setChecked(row2_checked)
+        row1_item.setText(row2_text)
+        row1_item.setData(Qt.UserRole, row2_data)
+        row1_spinbox.setValue(row2_value)
+        
+        # Update row2 with row1 data
+        row2_checkbox.setChecked(row1_checked)
+        row2_item.setText(row1_text)
+        row2_item.setData(Qt.UserRole, row1_data)
+        row2_spinbox.setValue(row1_value)
 
     def setup_mask_format_layout(self):
         """Setup the mask format layout."""
@@ -241,20 +341,75 @@ class ExportMaskAnnotations(QDialog):
             self.output_dir_edit.setText(directory)
 
     def update_label_selection_list(self):
-        """Update the label selection list with labels from the label window."""
-        # Clear existing checkboxes
-        for checkbox in self.label_checkboxes:
-            self.label_layout.removeWidget(checkbox)
-            checkbox.deleteLater()
-        self.label_checkboxes = []
+        """Update the label selection table with labels from the label window."""
+        # Block signals to prevent them from firing during the update, which is more efficient
+        self.label_table.blockSignals(True)
+        self.label_table.setRowCount(0)  # Clear the table completely
+        
+        # Add background label first (row 0)
+        self.label_table.insertRow(0)
+        
+        # Create checkbox for background
+        checkbox = QCheckBox()
+        checkbox.setChecked(True)
+        cell_widget = QWidget()
+        layout = QHBoxLayout(cell_widget)
+        layout.addWidget(checkbox)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.label_table.setCellWidget(0, 0, cell_widget)
+        
+        # Create label item for background
+        label_item = QTableWidgetItem("Background")
+        label_item.setFlags(label_item.flags() & ~Qt.ItemIsEditable)
+        label_item.setData(Qt.UserRole, "Background")
+        self.label_table.setItem(0, 1, label_item)
+        
+        # Modified spinbox for background to allow editing and different values
+        spinbox = QSpinBox()
+        spinbox.setMinimum(0)
+        spinbox.setMaximum(255)  # Allow any value up to 255
+        spinbox.setValue(0)      # Default is still 0
+        spinbox.setEnabled(True) # Make it editable
+        self.label_table.setCellWidget(0, 2, spinbox)
 
-        # Create a checkbox for each label
-        for label in self.label_window.labels:
-            checkbox = QCheckBox(label.short_label_code)
-            checkbox.setChecked(True)  # Default to checked
-            checkbox.setProperty("label", label)  # Store the label object
-            self.label_checkboxes.append(checkbox)
-            self.label_layout.addWidget(checkbox)
+        # Add actual labels starting from row 1
+        for i, label in enumerate(self.label_window.labels):
+            row = i + 1  # +1 to account for background row
+            self.label_table.insertRow(row)
+
+            # --- Column 0: Include CheckBox ---
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            # We use a container widget to center the checkbox in the cell
+            cell_widget = QWidget()
+            layout = QHBoxLayout(cell_widget)
+            layout.addWidget(checkbox)
+            layout.setAlignment(Qt.AlignCenter)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.label_table.setCellWidget(row, 0, cell_widget)
+
+            # --- Column 1: Label Name ---
+            label_item = QTableWidgetItem(label.short_label_code)
+            # Make the label name read-only
+            label_item.setFlags(label_item.flags() & ~Qt.ItemIsEditable)
+            # Store only the label's short code as a string instead of the full object
+            label_item.setData(Qt.UserRole, label.short_label_code)
+            self.label_table.setItem(row, 1, label_item)
+
+            # --- Column 2: Mask Value SpinBox ---
+            spinbox = QSpinBox()
+            spinbox.setMinimum(0)    # Start at 1 since 0 is background
+            spinbox.setMaximum(255)  # The max value for an 8-bit mask (np.uint8)
+            spinbox.setValue(i + 1)  # Value equals index + 1
+            self.label_table.setCellWidget(row, 2, spinbox)
+
+        # Select the first row
+        if self.label_table.rowCount() > 0:
+            self.label_table.selectRow(0)
+            
+        # Re-enable signals after the table is populated
+        self.label_table.blockSignals(False)
 
     def update_georef_availability(self):
         """Update georeferencing checkbox availability based on file format"""
@@ -311,63 +466,110 @@ class ExportMaskAnnotations(QDialog):
             print(f"Warning: Failed to save class mapping to {mapping_file}")
 
     def export_masks(self):
-        """Export segmentation masks based on selected annotations and labels."""
-        # Validate inputs
+        """Export masks based on the configuration in the UI."""
         if not self.output_dir_edit.text():
-            QMessageBox.warning(self,
-                                "Missing Output Directory",
-                                "Please select an output directory.")
+            QMessageBox.warning(self, "Missing Output Directory", "Please select an output directory.")
             return
 
-        # Check if at least one annotation type is selected
-        if not any([self.patch_checkbox.isChecked(),
-                    self.rectangle_checkbox.isChecked(),
+        if not any([self.patch_checkbox.isChecked(), 
+                    self.rectangle_checkbox.isChecked(), 
                     self.polygon_checkbox.isChecked()]):
-            QMessageBox.warning(self,
-                                "No Annotation Type Selected",
+            QMessageBox.warning(self, 
+                                "No Annotation Type Selected", 
                                 "Please select at least one annotation type.")
             return
 
-        # Check for checked items
-        self.selected_labels = []
-        for checkbox in self.label_checkboxes:
-            if checkbox.isChecked():
-                self.selected_labels.append(checkbox.property("label"))
+        # --- MODIFIED SECTION START ---
 
-        # Check if at least one label is selected
-        if not self.selected_labels:
-            QMessageBox.warning(self,
-                                "No Labels Selected",
-                                "Please select at least one label.")
+        self.labels_to_render = []
+        self.background_value = 0  # Default background value is 0
+        used_mask_values = {}
+
+        # Parse the table to separate the background value from drawable labels
+        for i in range(self.label_table.rowCount()):
+            checkbox = self.label_table.cellWidget(i, 0).findChild(QCheckBox)
+            if not (checkbox and checkbox.isChecked()):
+                continue
+
+            label_item = self.label_table.item(i, 1)
+            label_code = label_item.data(Qt.UserRole)
+            spinbox = self.label_table.cellWidget(i, 2)
+            mask_value = spinbox.value()
+
+            # Track for duplicate value warnings later
+            if mask_value not in used_mask_values:
+                used_mask_values[mask_value] = []
+            used_mask_values[mask_value].append(label_code)
+
+            # Separate the special 'Background' case from real labels
+            if label_code == "Background":
+                self.background_value = mask_value
+                continue  # Go to the next row
+
+            # For all other rows, find the corresponding label object
+            label = next((l for l in self.label_window.labels if l.short_label_code == label_code), None)
+
+            if not label:
+                # This check now correctly ignores the "Background" code
+                QMessageBox.warning(self, "Label Not Found", f"Could not find a real label with code '{label_code}'.")
+                return
+
+            self.labels_to_render.append((label, mask_value))
+
+        # Check if at least one actual label is selected for export
+        if not self.labels_to_render:
+            QMessageBox.warning(self, "No Labels Selected", "Please select at least one drawable label to include.")
             return
 
+        # --- (Duplicate value warning logic remains the same) ---
+        duplicate_values = {value: labels for value, labels in used_mask_values.items() if len(labels) > 1}
+        if duplicate_values:
+            warning_message = "The following mask values are used by multiple labels:\n\n"
+            for value, labels in duplicate_values.items():
+                warning_message += f"Value {value}: {', '.join(labels)}\n"
+            warning_message += "\nThis may be intentional. Do you want to continue?"
+            reply = QMessageBox.warning(self, 
+                                        "Duplicate Mask Values", 
+                                        warning_message, QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+        
+        # Create the class mapping, correctly handling the background
+        self.class_mapping = {}
+        # Manually add the background entry if it was checked
+        background_checkbox = self.label_table.cellWidget(0, 0).findChild(QCheckBox)
+        if background_checkbox and background_checkbox.isChecked():
+            self.class_mapping["Background"] = {"label": "Background", "index": self.background_value}
+        
+        # Add the rest of the labels from the render list
+        for label, mask_value in self.labels_to_render:
+            self.class_mapping[label.short_label_code] = {
+                "label": label.to_dict(),
+                "index": mask_value
+            }
+            
+        # --- MODIFIED SECTION END ---
+
+        # ... (the rest of the function for creating directories and looping through images remains the same) ...
         output_dir = self.output_dir_edit.text()
         folder_name = self.output_name_edit.text().strip()
         file_format = self.file_format_combo.currentText()
 
-        # Ensure file_format starts with a dot
         if not file_format.startswith('.'):
             file_format = '.' + file_format
 
-        # Create output directory
         output_path = os.path.join(output_dir, folder_name)
         try:
             os.makedirs(output_path, exist_ok=True)
         except Exception as e:
-            QMessageBox.critical(self,
-                                 "Error Creating Directory",
-                                 f"Failed to create output directory: {str(e)}")
+            QMessageBox.critical(self, "Error Creating Directory", f"Failed to create output directory: {str(e)}")
             return
 
-        # Get the list of images to process
         images = self.get_selected_image_paths()
         if not images:
-            QMessageBox.warning(self,
-                                "No Images",
-                                "No images found in the project.")
+            QMessageBox.warning(self, "No Images", "No images found for processing.")
             return
 
-        # Collect annotation types to include
         self.annotation_types = []
         if self.patch_checkbox.isChecked():
             self.annotation_types.append(PatchAnnotation)
@@ -377,80 +579,26 @@ class ExportMaskAnnotations(QDialog):
             self.annotation_types.append(PolygonAnnotation)
             self.annotation_types.append(MultiPolygonAnnotation)
 
-        # Create class mapping
-        self.class_mapping = {}
-
-        for i, label in enumerate(self.selected_labels):
-            # Leave 0 for background
-            self.class_mapping[label.short_label_code] = {
-                "label": label.to_dict(),
-                "index": i + 1
-            }
-
-        # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, "Exporting Segmentation Masks")
+        progress_bar = ProgressBar(self.annotation_window, "Exporting Masks")
         progress_bar.show()
         progress_bar.start_progress(len(images))
 
         try:
             for image_path in images:
-                # Create mask for this image
                 self.create_mask_for_image(image_path, output_path, file_format)
                 progress_bar.update_progress()
 
-            # Write the class mapping to a JSON file
             self.export_class_mapping(output_path)
-
-            QMessageBox.information(self,
-                                    "Export Complete",
-                                    "Segmentation masks have been successfully exported")
+            QMessageBox.information(self, "Export Complete", "Masks have been successfully exported.")
             self.accept()
-
         except Exception as e:
-            QMessageBox.critical(self,
-                                 "Error Exporting Masks",
-                                 f"An error occurred: {str(e)}")
-
+            QMessageBox.critical(self, "Error Exporting Masks", f"An error occurred: {str(e)}")
         finally:
-            # Make cursor normal again
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
-
-    def get_annotations_for_image(self, image_path):
-        """Get annotations for a specific image."""
-        # Get the selected labels' short label codes
-        selected_labels = [label.short_label_code for label in self.selected_labels]
-
-        # Get all annotations for this image
-        annotations = []
-
-        for annotation in self.annotation_window.get_image_annotations(image_path):
-            # Check that the annotation is of the correct type
-            if not isinstance(annotation, tuple(self.annotation_types)):
-                continue
-
-            # Check that the annotation's label is in the selected labels
-            if annotation.label.short_label_code not in selected_labels:
-                continue
-
-            # Add the annotation to the list based on its type, if selected
-            if self.patch_checkbox.isChecked() and isinstance(annotation, PatchAnnotation):
-                annotations.append(annotation)
-
-            elif self.rectangle_checkbox.isChecked() and isinstance(annotation, RectangleAnnotation):
-                annotations.append(annotation)
-
-            elif self.polygon_checkbox.isChecked() and isinstance(annotation, PolygonAnnotation):
-                annotations.append(annotation)
-                
-            elif self.polygon_checkbox.isChecked() and isinstance(annotation, MultiPolygonAnnotation):
-                for polygon in annotation.polygons:
-                    annotations.append(polygon)
-
-        return annotations
 
     def get_image_metadata(self, image_path, file_format):
         """Get the dimensions of the image, and check for georeferencing."""
@@ -497,66 +645,32 @@ class ExportMaskAnnotations(QDialog):
 
         return height, width, has_georef, transform, crs
 
-    def draw_annotations_on_mask(self, mask, annotations):
-        """Draw annotations on the mask."""
-        # Draw each annotation on the mask
-        for annotation in annotations:
-            # Get the label index for the annotation
-            short_label_code = annotation.label.short_label_code
-            label_index = self.class_mapping[short_label_code]["index"]
-
-            # Draw the patch annotation
-            if isinstance(annotation, PatchAnnotation):
-                # Draw a filled rectangle
-                cv2.rectangle(mask,
-                              (int(annotation.center_xy.x() - annotation.annotation_size / 2),
-                               int(annotation.center_xy.y() - annotation.annotation_size / 2)),
-                              (int(annotation.center_xy.x() + annotation.annotation_size / 2),
-                               int(annotation.center_xy.y() + annotation.annotation_size / 2)),
-                              label_index, -1)  # -1 means filled
-
-            # Draw the rectangle annotation
-            elif isinstance(annotation, RectangleAnnotation):
-                # Draw a filled rectangle
-                cv2.rectangle(mask,
-                              (int(annotation.top_left.x()), int(annotation.top_left.y())),
-                              (int(annotation.bottom_right.x()), int(annotation.bottom_right.y())),
-                              label_index, -1)  # -1 means filled
-
-            # Draw the polygon annotation
-            elif isinstance(annotation, PolygonAnnotation):
-                # Draw a filled polygon
-                points = np.array([[p.x(), p.y()] for p in annotation.points]).astype(np.int32)
-                cv2.fillPoly(mask, [points], label_index)
-                
-            # Draw the multipolygon annotation
-            elif isinstance(annotation, MultiPolygonAnnotation):
-                for polygon in annotation.polygons:
-                    points = np.array([[p.x(), p.y()] for p in polygon.points]).astype(np.int32)
-                    cv2.fillPoly(mask, [points], label_index)
-
-        return mask
-
     def create_mask_for_image(self, image_path, output_path, file_format):
-        """Create a segmentation mask for a single image"""
-        # Get the annotations for this image
-        annotations = self.get_annotations_for_image(image_path)
-
-        if not annotations and not self.include_negative_samples_checkbox.isChecked():
-            return  # Skip images with no annotations if the user doesn't want negative samples
-
-        # Get the image dimensions, georeferencing
+        """Create a mask for a single image, respecting render order."""
         height, width, has_georef, transform, crs = self.get_image_metadata(image_path, file_format)
 
         if not height or not width:
             print(f"Could not get dimensions for image: {image_path}")
             return
 
-        # Create a blank mask
-        mask = np.zeros((height, width), dtype=np.uint8)
+        # CHANGED: Initialize the mask with the user-defined background value
+        mask = np.full((height, width), self.background_value, dtype=np.uint8)
+        has_annotations_on_image = False
 
-        # Draw annotations on the mask
-        mask = self.draw_annotations_on_mask(mask, annotations)
+        # Iterate through the ordered list created in export_masks
+        for label, mask_value in self.labels_to_render:
+
+            # Get annotations for this specific label
+            annotations = self.get_annotations_for_image(image_path, label)
+            
+            if annotations:
+                has_annotations_on_image = True
+                # Draw these annotations onto the mask with the specified value
+                mask = self.draw_annotations_on_mask(mask, annotations, mask_value)
+
+        # Skip saving if the image has no relevant annotations and we're not including negatives
+        if not has_annotations_on_image and not self.include_negative_samples_checkbox.isChecked():
+            return
 
         # Save the mask
         filename = os.path.basename(image_path)
@@ -564,27 +678,60 @@ class ExportMaskAnnotations(QDialog):
         mask_filename = f"{name_without_ext}{file_format}"
         mask_path = os.path.join(output_path, mask_filename)
 
-        # If we have georeferencing and we need to preserve it, use rasterio to save
         if has_georef and file_format.lower() == '.tif':
             with rasterio.open(
-                mask_path,
-                'w',
-                driver='GTiff',
-                height=height,
-                width=width,
-                count=1,
-                dtype=mask.dtype,
-                crs=crs,
-                transform=transform,
-                compress='lzw',
+                mask_path, 'w', driver='GTiff', height=height, width=width,
+                count=1, dtype=mask.dtype, crs=crs, transform=transform, compress='lzw',
             ) as dst:
                 dst.write(mask, 1)
         else:
-            # Use OpenCV as before for non-georeferenced images
             cv2.imwrite(mask_path, mask)
 
         if not os.path.exists(mask_path):
             print(f"Warning: Failed to save mask to {mask_path}")
+
+    def get_annotations_for_image(self, image_path, label):
+        """Get annotations for a specific image AND a specific label."""
+        annotations = []
+        label_code_to_match = label.short_label_code
+
+        for annotation in self.annotation_window.get_image_annotations(image_path):
+            # Check that the annotation's label matches the one we're looking for
+            if annotation.label.short_label_code != label_code_to_match:
+                continue
+            
+            # Check that the annotation is of a type the user wants to include
+            if not isinstance(annotation, tuple(self.annotation_types)):
+                continue
+
+            if isinstance(annotation, MultiPolygonAnnotation):
+                for polygon in annotation.polygons:
+                    annotations.append(polygon)
+            else:
+                annotations.append(annotation)
+                
+        return annotations
+
+    def draw_annotations_on_mask(self, mask, annotations, mask_value):
+        """Draw a list of annotations on the mask with a specific integer value."""
+        for annotation in annotations:
+            if isinstance(annotation, PatchAnnotation):
+                cv2.rectangle(mask,
+                              (int(annotation.center_xy.x() - annotation.annotation_size / 2),
+                               int(annotation.center_xy.y() - annotation.annotation_size / 2)),
+                              (int(annotation.center_xy.x() + annotation.annotation_size / 2),
+                               int(annotation.center_xy.y() + annotation.annotation_size / 2)),
+                              mask_value, -1)
+            elif isinstance(annotation, RectangleAnnotation):
+                cv2.rectangle(mask,
+                              (int(annotation.top_left.x()), int(annotation.top_left.y())),
+                              (int(annotation.bottom_right.x()), int(annotation.bottom_right.y())),
+                              mask_value, -1)
+            elif isinstance(annotation, PolygonAnnotation):
+                points = np.array([[p.x(), p.y()] for p in annotation.points]).astype(np.int32)
+                cv2.fillPoly(mask, [points], mask_value)
+
+        return mask
 
     def closeEvent(self, event):
         """Handle the close event."""
