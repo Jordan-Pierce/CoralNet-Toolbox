@@ -213,23 +213,29 @@ class RectangleAnnotation(Annotation):
         # Get the bounding box of the rectangle
         min_x, min_y, max_x, max_y = self.cropped_bbox
         
-        # Ensure min/max values are correctly ordered to avoid negative width/height
+        # Ensure min/max values are correctly ordered
         min_x, max_x = min(min_x, max_x), max(min_x, max_x)
         min_y, max_y = min(min_y, max_y), max(min_y, max_y)
-
+        
+        # Clamp values to image bounds
+        min_x = max(0, min(rasterio_src.width - 1, min_x))
+        min_y = max(0, min(rasterio_src.height - 1, min_y))
+        max_x = max(min_x + 1, min(rasterio_src.width, max_x))
+        max_y = max(min_y + 1, min(rasterio_src.height, max_y))
+        
         # Calculate the window for rasterio
         window = Window(
-            col_off=max(0, int(min_x)),
-            row_off=max(0, int(min_y)),
-            width=min(rasterio_src.width - int(min_x), int(max_x - min_x)),
-            height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
+            col_off=int(min_x),
+            row_off=int(min_y),
+            width=int(max_x - min_x),
+            height=int(max_y - min_y)
         )
-
+        
         # Convert rasterio to QImage
         q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
-
+        
         self.annotationUpdated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
@@ -282,13 +288,37 @@ class RectangleAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
 
-        # Update the size, graphic
-        width = (self.bottom_right.x() - self.top_left.x()) * scale_factor
-        height = (self.bottom_right.y() - self.top_left.y()) * scale_factor
-        self.top_left = QPointF(self.center_xy.x() - width / 2, self.center_xy.y() - height / 2)
-        self.bottom_right = QPointF(self.center_xy.x() + width / 2, self.center_xy.y() + height / 2)
+        # Calculate new dimensions
+        current_width = self.bottom_right.x() - self.top_left.x()
+        current_height = self.bottom_right.y() - self.top_left.y()
+        new_width = current_width * scale_factor
+        new_height = current_height * scale_factor
+        
+        # Calculate tentative new corners
+        new_left = self.center_xy.x() - new_width / 2
+        new_top = self.center_xy.y() - new_height / 2
+        new_right = self.center_xy.x() + new_width / 2
+        new_bottom = self.center_xy.y() + new_height / 2
+        
+        # Check if we're within valid image bounds (or use a reasonable padding)
+        # Assuming we have access to the image dimensions
+        if hasattr(self, 'rasterio_src'):
+            img_width = self.rasterio_src.width
+            img_height = self.rasterio_src.height
+            
+            # Apply reasonable bounds with some margin
+            padding = 10  # pixels
+            if new_left < -padding or new_top < -padding or new_right > img_width + padding or new_bottom > img_height + padding:
+                # Don't resize beyond these limits
+                return
+        
+        # Update the rectangle coordinates
+        self.top_left = QPointF(new_left, new_top)
+        self.bottom_right = QPointF(new_right, new_bottom)
+        
+        # Update graphics and notify
         self.update_graphics_item()
-        self.annotationUpdated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)
 
     def resize(self, handle: str, new_pos: QPointF):
         """Resize the annotation based on the handle and new position."""
