@@ -389,9 +389,12 @@ class ExportMaskAnnotations(QDialog):
         color = QColorDialog.getColor(self.rgb_background_color, self, "Select Background Color")
         if color.isValid():
             self.rgb_background_color = color
-            swatch_widget = self.label_table.cellWidget(0, 2)
-            if swatch_widget:
-                swatch_widget.setColor(color)
+            swatch_container = self.label_table.cellWidget(0, 2)
+            if swatch_container:
+                # Find the swatch inside the container
+                swatch = swatch_container.findChild(ClickableColorSwatchWidget)
+                if swatch:
+                    swatch.setColor(color)
 
     def create_centered_checkbox(self, checked=True):
         checkbox = QCheckBox()
@@ -582,24 +585,14 @@ class ExportMaskAnnotations(QDialog):
         if not has_annotations and not self.include_negative_samples_checkbox.isChecked():
             return
 
-        # Save mask
-        filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
+        # Always save as PNG
+        filename = f"{os.path.splitext(os.path.basename(image_path))[0]}.png"
         mask_path = os.path.join(output_path, filename)
-        
-        if has_georef and self.file_format.lower() == '.tif':
-            with rasterio.open(mask_path, 'w', driver='GTiff', height=height, width=width,
-                               count=mask.shape[2] if self.mask_mode == 'rgb' else 1, 
-                               dtype=mask.dtype, crs=crs, transform=transform, compress='lzw') as dst:
-                if self.mask_mode == 'rgb':
-                    # Rasterio expects channels-first format
-                    dst.write(mask.transpose(2, 0, 1))
-                else:
-                    dst.write(mask, 1)
-        else:
-            if self.mask_mode == 'rgb':
-                # OpenCV expects BGR, so convert from RGB
-                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(mask_path, mask)
+
+        if self.mask_mode == 'rgb':
+            # OpenCV expects BGR, so convert from RGB
+            mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(mask_path, mask)
 
     def export_metadata(self, output_path):
         if self.mask_mode == 'semantic':
@@ -731,5 +724,4 @@ class ExportMaskAnnotations(QDialog):
 
     def closeEvent(self, event):
         super().closeEvent(event)
-        
-        
+
