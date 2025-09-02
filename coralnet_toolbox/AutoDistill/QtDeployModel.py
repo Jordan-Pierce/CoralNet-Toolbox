@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Results import ResultsProcessor
+from coralnet_toolbox.Results import ConvertResults
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -66,6 +67,8 @@ class DeployModelDialog(QDialog):
         self.ontology = None
         self.class_mapping = {}
         self.ontology_pairs = []
+        
+        self.task = 'detect'
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -422,8 +425,6 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
         # Restore cursor
         QApplication.restoreOverrideCursor()
-        # Exit the dialog box
-        self.accept()
 
     def load_new_model(self, model_name):
         """
@@ -555,10 +556,14 @@ class DeployModelDialog(QDialog):
 
     def _update_results(self, results_processor, results, inputs, image_path):
         """Update the results to match Ultralytics format."""
-        return [results_processor.from_supervision(results,
-                                                   inputs,
-                                                   image_path,
-                                                   self.class_mapping)]
+        # Create a ConvertResults instance to handle the conversion
+        converter = ConvertResults()
+        
+        # Use the converter's from_supervision method
+        return converter.from_supervision(results,
+                                          inputs,
+                                          image_path,
+                                          self.class_mapping)
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""

@@ -67,8 +67,13 @@ class OWLViTModel(QtBaseModel):
                 continue
 
         if len(final_boxes) == 0:
-            return None
-
+            # Return an empty Detections object instead of None
+            return sv.Detections(
+                xyxy=np.empty((0, 4), dtype=float),
+                class_id=np.empty(0, dtype=int),
+                confidence=np.empty(0, dtype=float)
+            )
+        
         return sv.Detections(
             xyxy=np.array(final_boxes),
             class_id=np.array(final_labels),
