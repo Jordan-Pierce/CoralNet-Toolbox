@@ -30,21 +30,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def get_available_device():
-    """
-    Get available devices
-
-    :return:
-    """
-    devices = ['cpu',]
-    if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
-            devices.append(f'cuda:{i}')
-    if torch.backends.mps.is_available():
-        devices.append('mps')
-    return devices
-
-
 @lru_cache(maxsize=32)
 def rasterio_open(image_path):
     """

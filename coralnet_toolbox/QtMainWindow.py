@@ -9,6 +9,8 @@ import requests
 
 from packaging import version
 
+import torch
+
 from PyQt5 import sip
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
@@ -119,8 +121,6 @@ from coralnet_toolbox.BreakTime import (
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 
 from coralnet_toolbox.Icons import get_icon
-
-from coralnet_toolbox.utilities import get_available_device
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -839,15 +839,15 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.devices = get_available_device()
-        self.current_device_index = 0
-        self.device = self.devices[self.current_device_index]
+        self.devices = self.get_available_devices()
+        # Get the 'best' device available
+        self.device = self.devices[-1]
 
         if self.device.startswith('cuda'):
-            if len(self.devices) == 1:
-                device_icon = self.rabbit_icon
-            else:
+            if len([d for d in self.devices if d.endswith('cuda')]) > 1:
                 device_icon = self.rocket_icon
+            else:
+                device_icon = self.rabbit_icon
             device_tooltip = self.device
         elif self.device == 'mps':
             device_icon = self.apple_icon
@@ -1390,6 +1390,20 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+    
+    def get_available_devices(self):
+        """
+        Get available devices
+
+        :return:
+        """
+        devices = ['cpu',]
+        if torch.backends.mps.is_available():
+            devices.append('mps')
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                devices.append(f'cuda:{i}')
+        return devices
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
