@@ -143,6 +143,12 @@ class DeployPredictorDialog(QDialog):
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
         
+        # Output type dropdown (polygon or rectangle)
+        self.output_type_dropdown = QComboBox()
+        self.output_type_dropdown.addItems(["Polygon", "Rectangle"])
+        self.output_type_dropdown.setCurrentIndex(0)  # Default to Polygon
+        layout.addRow("Output Type:", self.output_type_dropdown)
+        
         # Allow holes dropdown
         self.allow_holes_dropdown = QComboBox()
         self.allow_holes_dropdown.addItems(["True", "False"])
@@ -245,6 +251,10 @@ class DeployPredictorDialog(QDialog):
     def get_allow_holes(self):
         """Return the current setting for allowing holes."""
         return self.allow_holes_dropdown.currentText() == "True"
+    
+    def get_output_type(self):
+        """Return the current setting for output type."""
+        return self.output_type_dropdown.currentText()
     
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
