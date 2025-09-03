@@ -113,7 +113,9 @@ class ConvertResults:
             # Ensure image is numpy array
             if isinstance(image, str):
                 # If image is a string (path), we can't proceed because we need the actual image data
-                raise ValueError(f"Expected image array, got path string: {image}. Please load the image before passing.")
+                raise ValueError(
+                    f"Expected image array, got path string: {image}. Please load the image before passing."
+                )
                 
             if torch.is_tensor(image):
                 image = image.cpu().numpy()
@@ -149,12 +151,8 @@ class ConvertResults:
             scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
             # Create Results object
-            results_list.append(Results(image,
-                        path=path,
-                        names=names,
-                        boxes=scaled_boxes, 
-                        masks=scaled_masks))
-        
+            results_list.append(Results(image, path=path, names=names, boxes=scaled_boxes, masks=scaled_masks))
+
         return results_list
     
 

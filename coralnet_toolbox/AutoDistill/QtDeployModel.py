@@ -496,7 +496,6 @@ class DeployModelDialog(QDialog):
                     continue
 
                 results = self._apply_model(inputs)
-                results = self._update_results(results_processor, results, inputs, image_path)
                 results = self._apply_sam(results, image_path)
                 self._process_results(results_processor, results, image_path)
 
@@ -540,7 +539,7 @@ class DeployModelDialog(QDialog):
             # Run the model on the input image
             results = self.loaded_model.predict(input_image)
             # Add the results to the list
-            results_list.append(results)
+            results_list.extend(results)
             # Update the progress bar
             progress_bar.update_progress()
             # Clean up GPU memory after each prediction
@@ -553,17 +552,6 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
         return results_list
-
-    def _update_results(self, results_processor, results, inputs, image_path):
-        """Update the results to match Ultralytics format."""
-        # Create a ConvertResults instance to handle the conversion
-        converter = ConvertResults()
-        
-        # Use the converter's from_supervision method
-        return converter.from_supervision(results,
-                                          inputs,
-                                          image_path,
-                                          self.class_mapping)
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""

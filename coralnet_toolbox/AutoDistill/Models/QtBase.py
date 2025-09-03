@@ -46,7 +46,7 @@ class QtBaseModel(DetectionBaseModel, ABC):
             confidence: Confidence threshold
             
         Returns:
-            sv.Detections object or None if no detections
+            Ultralytics Results object or None if no detections
         """
         pass
 
@@ -59,7 +59,7 @@ class QtBaseModel(DetectionBaseModel, ABC):
             confidence: Detection confidence threshold
             
         Returns:
-            Either a single sv.Detections object or a list of sv.Detections objects
+            List of Ultralytics Results objects
         """
         # Normalize input into a list of CV2-format images
         images = []
@@ -91,7 +91,7 @@ class QtBaseModel(DetectionBaseModel, ABC):
                 "Input must be an image path, a list of image paths, a numpy array, or a list/array of numpy arrays."
             )
 
-        detections_result = []
+        detection_results = []
         
         # Get text prompts and create class index mapper
         texts = self.ontology.prompts()
@@ -99,14 +99,9 @@ class QtBaseModel(DetectionBaseModel, ABC):
         
         # Loop through images
         for image in images:
-            # Process predictions for this image
-            detection = self._process_predictions(image, texts, class_idx_mapper, confidence)
-            if detection is not None:
-                detections_result.append(detection)
+            # Process predictions for this image - now returning Results directly
+            result = self._process_predictions(image, texts, class_idx_mapper, confidence)
+            detection_results.append(result)
 
-        # Return detections for a single image directly,
-        # or a list of detections if multiple images were passed
-        if len(detections_result) == 1:
-            return detections_result[0]
-        else:
-            return detections_result
+        # Return results as a list of results
+        return detection_results
