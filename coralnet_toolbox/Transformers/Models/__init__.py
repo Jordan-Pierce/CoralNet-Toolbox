@@ -1,4 +1,4 @@
-# coralnet_toolbox/AutoDistill/Models/__init__.py
+# coralnet_toolbox/Transformers/Models/__init__.py
 
 from .GroundingDINO import GroundingDINOModel
 from .OWLViT import OWLViTModel

@@ -80,7 +80,7 @@ The workflow leverages the unique capabilities of SAM, a powerful foundation mod
 
 This workflow effectively bridges the gap between low-effort bounding boxes and high-effort, high-value segmentation masks. It allows researchers to create rich instance segmentation datasets in a fraction of the time it would take with manual tracing alone. This practical application directly realizes the concept of using an object detection model's outputs (bounding boxes) to feed a segmentation model (SAM) to generate instance segmentations.
 
-The CoralNet-Toolbox integrates a suite of SAM variants to suit different needs, including the original, high-accuracy SAM; the faster FastSAM; and the lightweight MobileSAM, which is optimized for speed and use on systems with less computational power. Furthermore, the toolbox incorporates other advanced AI-assisted annotation tools like AutoDistill, which can leverage models like Grounding DINO and OWLViT to perform zero-shot object detection from natural language text prompts, further reducing the manual annotation burden.
+The CoralNet-Toolbox integrates a suite of SAM variants to suit different needs, including the original, high-accuracy SAM; the faster FastSAM; and the lightweight MobileSAM, which is optimized for speed and use on systems with less computational power. Furthermore, the toolbox incorporates other advanced AI-assisted annotation tools like Transformers, which can leverage models like Grounding DINO and OWLViT to perform zero-shot object detection from natural language text prompts, further reducing the manual annotation burden.
 
 ## Section 3: Training and Tuning Models with the Ultralytics Engine
 
@@ -134,7 +134,7 @@ Achieving the absolute best performance from a machine learning model often requ
 |----------|------------|-----------------|
 | Trainable Models | YOLOv8, YOLOv9, YOLOv10, etc. | Training custom models for Object Detection, Instance Segmentation, and Classification. |
 | Segment Anything Models | SAM, MobileSAM, FastSAM, EdgeSAM, RepViT-SAM, CoralSCOP | AI-assisted annotation; generating high-quality polygon masks from simple prompts (points or boxes). |
-| Visual Prompting / Zero-Shot Models | YOLOE (See Anything), AutoDistill (Grounding DINO, OWLViT) | AI-assisted annotation; detecting objects based on visual examples or text prompts without prior training. |
+| Visual Prompting / Zero-Shot Models | YOLOE (See Anything), Transformers (Grounding DINO, OWLViT) | AI-assisted annotation; detecting objects based on visual examples or text prompts without prior training. |
 
 ## Section 4: Strategic Model Selection: A Comparative Analysis for Instance Segmentation
 

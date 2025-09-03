@@ -103,9 +103,9 @@ from coralnet_toolbox.SeeAnything import (
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
-from coralnet_toolbox.AutoDistill import (
-    DeployModelDialog as AutoDistillDeployModelDialog,
-    BatchInferenceDialog as AutoDistillBatchInferenceDialog
+from coralnet_toolbox.Transformers import (
+    DeployModelDialog as TransformersDeployModelDialog,
+    BatchInferenceDialog as TransformersBatchInferenceDialog
 )
 
 from coralnet_toolbox.CoralNet import (
@@ -269,9 +269,9 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
 
-        # Create dialogs (AutoDistill)
-        self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
-        self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
+        # Create dialogs (Transformers)
+        self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
+        self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
 
         # Create dialogs (Tile)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
@@ -647,16 +647,16 @@ class MainWindow(QMainWindow):
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
         self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
 
-        # Auto Distill menu
-        self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
+        # Transformers menu
+        self.transformers_menu = self.menu_bar.addMenu("Transformers")
         # Deploy Model
-        self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
-        self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
-        self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
+        self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        self.transformers_menu.addAction(self.transformers_deploy_model_action)
         # Batch Inference
-        self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
-        self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
-        self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
+        self.transformers_batch_inference_action = QAction("Batch Inference", self)
+        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
+        self.transformers_menu.addAction(self.transformers_batch_inference_action)
 
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
@@ -2359,37 +2359,37 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_auto_distill_deploy_model_dialog(self):
-        """Open the AutoDistill Deploy Model dialog to deploy an AutoDistill model."""
+    def open_transformers_deploy_model_dialog(self):
+        """Open the Transformers Deploy Model dialog to deploy an Transformers model."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
-                                "AutoDistill Deploy Model",
+                                "Transformers Deploy Model",
                                 "No images are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.auto_distill_deploy_model_dialog.exec_()
+            self.transformers_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_auto_distill_batch_inference_dialog(self):
-        """Open the AutoDistill Batch Inference dialog to run batch inference with AutoDistill."""
+    def open_transformers_batch_inference_dialog(self):
+        """Open the Transformers Batch Inference dialog to run batch inference with Transformers."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
-                                "AutoDistill Batch Inference",
+                                "Transformers Batch Inference",
                                 "No images are present in the project.")
             return
 
-        if not self.auto_distill_deploy_model_dialog.loaded_model:
+        if not self.transformers_deploy_model_dialog.loaded_model:
             QMessageBox.warning(self,
-                                "AutoDistill Batch Inference",
+                                "Transformers Batch Inference",
                                 "Please deploy a model before running batch inference.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.auto_distill_batch_inference_dialog.exec_()
+            self.transformers_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             

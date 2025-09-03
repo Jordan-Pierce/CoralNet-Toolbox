@@ -4,11 +4,11 @@ import torch
 
 from ultralytics.engine.results import Results
 
-from transformers import OwlViTForObjectDetection, OwlViTProcessor
+from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
 from autodistill.detection import CaptionOntology
 
-from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
+from coralnet_toolbox.Transformers.Models.QtBase import QtBaseModel
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,28 +17,28 @@ from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
 
 
 @dataclass
-class OWLViTModel(QtBaseModel):
-    def __init__(self, ontology: CaptionOntology, device: str = "cpu"):
+class GroundingDINOModel(QtBaseModel):
+    def __init__(self, ontology: CaptionOntology, model="SwinB", device: str = "cpu"):
         super().__init__(ontology, device)
         
-        model_name = "google/owlvit-base-patch32"
-        self.processor = OwlViTProcessor.from_pretrained(model_name, use_fast=True)
-        self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(self.device)
+        if model == "SwinB":
+            model_name = "IDEA-Research/grounding-dino-base"
+        else:
+            model_name = "IDEA-Research/grounding-dino-tiny"
+            
+        self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
+        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_name).to(self.device)
 
     def _process_predictions(self, image, texts, confidence):
-        """
-        Process model predictions for a single image, converting directly
-        to an Ultralytics Results object without an intermediate Supervision object.
-        """
+        """Process model predictions for a single image."""
         inputs = self.processor(text=texts, images=image, return_tensors="pt").to(self.device)
         outputs = self.model(**inputs)
 
-        # Post-process the outputs to get detections.
-        # The confidence threshold is applied during this step.
-        results_processed = self.processor.post_process_object_detection(
+        results_processed = self.processor.post_process_grounded_object_detection(
             outputs,
+            inputs.input_ids,
             threshold=confidence,
-            target_sizes=[image.shape[:2]]
+            target_sizes=[image.shape[:2]],
         )[0]
 
         boxes = results_processed["boxes"]

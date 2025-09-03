@@ -4,11 +4,11 @@ import torch
 
 from ultralytics.engine.results import Results
 
-from transformers import AutoProcessor, OmDetTurboForObjectDetection
+from transformers import OwlViTForObjectDetection, OwlViTProcessor
 
 from autodistill.detection import CaptionOntology
 
-from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
+from coralnet_toolbox.Transformers.Models.QtBase import QtBaseModel
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,24 +17,28 @@ from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
 
 
 @dataclass
-class OmDetTurboModel(QtBaseModel):
+class OWLViTModel(QtBaseModel):
     def __init__(self, ontology: CaptionOntology, device: str = "cpu"):
         super().__init__(ontology, device)
         
-        model_name = "omlab/omdet-turbo-swin-tiny-hf"
-        self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
-        self.model = OmDetTurboForObjectDetection.from_pretrained(model_name).to(self.device)
+        model_name = "google/owlvit-base-patch32"
+        self.processor = OwlViTProcessor.from_pretrained(model_name, use_fast=True)
+        self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(self.device)
 
     def _process_predictions(self, image, texts, confidence):
-        """Process model predictions for a single image."""
+        """
+        Process model predictions for a single image, converting directly
+        to an Ultralytics Results object without an intermediate Supervision object.
+        """
         inputs = self.processor(text=texts, images=image, return_tensors="pt").to(self.device)
         outputs = self.model(**inputs)
 
-        results_processed = self.processor.post_process_grounded_object_detection(
+        # Post-process the outputs to get detections.
+        # The confidence threshold is applied during this step.
+        results_processed = self.processor.post_process_object_detection(
             outputs,
             threshold=confidence,
-            target_sizes=[image.shape[:2]],
-            text_labels=texts,
+            target_sizes=[image.shape[:2]]
         )[0]
 
         boxes = results_processed["boxes"]

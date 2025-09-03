@@ -135,7 +135,7 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 | **Framework** | **Models** | **Capability** |
 |:---:|:---:|:---:|
 | **YOLOE** | See Anything | Visual prompt detection |
-| **AutoDistill** | Grounding DINO • OWLViT • OmDetTurbo | Zero-shot detection |
+| **Transformers** | Grounding DINO • OWLViT • OmDetTurbo | Zero-shot detection |
 
 </div>
 

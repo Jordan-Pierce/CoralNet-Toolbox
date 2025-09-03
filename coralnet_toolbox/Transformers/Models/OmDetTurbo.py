@@ -4,11 +4,11 @@ import torch
 
 from ultralytics.engine.results import Results
 
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+from transformers import AutoProcessor, OmDetTurboForObjectDetection
 
 from autodistill.detection import CaptionOntology
 
-from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
+from coralnet_toolbox.Transformers.Models.QtBase import QtBaseModel
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,17 +17,13 @@ from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
 
 
 @dataclass
-class GroundingDINOModel(QtBaseModel):
-    def __init__(self, ontology: CaptionOntology, model="SwinB", device: str = "cpu"):
+class OmDetTurboModel(QtBaseModel):
+    def __init__(self, ontology: CaptionOntology, device: str = "cpu"):
         super().__init__(ontology, device)
         
-        if model == "SwinB":
-            model_name = "IDEA-Research/grounding-dino-base"
-        else:
-            model_name = "IDEA-Research/grounding-dino-tiny"
-            
+        model_name = "omlab/omdet-turbo-swin-tiny-hf"
         self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_name).to(self.device)
+        self.model = OmDetTurboForObjectDetection.from_pretrained(model_name).to(self.device)
 
     def _process_predictions(self, image, texts, confidence):
         """Process model predictions for a single image."""
@@ -36,9 +32,9 @@ class GroundingDINOModel(QtBaseModel):
 
         results_processed = self.processor.post_process_grounded_object_detection(
             outputs,
-            inputs.input_ids,
             threshold=confidence,
             target_sizes=[image.shape[:2]],
+            text_labels=texts,
         )[0]
 
         boxes = results_processed["boxes"]

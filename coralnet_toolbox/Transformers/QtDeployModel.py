@@ -34,13 +34,13 @@ from coralnet_toolbox.Icons import get_icon
 
 class DeployModelDialog(QDialog):
     """
-    Dialog for deploying and managing AutoDistill models.
+    Dialog for deploying and managing Transformers models.
     Allows users to load, configure, and deactivate models, as well as make predictions on images.
     """
 
     def __init__(self, main_window, parent=None):
         """
-        Initialize the AutoDistillDeployModelDialog.
+        Initialize the TransformersDeployModelDialog.
 
         Args:
             main_window: The main application window.
@@ -53,7 +53,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("AutoDistill Deploy Model (Ctrl + 6)")
+        self.setWindowTitle("Transformers Deploy Model (Ctrl + 6)")
         self.resize(400, 325)
 
         # Initialize variables
@@ -444,7 +444,7 @@ class DeployModelDialog(QDialog):
         torch.cuda.empty_cache()
         
         if "GroundingDINO" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.GroundingDINO import GroundingDINOModel
+            from coralnet_toolbox.Transformers.Models.GroundingDINO import GroundingDINOModel
 
             model = model_name.split("-")[1].strip()
             self.model_name = model_name
@@ -453,14 +453,14 @@ class DeployModelDialog(QDialog):
                                                    device=self.main_window.device)
 
         elif "OmDetTurbo" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.OmDetTurbo import OmDetTurboModel
+            from coralnet_toolbox.Transformers.Models.OmDetTurbo import OmDetTurboModel
 
             self.model_name = model_name
             self.loaded_model = OmDetTurboModel(ontology=self.ontology,
                                                 device=self.main_window.device)
 
         elif "OWLViT" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.OWLViT import OWLViTModel
+            from coralnet_toolbox.Transformers.Models.OWLViT import OWLViTModel
 
             self.model_name = model_name
             self.loaded_model = OWLViTModel(ontology=self.ontology,

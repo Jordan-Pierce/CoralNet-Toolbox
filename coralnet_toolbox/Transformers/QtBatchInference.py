@@ -13,14 +13,14 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout, 
 
 
 class BatchInferenceDialog(QDialog):
-    """Dialog for performing batch inference on images using AutoDistill."""
+    """Dialog for performing batch inference on images using Transformers."""
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-        self.deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
+        self.deploy_model_dialog = main_window.transformers_deploy_model_dialog
         self.loaded_models = self.deploy_model_dialog.loaded_model
 
         self.setWindowTitle("Batch Inference")
