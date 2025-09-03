@@ -585,14 +585,53 @@ class ExportMaskAnnotations(QDialog):
         if not has_annotations and not self.include_negative_samples_checkbox.isChecked():
             return
 
-        # Always save as PNG
-        filename = f"{os.path.splitext(os.path.basename(image_path))[0]}.png"
+        # Use the selected file format
+        filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
         mask_path = os.path.join(output_path, filename)
 
-        if self.mask_mode == 'rgb':
-            # OpenCV expects BGR, so convert from RGB
-            mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(mask_path, mask)
+        # Check if we need to preserve georeferencing
+        use_georef = has_georef and self.preserve_georef_checkbox.isChecked() and self.file_format.lower() == '.tif'
+        
+        if use_georef:
+            # Save with georeferencing using rasterio
+            if self.mask_mode == 'rgb':
+                # For RGB, we need to convert to the expected channel order for rasterio
+                # rasterio expects (bands, height, width) with R,G,B channel order
+                mask_transposed = np.transpose(mask, (2, 0, 1))
+                with rasterio.open(
+                    mask_path,
+                    'w',
+                    driver='GTiff',
+                    height=height,
+                    width=width,
+                    count=3,
+                    dtype=mask.dtype,
+                    crs=crs,
+                    transform=transform
+                ) as dst:
+                    dst.write(mask_transposed)
+            else:
+                # For single-channel masks
+                with rasterio.open(
+                    mask_path,
+                    'w',
+                    driver='GTiff',
+                    height=height,
+                    width=width,
+                    count=1,
+                    dtype=mask.dtype,
+                    crs=crs,
+                    transform=transform
+                ) as dst:
+                    dst.write(mask, 1)
+        else:
+            # Use cv2 for non-georeferenced output
+            if self.mask_mode == 'rgb':
+                # OpenCV expects BGR, so convert from RGB
+                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
+            
+            # Save using the appropriate format
+            cv2.imwrite(mask_path, mask)
 
     def export_metadata(self, output_path):
         if self.mask_mode == 'semantic':

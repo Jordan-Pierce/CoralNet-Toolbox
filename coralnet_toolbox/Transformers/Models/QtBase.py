@@ -98,7 +98,8 @@ class QtBaseModel(DetectionBaseModel, ABC):
             confidence: Detection confidence threshold.
             
         Returns:
-            A flat list of Ultralytics Results objects, one for each input image.
+            A list containing a single combined Ultralytics Results object with detections from all input images.
+            Returns an empty list if no detections are found in any image.
         """
         # Step 1: Normalize the input into a consistent list of images
         normalized_inputs = self._normalize_input(inputs)
