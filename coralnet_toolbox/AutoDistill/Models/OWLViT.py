@@ -9,7 +9,6 @@ from transformers import OwlViTForObjectDetection, OwlViTProcessor
 from autodistill.detection import CaptionOntology
 
 from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
-from coralnet_toolbox.Results.ConvertResults import ConvertResults
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -25,7 +24,6 @@ class OWLViTModel(QtBaseModel):
         model_name = "google/owlvit-base-patch32"
         self.processor = OwlViTProcessor.from_pretrained(model_name, use_fast=True)
         self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(self.device)
-        self.converter = ConvertResults()
 
     def _process_predictions(self, image, texts, confidence):
         """

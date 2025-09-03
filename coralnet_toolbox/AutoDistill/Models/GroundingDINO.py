@@ -1,19 +1,14 @@
 from dataclasses import dataclass
 
-import cv2
-import numpy as np
 import torch
 
-import supervision as sv
 from ultralytics.engine.results import Results
 
 from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
 from autodistill.detection import CaptionOntology
-from autodistill.helpers import load_image
 
 from coralnet_toolbox.AutoDistill.Models.QtBase import QtBaseModel
-from coralnet_toolbox.Results.ConvertResults import ConvertResults
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,63 +28,45 @@ class GroundingDINOModel(QtBaseModel):
             
         self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_name).to(self.device)
-        self.converter = ConvertResults()
 
-    def _process_predictions(self, image, texts, class_idx_mapper, confidence):
+    def _process_predictions(self, image, texts, confidence):
         """Process model predictions for a single image."""
         inputs = self.processor(text=texts, images=image, return_tensors="pt").to(self.device)
         outputs = self.model(**inputs)
 
-        results = self.processor.post_process_grounded_object_detection(
+        results_processed = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
             threshold=confidence,
             target_sizes=[image.shape[:2]],
         )[0]
 
-        boxes, scores, labels = (
-            results["boxes"],
-            results["scores"],
-            results["text_labels"],
-        )
-
-        final_boxes, final_scores, final_labels = [], [], []
-
-        for box, score, label in zip(boxes, scores, labels):
-            try:
-                box = box.detach().cpu().numpy().astype(int).tolist()
-                score = score.item()
-
-                # TODO AutoDistill only supports a single class right now
-                label = 0
-                # label_index = label.item()
-                # class_label = texts[label_index]
-                # label = class_idx_mapper[class_label]
-
-                # Filter by confidence
-                if score < confidence:
-                    continue
-
-                final_boxes.append(box)
-                final_scores.append(score)
-                final_labels.append(label)
-            
-            except Exception as e:
-                print(f"Error: Issue converting predictions:\n{e}")
-                continue
-
-        # Create supervision Detections object
-        detections = sv.Detections(
-            xyxy=np.array(final_boxes) if final_boxes else np.empty((0, 4), dtype=float),
-            class_id=np.array(final_labels) if final_labels else np.empty(0, dtype=int),
-            confidence=np.array(final_scores) if final_scores else np.empty(0, dtype=float)
-        )
+        boxes = results_processed["boxes"]
+        scores = results_processed["scores"]
         
-        # Convert to Ultralytics Results
-        names = {idx: text for idx, text in enumerate(self.ontology.classes())}
-        results = self.converter.from_supervision(detections, image, names=names)
-
-        if results[0].boxes:
-            return results
-        else:
+        # If no objects are detected, return an empty list to match the original behavior.
+        if scores.nelement() == 0:
             return []
+
+        # Per original logic, assign all detections to class_id 0.
+        # TODO: We are only supporting a single class right now
+        class_ids = torch.zeros(scores.shape[0], 1, device=self.device)
+
+        # Combine boxes, scores, and class_ids into the (N, 6) tensor format
+        # required by the Results object: [x1, y1, x2, y2, confidence, class_id]
+        combined_data = torch.cat([
+            boxes,
+            scores.unsqueeze(1),
+            class_ids
+        ], dim=1)
+
+        # Create the dictionary mapping class indices to class names.
+        names = {idx: text for idx, text in enumerate(self.ontology.classes())}
+        
+        # Create the Results object with a DETACHED tensor
+        result = Results(orig_img=image, 
+                         path=None, 
+                         names=names, 
+                         boxes=combined_data.detach().cpu())
+        
+        return result
