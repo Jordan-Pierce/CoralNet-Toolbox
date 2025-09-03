@@ -9,6 +9,8 @@ import requests
 
 from packaging import version
 
+import torch
+
 from PyQt5 import sip
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
@@ -101,9 +103,9 @@ from coralnet_toolbox.SeeAnything import (
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
-from coralnet_toolbox.AutoDistill import (
-    DeployModelDialog as AutoDistillDeployModelDialog,
-    BatchInferenceDialog as AutoDistillBatchInferenceDialog
+from coralnet_toolbox.Transformers import (
+    DeployModelDialog as TransformersDeployModelDialog,
+    BatchInferenceDialog as TransformersBatchInferenceDialog
 )
 
 from coralnet_toolbox.CoralNet import (
@@ -119,8 +121,6 @@ from coralnet_toolbox.BreakTime import (
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 
 from coralnet_toolbox.Icons import get_icon
-
-from coralnet_toolbox.utilities import get_available_device
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -269,9 +269,9 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
 
-        # Create dialogs (AutoDistill)
-        self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
-        self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
+        # Create dialogs (Transformers)
+        self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
+        self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
 
         # Create dialogs (Tile)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
@@ -608,6 +608,17 @@ class MainWindow(QMainWindow):
         self.ml_segment_video_inference_action = QAction("Segment", self)
         self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
         self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action) 
+        
+        # Transformers menu
+        self.transformers_menu = self.menu_bar.addMenu("Transformers")
+        # Deploy Model
+        self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        self.transformers_menu.addAction(self.transformers_deploy_model_action)
+        # Batch Inference
+        self.transformers_batch_inference_action = QAction("Batch Inference", self)
+        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
+        self.transformers_menu.addAction(self.transformers_batch_inference_action)
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
@@ -646,17 +657,6 @@ class MainWindow(QMainWindow):
         self.see_anything_batch_inference_action = QAction("Batch Inference", self)
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
         self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
-
-        # Auto Distill menu
-        self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
-        # Deploy Model
-        self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
-        self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
-        self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
-        # Batch Inference
-        self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
-        self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
-        self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
 
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
@@ -839,15 +839,15 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.devices = get_available_device()
-        self.current_device_index = 0
-        self.device = self.devices[self.current_device_index]
+        self.devices = self.get_available_devices()
+        # Get the 'best' device available
+        self.device = self.devices[-1]
 
         if self.device.startswith('cuda'):
-            if len(self.devices) == 1:
-                device_icon = self.rabbit_icon
-            else:
+            if len([d for d in self.devices if d.endswith('cuda')]) > 1:
                 device_icon = self.rocket_icon
+            else:
+                device_icon = self.rabbit_icon
             device_tooltip = self.device
         elif self.device == 'mps':
             device_icon = self.apple_icon
@@ -1390,6 +1390,20 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+    
+    def get_available_devices(self):
+        """
+        Get available devices
+
+        :return:
+        """
+        devices = ['cpu',]
+        if torch.backends.mps.is_available():
+            devices.append('mps')
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                devices.append(f'cuda:{i}')
+        return devices
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -2227,6 +2241,40 @@ class MainWindow(QMainWindow):
             self.segment_video_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_transformers_deploy_model_dialog(self):
+        """Open the Transformers Deploy Model dialog to deploy an Transformers model."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Transformers Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.transformers_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_transformers_batch_inference_dialog(self):
+        """Open the Transformers Batch Inference dialog to run batch inference with Transformers."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Transformers Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.transformers_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Transformers Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.transformers_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_predictor_dialog(self):
         """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
@@ -2342,40 +2390,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_auto_distill_deploy_model_dialog(self):
-        """Open the AutoDistill Deploy Model dialog to deploy an AutoDistill model."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "AutoDistill Deploy Model",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.auto_distill_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_auto_distill_batch_inference_dialog(self):
-        """Open the AutoDistill Batch Inference dialog to run batch inference with AutoDistill."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "AutoDistill Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.auto_distill_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "AutoDistill Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             

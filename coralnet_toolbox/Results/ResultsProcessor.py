@@ -1,6 +1,7 @@
 from PyQt5.QtCore import QPointF
 
 from torchvision.ops import nms
+from ultralytics.utils.nms import TorchNMS
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -62,7 +63,7 @@ class ResultsProcessor:
     def filter_by_iou(self, results):
         """Filter the results based on the IoU threshold."""
         try:
-            results = results[nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
+            results = results[TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
         except Exception as e:
             print(f"Warning: Failed to filter results by IoU\n{e}")
 
@@ -106,7 +107,7 @@ class ResultsProcessor:
         Get the indices of results that pass the IoU threshold.
         """
         try:
-            indices = nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh).tolist()
+            indices = TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh).tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for IoU\n{e}")
             indices = []

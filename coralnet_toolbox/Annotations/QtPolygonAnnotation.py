@@ -306,20 +306,30 @@ class PolygonAnnotation(Annotation):
         self.set_cropped_bbox()
         # Get the bounding box of the polygon
         min_x, min_y, max_x, max_y = self.cropped_bbox
-
+        
+        # Ensure min/max values are correctly ordered
+        min_x, max_x = min(min_x, max_x), max(min_x, max_x)
+        min_y, max_y = min(min_y, max_y), max(min_y, max_y)
+        
+        # Clamp values to image bounds
+        min_x = max(0, min(rasterio_src.width - 1, min_x))
+        min_y = max(0, min(rasterio_src.height - 1, min_y))
+        max_x = max(min_x + 1, min(rasterio_src.width, max_x))
+        max_y = max(min_y + 1, min(rasterio_src.height, max_y))
+    
         # Calculate the window for rasterio
         window = Window(
-            col_off=max(0, int(min_x)),
-            row_off=max(0, int(min_y)),
-            width=min(rasterio_src.width - int(min_x), int(max_x - min_x)),
-            height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
+            col_off=int(min_x),
+            row_off=int(min_y),
+            width=int(max_x - min_x),
+            height=int(max_y - min_y)
         )
-
+    
         # Convert rasterio to QImage
         q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
-
+    
         self.annotationUpdated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
@@ -423,7 +433,7 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
-    def update_annotation_size(self, delta: float):
+    def update_annotation_size(self, scale_factor: float):
         """
         Grow/shrink the polygon and its holes by scaling vertices radially from the centroid.
         """
@@ -433,18 +443,53 @@ class PolygonAnnotation(Annotation):
             return
 
         # 1. Use the true geometric centroid as the pivot for scaling.
-        # This is correctly calculated by the new set_centroid() method.
         centroid_x = self.center_xy.x()
         centroid_y = self.center_xy.y()
 
-        # 2. Determine the scale factor (this logic remains the same).
+        # 2. Determine the scale factor.
         step = 0.01  # Adjust for finer or coarser changes
-        if delta > 1.0:
+        if scale_factor > 1.0:
             scale = 1.0 + step
-        elif delta < 1.0:
+        elif scale_factor < 1.0:
             scale = 1.0 - step
         else:
             scale = 1.0
+        
+        # Check for image boundaries before scaling
+        if hasattr(self, 'rasterio_src'):
+            # Before scaling, check if any point would go beyond image boundaries
+            img_width = self.rasterio_src.width
+            img_height = self.rasterio_src.height
+            padding = 10  # pixels of padding
+            
+            # Check outer boundary points
+            for p in self.points:
+                dx = p.x() - centroid_x
+                dy = p.y() - centroid_y
+                new_x = centroid_x + dx * scale
+                new_y = centroid_y + dy * scale
+                
+                if new_x < -padding or \
+                   new_y < -padding or \
+                   new_x > img_width + padding or \
+                   new_y > img_height + padding:
+                    # Point would be out of bounds, don't scale
+                    return
+            
+            # Check holes points too
+            for hole in self.holes:
+                for p in hole:
+                    dx = p.x() - centroid_x
+                    dy = p.y() - centroid_y
+                    new_x = centroid_x + dx * scale
+                    new_y = centroid_y + dy * scale
+                    
+                    if new_x < -padding or \
+                       new_y < -padding or \
+                       new_x > img_width + padding or \
+                       new_y > img_height + padding:
+                        # Point would be out of bounds, don't scale
+                        return
 
         # 3. Scale the outer boundary points.
         new_points = []

@@ -36,7 +36,7 @@ class DeployGeneratorDialog(QDialog):
 
     def __init__(self, main_window, parent=None):
         """
-        Initialize the AutoDistillDeployModelDialog.
+        Initialize the DeployGeneratorDialog.
 
         Args:
             main_window: The main application window.
