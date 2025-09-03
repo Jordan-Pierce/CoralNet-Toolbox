@@ -4,8 +4,12 @@ from abc import ABC, abstractmethod
 import cv2
 import numpy as np
 
+from ultralytics.engine.results import Results
+
 from autodistill.detection import CaptionOntology, DetectionBaseModel
 from autodistill.helpers import load_image
+
+from coralnet_toolbox.Results import CombineResults
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -16,7 +20,7 @@ from autodistill.helpers import load_image
 @dataclass
 class QtBaseModel(DetectionBaseModel, ABC):
     """
-    Base class for CoralNet foundation models that provides common functionality for 
+    Base class for Transformer foundation models that provides common functionality for 
     handling inputs, processing image data, and formatting detection results.
     """
     ontology: CaptionOntology
@@ -34,74 +38,83 @@ class QtBaseModel(DetectionBaseModel, ABC):
         self.processor = None
         self.model = None
         
-    @abstractmethod
-    def _process_predictions(self, image, texts, class_idx_mapper, confidence):
+    def _normalize_input(self, input) -> list[np.ndarray]:
         """
-        Process model predictions for a single image.
-        
-        Args:
-            image: The input image
-            texts: The text prompts from the ontology
-            class_idx_mapper: Mapping from text labels to class indices
-            confidence: Confidence threshold
-            
-        Returns:
-            Ultralytics Results object or None if no detections
-        """
-        pass
+        Normalizes various input types into a list of images in CV2 (BGR) format.
 
-    def predict(self, input, confidence=0.01):
-        """
-        Run inference on input images.
-        
         Args:
-            input: Can be an image path, a list of image paths, a numpy array, or a list of numpy arrays
-            confidence: Detection confidence threshold
-            
+            input: Can be an image path, a list of paths, a numpy array, or a list of numpy arrays.
+
         Returns:
-            List of Ultralytics Results objects
+            A list of images, each as a numpy array in CV2 (BGR) format.
         """
-        # Normalize input into a list of CV2-format images
         images = []
         if isinstance(input, str):
             # Single image path
             images = [load_image(input, return_format="cv2")]
         elif isinstance(input, np.ndarray):
-            # Single image numpy array or batch of images
+            # Single image numpy array (RGB) or a batch of images (NHWC, RGB)
             if input.ndim == 3:
                 images = [cv2.cvtColor(input, cv2.COLOR_RGB2BGR)]
             elif input.ndim == 4:
-                for img in input:
-                    images.append(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                images = [cv2.cvtColor(img, cv2.COLOR_RGB2BGR) for img in input]
             else:
-                raise ValueError("Unsupported numpy array dimensions.")
+                raise ValueError(f"Unsupported numpy array dimensions: {input.ndim}")
         elif isinstance(input, list):
             if all(isinstance(i, str) for i in input):
                 # List of image paths
-                for path in input:
-                    images.append(load_image(path, return_format="cv2"))
+                images = [load_image(path, return_format="cv2") for path in input]
             elif all(isinstance(i, np.ndarray) for i in input):
-                # List of image arrays
-                for img in input:
-                    images.append(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                # List of image arrays (RGB)
+                images = [cv2.cvtColor(img, cv2.COLOR_RGB2BGR) for img in input]
             else:
-                raise ValueError("List must contain all image paths or all numpy arrays.")
+                raise ValueError("A list input must contain either all image paths or all numpy arrays.")
         else:
-            raise ValueError(
-                "Input must be an image path, a list of image paths, a numpy array, or a list/array of numpy arrays."
-            )
-
-        detection_results = []
+            raise TypeError(f"Unsupported input type: {type(input)}")
         
-        # Get text prompts and create class index mapper
+        return images
+        
+    @abstractmethod
+    def _process_predictions(self, image: np.ndarray, texts: list[str], confidence: float) -> Results:
+        """
+        Process model predictions for a single image.
+        
+        Args:
+            image: The input image in CV2 (BGR) format.
+            texts: The text prompts from the ontology.
+            confidence: Confidence threshold.
+            
+        Returns:
+            A single Ultralytics Results object, which may be empty if no detections are found.
+        """
+        pass
+
+    def predict(self, inputs, confidence=0.01) -> list[Results]:
+        """
+        Run inference on input images.
+        
+        Args:
+            inputs: Can be an image path, a list of image paths, a numpy array, or a list of numpy arrays.
+            confidence: Detection confidence threshold.
+            
+        Returns:
+            A flat list of Ultralytics Results objects, one for each input image.
+        """
+        # Step 1: Normalize the input into a consistent list of images
+        normalized_inputs = self._normalize_input(inputs)
+
+        # Step 2: Prepare for inference
+        results = []
         texts = self.ontology.prompts()
-        class_idx_mapper = {label: idx for idx, label in enumerate(texts)}
         
-        # Loop through images
-        for image in images:
-            # Process predictions for this image - now returning Results directly
-            result = self._process_predictions(image, texts, class_idx_mapper, confidence)
-            detection_results.append(result)
+        # Step 3: Loop through images and process predictions
+        for normalized_input in normalized_inputs:
+            result = self._process_predictions(normalized_input, texts, confidence)
+            if result:
+                results.append(result)
+        
+        if len(results):
+            # Combine the results into one, then wrap in a list
+            results = CombineResults().combine_results(results)
 
-        # Return results as a list of results
-        return detection_results
+        return [results] if results else []

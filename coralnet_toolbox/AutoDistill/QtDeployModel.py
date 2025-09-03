@@ -434,6 +434,15 @@ class DeployModelDialog(QDialog):
             model_name: Name of the model to load.
             uncertainty_thresh: Threshold for uncertainty.
         """
+        
+        # Clear the model
+        self.loaded_model = None
+        self.model_name = None
+        
+        # Clear cache
+        gc.collect()
+        torch.cuda.empty_cache()
+        
         if "GroundingDINO" in model_name:
             from coralnet_toolbox.AutoDistill.Models.GroundingDINO import GroundingDINOModel
 
@@ -539,7 +548,7 @@ class DeployModelDialog(QDialog):
             # Run the model on the input image
             results = self.loaded_model.predict(input_image)
             # Add the results to the list
-            results_list.extend(results)
+            results_list.append(results)
             # Update the progress bar
             progress_bar.update_progress()
             # Clean up GPU memory after each prediction
