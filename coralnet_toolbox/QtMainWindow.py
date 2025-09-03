@@ -608,6 +608,17 @@ class MainWindow(QMainWindow):
         self.ml_segment_video_inference_action = QAction("Segment", self)
         self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
         self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action) 
+        
+        # Transformers menu
+        self.transformers_menu = self.menu_bar.addMenu("Transformers")
+        # Deploy Model
+        self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        self.transformers_menu.addAction(self.transformers_deploy_model_action)
+        # Batch Inference
+        self.transformers_batch_inference_action = QAction("Batch Inference", self)
+        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
+        self.transformers_menu.addAction(self.transformers_batch_inference_action)
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
@@ -646,17 +657,6 @@ class MainWindow(QMainWindow):
         self.see_anything_batch_inference_action = QAction("Batch Inference", self)
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
         self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
-
-        # Transformers menu
-        self.transformers_menu = self.menu_bar.addMenu("Transformers")
-        # Deploy Model
-        self.transformers_deploy_model_action = QAction("Deploy Model", self)
-        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
-        self.transformers_menu.addAction(self.transformers_deploy_model_action)
-        # Batch Inference
-        self.transformers_batch_inference_action = QAction("Batch Inference", self)
-        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
-        self.transformers_menu.addAction(self.transformers_batch_inference_action)
 
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
@@ -2241,6 +2241,40 @@ class MainWindow(QMainWindow):
             self.segment_video_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_transformers_deploy_model_dialog(self):
+        """Open the Transformers Deploy Model dialog to deploy an Transformers model."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Transformers Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.transformers_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_transformers_batch_inference_dialog(self):
+        """Open the Transformers Batch Inference dialog to run batch inference with Transformers."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Transformers Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.transformers_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Transformers Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.transformers_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_predictor_dialog(self):
         """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
@@ -2356,40 +2390,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_transformers_deploy_model_dialog(self):
-        """Open the Transformers Deploy Model dialog to deploy an Transformers model."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Transformers Deploy Model",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.transformers_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_transformers_batch_inference_dialog(self):
-        """Open the Transformers Batch Inference dialog to run batch inference with Transformers."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Transformers Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.transformers_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Transformers Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.transformers_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
