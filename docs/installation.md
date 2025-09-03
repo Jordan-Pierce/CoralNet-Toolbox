@@ -36,18 +36,18 @@ pip install coralnet-toolbox
 
 ### ⚡ CUDA
 
-If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you
+If you have `CUDA`, you can install the versions of `cuda-nvcc` and `cudatoolkit` that you
 need, and then install the corresponding versions of `torch` and `torchvision`. Below is an example of how that can be
-done using `CUDA` version 11.8:
+done using `CUDA` version 12.9:
 ```bash
 # cmd
 
-# Example for CUDA 11.8
-conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
+# Example for CUDA 12.9
+conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
+conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
 
-# Example for torch w/ CUDA 11.8
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+# Example for torch w/ CUDA 12.9
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129 --upgrade
 ```
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the
@@ -108,10 +108,10 @@ cd CoralNet-Toolbox
 pip install -e .
 
 # Install CUDA requirements (if applicable)
-conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
+conda install nvidia/label/cuda-12.9.0::cuda-nvcc -y
+conda install nvidia/label/cuda-12.9.0::cuda-toolkit -y
 
-# Example for torch w/ CUDA 11.8
+# Example for torch w/ CUDA 12.9
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
 
 # Run

@@ -233,12 +233,9 @@ uv pip install coralnet-toolbox
 ### 🚀 **Step 3: GPU Acceleration (Optional)**
 For CUDA-enabled systems:
 ```bash
-# Example for CUDA 11.8
-conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
-
+# Example for CUDA 12.9
 # Install PyTorch with CUDA support
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129 --upgrade
 ```
 
 ### 🏃‍♂️ **Step 4: Launch**
