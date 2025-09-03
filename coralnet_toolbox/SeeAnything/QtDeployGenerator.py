@@ -10,10 +10,10 @@ import torch
 from torch.cuda import empty_cache
 
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog,
@@ -90,7 +90,7 @@ class DeployGeneratorDialog(QDialog):
         self.imported_vpes = []  # VPEs loaded from file
         self.reference_vpes = []  # VPEs created from reference images
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = None  # Will be set in showEvent
 
         # Main vertical layout for the dialog
         self.layout = QVBoxLayout(self)
@@ -195,6 +195,8 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
         
+        # Update the device
+        self.device = self.main_window.device
         # Configure the image window's UI elements for this specific dialog
         self.configure_image_window_for_dialog()
         # Sync with main window's images BEFORE updating labels
@@ -767,20 +769,20 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Load the VPE file
             loaded_data = torch.load(file_path)
-            
-            # TODO Move tensors to the appropriate device
-            # device = self.main_window.device
+
+            # Move tensors to the appropriate device
+            device = self.main_window.device
             
             # Check format type and handle appropriately
             if isinstance(loaded_data, list):
                 # New format: list of VPE tensors
-                self.imported_vpes = [vpe.to(self.device) for vpe in loaded_data]
+                self.imported_vpes = [vpe.to(device) for vpe in loaded_data]
                 vpe_count = len(self.imported_vpes)
                 self.status_bar.setText(f"Loaded {vpe_count} VPE tensors from file")
                 
             elif isinstance(loaded_data, torch.Tensor):
                 # Legacy format: single tensor - convert to list for consistency
-                loaded_vpe = loaded_data.to(self.device)
+                loaded_vpe = loaded_data.to(device)
                 # Store as a single-item list
                 self.imported_vpes = [loaded_vpe]
                 self.status_bar.setText("Loaded 1 VPE tensor from file (legacy format)")
@@ -948,7 +950,7 @@ class DeployGeneratorDialog(QDialog):
         self.model_path = self.model_combo.currentText()
 
         # Load model using registry
-        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.device)  # TODO
+        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.device)
 
         # Create a dummy visual dictionary for standard model loading
         visual_prompts = dict(
@@ -966,7 +968,7 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model.predict(
             np.zeros((640, 640, 3), dtype=np.uint8),
             visual_prompts=visual_prompts.copy(),  # This needs to happen to properly initialize the predictor
-            predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
+            predictor=YOLOEVPDetectPredictor if self.task == "detect" else YOLOEVPSegPredictor,
             imgsz=640,
             conf=0.99,
         )
@@ -1108,6 +1110,9 @@ class DeployGeneratorDialog(QDialog):
         # We will predict on the first work area/full image.
         input_image = inputs[0] 
 
+        # Set the predictor
+        predictor = YOLOEVPDetectPredictor if self.task == "detect" else YOLOEVPSegPredictor
+
         # Iterate through each reference image and its annotations
         for ref_path, ref_annotations in reference_dict.items():
             # The 'refer_image' parameter is the path to the current reference image
@@ -1123,7 +1128,7 @@ class DeployGeneratorDialog(QDialog):
             results = self.loaded_model.predict(input_image,
                                                 refer_image=ref_path,
                                                 visual_prompts=visual_prompts,
-                                                predictor=YOLOEVPSegPredictor,  # TODO This is necessary here?
+                                                predictor=predictor,
                                                 imgsz=self.imgsz_spinbox.value(),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),

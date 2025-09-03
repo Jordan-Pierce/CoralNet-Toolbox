@@ -135,7 +135,7 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 | **Framework** | **Models** | **Capability** |
 |:---:|:---:|:---:|
 | **YOLOE** | See Anything | Visual prompt detection |
-| **AutoDistill** | Grounding DINO • OWLViT • OmDetTurbo | Zero-shot detection |
+| **Transformers** | Grounding DINO • OWLViT • OmDetTurbo | Zero-shot detection |
 
 </div>
 
@@ -233,12 +233,9 @@ uv pip install coralnet-toolbox
 ### 🚀 **Step 3: GPU Acceleration (Optional)**
 For CUDA-enabled systems:
 ```bash
-# Example for CUDA 11.8
-conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
-
+# Example for CUDA 12.9
 # Install PyTorch with CUDA support
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129 --upgrade
 ```
 
 ### 🏃‍♂️ **Step 4: Launch**

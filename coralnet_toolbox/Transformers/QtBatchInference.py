@@ -13,14 +13,14 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout, 
 
 
 class BatchInferenceDialog(QDialog):
-    """Dialog for performing batch inference on images using AutoDistill."""
+    """Dialog for performing batch inference on images using Transformers."""
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-        self.deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
+        self.deploy_model_dialog = main_window.transformers_deploy_model_dialog
         self.loaded_models = self.deploy_model_dialog.loaded_model
 
         self.setWindowTitle("Batch Inference")
@@ -64,25 +64,25 @@ class BatchInferenceDialog(QDialog):
         self.image_options_group = QButtonGroup(self)
 
         # Create image selection options
-        self.apply_filtered = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev = QCheckBox("↑ Apply to previous images")
-        self.apply_next = QCheckBox("↓ Apply to next images")
-        self.apply_all = QCheckBox("↕ Apply to all images")
+        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
+        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
+        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
         # Add options to button group
-        self.image_options_group.addButton(self.apply_filtered)
-        self.image_options_group.addButton(self.apply_prev)
-        self.image_options_group.addButton(self.apply_next)
-        self.image_options_group.addButton(self.apply_all)
+        self.image_options_group.addButton(self.apply_filtered_checkbox)
+        self.image_options_group.addButton(self.apply_prev_checkbox)
+        self.image_options_group.addButton(self.apply_next_checkbox)
+        self.image_options_group.addButton(self.apply_all_checkbox)
         # Make selections exclusive
         self.image_options_group.setExclusive(True)
         # Default selection
-        self.apply_all.setChecked(True)
+        self.apply_all_checkbox.setChecked(True)
 
         # Add widgets to layout
-        layout.addWidget(self.apply_filtered)
-        layout.addWidget(self.apply_prev)
-        layout.addWidget(self.apply_next)
-        layout.addWidget(self.apply_all)
+        layout.addWidget(self.apply_filtered_checkbox)
+        layout.addWidget(self.apply_prev_checkbox)
+        layout.addWidget(self.apply_next_checkbox)
+        layout.addWidget(self.apply_all_checkbox)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)

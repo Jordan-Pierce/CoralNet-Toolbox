@@ -1,6 +1,5 @@
 import warnings
 
-import os
 import gc
 
 import numpy as np
@@ -14,7 +13,6 @@ from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QGroupBox,
@@ -408,7 +406,7 @@ class DeployPredictorDialog(QDialog):
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
                 visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-                predictor=YOLOEVPSegPredictor,  # This also needs to be SegPredictor, no matter what
+                predictor=YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor,
                 imgsz=640,
                 conf=0.99,
             )
@@ -545,12 +543,15 @@ class DeployPredictorDialog(QDialog):
 
         # Get the scaled visual prompts
         visual_prompts = self.scale_prompts(bboxes, masks)
+        
+        # Set the predictor
+        predictor=YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor
 
         try:
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
-                                                visual_prompts=visual_prompts.copy(),  
-                                                predictor=YOLOEVPSegPredictor,
+                                                visual_prompts=visual_prompts.copy(),
+                                                predictor=predictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
@@ -615,6 +616,9 @@ class DeployPredictorDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(target_images))
+        
+        # Set the predictor
+        predictor = YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor
 
         for target_image in target_images:
 
@@ -623,7 +627,7 @@ class DeployPredictorDialog(QDialog):
                 results = self.loaded_model.predict(target_image,
                                                     refer_image=refer_image,
                                                     visual_prompts=visual_prompts.copy(),
-                                                    predictor=YOLOEVPSegPredictor,
+                                                    predictor=predictor,
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.main_window.get_uncertainty_thresh(),
                                                     iou=self.main_window.get_iou_thresh(),

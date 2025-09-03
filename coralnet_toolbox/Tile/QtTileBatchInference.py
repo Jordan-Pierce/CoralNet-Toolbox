@@ -37,8 +37,8 @@ class TileBatchInference(QDialog):
         self.detect_dialog = main_window.detect_deploy_model_dialog
         self.segment_dialog = main_window.segment_deploy_model_dialog
         self.sam_dialog = main_window.sam_deploy_generator_dialog
-        self.autodistill_dialog = main_window.auto_distill_deploy_model_dialog
-        
+        self.transformers_dialog = main_window.transformers_deploy_model_dialog
+
         # Create a dictionary of the different model dialogs and their loaded models
         self.model_dialogs = {}
 
@@ -167,8 +167,8 @@ class TileBatchInference(QDialog):
             self.model_dialogs["Segment"] = self.segment_dialog
         if self.sam_dialog and getattr(self.sam_dialog, "loaded_model", None):
             self.model_dialogs["SAM Generator"] = self.sam_dialog
-        if self.autodistill_dialog and getattr(self.autodistill_dialog, "loaded_model", None):
-            self.model_dialogs["Autodistill"] = self.autodistill_dialog
+        if self.transformers_dialog and getattr(self.transformers_dialog, "loaded_model", None):
+            self.model_dialogs["Transformers"] = self.transformers_dialog
             
         # Update the model combo box with the available models
         self.update_model_combo()

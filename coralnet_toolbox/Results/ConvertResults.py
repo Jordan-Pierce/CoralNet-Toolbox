@@ -94,7 +94,7 @@ class ConvertResults:
             names: Dictionary mapping class ids to class names (optional)
 
         Returns:
-            generator: Yields Ultralytics Results objects
+            list: List of Ultralytics Results objects
         """
         # Convert single inputs to lists
         if not isinstance(detections, list):
@@ -108,8 +108,15 @@ class ConvertResults:
         if not image_paths:
             image_paths = [None] * len(images)
 
+        results_list = []
         for detection, image, path in zip(detections, images, image_paths):
             # Ensure image is numpy array
+            if isinstance(image, str):
+                # If image is a string (path), we can't proceed because we need the actual image data
+                raise ValueError(
+                    f"Expected image array, got path string: {image}. Please load the image before passing."
+                )
+                
             if torch.is_tensor(image):
                 image = image.cpu().numpy()
 
@@ -118,7 +125,8 @@ class ConvertResults:
                 names = {i: str(i) for i in range(len(detection))} if len(detection) > 0 else {}
 
             if len(detection) == 0:
-                return [Results(orig_img=image, path=path, names=names)]
+                results_list.append(Results(orig_img=image, path=path, names=names))
+                continue
 
             # Handle masks if present
             if hasattr(detection, 'mask') and detection.mask is not None:
@@ -142,11 +150,9 @@ class ConvertResults:
                 scaled_boxes = scaled_boxes.unsqueeze(0)
             scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
-            # Create and return Results object
-            return [Results(image,
-                            path=path,
-                            names=names,
-                            boxes=scaled_boxes, 
-                            masks=scaled_masks)]
+            # Create Results object
+            results_list.append(Results(image, path=path, names=names, boxes=scaled_boxes, masks=scaled_masks))
+
+        return results_list
     
 

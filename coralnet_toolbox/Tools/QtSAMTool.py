@@ -6,6 +6,8 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPa
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
+
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.QtWorkArea import WorkArea
@@ -374,45 +376,21 @@ class SAMTool(Tool):
             top1_index = np.argmax(results.boxes.conf)
             mask_tensor = results[top1_index].masks.data
 
-            # Check if holes are allowed from the SAM dialog
+            # Check which output type is selected and get allow_holes settings
+            output_type = self.sam_dialog.get_output_type()
             allow_holes = self.sam_dialog.get_allow_holes()
-
-            # Polygonize the mask to get the exterior and holes
-            exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
-
-            # Safety check: need at least 3 points for a valid polygon
-            if len(exterior_coords) < 3:
+            
+            # Create annotation using the helper method
+            self.temp_annotation = self.create_annotation_from_mask(
+                mask_tensor,
+                output_type,
+                allow_holes
+            )
+            
+            if not self.temp_annotation:
                 QApplication.restoreOverrideCursor()
                 return
-
-            # --- Process and Clean the Polygon Points ---
-            working_area_top_left = self.working_area.rect.topLeft()
-            offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
-
-            # Simplify, offset, and convert the exterior points
-            simplified_exterior = simplify_polygon(exterior_coords, 0.1)
-            self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
-
-            # Simplify, offset, and convert each hole only if allowed
-            final_holes = []
-            if allow_holes:
-                for hole_coords in holes_coords_list:
-                    if len(hole_coords) >= 3:  # Ensure holes are also valid polygons
-                        simplified_hole = simplify_polygon(hole_coords, 0.1)
-                        final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
-
-            # Create the temporary annotation, now with holes (or not)
-            self.temp_annotation = PolygonAnnotation(
-                points=self.points,
-                holes=final_holes,
-                short_label_code=self.annotation_window.selected_label.short_label_code,
-                long_label_code=self.annotation_window.selected_label.long_label_code,
-                color=self.annotation_window.selected_label.color,
-                image_path=self.annotation_window.current_image_path,
-                label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.label_window.active_label.transparency
-            )
-
+                
             # Create the graphics item for the temporary annotation
             self.temp_annotation.create_graphics_item(self.annotation_window.scene)
             
@@ -616,17 +594,31 @@ class SAMTool(Tool):
             elif self.has_active_prompts:
                 # Create the final annotation
                 if self.temp_annotation:
-                    # Use existing temporary annotation
-                    final_annotation = PolygonAnnotation(
-                        self.points,
-                        self.temp_annotation.label.short_label_code,
-                        self.temp_annotation.label.long_label_code,
-                        self.temp_annotation.label.color,
-                        self.temp_annotation.image_path,
-                        self.temp_annotation.label.id,
-                        self.temp_annotation.label.transparency,
-                        holes=self.temp_annotation.holes
-                    )
+                    # Check if temp_annotation is a PolygonAnnotation or RectangleAnnotation
+                    if isinstance(self.temp_annotation, PolygonAnnotation):
+                        # For polygon annotations, use the points and holes
+                        final_annotation = PolygonAnnotation(
+                            self.points,
+                            self.temp_annotation.label.short_label_code,
+                            self.temp_annotation.label.long_label_code,
+                            self.temp_annotation.label.color,
+                            self.temp_annotation.image_path,
+                            self.temp_annotation.label.id,
+                            self.temp_annotation.label.transparency,
+                            holes=self.temp_annotation.holes
+                        )
+                    elif isinstance(self.temp_annotation, RectangleAnnotation):
+                        # For rectangle annotations, use the top_left and bottom_right
+                        final_annotation = RectangleAnnotation(
+                            top_left=self.temp_annotation.top_left,
+                            bottom_right=self.temp_annotation.bottom_right,
+                            short_label_code=self.temp_annotation.label.short_label_code,
+                            long_label_code=self.temp_annotation.label.long_label_code,
+                            color=self.temp_annotation.label.color,
+                            image_path=self.temp_annotation.image_path,
+                            label_id=self.temp_annotation.label.id,
+                            transparency=self.temp_annotation.label.transparency
+                        )
 
                     # Copy confidence data
                     final_annotation.update_machine_confidence(
@@ -740,54 +732,23 @@ class SAMTool(Tool):
         top1_index = np.argmax(results.boxes.conf)
         mask_tensor = results[top1_index].masks.data
 
-        # Check if holes are allowed from the SAM dialog
+        # Check which output type is selected and get allow_holes settings
+        output_type = self.sam_dialog.get_output_type()
         allow_holes = self.sam_dialog.get_allow_holes()
-
-        # Polygonize the mask using the new method to get the exterior and holes
-        exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
-
-        # Safety check for an empty result
-        if not exterior_coords:
-            QApplication.restoreOverrideCursor()
-            return None
-
-        # --- Process and Clean the Polygon Points ---
-        working_area_top_left = self.working_area.rect.topLeft()
-        offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
-
-        # Simplify, offset, and convert the exterior points
-        simplified_exterior = simplify_polygon(exterior_coords, 0.1)
-        self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
-
-        # Simplify, offset, and convert each hole only if allowed
-        final_holes = []
-        if allow_holes:
-            for hole_coords in holes_coords_list:
-                if len(hole_coords) >= 3:
-                    simplified_hole = simplify_polygon(hole_coords, 0.1)
-                    final_holes.append([QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole])
-
-        # Require at least 3 points for valid polygon
-        if len(self.points) < 3:
-            QApplication.restoreOverrideCursor()
-            return None
-
-        # Get confidence score
-        confidence = results.boxes.conf[top1_index].item()
-
-        # Create final annotation, now passing the holes argument
-        annotation = PolygonAnnotation(
-            points=self.points,
-            holes=final_holes,
-            short_label_code=self.annotation_window.selected_label.short_label_code,
-            long_label_code=self.annotation_window.selected_label.long_label_code,
-            color=self.annotation_window.selected_label.color,
-            image_path=self.annotation_window.current_image_path,
-            label_id=self.annotation_window.selected_label.id,
-            transparency=self.main_window.label_window.active_label.transparency
+        
+        # Create annotation using the helper method
+        annotation = self.create_annotation_from_mask(
+            mask_tensor,
+            output_type,
+            allow_holes
         )
+        
+        if not annotation:
+            QApplication.restoreOverrideCursor()
+            return None
 
-        # Update confidence
+        # Update confidence - make sure to extract confidence from results
+        confidence = float(results.boxes.conf[top1_index])
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
         # Create cropped image
@@ -797,6 +758,94 @@ class SAMTool(Tool):
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
+        return annotation
+
+    def create_annotation_from_mask(self, mask_tensor, output_type, allow_holes=True):
+        """
+        Create annotation (Rectangle or Polygon) from a mask tensor.
+        
+        Args:
+            mask_tensor: The tensor containing the mask data
+            output_type (str): "Rectangle" or "Polygon"
+            allow_holes (bool): Whether to include holes in polygon annotations
+        
+        Returns:
+            Annotation object or None if creation fails
+        """
+        if not self.working_area:
+            return None
+            
+        if output_type == "Rectangle":
+            # For rectangle output, just get the bounding box of the mask
+            # Find the bounding rectangle of the mask
+            y_indices, x_indices = np.where(mask_tensor.cpu().numpy()[0] > 0)
+            if len(y_indices) == 0 or len(x_indices) == 0:
+                return None
+                
+            # Get the min/max coordinates
+            min_x, max_x = np.min(x_indices), np.max(x_indices)
+            min_y, max_y = np.min(y_indices), np.max(y_indices)
+            
+            # Apply the offset from working area
+            working_area_top_left = self.working_area.rect.topLeft()
+            offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
+            
+            top_left = QPointF(min_x + offset_x, min_y + offset_y)
+            bottom_right = QPointF(max_x + offset_x, max_y + offset_y)
+            
+            # Create a rectangle annotation
+            annotation = RectangleAnnotation(
+                top_left=top_left,
+                bottom_right=bottom_right,
+                short_label_code=self.annotation_window.selected_label.short_label_code,
+                long_label_code=self.annotation_window.selected_label.long_label_code,
+                color=self.annotation_window.selected_label.color,
+                image_path=self.annotation_window.current_image_path,
+                label_id=self.annotation_window.selected_label.id,
+                transparency=self.main_window.label_window.active_label.transparency
+            )
+        else:
+            # Original polygon code
+            # Polygonize the mask using the new method to get the exterior and holes
+            exterior_coords, holes_coords_list = polygonize_mask_with_holes(mask_tensor)
+            
+            # Safety check for an empty result
+            if not exterior_coords:
+                return None
+                
+            # --- Process and Clean the Polygon Points ---
+            working_area_top_left = self.working_area.rect.topLeft()
+            offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
+            
+            # Simplify, offset, and convert the exterior points
+            simplified_exterior = simplify_polygon(exterior_coords, 0.1)
+            self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
+            
+            # Simplify, offset, and convert each hole only if allowed
+            final_holes = []
+            if allow_holes:
+                for hole_coords in holes_coords_list:
+                    simplified_hole = simplify_polygon(hole_coords, 0.1)
+                    if len(simplified_hole) >= 3:
+                        hole_points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole]
+                        final_holes.append(hole_points)
+            
+            # Require at least 3 points for valid polygon
+            if len(self.points) < 3:
+                return None
+                
+            # Create final annotation, now passing the holes argument
+            annotation = PolygonAnnotation(
+                points=self.points,
+                holes=final_holes,
+                short_label_code=self.annotation_window.selected_label.short_label_code,
+                long_label_code=self.annotation_window.selected_label.long_label_code,
+                color=self.annotation_window.selected_label.color,
+                image_path=self.annotation_window.current_image_path,
+                label_id=self.annotation_window.selected_label.id,
+                transparency=self.main_window.label_window.active_label.transparency
+            )
+            
         return annotation
 
     def cancel_working_area(self):

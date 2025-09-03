@@ -1,4 +1,4 @@
-# coralnet_toolbox/AutoDistill/__init__.py
+# coralnet_toolbox/Transformers/__init__.py
 
 from .QtDeployModel import DeployModelDialog
 from .QtBatchInference import BatchInferenceDialog

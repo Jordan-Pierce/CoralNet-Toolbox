@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Results import ResultsProcessor
+from coralnet_toolbox.Results import ConvertResults
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -33,13 +34,13 @@ from coralnet_toolbox.Icons import get_icon
 
 class DeployModelDialog(QDialog):
     """
-    Dialog for deploying and managing AutoDistill models.
+    Dialog for deploying and managing Transformers models.
     Allows users to load, configure, and deactivate models, as well as make predictions on images.
     """
 
     def __init__(self, main_window, parent=None):
         """
-        Initialize the AutoDistillDeployModelDialog.
+        Initialize the TransformersDeployModelDialog.
 
         Args:
             main_window: The main application window.
@@ -52,7 +53,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("AutoDistill Deploy Model (Ctrl + 6)")
+        self.setWindowTitle("Transformers Deploy Model (Ctrl + 6)")
         self.resize(400, 325)
 
         # Initialize variables
@@ -66,6 +67,8 @@ class DeployModelDialog(QDialog):
         self.ontology = None
         self.class_mapping = {}
         self.ontology_pairs = []
+        
+        self.task = 'detect'
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -422,8 +425,6 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
         # Restore cursor
         QApplication.restoreOverrideCursor()
-        # Exit the dialog box
-        self.accept()
 
     def load_new_model(self, model_name):
         """
@@ -433,8 +434,17 @@ class DeployModelDialog(QDialog):
             model_name: Name of the model to load.
             uncertainty_thresh: Threshold for uncertainty.
         """
+        
+        # Clear the model
+        self.loaded_model = None
+        self.model_name = None
+        
+        # Clear cache
+        gc.collect()
+        torch.cuda.empty_cache()
+        
         if "GroundingDINO" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.GroundingDINO import GroundingDINOModel
+            from coralnet_toolbox.Transformers.Models.GroundingDINO import GroundingDINOModel
 
             model = model_name.split("-")[1].strip()
             self.model_name = model_name
@@ -443,14 +453,14 @@ class DeployModelDialog(QDialog):
                                                    device=self.main_window.device)
 
         elif "OmDetTurbo" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.OmDetTurbo import OmDetTurboModel
+            from coralnet_toolbox.Transformers.Models.OmDetTurbo import OmDetTurboModel
 
             self.model_name = model_name
             self.loaded_model = OmDetTurboModel(ontology=self.ontology,
                                                 device=self.main_window.device)
 
         elif "OWLViT" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.OWLViT import OWLViTModel
+            from coralnet_toolbox.Transformers.Models.OWLViT import OWLViTModel
 
             self.model_name = model_name
             self.loaded_model = OWLViTModel(ontology=self.ontology,
@@ -495,7 +505,6 @@ class DeployModelDialog(QDialog):
                     continue
 
                 results = self._apply_model(inputs)
-                results = self._update_results(results_processor, results, inputs, image_path)
                 results = self._apply_sam(results, image_path)
                 self._process_results(results_processor, results, image_path)
 
@@ -552,13 +561,6 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
         return results_list
-
-    def _update_results(self, results_processor, results, inputs, image_path):
-        """Update the results to match Ultralytics format."""
-        return [results_processor.from_supervision(results,
-                                                   inputs,
-                                                   image_path,
-                                                   self.class_mapping)]
 
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
