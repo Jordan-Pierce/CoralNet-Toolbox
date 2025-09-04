@@ -1459,15 +1459,15 @@ class DeployGeneratorDialog(QDialog):
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
             if results and results[0].boxes is not None and len(results[0].boxes) > 0:
-                # This is the "merge" step, modifying the final Results object directly
-                # 1. Clone the Boxes object to make it writable.
-                new_boxes = results[0].boxes.clone()
-                # 2. Force all detected boxes in the new object to belong to a single class ID (0).
-                new_boxes.cls[:] = 0
-                # 3. Replace the original boxes object with the modified one.
+                # Clone the data tensor and set all classes to 0
+                new_data = results[0].boxes.data.clone()
+                new_data[:, 5] = 0   # The 6th column (index 5) is the class
+
+                # Create a new Boxes object of the same type
+                new_boxes = type(results[0].boxes)(new_data, results[0].boxes.orig_shape)
                 results[0].boxes = new_boxes
-                
-                # 4. Update the 'names' dictionary to map our single class ID (0)
+
+                # Update the 'names' dictionary to map our single class ID (0)
                 #    to the final target label name chosen by the user.
                 results[0].names = {0: target_label_name}
 
@@ -1524,17 +1524,19 @@ class DeployGeneratorDialog(QDialog):
                 )
                 return
 
-            all_raw_vpes = [vpe for vpe, source in vpes_with_source]
+            raw_vpes = [vpe for vpe, source in vpes_with_source]
+            num_raw = len(raw_vpes)
             
-            # 2. Get K and generate prototypes via clustering
+            # 2. Get K and determine if we need to cluster
             k = self.k_prototypes_spinbox.value()
-            num_available_vpes = len(all_raw_vpes)
-            prototype_vpes = []
+            prototypes = []  # This will be the centroids if clustering is performed
+            final_vpe = None
 
-            # Only perform clustering if K is a valid value for clustering (1 <= K < N)
-            if 1 <= k < num_available_vpes:
+            # Case 1: We want to cluster (1 <= k < num_raw)
+            if 1 <= k < num_raw:
                 try:
-                    all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in all_raw_vpes], dim=0)
+                    # Prepare tensor for scikit-learn: shape (N, E)
+                    all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in raw_vpes], dim=0)
                     vpes_np = all_vpes_tensor.cpu().numpy()
 
                     from sklearn.cluster import KMeans
@@ -1545,28 +1547,37 @@ class DeployGeneratorDialog(QDialog):
                     for i in range(k):
                         centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
                         normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
-                        prototype_vpes.append(normalized_centroid)
+                        prototypes.append(normalized_centroid)
+
+                    # The final VPE is the average of the centroids
+                    stacked_prototypes = torch.cat(prototypes, dim=1)  # Shape: (1, k, E)
+                    averaged_prototype = stacked_prototypes.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
+                    final_vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
+
                 except Exception as e:
                     QMessageBox.critical(self, 
                                          "Clustering Error", 
                                          f"Could not perform clustering for visualization: {e}")
-                    # Continue without prototypes if clustering fails
-                    prototype_vpes = []
+                    # If clustering fails, fall back to using all raw VPEs
+                    prototypes = []
+                    # Then final_vpe will be computed below in the else branch
+
+            # Case 2: k==0 or k>=num_raw -> use all raw VPEs as prototypes
+            if not prototypes:  # This includes the case when clustering was not performed or failed
+                # We are not clustering, so we use all raw VPEs as prototypes
+                # But we don't want to show them as separate prototypes (they are already raw VPEs)
+                # So we leave prototypes as an empty list for visualization.
+                # The final VPE is the average of all raw VPEs.
+                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
+                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
+                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
 
             # 3. Create and show the visualization dialog
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-            # Calculate the final averaged VPE for backward compatibility and comparison
-            averaged_vpe = torch.cat(all_raw_vpes).mean(dim=0, keepdim=True)
-            final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
-
-            # Pass both raw VPEs and the new prototypes to the dialog
-            # Note: VPEVisualizationDialog will need to be updated to accept 'prototypes'
-            dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, prototypes=prototype_vpes, parent=self)
-            
+            dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, prototypes=prototypes, parent=self)
             QApplication.restoreOverrideCursor()
             dialog.exec_()
-            
+
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Visualizing VPE", f"An error occurred: {str(e)}")
@@ -1692,7 +1703,7 @@ class VPEVisualizationDialog(QDialog):
                                          name=f"VPE {i+1} ({source_char})")
             self.plot_widget.addItem(scatter)
         
-        # Plot K-Prototypes (blue diamonds)
+        # Plot K-Prototypes (blue diamonds) if we have any
         if self.prototypes:
             prototype_vpes_2d = vpes_2d[num_raw: num_raw + num_prototypes]
             scatter = pg.ScatterPlotItem(
@@ -1722,12 +1733,19 @@ class VPEVisualizationDialog(QDialog):
         # 4. Update the information label
         orig_dim = self.vpe_list_with_source[0][0].shape[-1]
         explained_variance = sum(pca.explained_variance_ratio_)
-        self.info_label.setText(
-            f"Original dimension: {orig_dim} → Reduced to 2D\n"
-            f"Total explained variance: {explained_variance:.2%}\n"
-            f"PC1: {pca.explained_variance_ratio_[0]:.2%} variance, "
-            f"PC2: {pca.explained_variance_ratio_[1]:.2%} variance"
-        )
+        
+        info_text = (f"Original dimension: {orig_dim} → Reduced to 2D\n"
+                     f"Total explained variance: {explained_variance:.2%}\n"
+                     f"PC1: {pca.explained_variance_ratio_[0]:.2%} variance, "
+                     f"PC2: {pca.explained_variance_ratio_[1]:.2%} variance\n"
+                     f"Number of raw VPEs: {num_raw}\n")
+        
+        if self.prototypes:
+            info_text += f"Number of prototypes (K): {len(self.prototypes)}"
+        else:
+            info_text += "No clustering (using all raw VPEs as prototypes)"
+
+        self.info_label.setText(info_text)
     
     def generate_distinct_colors(self, num_colors):
         """Generates visually distinct colors."""
