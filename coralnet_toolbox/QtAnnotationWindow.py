@@ -401,6 +401,10 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         self.active_image = True
 
+        # Automatically mark this image as checked when viewed
+        raster.checkbox_state = True
+        self.main_window.image_window.table_model.update_raster_data(image_path)
+
         self.tools["zoom"].reset_zoom()
         self.scene.addItem(QGraphicsPixmapItem(self.pixmap_image))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)

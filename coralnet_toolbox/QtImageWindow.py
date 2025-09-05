@@ -667,6 +667,10 @@ class ImageWindow(QWidget):
                 # Get the raster
                 raster = self.raster_manager.get_raster(image_path)
                 
+                # Mark as checked when viewed
+                raster.checkbox_state = True
+                self.table_model.update_raster_data(image_path)
+                
                 # Update selection
                 self.selected_image_path = image_path
                 self.table_model.set_selected_path(image_path)
