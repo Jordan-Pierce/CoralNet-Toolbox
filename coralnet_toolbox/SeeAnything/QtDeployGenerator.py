@@ -26,7 +26,6 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
-from coralnet_toolbox.Results import CombineResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtImageWindow import ImageWindow
@@ -1158,7 +1157,7 @@ class DeployGeneratorDialog(QDialog):
 
         num_prototypes = len(prototype_vpes)
         proto_class_names = [f"object{i}" for i in range(num_prototypes)]
-        stacked_vpes = torch.cat(prototype_vpes, dim=1) # Shape: (1, K, E)
+        stacked_vpes = torch.cat(prototype_vpes, dim=1)  # Shape: (1, K, E)
 
         self.loaded_model.is_fused = lambda: False
         self.loaded_model.set_classes(proto_class_names, stacked_vpes)
@@ -1713,18 +1712,36 @@ class VPEVisualizationDialog(QDialog):
         num_raw = len(raw_vpe_arrays)
         num_prototypes = len(prototype_arrays)
 
-        # Plot individual raw VPEs (colored circles)
+        # Determine if each raw VPE is effectively a prototype (k==0 or k>=N)
+        each_vpe_is_prototype = (self.k_value == 0 or self.k_value >= num_raw)
+        
+        # Plot individual raw VPEs 
         colors = self.generate_distinct_colors(num_raw)
         for i, (vpe_tuple, vpe_2d) in enumerate(zip(self.vpe_list_with_source, vpes_2d[:num_raw])):
             source_char = 'I' if vpe_tuple[1] == 'Import' else 'R'
-            scatter = pg.ScatterPlotItem(x=[vpe_2d[0]], 
-                                         y=[vpe_2d[1]], 
-                                         brush=pg.mkColor(colors[i]), 
-                                         size=15, 
-                                         name=f"VPE {i+1} ({source_char})")
+            
+            # Use diamonds if each VPE is a prototype, circles otherwise
+            symbol = 'd' if each_vpe_is_prototype else 'o'
+            
+            # If it's a prototype, add a black border
+            pen = pg.mkPen(color='k', width=1.5) if each_vpe_is_prototype else None
+            
+            # Create label with prototype indicator if applicable
+            name_suffix = " (Prototype)" if each_vpe_is_prototype else ""
+            name = f"VPE {i+1} ({source_char}){name_suffix}"
+            
+            scatter = pg.ScatterPlotItem(
+                x=[vpe_2d[0]], 
+                y=[vpe_2d[1]], 
+                brush=pg.mkColor(colors[i]), 
+                pen=pen,
+                size=15 if not each_vpe_is_prototype else 18,
+                symbol=symbol, 
+                name=name
+            )
             self.plot_widget.addItem(scatter)
         
-        # Plot K-Prototypes (blue diamonds) if we have any and clustering was performed
+        # Plot K-Prototypes (blue diamonds) if we have any and explicit clustering was performed
         if self.prototypes and self.clustering_performed:
             prototype_vpes_2d = vpes_2d[num_raw: num_raw + num_prototypes]
             scatter = pg.ScatterPlotItem(
@@ -1766,9 +1783,9 @@ class VPEVisualizationDialog(QDialog):
             info_text += f"Number of prototypes: {len(self.prototypes)}"
         else:
             if self.k_value == 0:
-                info_text += "No clustering (K=0, using all raw VPEs)"
+                info_text += f"No clustering (K=0): all {num_raw} raw VPEs used as prototypes"
             else:
-                info_text += f"No clustering performed (K={self.k_value} >= number of VPEs)"
+                info_text += f"No clustering performed (K={self.k_value} >= {num_raw}): all raw VPEs used as prototypes"
 
         self.info_label.setText(info_text)
     
