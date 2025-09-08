@@ -25,6 +25,8 @@ class Tool:
         
         # Crosshair settings
         self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
+        self.h_crosshair_line = None
+        self.v_crosshair_line = None
 
     def activate(self):
         self.active = True
@@ -120,26 +122,27 @@ class Tool:
         image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
         
         # Create horizontal line across the full width of the image
-        h_line = self.graphics_utility.create_guide_line(
+        self.h_crosshair_line = self.graphics_utility.create_guide_line(
             QPointF(image_rect.left(), scene_pos.y()),
             QPointF(image_rect.right(), scene_pos.y())
         )
-        h_line.setData(0, "crosshair_guide")  # Tag it for identification
-        self.annotation_window.scene.addItem(h_line)
+        self.annotation_window.scene.addItem(self.h_crosshair_line)
         
         # Create vertical line across the full height of the image
-        v_line = self.graphics_utility.create_guide_line(
+        self.v_crosshair_line = self.graphics_utility.create_guide_line(
             QPointF(scene_pos.x(), image_rect.top()),
             QPointF(scene_pos.x(), image_rect.bottom())
         )
-        v_line.setData(0, "crosshair_guide")  # Tag it for identification
-        self.annotation_window.scene.addItem(v_line)
+        self.annotation_window.scene.addItem(self.v_crosshair_line)
         
     def clear_crosshair(self):
         """Remove any crosshair guide lines from the scene."""
-        for item in self.annotation_window.scene.items():
-            if item.data(0) == "crosshair_guide":
-                self.annotation_window.scene.removeItem(item)
+        if self.h_crosshair_line and self.h_crosshair_line.scene():
+            self.annotation_window.scene.removeItem(self.h_crosshair_line)
+            self.h_crosshair_line = None
+        if self.v_crosshair_line and self.v_crosshair_line.scene():
+            self.annotation_window.scene.removeItem(self.v_crosshair_line)
+            self.v_crosshair_line = None
 
     def update_crosshair(self, scene_pos):
         """
