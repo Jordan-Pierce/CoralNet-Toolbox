@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class GlobalEventFilter(QObject):
     def __init__(self, main_window):
-        super().__init__()
+        super().__init__(main_window)
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window

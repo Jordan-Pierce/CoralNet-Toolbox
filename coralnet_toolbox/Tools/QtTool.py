@@ -1,7 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtGui import QMouseEvent, QColor
+from PyQt5.QtWidgets import QGraphicsPixmapItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -21,6 +22,9 @@ class Tool:
         self.cursor = Qt.ArrowCursor
         self.default_cursor = Qt.ArrowCursor
         self.cursor_annotation = None
+        
+        # Crosshair settings
+        self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
 
     def activate(self):
         self.active = True
@@ -30,12 +34,26 @@ class Tool:
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
+        self.clear_crosshair()  # Clear any crosshair when tool is deactivated
 
     def mousePressEvent(self, event: QMouseEvent):
         pass
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        pass
+        """
+        Base implementation of mouseMoveEvent that handles crosshair display.
+        Child classes should call super().mouseMoveEvent(event) in their implementation.
+        """
+        # Handle crosshair display
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        
+        if (cursor_in_window and self.active and 
+            self.annotation_window.selected_label and 
+            self.show_crosshair):
+            self.update_crosshair(scene_pos)
+        else:
+            self.clear_crosshair()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         pass
@@ -78,3 +96,58 @@ class Tool:
         if self.cursor_annotation:
             self.cursor_annotation.delete()
             self.cursor_annotation = None
+            
+    def draw_crosshair(self, scene_pos):
+        """
+        Draw crosshair guides at the current cursor position.
+        
+        Args:
+            scene_pos: Position in scene coordinates where to draw the crosshair
+        """
+        # Only draw if we have an active image and scene position
+        if (
+            not self.show_crosshair
+            or not self.annotation_window.active_image
+            or not scene_pos
+            or not self.annotation_window.pixmap_image
+        ):
+            return
+
+        # Remove any existing crosshair lines
+        self.clear_crosshair()
+        
+        # Get image bounds
+        image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
+        
+        # Create horizontal line across the full width of the image
+        h_line = self.graphics_utility.create_guide_line(
+            QPointF(image_rect.left(), scene_pos.y()),
+            QPointF(image_rect.right(), scene_pos.y())
+        )
+        h_line.setData(0, "crosshair_guide")  # Tag it for identification
+        self.annotation_window.scene.addItem(h_line)
+        
+        # Create vertical line across the full height of the image
+        v_line = self.graphics_utility.create_guide_line(
+            QPointF(scene_pos.x(), image_rect.top()),
+            QPointF(scene_pos.x(), image_rect.bottom())
+        )
+        v_line.setData(0, "crosshair_guide")  # Tag it for identification
+        self.annotation_window.scene.addItem(v_line)
+        
+    def clear_crosshair(self):
+        """Remove any crosshair guide lines from the scene."""
+        for item in self.annotation_window.scene.items():
+            if item.data(0) == "crosshair_guide":
+                self.annotation_window.scene.removeItem(item)
+
+    def update_crosshair(self, scene_pos):
+        """
+        Update the crosshair position. This is a convenience method that
+        clears and redraws the crosshair.
+        
+        Args:
+            scene_pos: New position for the crosshair
+        """
+        self.clear_crosshair()
+        self.draw_crosshair(scene_pos)
