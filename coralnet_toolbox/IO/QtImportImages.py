@@ -50,7 +50,6 @@ class ImportImages:
     
     def _process_image_files(self, file_names):
         """Helper method to process a list of image files with progress tracking."""
-        # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
@@ -58,30 +57,24 @@ class ImportImages:
         progress_bar.start_progress(len(file_names))
 
         try:
-            # Keep track of successfully imported images
             imported_paths = []
             
-            # Add images to the image window's raster manager
+            # Add images directly to the manager without emitting signals
             for file_name in file_names:
-                # Check if the image is already in the raster manager
                 if file_name not in self.image_window.raster_manager.image_paths:
-                    try:
-                        # Use the image window's add_image method which handles the raster manager
-                        if self.image_window.add_image(file_name):
-                            imported_paths.append(file_name)
-                    except Exception as e:
-                        print(f"Warning: Could not import image {file_name}. Error: {e}")
+                    # Call the manager directly to add the raster silently,
+                    # bypassing ImageWindow.add_image and its signal handlers.
+                    if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
+                        imported_paths.append(file_name)
                 else:
-                    # Image already exists
                     imported_paths.append(file_name)
 
-                # Update the progress bar
                 progress_bar.update_progress()
 
-            # Apply filtering to update the view
+            # After the silent loop, manually update the UI exactly once.
+            self.image_window.update_search_bars()
             self.image_window.filter_images()
             
-            # Show the last imported image if any were imported
             if imported_paths:
                 self.image_window.load_image_by_path(imported_paths[-1])
 
@@ -89,7 +82,6 @@ class ImportImages:
         except Exception as e:
             self._show_error_message(str(e))
         finally:
-            # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
