@@ -455,6 +455,10 @@ class SeeAnythingTool(Tool):
         Args:
             event (QMouseEvent): The mouse move event.
         """
+        # Call parent implementation to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        # Continue with tool-specific behavior
         scene_pos = self.annotation_window.mapToScene(event.pos())
         self.hover_pos = scene_pos
         

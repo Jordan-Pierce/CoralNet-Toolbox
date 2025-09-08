@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QGraphicsPixmapItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -29,9 +29,7 @@ class RectangleTool(Tool):
         self.annotation_window.setCursor(self.cursor)
 
     def deactivate(self):
-        self.active = False
-        self.annotation_window.setCursor(self.default_cursor)
-        self.clear_cursor_annotation()
+        super().deactivate()
         self.start_point = None
         self.end_point = None
         self.drawing_continuous = False
@@ -72,8 +70,11 @@ class RectangleTool(Tool):
             self.cancel_annotation()
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        # Call parent implementation to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        # Continue with tool-specific behavior
         if self.drawing_continuous:
-            # Update the end point while drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
             
             # Update the cursor annotation if we're in the window
@@ -82,12 +83,19 @@ class RectangleTool(Tool):
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
             if active_image and pixmap_image and cursor_in_window and self.start_point:
                 self.update_cursor_annotation(self.end_point)
+                
+                # Show crosshair at current cursor position during drawing
+                self.update_crosshair(self.end_point)
         else:
             # Show a preview rectangle at the cursor position when not drawing
             scene_pos = self.annotation_window.mapToScene(event.pos())
-            if self.annotation_window.cursorInWindow(event.pos()) and self.annotation_window.selected_label:
-                self.clear_cursor_annotation()
-                # No cursor annotation in non-drawing mode
+            cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+            
+            # Show crosshair guides when cursor is over the image
+            if cursor_in_window and self.active and self.annotation_window.selected_label:
+                self.update_crosshair(scene_pos)
+            else:
+                self.clear_crosshair()
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Backspace:

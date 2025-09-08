@@ -103,6 +103,10 @@ class WorkAreaTool(Tool):
                 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events to update the work area while drawing."""
+        # Call parent implementation to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        # Continue with tool-specific behavior
         scene_pos = self.annotation_window.mapToScene(event.pos())
         self.hover_pos = scene_pos  # Track hover position for spacebar confirmation
         

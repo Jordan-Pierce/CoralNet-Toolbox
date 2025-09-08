@@ -78,15 +78,17 @@ class PolygonTool(Tool):
         else:
             self.cancel_annotation()
 
-    def mouseMoveEvent(self, event: QMouseEvent):
+    def mouseMoveEvent(self, event: QMouseEvent):       
+        # Tool-specific behavior (non-crosshair related) for mouse move events
         if self.drawing_continuous:
-            scene_pos = self.annotation_window.mapToScene(event.pos())
             active_image = self.annotation_window.active_image
             pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            
             if active_image and pixmap_image and cursor_in_window and self.points:
                 if self.ctrl_pressed and self.last_click_point:
-                    # Show a straight line preview from last point to cursor, do not modify self.points
+                    # Show a straight line preview
                     self.update_cursor_annotation(scene_pos)
                 else:
                     # Free-hand: add points as the mouse moves

@@ -56,9 +56,13 @@ class PatchTool(Tool):
             self.update_cursor_annotation(scene_pos)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        # First clear any existing cursor annotation
+        # Call parent implementation to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        # Then clear any existing cursor annotation
         self.clear_cursor_annotation()
-            
+        
+        # Continue with tool-specific behavior for cursor annotation
         if self.annotation_window.active_image and self.annotation_window.selected_label:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             if self.annotation_window.cursorInWindow(event.pos()):

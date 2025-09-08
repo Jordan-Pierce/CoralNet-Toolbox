@@ -31,7 +31,7 @@ class RasterManager(QObject):
         self.rasters: Dict[str, Raster] = {}
         self.image_paths: List[str] = []
         
-    def add_raster(self, image_path: str) -> bool:
+    def add_raster(self, image_path: str, emit_signal: bool = True) -> bool:
         """
         Add a new raster to the manager.
         
@@ -51,7 +51,10 @@ class RasterManager(QObject):
                 
             self.rasters[image_path] = raster
             self.image_paths.append(image_path)
-            self.rasterAdded.emit(image_path)
+            
+            if emit_signal:
+                self.rasterAdded.emit(image_path)
+                
             return True
             
         except Exception as e:

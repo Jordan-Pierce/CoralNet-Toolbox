@@ -1,18 +1,17 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
-import os 
-
+from PyQt5.QtCore import Qt                
+from PyQt5.QtGui import QPen, QColor
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,
                              QDoubleSpinBox, QComboBox, QSpinBox, QHBoxLayout,
                              QWidget, QStackedWidget, QGridLayout, QMessageBox,
                              QDialog, QListWidget, QPushButton, QFileDialog,
-                             QGraphicsView)
-from PyQt5.QtCore import Qt                           
+                             QGraphicsView, QGraphicsLineItem)
 
-from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -162,3 +161,14 @@ class GraphicsUtility:
         view_width = round(extent.width())
         view_height = round(extent.height())
         return max(2, min(5, max(view_width, view_height) // 1000))
+    
+    @staticmethod
+    def create_guide_line(start_point, end_point):
+        """Create a semi-transparent guide line for crosshairs."""
+        line = QGraphicsLineItem(start_point.x(), start_point.y(), end_point.x(), end_point.y())
+        pen = QPen(QColor(255, 255, 255, 180))  # Semi-transparent white
+        pen.setWidth(1)
+        pen.setStyle(Qt.DashLine)
+        line.setPen(pen)
+        line.setZValue(1000)  # Ensure it's drawn on top of other elements
+        return line

@@ -26,7 +26,6 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
-from coralnet_toolbox.Results import CombineResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtImageWindow import ImageWindow
@@ -539,8 +538,8 @@ class DeployGeneratorDialog(QDialog):
 
     def setup_reference_layout(self):
         """
-        Set up the layout with reference label selection.
-        The reference image is implicitly the currently active image.
+        Set up the layout for reference selection, including the output label,
+        reference method, and the number of prototype clusters (K).
         """
         group_box = QGroupBox("Reference")
         layout = QFormLayout()
@@ -555,8 +554,18 @@ class DeployGeneratorDialog(QDialog):
         self.reference_method_combo_box.addItems(["VPE", "Images"])
         layout.addRow("Reference Method:", self.reference_method_combo_box)
 
+        # Add a spinbox for the user to define the number of prototypes (K)
+        self.k_prototypes_spinbox = QSpinBox()
+        self.k_prototypes_spinbox.setRange(0, 1000)
+        self.k_prototypes_spinbox.setValue(0)
+        self.k_prototypes_spinbox.setToolTip(
+            "Set the number of prototype clusters (K) to generate from references.\n"
+            "Set to 0 to treat every unique reference image/VPE as its own prototype (K=N)."
+        )
+        layout.addRow("Number of Prototypes (K):", self.k_prototypes_spinbox)
+
         group_box.setLayout(layout)
-        self.right_panel.addWidget(group_box)  # Add to right panel
+        self.right_panel.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """
@@ -1088,9 +1097,9 @@ class DeployGeneratorDialog(QDialog):
 
     def _apply_model_using_images(self, inputs, reference_dict):
         """
-        Apply the model using the provided images and reference annotations (dict). This method
-        loops through each reference image using its annotations; we then aggregate
-        all the results together. Less efficient, but potentially more accurate.
+        Apply the model using reference images. This method now generates VPEs
+        from the reference annotations, clusters them into K prototypes, and
+        runs a single, efficient multi-class prediction.
 
         Args:
             inputs (list): List of input images.
@@ -1099,67 +1108,70 @@ class DeployGeneratorDialog(QDialog):
         Returns:
             list: List of prediction results.
         """
-        # Create a progress bar for iterating through reference images
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions per Reference")
-        progress_bar.show()
-        progress_bar.start_progress(len(reference_dict))
+        # Note: This method may require 'from sklearn.cluster import KMeans'
 
-        results_list = []
-        # The 'inputs' list contains work areas from the single target image.
-        # We will predict on the first work area/full image.
-        input_image = inputs[0] 
+        # 1. Reload model and generate initial VPEs from the reference images
+        self.reload_model()
+        initial_vpes = self.references_to_vpe(reference_dict, update_reference_vpes=False)
 
-        # Set the predictor
-        predictor = YOLOEVPDetectPredictor if self.task == "detect" else YOLOEVPSegPredictor
-
-        # Iterate through each reference image and its annotations
-        for ref_path, ref_annotations in reference_dict.items():
-            # The 'refer_image' parameter is the path to the current reference image
-            # The 'visual_prompts' are the annotations from that same reference image
-            visual_prompts = {
-                'bboxes': ref_annotations['bboxes'],
-                'cls': ref_annotations['cls'],
-            }
-            if self.task == 'segment':
-                visual_prompts['masks'] = ref_annotations['masks']
-
-            # Make predictions on the target using the current reference
-            results = self.loaded_model.predict(input_image,
-                                                refer_image=ref_path,
-                                                visual_prompts=visual_prompts,
-                                                predictor=predictor,
-                                                imgsz=self.imgsz_spinbox.value(),
-                                                conf=self.main_window.get_uncertainty_thresh(),
-                                                iou=self.main_window.get_iou_thresh(),
-                                                max_det=self.get_max_detections(),
-                                                retina_masks=self.task == "segment")
-            
-            if not len(results[0].boxes):
-                # If no boxes were detected, skip to the next reference
-                progress_bar.update_progress()
-                continue
-            
-            # Update the name of the results and append to the list
-            results[0].names = {0: self.class_mapping[0].short_label_code}
-            results_list.extend(results[0])
-            
-            progress_bar.update_progress()
-            gc.collect()
-            empty_cache()
-
-        # Clean up
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-        
-        # Combine results if there are any
-        combined_results = CombineResults().combine_results(results_list)
-        if combined_results is None:
+        if not initial_vpes:
+            QMessageBox.warning(self, 
+                                "VPE Generation Failed", 
+                                "Could not generate VPEs from the selected reference images.")
             return []
-        
-        return [[combined_results]]
+
+        # 2. Generate K prototypes from the N generated VPEs
+        k = self.k_prototypes_spinbox.value()
+        num_available_vpes = len(initial_vpes)
+        prototype_vpes = []
+
+        # If K is 0 (use all) or K >= N, no clustering is needed.
+        if k == 0 or k >= num_available_vpes:
+            prototype_vpes = initial_vpes
+        else:
+            # Perform K-Means clustering to find K prototypes
+            try:
+                # Prepare tensor for scikit-learn: shape (N, E)
+                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in initial_vpes], dim=0)
+                vpes_np = all_vpes_tensor.cpu().numpy()
+
+                from sklearn.cluster import KMeans
+                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
+                centroids_np = kmeans.cluster_centers_
+
+                # Convert centroids back to a list of normalized PyTorch tensors
+                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
+                for i in range(k):
+                    # Reshape centroid to (1, 1, E)
+                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
+                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
+                    prototype_vpes.append(normalized_centroid)
+            except Exception as e:
+                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
+                return []
+
+        # 3. Configure the model with the K prototypes
+        if not prototype_vpes:
+            QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
+            return []
+
+        num_prototypes = len(prototype_vpes)
+        proto_class_names = [f"object{i}" for i in range(num_prototypes)]
+        stacked_vpes = torch.cat(prototype_vpes, dim=1)  # Shape: (1, K, E)
+
+        self.loaded_model.is_fused = lambda: False
+        self.loaded_model.set_classes(proto_class_names, stacked_vpes)
+
+        # 4. Make a single prediction on the target using the K prototypes
+        results = self.loaded_model.predict(inputs[0],
+                                            visual_prompts=[],
+                                            imgsz=self.imgsz_spinbox.value(),
+                                            conf=self.main_window.get_uncertainty_thresh(),
+                                            iou=self.main_window.get_iou_thresh(),
+                                            max_det=self.get_max_detections(),
+                                            retina_masks=self.task == "segment")
+
+        return [results]
     
     def generate_vpes_from_references(self):
         """
@@ -1257,8 +1269,8 @@ class DeployGeneratorDialog(QDialog):
 
     def _apply_model_using_vpe(self, inputs):
         """
-        Apply the model to the inputs using pre-calculated VPEs from imported files
-        and/or generated from reference annotations.
+        Apply the model using VPEs. This method now supports clustering N VPEs
+        into K prototypes before running a single multi-class prediction.
         
         Args:
             inputs (list): List of input images.
@@ -1266,21 +1278,18 @@ class DeployGeneratorDialog(QDialog):
         Returns:
             list: List of prediction results.
         """
+        # Note: This method may require 'from sklearn.cluster import KMeans'
+        
         # First reload the model to clear any cached data
         self.reload_model()
         
-        # Initialize combined_vpes list
+        # 1. Gather all available VPEs from imported files and generated references
         combined_vpes = []
-        
-        # Add imported VPEs if available
         if self.imported_vpes:
             combined_vpes.extend(self.imported_vpes)
-            
-        # Add pre-generated reference VPEs if available
         if self.reference_vpes:
             combined_vpes.extend(self.reference_vpes)
         
-        # Check if we have any VPEs to use
         if not combined_vpes:
             QMessageBox.warning(
                 self,
@@ -1290,18 +1299,57 @@ class DeployGeneratorDialog(QDialog):
             )
             return []
         
-        # Average all the VPEs together to create a final VPE tensor
-        averaged_vpe = torch.cat(combined_vpes).mean(dim=0, keepdim=True)
-        final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
+        # 2. Generate K prototypes from the N available VPEs
+        k = self.k_prototypes_spinbox.value()
+        num_available_vpes = len(combined_vpes)
+        prototype_vpes = []
+
+        # If K is 0 (use all) or K >= N, no clustering is needed. Each VPE is a prototype.
+        if k == 0 or k >= num_available_vpes:
+            prototype_vpes = combined_vpes
+        else:
+            # Perform K-Means clustering to find K prototypes
+            try:
+                # Prepare tensor for scikit-learn: shape (N, E)
+                all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in combined_vpes], dim=0)
+                vpes_np = all_vpes_tensor.cpu().numpy()
+
+                # Lazily import KMeans to avoid making sklearn a hard dependency if not used
+                from sklearn.cluster import KMeans
+                kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
+                centroids_np = kmeans.cluster_centers_
+
+                # Convert centroids back to a list of normalized PyTorch tensors
+                centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
+                for i in range(k):
+                    # Reshape centroid to (1, 1, E) for model compatibility
+                    centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
+                    normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
+                    prototype_vpes.append(normalized_centroid)
+            except Exception as e:
+                QMessageBox.critical(self, "Clustering Error", f"Failed to perform K-Means clustering: {e}")
+                return []
+
+        # 3. Configure the model with the K prototypes
+        if not prototype_vpes:
+            QMessageBox.warning(self, "Prototype Error", "Could not generate any prototypes for prediction.")
+            return []
+
+        # For backward compatibility, set self.vpe to the average of the final prototypes
+        averaged_prototype = torch.cat(prototype_vpes).mean(dim=0, keepdim=True)
+        self.vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
+
+        # Set up the model for multi-class detection with K proto-classes
+        num_prototypes = len(prototype_vpes)
+        proto_class_names = [f"object{i}" for i in range(num_prototypes)]
         
-        # For backward compatibility, update self.vpe
-        self.vpe = final_vpe
-        
-        # Set the final VPE to the model
+        # Stack prototypes into a single tensor of shape (1, K, E) for set_classes
+        stacked_vpes = torch.cat(prototype_vpes, dim=1)
+
         self.loaded_model.is_fused = lambda: False 
-        self.loaded_model.set_classes(["object0"], final_vpe)
+        self.loaded_model.set_classes(proto_class_names, stacked_vpes)
         
-        # Make predictions on the target using the averaged VPE
+        # 4. Make predictions on the target using the K prototypes
         results = self.loaded_model.predict(inputs[0],
                                             visual_prompts=[],
                                             imgsz=self.imgsz_spinbox.value(),
@@ -1391,7 +1439,7 @@ class DeployGeneratorDialog(QDialog):
         return updated_results
 
     def _process_results(self, results_processor, results_list, image_path):
-        """Process the results using the result processor."""
+        """Process the results, merging K proto-class detections into a single target class."""
         # Get the raster object and number of work items
         raster = self.image_window.raster_manager.get_raster(image_path)
         total = raster.count_work_items()
@@ -1405,14 +1453,25 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.start_progress(total)
 
         updated_results = []
+        target_label_name = self.reference_label.short_label_code
 
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
-            if results:
-                # Update path and names
+            if results and results[0].boxes is not None and len(results[0].boxes) > 0:
+                # Clone the data tensor and set all classes to 0
+                new_data = results[0].boxes.data.clone()
+                new_data[:, 5] = 0   # The 6th column (index 5) is the class
+
+                # Create a new Boxes object of the same type
+                new_boxes = type(results[0].boxes)(new_data, results[0].boxes.orig_shape)
+                results[0].boxes = new_boxes
+
+                # Update the 'names' dictionary to map our single class ID (0)
+                #    to the final target label name chosen by the user.
+                results[0].names = {0: target_label_name}
+
+                # Update path (original logic)
                 results[0].path = image_path
-                results[0].names = {0: self.class_mapping[0].short_label_code}
-                # This needs to be done again, in case SAM was used
 
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
@@ -1424,7 +1483,7 @@ class DeployGeneratorDialog(QDialog):
                 else:
                     results = results[0]
 
-                # Append the result object (not a list) to the updated results list
+                # Append the result object to the updated results list
                 updated_results.append(results)
 
                 # Update the index for the next work area
@@ -1444,42 +1503,96 @@ class DeployGeneratorDialog(QDialog):
         
     def show_vpe(self):
         """
-        Show a visualization of the currently stored VPEs using PyQtGraph.
+        Show a visualization of the stored VPEs and their K-prototypes.
         """
         try:
+            # 1. Gather all raw VPEs from imports and references
             vpes_with_source = []
-
-            # 1. Add any VPEs that were loaded from a file
             if self.imported_vpes:
                 for vpe in self.imported_vpes:
                     vpes_with_source.append((vpe, "Import"))
-
-            # 2. Add any pre-generated VPEs from reference images
             if self.reference_vpes:
                 for vpe in self.reference_vpes:
                     vpes_with_source.append((vpe, "Reference"))
 
-            # 3. Check if there is anything to visualize
             if not vpes_with_source:
                 QMessageBox.warning(
                     self,
                     "No VPEs Available",
-                    "No VPEs available to visualize. Please load a VPE file or generate VPEs from references first."
+                    "No VPEs available to visualize. Please load or generate VPEs first."
                 )
                 return
 
-            # 4. Create the visualization dialog
-            all_vpe_tensors = [vpe for vpe, source in vpes_with_source]
-            averaged_vpe = torch.cat(all_vpe_tensors).mean(dim=0, keepdim=True)
-            final_vpe = torch.nn.functional.normalize(averaged_vpe, p=2, dim=-1)
+            raw_vpes = [vpe for vpe, source in vpes_with_source]
+            num_raw = len(raw_vpes)
+            
+            # 2. Get K and determine if we need to cluster
+            k = self.k_prototypes_spinbox.value()
+            prototypes = []  # This will be the centroids if clustering is performed
+            final_vpe = None
+            clustering_performed = False
 
+            # Case 1: We want to cluster (1 <= k < num_raw)
+            if 1 <= k < num_raw:
+                try:
+                    # Prepare tensor for scikit-learn: shape (N, E)
+                    all_vpes_tensor = torch.cat([vpe.squeeze(1) for vpe in raw_vpes], dim=0)
+                    vpes_np = all_vpes_tensor.cpu().numpy()
+
+                    from sklearn.cluster import KMeans
+                    kmeans = KMeans(n_clusters=k, random_state=0, n_init='auto').fit(vpes_np)
+                    centroids_np = kmeans.cluster_centers_
+
+                    centroids_tensor = torch.from_numpy(centroids_np).to(self.device)
+                    for i in range(k):
+                        centroid = centroids_tensor[i].unsqueeze(0).unsqueeze(0)
+                        normalized_centroid = torch.nn.functional.normalize(centroid, p=2, dim=-1)
+                        prototypes.append(normalized_centroid)
+
+                    # The final VPE is the average of the centroids
+                    stacked_prototypes = torch.cat(prototypes, dim=1)  # Shape: (1, k, E)
+                    averaged_prototype = stacked_prototypes.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
+                    final_vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
+                    clustering_performed = True
+
+                except Exception as e:
+                    QMessageBox.critical(self, 
+                                        "Clustering Error", 
+                                        f"Could not perform clustering for visualization: {e}")
+                    # If clustering fails, fall back to using all raw VPEs
+                    prototypes = []
+                    clustering_performed = False
+
+            # Case 2: k==0 -> use all raw VPEs as prototypes (no clustering)
+            if k == 0 or not clustering_performed:
+                # We are not clustering, so we use all raw VPEs as prototypes
+                # For visualization purposes, we'll show the raw VPEs and their average
+                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
+                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
+                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
+                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
+            
+            # Case 3: k >= num_raw -> use all raw VPEs as prototypes (no clustering needed)
+            elif k >= num_raw:
+                # We have more requested prototypes than available VPEs, so we use all VPEs
+                stacked_raw = torch.cat(raw_vpes, dim=1)  # Shape: (1, num_raw, E)
+                averaged_raw = stacked_raw.mean(dim=1, keepdim=True)  # Shape: (1, 1, E)
+                final_vpe = torch.nn.functional.normalize(averaged_raw, p=2, dim=-1)
+                # Don't set prototypes here - we'll show raw VPEs separately in the visualization
+
+            # 3. Create and show the visualization dialog
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-            dialog = VPEVisualizationDialog(vpes_with_source, final_vpe, self)
+            dialog = VPEVisualizationDialog(
+                vpes_with_source, 
+                final_vpe, 
+                prototypes=prototypes, 
+                clustering_performed=clustering_performed,
+                k_value=k,
+                parent=self
+            )
             QApplication.restoreOverrideCursor()
-            
             dialog.exec_()
-            
+
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Visualizing VPE", f"An error occurred: {str(e)}")
@@ -1512,44 +1625,45 @@ class DeployGeneratorDialog(QDialog):
         
 class VPEVisualizationDialog(QDialog):
     """
-    Dialog for visualizing VPE embeddings in 2D space using PCA.
+    Dialog for visualizing VPE embeddings, now including K-prototypes.
     """
-    def __init__(self, vpe_list_with_source, final_vpe=None, parent=None):
+    def __init__(self, vpe_list_with_source, final_vpe=None, prototypes=None, 
+                 clustering_performed=False, k_value=0, parent=None):
         """
-        Initialize the dialog with a list of VPE tensors and their sources.
+        Initialize the dialog.
         
         Args:
-            vpe_list_with_source (list): List of (VPE tensor, source_str) tuples
-            final_vpe (torch.Tensor, optional): The final (averaged) VPE
-            parent (QWidget, optional): Parent widget
+            vpe_list_with_source (list): List of (VPE tensor, source_str) tuples for raw VPEs.
+            final_vpe (torch.Tensor, optional): The final (averaged) VPE.
+            prototypes (list, optional): List of K-prototype VPE tensors (cluster centroids).
+            clustering_performed (bool): Whether clustering was performed.
+            k_value (int): The K value used for clustering.
+            parent (QWidget, optional): Parent widget.
         """
         super().__init__(parent)
         self.setWindowTitle("VPE Visualization")
         self.resize(1000, 1000)
-        
-        # Add a maximize button to the dialog's title bar
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
         
-        # Store the VPEs and their sources
+        # Store the VPEs and clustering info
         self.vpe_list_with_source = vpe_list_with_source
         self.final_vpe = final_vpe
+        self.prototypes = prototypes if prototypes else []
+        self.clustering_performed = clustering_performed
+        self.k_value = k_value
         
         # Create the layout
         layout = QVBoxLayout(self)
         
         # Create the plot widget
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground('w')  # White background
+        self.plot_widget.setBackground('w')
         self.plot_widget.setTitle("PCA Visualization of Visual Prompt Embeddings", color="#000000", size="10pt")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        
-        # Add the plot widget to the layout
         layout.addWidget(self.plot_widget)
-        
-        # Add spacing between plot_widget and info_label
         layout.addSpacing(20)
         
-        # Add information label at the bottom
+        # Add information label
         self.info_label = QLabel()
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
@@ -1564,101 +1678,129 @@ class VPEVisualizationDialog(QDialog):
     
     def visualize_vpes(self):
         """
-        Apply PCA to the VPE tensors and visualize them in 2D space.
+        Apply PCA to all VPEs (raw, prototypes, final) and visualize them.
         """
         if not self.vpe_list_with_source:
             self.info_label.setText("No VPEs available to visualize.")
             return
+
+        # 1. Collect all numpy arrays for PCA transformation
+        raw_vpe_arrays = [vpe.detach().cpu().numpy().squeeze() for vpe, source in self.vpe_list_with_source]
+        prototype_arrays = [p.detach().cpu().numpy().squeeze() for p in self.prototypes]
         
-        # Convert tensors to numpy arrays for PCA, separating them from the source string
-        vpe_arrays = [vpe.detach().cpu().numpy().squeeze() for vpe, source in self.vpe_list_with_source]
+        all_arrays_for_pca = raw_vpe_arrays + prototype_arrays
         
-        # If final VPE is provided, add it to the arrays
         final_vpe_array = None
         if self.final_vpe is not None:
             final_vpe_array = self.final_vpe.detach().cpu().numpy().squeeze()
-            all_vpes = np.vstack(vpe_arrays + [final_vpe_array])
-        else:
-            all_vpes = np.vstack(vpe_arrays)
-        
-        # Apply PCA to reduce to 2 dimensions
+            all_arrays_for_pca.append(final_vpe_array)
+
+        if len(all_arrays_for_pca) < 2:
+            self.info_label.setText("At least 2 VPEs are needed for PCA visualization.")
+            return
+            
+        # 2. Apply PCA
+        all_vpes_stacked = np.vstack(all_arrays_for_pca)
         pca = PCA(n_components=2)
-        vpes_2d = pca.fit_transform(all_vpes)
+        vpes_2d = pca.fit_transform(all_vpes_stacked)
         
-        # Clear the plot
+        # 3. Plot the results
         self.plot_widget.clear()
-        
-        # Generate random colors for individual VPEs
-        num_vpes = len(vpe_arrays)
-        colors = self.generate_distinct_colors(num_vpes)
-        
-        # Create a legend with 3 columns to keep it compact
         legend = self.plot_widget.addLegend(colCount=3)
         
-        # Plot individual VPEs
-        for i, (vpe_tuple, vpe_2d) in enumerate(zip(self.vpe_list_with_source, vpes_2d[:num_vpes])):
+        # Slicing indices
+        num_raw = len(raw_vpe_arrays)
+        num_prototypes = len(prototype_arrays)
+
+        # Determine if each raw VPE is effectively a prototype (k==0 or k>=N)
+        each_vpe_is_prototype = (self.k_value == 0 or self.k_value >= num_raw)
+        
+        # Plot individual raw VPEs 
+        colors = self.generate_distinct_colors(num_raw)
+        for i, (vpe_tuple, vpe_2d) in enumerate(zip(self.vpe_list_with_source, vpes_2d[:num_raw])):
             source_char = 'I' if vpe_tuple[1] == 'Import' else 'R'
-            color = pg.mkColor(colors[i])
+            
+            # Use diamonds if each VPE is a prototype, circles otherwise
+            symbol = 'd' if each_vpe_is_prototype else 'o'
+            
+            # If it's a prototype, add a black border
+            pen = pg.mkPen(color='k', width=1.5) if each_vpe_is_prototype else None
+            
+            # Create label with prototype indicator if applicable
+            name_suffix = " (Prototype)" if each_vpe_is_prototype else ""
+            name = f"VPE {i+1} ({source_char}){name_suffix}"
+            
             scatter = pg.ScatterPlotItem(
                 x=[vpe_2d[0]], 
                 y=[vpe_2d[1]], 
-                brush=color, 
-                size=15,
-                name=f"VPE {i+1} ({source_char})"
+                brush=pg.mkColor(colors[i]), 
+                pen=pen,
+                size=15 if not each_vpe_is_prototype else 18,
+                symbol=symbol, 
+                name=name
             )
             self.plot_widget.addItem(scatter)
         
-        # Plot the final (averaged) VPE if available
+        # Plot K-Prototypes (blue diamonds) if we have any and explicit clustering was performed
+        if self.prototypes and self.clustering_performed:
+            prototype_vpes_2d = vpes_2d[num_raw: num_raw + num_prototypes]
+            scatter = pg.ScatterPlotItem(
+                x=prototype_vpes_2d[:, 0], 
+                y=prototype_vpes_2d[:, 1],
+                brush=pg.mkBrush(color=(0, 0, 255, 150)), 
+                pen=pg.mkPen(color='k', width=1.5),
+                size=18, 
+                symbol='d', 
+                name=f"K-Prototypes (K={self.k_value})"
+            )
+            self.plot_widget.addItem(scatter)
+
+        # Plot the final (averaged) VPE (red star)
         if final_vpe_array is not None:
             final_vpe_2d = vpes_2d[-1]
             scatter = pg.ScatterPlotItem(
                 x=[final_vpe_2d[0]], 
-                y=[final_vpe_2d[1]], 
+                y=[final_vpe_2d[1]],
                 brush=pg.mkBrush(color='r'), 
-                size=20,
-                symbol='star',
-                name="Final VPE"
+                size=20, 
+                symbol='star', 
+                name="Final VPE (Avg)"
             )
             self.plot_widget.addItem(scatter)
         
-        # Update the information label
+        # 4. Update the information label
         orig_dim = self.vpe_list_with_source[0][0].shape[-1]
         explained_variance = sum(pca.explained_variance_ratio_)
-        self.info_label.setText(
-            f"Original dimension: {orig_dim} → Reduced to 2D\n"
-            f"Total explained variance: {explained_variance:.2%}\n"
-            f"PC1: {pca.explained_variance_ratio_[0]:.2%} variance, "
-            f"PC2: {pca.explained_variance_ratio_[1]:.2%} variance"
-        )
+        
+        info_text = (f"Original dimension: {orig_dim} → Reduced to 2D\n"
+                     f"Total explained variance: {explained_variance:.2%}\n"
+                     f"PC1: {pca.explained_variance_ratio_[0]:.2%} variance, "
+                     f"PC2: {pca.explained_variance_ratio_[1]:.2%} variance\n"
+                     f"Number of raw VPEs: {num_raw}\n")
+        
+        if self.clustering_performed:
+            info_text += f"Clustering performed with K={self.k_value}\n"
+            info_text += f"Number of prototypes: {len(self.prototypes)}"
+        else:
+            if self.k_value == 0:
+                info_text += f"No clustering (K=0): all {num_raw} raw VPEs used as prototypes"
+            else:
+                info_text += f"No clustering performed (K={self.k_value} >= {num_raw}): all raw VPEs used as prototypes"
+
+        self.info_label.setText(info_text)
     
     def generate_distinct_colors(self, num_colors):
-        """
-        Generate visually distinct colors by using evenly spaced hues
-        with random saturation and value.
-        
-        Args:
-            num_colors (int): Number of colors to generate
-            
-        Returns:
-            list: List of color hex strings
-        """
+        """Generates visually distinct colors."""
         import random
         from colorsys import hsv_to_rgb
         
         colors = []
         for i in range(num_colors):
-            # Use golden ratio to space hues evenly
             hue = (i * 0.618033988749895) % 1.0
-            # Random saturation between 0.6-1.0 (avoid too pale)
             saturation = random.uniform(0.6, 1.0)
-            # Random value between 0.7-1.0 (avoid too dark)
             value = random.uniform(0.7, 1.0)
-            
-            # Convert HSV to RGB (0-1 range)
             r, g, b = hsv_to_rgb(hue, saturation, value)
-            
-            # Convert RGB to hex string
             hex_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
             colors.append(hex_color)
-        
+            
         return colors

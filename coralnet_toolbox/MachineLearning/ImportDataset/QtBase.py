@@ -346,6 +346,8 @@ class Base(QDialog):
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
 
+    # In: QtBase.py
+
     def browse_data_yaml(self):
         """Open a file dialog to select the data YAML file and populate advanced options."""
         options = QFileDialog.Options()
@@ -358,22 +360,40 @@ class Base(QDialog):
         try:
             with open(file_path, 'r') as file:
                 data = yaml.safe_load(file)
-            class_names = data.get('names', [])
-            if not class_names:
-                QMessageBox.warning(self, "Warning", "Could not find a 'names' list in the selected YAML file.")
+            
+            names_data = data.get('names')
+            if not names_data:
+                QMessageBox.warning(self, "Warning", "Could not find a 'names' entry in the selected YAML file.")
                 return
 
+            # Handle both dictionary and list formats for class names
+            names_to_display = []
+            if isinstance(names_data, dict):
+                # If it's a dictionary (e.g., {0: 'coral'}), extract the values, sorting by key
+                # to preserve the intended class order.
+                names_to_display = [str(names_data[key]) for key in sorted(names_data.keys())]
+            elif isinstance(names_data, list):
+                # If it's already a list, use it directly.
+                names_to_display = [str(name) for name in names_data]
+            else:
+                # Handle any other unexpected format.
+                QMessageBox.warning(self, "Format Error", 
+                                    f"The 'names' entry in the YAML has an unexpected format: {type(names_data)}.")
+                return
+            
             self.yaml_path_label.setText(file_path)
             yaml_dir = os.path.dirname(file_path)
             self.output_dir_label.setText(yaml_dir)
             self.output_folder_name.setText("data")
 
+            # Clear any existing checkboxes before adding new ones
             for checkbox in self.class_checkboxes:
                 self.class_layout.removeWidget(checkbox)
                 checkbox.deleteLater()
             self.class_checkboxes.clear()
 
-            for name in class_names:
+            # Create checkboxes using the processed list of names
+            for name in names_to_display:
                 checkbox = QCheckBox(name)
                 checkbox.setChecked(True)
                 self.class_layout.addWidget(checkbox)
@@ -504,8 +524,11 @@ class Base(QDialog):
         added_paths = []
         progress_bar.set_title(f"Adding {len(image_paths)} images...")
         progress_bar.start_progress(len(image_paths))
+        
         for path in image_paths:
-            if self.image_window.add_image(path):
+            # Call the manager directly to add the raster silently,
+            # bypassing ImageWindow.add_image and its signal handlers.
+            if self.image_window.raster_manager.add_raster(path, emit_signal=False):
                 added_paths.append(path)
             progress_bar.update_progress()
 
@@ -535,19 +558,21 @@ class Base(QDialog):
                                                self.main_window.get_transparency_value())
 
             self.annotation_window.add_annotation_to_dict(annotation)
-            newly_created_annotations.append(annotation)  # Collect created objects
+            newly_created_annotations.append(annotation)
             
             progress_bar.update_progress()
 
-        # --- Call the restored, correct export function ---
         progress_bar.set_title("Exporting annotations.json...")
         self._export_annotations_to_json(newly_created_annotations, self.output_folder)
         
         progress_bar.finish_progress()
         progress_bar.stop_progress()
         progress_bar.close()
-
+        
+        # Manually perform a full UI update exactly once.
+        self.image_window.update_search_bars()
         self.image_window.filter_images()
+
         if added_paths:
             self.image_window.load_image_by_path(added_paths[-1])
             self.image_window.update_image_annotations(added_paths[-1])

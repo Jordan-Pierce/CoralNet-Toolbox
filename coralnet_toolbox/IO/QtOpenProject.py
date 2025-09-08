@@ -163,46 +163,42 @@ class OpenProject(QDialog):
         # Exit
         self.accept()
 
+    # In: QtOpenProject.py
+
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
         if not images_data:
             return
 
-        # Determine if the format is old (list of strings) or new (list of dicts)
         is_new_format = isinstance(images_data[0], dict)
-        
         image_paths = [img['path'] for img in images_data] if is_new_format else images_data
         
         if not all([os.path.exists(path) for path in image_paths]):
             image_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
         
-        # Start progress bar
         total_images = len(image_paths)
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
         progress_bar.show()
         progress_bar.start_progress(total_images)
 
         try:
-            # Create a map for quick data lookup if using the new format
             image_data_map = {img['path']: img for img in images_data} if is_new_format else {}
 
-            # Add images to the image window's raster manager one by one
+            # Add images directly to the manager without emitting signals
             for path in image_paths:
-                self.image_window.add_image(path)
+                # Call the manager directly to add the raster silently
+                self.image_window.raster_manager.add_raster(path, emit_signal=False) 
+                
                 raster = self.image_window.raster_manager.get_raster(path)
                 if not raster:
+                    progress_bar.update_progress()
                     continue
 
-                # If using the new format, apply saved state and work areas
                 if is_new_format and path in image_data_map:
                     data = image_data_map[path]
                     state = data.get('state', {})
                     work_areas_list = data.get('work_areas', [])
-
-                    # Apply raster state
                     raster.checkbox_state = state.get('checkbox_state', False)
-                    
-                    # Import work areas for this image
                     for work_area_data in work_areas_list:
                         try:
                             work_area = WorkArea.from_dict(work_area_data, path)
@@ -210,10 +206,8 @@ class OpenProject(QDialog):
                         except Exception as e:
                             print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
                 
-                # Update the progress bar
                 progress_bar.update_progress()
-            
-            # Handle backward compatibility for old, top-level work areas
+
             if legacy_workareas:
                 for image_path, work_areas_list in legacy_workareas.items():
                     current_path = self.updated_paths.get(image_path, image_path)
@@ -223,16 +217,18 @@ class OpenProject(QDialog):
                             work_area = WorkArea.from_dict(work_area_data, current_path)
                             raster.add_work_area(work_area)
 
-            # Show the last image if any were imported
-            if self.image_window.raster_manager.image_paths:
-                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
-
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Image(s)",
                                 f"An error occurred while importing image(s): {str(e)}")
         finally:
-            # Close progress bar
+            # Manually perform the UI updates ONCE for all imported images
+            self.image_window.update_search_bars()
+            self.image_window.filter_images()
+
+            if self.image_window.raster_manager.image_paths:
+                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
+            
             progress_bar.stop_progress()
             progress_bar.close()
 
