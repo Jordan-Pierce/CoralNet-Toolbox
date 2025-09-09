@@ -103,18 +103,18 @@ class SeeAnythingTool(Tool):
 
         # Clear rectangle data and graphics
         self.clear_all_rectangles()
-
         # Clean up working area and shadow
         self.cancel_working_area()
-        
         # Cancel working area creation if in progress
         self.cancel_working_area_creation()
-
         # Clear detection data
         self.results = None
 
         # Update the viewport
         self.annotation_window.scene.update()
+        
+        # Call parent deactivate to ensure crosshair is properly cleared
+        super().deactivate()
 
     def set_working_area(self):
         """

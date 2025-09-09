@@ -36,7 +36,9 @@ class Tool:
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
         self.clear_cursor_annotation()
-        self.clear_crosshair()  # Clear any crosshair when tool is deactivated
+        
+        # Ensure crosshair is properly cleared when deactivating tool
+        self.clear_crosshair()
 
     def mousePressEvent(self, event: QMouseEvent):
         pass
