@@ -31,6 +31,9 @@ class PatchTool(Tool):
         self.annotation_window.setCursor(self.default_cursor)
         self.annotation_window.main_window.annotation_size_spinbox.setEnabled(False)
         self.clear_cursor_annotation()
+        
+        # Call parent deactivate to ensure crosshair is properly cleared
+        super().deactivate()
 
     def mousePressEvent(self, event: QMouseEvent):
 

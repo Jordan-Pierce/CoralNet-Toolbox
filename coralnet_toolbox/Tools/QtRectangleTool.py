@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QMessageBox, QGraphicsPixmapItem
+from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -33,6 +33,9 @@ class RectangleTool(Tool):
         self.start_point = None
         self.end_point = None
         self.drawing_continuous = False
+        
+        # Call parent deactivate to ensure crosshair is properly cleared
+        super().deactivate()
 
     def mousePressEvent(self, event: QMouseEvent):
         

@@ -91,6 +91,9 @@ class SAMTool(Tool):
         self.cancel_working_area()
         self.has_active_prompts = False
         self.cancel_working_area_creation()
+        
+        # Call parent deactivate to ensure crosshair is properly cleared
+        super().deactivate()
 
     def set_working_area(self):
         """

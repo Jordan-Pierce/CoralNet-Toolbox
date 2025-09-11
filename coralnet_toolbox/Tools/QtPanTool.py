@@ -1,6 +1,6 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QMouseEvent
 
 from coralnet_toolbox.Tools.QtTool import Tool

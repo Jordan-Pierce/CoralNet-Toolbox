@@ -62,6 +62,9 @@ class WorkAreaTool(Tool):
         self.annotation_window.viewport().setCursor(self.default_cursor)
         self.active = False
         
+        # Call parent deactivate to ensure crosshair is properly cleared
+        super().deactivate()
+        
     def clear_work_area_graphics(self):
         """Remove all work area graphics from the scene without clearing the data in the raster."""
         # Create a copy to safely iterate
