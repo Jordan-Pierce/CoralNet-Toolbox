@@ -42,7 +42,7 @@
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start ⚡ 
 
 Get up and running in seconds:
 
