@@ -2,7 +2,6 @@ import warnings
 
 import os
 import gc
-import random
 import ujson as json
 
 from PyQt5.QtGui import QColor
