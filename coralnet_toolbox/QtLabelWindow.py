@@ -966,21 +966,17 @@ class LabelWindow(QWidget):
         for image_path in affected_images:
             self.main_window.image_window.update_image_annotations(image_path)
 
-    def handle_wasd_key(self, key):
-        """Simplified WASD navigation for vertical layout."""
+    def cycle_labels(self, direction):
+        """Cycle through labels in the specified direction (1 for down/next, -1 for up/previous)."""
         if not self.labels:
             return
         if not self.active_label:
             self.set_active_label(self.labels[0])
             return
         idx = self.labels.index(self.active_label)
-        if key == 'W':  # Up
-            if idx > 0:
-                self.set_active_label(self.labels[idx - 1])
-        elif key == 'S':  # Down
-            if idx < len(self.labels) - 1:
-                self.set_active_label(self.labels[idx + 1])
-        # Left/Right removed for vertical layout
+        new_idx = (idx + direction) % len(self.labels)
+        self.set_active_label(self.labels[new_idx])
+
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
