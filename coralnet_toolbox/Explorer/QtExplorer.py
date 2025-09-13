@@ -11,7 +11,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QSignalBlocker, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QMessageBox,
-                             QApplication)
+                             QApplication, QToolBox)
 
 from coralnet_toolbox.Explorer.QtViewers import AnnotationViewer
 from coralnet_toolbox.Explorer.QtViewers import EmbeddingViewer
@@ -176,13 +176,16 @@ class ExplorerWindow(QMainWindow):
         if self.embedding_viewer is None:
             self.embedding_viewer = EmbeddingViewer(self)
 
-        # Vertical settings panel on the far left
-        left_settings_layout = QVBoxLayout()
-        left_settings_layout.addWidget(self.annotation_settings_widget)
-        left_settings_layout.addWidget(self.model_settings_widget)
-        left_settings_layout.addWidget(self.embedding_settings_widget)
+        # Vertical settings panel on the far left is now a QToolBox
+        settings_toolbox = QToolBox()
+        settings_toolbox.addItem(self.annotation_settings_widget, "1. Annotation Filters")
+        settings_toolbox.addItem(self.model_settings_widget, "2. Model Selection")
+        settings_toolbox.addItem(self.embedding_settings_widget, "3. Embedding Parameters")
+        
         left_settings_container = QWidget()
-        left_settings_container.setLayout(left_settings_layout)
+        left_settings_layout = QVBoxLayout(left_settings_container)
+        left_settings_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins to fit toolbox cleanly
+        left_settings_layout.addWidget(settings_toolbox)
 
         # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
@@ -197,11 +200,11 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
 
-        # --- NEW MAIN SPLITTER: Vertical stack, left panel for settings, right for viewers ---
+        # Vertical stack, left panel for settings, right for viewers 
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(left_settings_container)
         main_splitter.addWidget(middle_splitter)
-        main_splitter.setSizes([250, 1000])  # Give left panel less space by default
+        main_splitter.setSizes([300, 1000])  # Give left panel less space by default
 
         self.main_layout.addWidget(main_splitter, 1)
         self.main_layout.addWidget(self.label_window)

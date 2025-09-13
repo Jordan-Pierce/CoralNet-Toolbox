@@ -4,7 +4,8 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
-                             QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox)
+                             QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
+                             QToolBox)
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
@@ -244,18 +245,16 @@ class AnnotationSettingsWidget(QGroupBox):
         self.setup_ui()
 
     def setup_ui(self):
-        # The main layout is vertical, to hold the top columns and the bottom buttons
+        # The main layout is vertical
         layout = QVBoxLayout(self)
 
-        # A horizontal layout to contain the filter columns
-        conditions_layout = QHBoxLayout()
+        # Create a QTabWidget to hold the different filter categories
+        filter_tabs = QTabWidget()
 
-        # Images column
-        images_column = QVBoxLayout()
-        images_label = QLabel("Images:")
-        images_label.setStyleSheet("font-weight: bold;")
-        images_column.addWidget(images_label)
-
+        # --- Tab 1: Images ---
+        images_tab = QWidget()
+        images_column = QVBoxLayout(images_tab)
+        
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.images_list.setMinimumHeight(100)
@@ -263,8 +262,6 @@ class AnnotationSettingsWidget(QGroupBox):
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
                 self.images_list.addItem(os.path.basename(path))
-
-        images_column.addWidget(self.images_list)
 
         images_buttons_layout = QHBoxLayout()
         self.images_select_all_btn = QPushButton("Select All")
@@ -274,15 +271,16 @@ class AnnotationSettingsWidget(QGroupBox):
         self.images_deselect_all_btn = QPushButton("Deselect All")
         self.images_deselect_all_btn.clicked.connect(self.deselect_all_images)
         images_buttons_layout.addWidget(self.images_deselect_all_btn)
+
+        images_column.addWidget(QLabel("Images:"))
+        images_column.addWidget(self.images_list)
         images_column.addLayout(images_buttons_layout)
+        
+        filter_tabs.addTab(images_tab, "Images")
 
-        conditions_layout.addLayout(images_column)
-
-        # Annotation Type column
-        type_column = QVBoxLayout()
-        type_label = QLabel("Annotation Type:")
-        type_label.setStyleSheet("font-weight: bold;")
-        type_column.addWidget(type_label)
+        # --- Tab 2: Annotation Type ---
+        type_tab = QWidget()
+        type_column = QVBoxLayout(type_tab)
 
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -292,8 +290,6 @@ class AnnotationSettingsWidget(QGroupBox):
                                             "PolygonAnnotation",
                                             "MultiPolygonAnnotation"])
 
-        type_column.addWidget(self.annotation_type_list)
-
         type_buttons_layout = QHBoxLayout()
         self.type_select_all_btn = QPushButton("Select All")
         self.type_select_all_btn.clicked.connect(self.select_all_annotation_types)
@@ -302,16 +298,17 @@ class AnnotationSettingsWidget(QGroupBox):
         self.type_deselect_all_btn = QPushButton("Deselect All")
         self.type_deselect_all_btn.clicked.connect(self.deselect_all_annotation_types)
         type_buttons_layout.addWidget(self.type_deselect_all_btn)
+
+        type_column.addWidget(QLabel("Annotation Type:"))
+        type_column.addWidget(self.annotation_type_list)
         type_column.addLayout(type_buttons_layout)
 
-        conditions_layout.addLayout(type_column)
+        filter_tabs.addTab(type_tab, "Type")
 
-        # Label column
-        label_column = QVBoxLayout()
-        label_label = QLabel("Label:")
-        label_label.setStyleSheet("font-weight: bold;")
-        label_column.addWidget(label_label)
-
+        # --- Tab 3: Label ---
+        label_tab = QWidget()
+        label_column = QVBoxLayout(label_tab)
+        
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.label_list.setMinimumHeight(100)
@@ -319,8 +316,6 @@ class AnnotationSettingsWidget(QGroupBox):
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
                 self.label_list.addItem(label.short_label_code)
-
-        label_column.addWidget(self.label_list)
 
         label_buttons_layout = QHBoxLayout()
         self.label_select_all_btn = QPushButton("Select All")
@@ -330,12 +325,15 @@ class AnnotationSettingsWidget(QGroupBox):
         self.label_deselect_all_btn = QPushButton("Deselect All")
         self.label_deselect_all_btn.clicked.connect(self.deselect_all_labels)
         label_buttons_layout.addWidget(self.label_deselect_all_btn)
+
+        label_column.addWidget(QLabel("Label:"))
+        label_column.addWidget(self.label_list)
         label_column.addLayout(label_buttons_layout)
-
-        conditions_layout.addLayout(label_column)
-
-        # Add the horizontal layout of columns to the main vertical layout
-        layout.addLayout(conditions_layout)
+        
+        filter_tabs.addTab(label_tab, "Label")
+        
+        # Add the tab widget to the main layout
+        layout.addWidget(filter_tabs)
 
         # Bottom buttons layout with Apply and Clear buttons on the right
         bottom_layout = QHBoxLayout()
@@ -558,13 +556,16 @@ class ModelSettingsWidget(QGroupBox):
 
         main_layout.addWidget(self.tabs)
 
-        # === Feature Extraction Mode (Reverted to bottom) ===
+        # === Feature Extraction Mode ===
         feature_mode_layout = QFormLayout()
         self.feature_mode_combo = QComboBox()
         self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
-        self.feature_mode_combo.setCurrentText("Embed Features")  # Set default to Embed Features
+        self.feature_mode_combo.setCurrentText("Embed Features")
         feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
         main_layout.addLayout(feature_mode_layout)
+
+        # --- ADD STRETCH TO PUSH CONTENT UP ---
+        main_layout.addStretch(1)
 
         # --- Connect Signals ---
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
