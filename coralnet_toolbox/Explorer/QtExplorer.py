@@ -95,7 +95,7 @@ class ExplorerWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         self.left_panel = QWidget()
-        self.left_layout = QVBoxLayout(self.left_panel)
+        self.label_layout = QVBoxLayout(self.left_panel)
 
         self.annotation_settings_widget = None
         self.model_settings_widget = None
@@ -182,10 +182,16 @@ class ExplorerWindow(QMainWindow):
         settings_toolbox.addItem(self.model_settings_widget, "2. Model Selection")
         settings_toolbox.addItem(self.embedding_settings_widget, "3. Embedding Parameters")
         
-        left_settings_container = QWidget()
-        left_settings_layout = QVBoxLayout(left_settings_container)
-        left_settings_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins to fit toolbox cleanly
-        left_settings_layout.addWidget(settings_toolbox)
+        # Create a vertical splitter for the top toolbox (to allow hiding/showing)
+        top_splitter = QSplitter(Qt.Vertical)
+        top_splitter.addWidget(settings_toolbox)
+        # Add an empty widget to enable collapsing the toolbox
+        empty_widget = QWidget()
+        top_splitter.addWidget(empty_widget)
+        top_splitter.setSizes([200, 0])  # Default: Show toolbox (200px), hide empty widget (0px)
+        top_splitter.setCollapsible(0, True)  # Allow collapsing the toolbox
+        top_splitter.setCollapsible(1, False)  # Prevent collapsing the empty widget
+        self.main_layout.addWidget(top_splitter)
 
         # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
@@ -200,14 +206,20 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
 
-        # Vertical stack, left panel for settings, right for viewers 
+        # Left panel: Reuse existing if it has the LabelWindow, otherwise create new
+        if not hasattr(self, 'left_panel') or not self.left_panel:
+            self.left_panel = QWidget()
+            self.label_layout = QVBoxLayout(self.left_panel)
+        # Insert the settings toolbox at the beginning of the existing label_layout
+        self.label_layout.insertWidget(0, settings_toolbox)
+
+        # Vertical stack: top splitter (toolbox) and main splitter (left panel + viewers)
         main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.addWidget(left_settings_container)
+        main_splitter.addWidget(self.left_panel)  # Fixed LabelWindow on the left
         main_splitter.addWidget(middle_splitter)
-        main_splitter.setSizes([300, 1000])  # Give left panel less space by default
+        main_splitter.setSizes([250, 1000])  # Adjust: More space to viewers, fixed left for LabelWindow
 
         self.main_layout.addWidget(main_splitter, 1)
-        self.main_layout.addWidget(self.label_window)
 
         self.buttons_layout = QHBoxLayout()
         self.buttons_layout.addStretch(1)
