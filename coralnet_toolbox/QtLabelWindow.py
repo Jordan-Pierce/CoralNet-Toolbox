@@ -6,9 +6,9 @@ import random
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
-from PyQt5.QtWidgets import (QScrollArea, QMessageBox, QCheckBox, QWidget,
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication)
+                             QPushButton, QApplication, QGroupBox, QScrollArea)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -249,30 +249,37 @@ class LabelWindow(QWidget):
         self.label_height = 30
         self.label_width = 100
 
-        # Main vertical layout
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
+        # Create the group box
+        self.group_box = QGroupBox("LabelWindow")
+        self.group_box_layout = QVBoxLayout(self.group_box)
+        self.group_box_layout.setContentsMargins(0, 0, 0, 0)
+        self.group_box_layout.setSpacing(0)
 
         # Top Actions Bar
         self.actions_bar = QHBoxLayout()
+        self.actions_bar.setContentsMargins(0, 0, 0, 0)
+        self.actions_bar.setSpacing(0)
+
         self.add_label_button = QPushButton()
         self.add_label_button.setIcon(self.main_window.add_icon)
         self.add_label_button.setToolTip("Add Label")
-        self.add_label_button.setFixedSize(self.label_width, self.label_height)
+        self.add_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.add_label_button.setFixedHeight(self.label_height)
         self.actions_bar.addWidget(self.add_label_button)
 
         self.delete_label_button = QPushButton()
         self.delete_label_button.setIcon(self.main_window.remove_icon)
         self.delete_label_button.setToolTip("Delete Label")
-        self.delete_label_button.setFixedSize(self.label_width, self.label_height)
+        self.delete_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.delete_label_button.setFixedHeight(self.label_height)
         self.delete_label_button.setEnabled(False)
         self.actions_bar.addWidget(self.delete_label_button)
 
         self.edit_label_button = QPushButton()
         self.edit_label_button.setIcon(self.main_window.edit_icon)
         self.edit_label_button.setToolTip("Edit Label / Merge Labels")
-        self.edit_label_button.setFixedSize(self.label_width, self.label_height)
+        self.edit_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.edit_label_button.setFixedHeight(self.label_height)
         self.edit_label_button.setEnabled(False)
         self.actions_bar.addWidget(self.edit_label_button)
 
@@ -281,49 +288,60 @@ class LabelWindow(QWidget):
         self.label_lock_button.setToolTip("Label Unlocked")
         self.label_lock_button.setCheckable(True)
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
-        self.label_lock_button.setFixedSize(self.label_height, self.label_height)
+        self.label_lock_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.label_lock_button.setFixedHeight(self.label_height)
         self.actions_bar.addWidget(self.label_lock_button)
-        self.actions_bar.addStretch()
 
         # Filter/Search Bar
         self.filter_bar_layout = QHBoxLayout()
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
         self.filter_bar.textChanged.connect(self.filter_labels)
-        self.filter_bar.setFixedWidth(150)
+        self.filter_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.filter_bar_layout.addWidget(self.filter_bar)
+        self.filter_bar_layout.addStretch()
 
-        # Scroll Area (vertical label list)
+        # --- Add scroll area and label layout ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_content = QWidget()
         self.labels_layout = QVBoxLayout(self.scroll_content)
-        self.labels_layout.setSpacing(0)
         self.labels_layout.setContentsMargins(0, 0, 0, 0)
+        self.labels_layout.setSpacing(2)
+        self.scroll_content.setLayout(self.labels_layout)
         self.scroll_area.setWidget(self.scroll_content)
 
         # Bottom Status Bar
         self.status_bar = QHBoxLayout()
-        self.label_count_display = QLineEdit("")
+        self.counts_layout = QVBoxLayout()
+
+        self.label_count_display = QLineEdit("Labels: 1")
         self.label_count_display.setReadOnly(True)
         self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.label_count_display.setFixedWidth(100)
-        self.status_bar.addWidget(self.label_count_display)
+        self.label_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.counts_layout.addWidget(self.label_count_display)
 
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)
         self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.annotation_count_display.setFixedWidth(150)
+        self.annotation_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
-        self.status_bar.addWidget(self.annotation_count_display)
+        self.counts_layout.addWidget(self.annotation_count_display)
+
+        self.status_bar.addLayout(self.counts_layout)
         self.status_bar.addStretch()
 
-        # Add layouts to the main layout
-        self.main_layout.addLayout(self.actions_bar)
-        self.main_layout.addLayout(self.filter_bar_layout)
-        self.main_layout.addWidget(self.scroll_area)
-        self.main_layout.addLayout(self.status_bar)
+        # Add layouts to the group box layout
+        self.group_box_layout.addLayout(self.actions_bar)
+        self.group_box_layout.addLayout(self.filter_bar_layout)
+        self.group_box_layout.addWidget(self.scroll_area)  # <-- Now defined!
+        self.group_box_layout.addLayout(self.status_bar)
+
+        # Main layout for the LabelWindow widget
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        self.main_layout.addWidget(self.group_box)
 
         # Connections
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
@@ -459,7 +477,7 @@ class LabelWindow(QWidget):
     def update_label_count(self):
         """Update the label count display."""
         count = len(self.labels)
-        self.label_count_display.setText(f"# Labels: {count}")
+        self.label_count_display.setText(f"Labels: {count}")
 
     def update_labels_per_row(self):
         """Calculate and update the number of labels per row based on width."""

@@ -1028,30 +1028,44 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
 
-        # Create left and right layouts
-        self.left_layout = QVBoxLayout()
+        # Main vertical layout
+        self.main_layout = QVBoxLayout(self.central_widget)
+
+        # Status bar at the top
+        self.main_layout.addLayout(self.status_bar_layout)
+
+        # Panels layout: horizontal row under status bar
+        self.panels_layout = QHBoxLayout()
+
+        # Label panel (left)
+        self.label_layout = QVBoxLayout()
+        self.label_layout.addWidget(self.label_window)
+        self.panels_layout.addLayout(self.label_layout, 15)
+
+        # Annotation panel (center)
+        self.annotation_layout = QVBoxLayout()
+        self.annotation_layout.addWidget(self.annotation_window)
+        self.panels_layout.addLayout(self.annotation_layout, 70)
+
+        # Right panel (ImageWindow + ConfidenceWindow stacked vertically)
         self.right_layout = QVBoxLayout()
+        self.right_layout.addWidget(self.image_window, 54)
+        self.right_layout.addWidget(self.confidence_window, 46)
+        self.panels_layout.addLayout(self.right_layout, 15)
 
-        # Add status bar layout to left layout above the AnnotationWindow
-        self.left_layout.addLayout(self.status_bar_layout)
-        self.left_layout.addWidget(self.annotation_window, 85)
-        self.left_layout.addWidget(self.label_window, 15)
+        # Add the panels row to the main layout
+        self.main_layout.addLayout(self.panels_layout)
 
-        # Adjust the right layout with new proportions
-        self.right_layout.addWidget(self.image_window, 54)  # 54% for image window
-        self.right_layout.addWidget(self.confidence_window, 46)  # 46% for confidence window
-
-        # Add left and right layouts to main layout
-        self.main_layout.addLayout(self.left_layout, 85)
-        self.main_layout.addLayout(self.right_layout, 15)
-
-        # Set up global event filter
+        # --------------------------------------------------
+        # Setup global event filter for shortcuts
+        # --------------------------------------------------
         self.global_event_filter = GlobalEventFilter(self)
         QApplication.instance().installEventFilter(self.global_event_filter)
 
+        # --------------------------------------------------
         # Enable drag and drop
+        # --------------------------------------------------
         self.setAcceptDrops(True)
 
         # -----------------------------------------
