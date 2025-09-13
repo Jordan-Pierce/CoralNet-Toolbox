@@ -307,12 +307,12 @@ class MainWindow(QMainWindow):
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
 
-        # Layout
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
-        self.left_layout = QVBoxLayout()
-        self.right_layout = QVBoxLayout()
+        # Layout DELETE ME
+        # self.central_widget = QWidget()
+        # self.setCentralWidget(self.central_widget)
+        # self.main_layout = QHBoxLayout(self.central_widget)
+        # self.label_layout = QVBoxLayout()
+        # self.image_layout = QVBoxLayout()
 
         # ----------------------------------------
         # Create the menu bar
@@ -1036,29 +1036,31 @@ class MainWindow(QMainWindow):
         self.status_bar_group_box.setLayout(self.status_bar_layout)
         self.main_layout.addWidget(self.status_bar_group_box)
 
-        # Panels layout: horizontal row under status bar
+        # Panels layout: horizontal row under status bar 
+        # (LabelWindow, AnnotationWindow, ImageWindow + ConfidenceWindow)
         self.panels_layout = QHBoxLayout()
 
         # Label panel (left)
         self.label_layout = QVBoxLayout()
         self.label_layout.addWidget(self.label_window)
 
-        # Annotation panel (center) strict
+        # Annotation panel (center) (in a group box since it's a QGraphicsView)
         self.annotation_layout = QVBoxLayout()
         self.annotation_group_box = QGroupBox("Annotation Window")
         group_layout = QVBoxLayout(self.annotation_group_box)
         group_layout.addWidget(self.annotation_window)
         self.annotation_group_box.setLayout(group_layout)
         self.annotation_layout.addWidget(self.annotation_group_box)
+
+        # Image panel (ImageWindow + ConfidenceWindow stacked vertically)
+        self.image_layout = QVBoxLayout()
+        self.image_layout.addWidget(self.image_window, 54)
+        self.image_layout.addWidget(self.confidence_window, 46)
         
-        # Right panel (ImageWindow + ConfidenceWindow stacked vertically)
-        self.right_layout = QVBoxLayout()
-        self.right_layout.addWidget(self.image_window, 54)
-        self.right_layout.addWidget(self.confidence_window, 46)
-        
+        # Set stretch factors to control relative sizes
         self.panels_layout.addLayout(self.label_layout, 15)  # Strict width
         self.panels_layout.addLayout(self.annotation_layout, 120)  # Strict width
-        self.panels_layout.addLayout(self.right_layout, 25)
+        self.panels_layout.addLayout(self.image_layout, 25)
 
         # Add the panels row to the main layout
         self.main_layout.addLayout(self.panels_layout)
@@ -1826,9 +1828,9 @@ class MainWindow(QMainWindow):
             self.explorer_window = ExplorerWindow(self)
             
             # Move the label_window from the main layout to the explorer
-            self.left_layout.removeWidget(self.label_window)
+            self.label_layout.removeWidget(self.label_window)
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
                 
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
@@ -1858,7 +1860,7 @@ class MainWindow(QMainWindow):
         if self.explorer_window:
             # Move the label_window back to the main window's layout
             self.label_window.setParent(self.central_widget)  # Re-parent back
-            self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
+            self.label_layout.addWidget(self.label_window, 15)  # Add it back to the layout
             self.label_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
