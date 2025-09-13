@@ -176,13 +176,13 @@ class ExplorerWindow(QMainWindow):
         if self.embedding_viewer is None:
             self.embedding_viewer = EmbeddingViewer(self)
 
-        # Horizontal layout for the three settings panels (original horizontal layout)
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self.annotation_settings_widget, 2)
-        top_layout.addWidget(self.model_settings_widget, 1)
-        top_layout.addWidget(self.embedding_settings_widget, 1)
-        top_container = QWidget()
-        top_container.setLayout(top_layout)
+        # Vertical settings panel on the far left
+        left_settings_layout = QVBoxLayout()
+        left_settings_layout.addWidget(self.annotation_settings_widget)
+        left_settings_layout.addWidget(self.model_settings_widget)
+        left_settings_layout.addWidget(self.embedding_settings_widget)
+        left_settings_container = QWidget()
+        left_settings_container.setLayout(left_settings_layout)
 
         # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
@@ -197,18 +197,13 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
 
-        # Create a VERTICAL splitter to manage the height between the settings and viewers.
-        # This makes the top settings panel vertically resizable.
-        main_splitter = QSplitter(Qt.Vertical)
-        main_splitter.addWidget(top_container)
+        # --- NEW MAIN SPLITTER: Vertical stack, left panel for settings, right for viewers ---
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(left_settings_container)
         main_splitter.addWidget(middle_splitter)
-        
-        # Set initial heights to give the settings panel a bit more space by default
-        main_splitter.setSizes([250, 750]) 
+        main_splitter.setSizes([250, 1000])  # Give left panel less space by default
 
-        # Add the new main splitter to the layout instead of the individual components
         self.main_layout.addWidget(main_splitter, 1)
-
         self.main_layout.addWidget(self.label_window)
 
         self.buttons_layout = QHBoxLayout()
