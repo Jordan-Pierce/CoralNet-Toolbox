@@ -251,11 +251,43 @@ class LabelWindow(QWidget):
         self.label_height = 30
         self.label_width = 50 
         
-        # Create the group box
-        self.group_box = QGroupBox("LabelWindow")
-        self.group_box_layout = QVBoxLayout(self.group_box)
-        self.group_box_layout.setContentsMargins(0, 0, 0, 0)
-        self.group_box_layout.setSpacing(0)
+        # Setup UI components
+        self.setup_ui()
+        
+        # Connections
+        self.add_label_button.clicked.connect(self.open_add_label_dialog)
+        self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
+        self.delete_label_button.clicked.connect(self.delete_active_label)
+
+        # Initialize labels
+        self.labels = []
+        self.active_label = None
+
+        # Add default label
+        self.add_review_label()
+
+        # Deselect at first
+        self.active_label.deselect()
+
+        self.show_confirmation_dialog = True
+        self.setAcceptDrops(True)
+
+    def setup_ui(self):
+        """Set up the user interface."""
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create UI sections
+        self.setup_actions_section()
+        self.setup_labels_section()
+        self.setup_counts_section()
+
+    def setup_actions_section(self):
+        """Set up the actions section of the UI."""
+        # Create a QGroupBox for Label Actions
+        self.actions_group = QGroupBox("Label Actions")
+        actions_layout = QVBoxLayout()
+        self.actions_group.setLayout(actions_layout)
 
         # Top Actions Bar
         self.actions_bar = QHBoxLayout()
@@ -301,6 +333,20 @@ class LabelWindow(QWidget):
         self.filter_bar.textChanged.connect(self.filter_labels)
         self.filter_bar_layout.addWidget(self.filter_bar)
 
+        # Add layouts to the group box layout
+        actions_layout.addLayout(self.actions_bar)
+        actions_layout.addLayout(self.filter_bar_layout)
+
+        # Add the group box to the main layout
+        self.layout.addWidget(self.actions_group)
+
+    def setup_labels_section(self):
+        """Set up the labels section of the UI."""
+        # Create a QGroupBox for Label Window
+        self.labels_group = QGroupBox("Label Window")
+        labels_layout = QVBoxLayout()
+        self.labels_group.setLayout(labels_layout)
+
         # --- Add scroll area and label layout ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -312,6 +358,19 @@ class LabelWindow(QWidget):
         self.labels_layout.setSpacing(0)
         self.scroll_content.setLayout(self.labels_layout)
         self.scroll_area.setWidget(self.scroll_content)
+
+        # Add scroll area to the group box layout
+        labels_layout.addWidget(self.scroll_area)
+
+        # Add the group box to the main layout
+        self.layout.addWidget(self.labels_group)
+
+    def setup_counts_section(self):
+        """Set up the counts section of the UI."""
+        # Create a QGroupBox for Counts
+        self.counts_group = QGroupBox("Counts")
+        counts_layout = QVBoxLayout()
+        self.counts_group.setLayout(counts_layout)
 
         # Bottom Status Bar
         self.status_bar = QHBoxLayout()
@@ -330,35 +389,11 @@ class LabelWindow(QWidget):
 
         self.status_bar.addLayout(self.counts_layout)
 
-        # Add layouts to the group box layout
-        self.group_box_layout.addLayout(self.actions_bar)
-        self.group_box_layout.addLayout(self.filter_bar_layout)
-        self.group_box_layout.addWidget(self.scroll_area)
-        self.group_box_layout.addLayout(self.status_bar)
+        # Add layout to the group box layout
+        counts_layout.addLayout(self.status_bar)
 
-        # Main layout for the LabelWindow widget
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
-        self.main_layout.addWidget(self.group_box)
-
-        # Connections
-        self.add_label_button.clicked.connect(self.open_add_label_dialog)
-        self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
-        self.delete_label_button.clicked.connect(self.delete_active_label)
-
-        # Initialize labels
-        self.labels = []
-        self.active_label = None
-
-        # Add default label
-        self.add_review_label()
-
-        # Deselect at first
-        self.active_label.deselect()
-
-        self.show_confirmation_dialog = True
-        self.setAcceptDrops(True)
+        # Add the group box to the main layout
+        self.layout.addWidget(self.counts_group)
 
     def resizeEvent(self, event):
         """Handle resize events and update label widths dynamically."""

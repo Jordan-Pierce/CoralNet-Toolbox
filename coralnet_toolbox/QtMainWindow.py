@@ -198,9 +198,8 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
         
-        self.system_monitor = None
-        
         self.explorer_window = None  # Initialized in open_explorer_window
+        self.system_monitor = None  # Initialized in open_system_monitor
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -1032,26 +1031,33 @@ class MainWindow(QMainWindow):
         # Main vertical layout
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Status bar at the top
-        self.main_layout.addLayout(self.status_bar_layout)
+        # Status bar in a group box
+        self.status_bar_group_box = QGroupBox("Status Bar")
+        self.status_bar_group_box.setLayout(self.status_bar_layout)
+        self.main_layout.addWidget(self.status_bar_group_box)
 
         # Panels layout: horizontal row under status bar
         self.panels_layout = QHBoxLayout()
 
-        # Label panel (left) strict width
+        # Label panel (left)
         self.label_layout = QVBoxLayout()
         self.label_layout.addWidget(self.label_window)
-        self.panels_layout.addLayout(self.label_layout, 10)
 
-        # Annotation panel (center) strict width
+        # Annotation panel (center) strict
         self.annotation_layout = QVBoxLayout()
-        self.annotation_layout.addWidget(self.annotation_window)
-        self.panels_layout.addLayout(self.annotation_layout, 90)
-
+        self.annotation_group_box = QGroupBox("Annotation Window")
+        group_layout = QVBoxLayout(self.annotation_group_box)
+        group_layout.addWidget(self.annotation_window)
+        self.annotation_group_box.setLayout(group_layout)
+        self.annotation_layout.addWidget(self.annotation_group_box)
+        
         # Right panel (ImageWindow + ConfidenceWindow stacked vertically)
         self.right_layout = QVBoxLayout()
         self.right_layout.addWidget(self.image_window, 54)
         self.right_layout.addWidget(self.confidence_window, 46)
+        
+        self.panels_layout.addLayout(self.label_layout, 15)  # Strict width
+        self.panels_layout.addLayout(self.annotation_layout, 120)  # Strict width
         self.panels_layout.addLayout(self.right_layout, 25)
 
         # Add the panels row to the main layout
