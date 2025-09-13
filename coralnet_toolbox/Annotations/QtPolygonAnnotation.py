@@ -814,6 +814,12 @@ class PolygonAnnotation(Annotation):
             image_path=data['image_path'],
             label_id=data['label_id']
         )
+        
+        # Set the UUID if present
+        if 'id' in data:
+            annotation.id = data['id']
+            
+        # Set any additional data if present
         annotation.data = data.get('data', {})
 
         # --- Remainder of the method is for handling confidence scores ---
