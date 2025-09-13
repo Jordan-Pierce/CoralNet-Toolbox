@@ -6,9 +6,9 @@ import random
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
-from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
+from PyQt5.QtWidgets import (QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox)
+                             QPushButton, QApplication)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -43,11 +43,9 @@ class Label(QWidget):
         self.animation_timer.timeout.connect(self._update_animated_line)
         self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
 
-        # Set the fixed width and height
-        self.fixed_width = 100  # -20 for buffer
+        # Set the fixed height
         self.fixed_height = 30
 
-        self.setFixedWidth(self.fixed_width)
         self.setFixedHeight(self.fixed_height)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -215,8 +213,7 @@ class Label(QWidget):
         if not isinstance(other, Label):
             return NotImplemented
         return (
-            self.short_label_code == other.short_label_code and
-            self.long_label_code == other.long_label_code
+            self.short_label_code == other.short_label_code and self.long_label_code == other.long_label_code
         )
 
     def __hash__(self):
@@ -251,89 +248,82 @@ class LabelWindow(QWidget):
 
         self.label_height = 30
         self.label_width = 100
-        self.labels_per_row = 1  # Initial value, will be updated
 
+        # Main vertical layout
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # Create a groupbox and set its title and style sheet
-        self.groupBox = QGroupBox("Label Window")
-
-        self.groupBoxLayout = QVBoxLayout()
-        self.groupBox.setLayout(self.groupBoxLayout)
-
-        # Top bar with Add Label, Edit Label, and Delete Label buttons
-        self.top_bar = QHBoxLayout()
+        # Top Actions Bar
+        self.actions_bar = QHBoxLayout()
         self.add_label_button = QPushButton()
         self.add_label_button.setIcon(self.main_window.add_icon)
         self.add_label_button.setToolTip("Add Label")
         self.add_label_button.setFixedSize(self.label_width, self.label_height)
-        self.top_bar.addWidget(self.add_label_button)
+        self.actions_bar.addWidget(self.add_label_button)
 
         self.delete_label_button = QPushButton()
         self.delete_label_button.setIcon(self.main_window.remove_icon)
         self.delete_label_button.setToolTip("Delete Label")
         self.delete_label_button.setFixedSize(self.label_width, self.label_height)
-        self.delete_label_button.setEnabled(False)  # Initially disabled
-        self.top_bar.addWidget(self.delete_label_button)
+        self.delete_label_button.setEnabled(False)
+        self.actions_bar.addWidget(self.delete_label_button)
 
         self.edit_label_button = QPushButton()
         self.edit_label_button.setIcon(self.main_window.edit_icon)
         self.edit_label_button.setToolTip("Edit Label / Merge Labels")
         self.edit_label_button.setFixedSize(self.label_width, self.label_height)
-        self.edit_label_button.setEnabled(False)  # Initially disabled
-        self.top_bar.addWidget(self.edit_label_button)
+        self.edit_label_button.setEnabled(False)
+        self.actions_bar.addWidget(self.edit_label_button)
 
-        # Lock button
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
         self.label_lock_button.setToolTip("Label Unlocked")
         self.label_lock_button.setCheckable(True)
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
         self.label_lock_button.setFixedSize(self.label_height, self.label_height)
-        self.top_bar.addWidget(self.label_lock_button)
+        self.actions_bar.addWidget(self.label_lock_button)
+        self.actions_bar.addStretch()
 
-        # Filter bar for labels
+        # Filter/Search Bar
+        self.filter_bar_layout = QHBoxLayout()
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
         self.filter_bar.textChanged.connect(self.filter_labels)
         self.filter_bar.setFixedWidth(150)
-        self.top_bar.addWidget(self.filter_bar)
+        self.filter_bar_layout.addWidget(self.filter_bar)
 
-        self.top_bar.addStretch()  # Add stretch to the right side
-
-        # Add label count display
-        self.label_count_display = QLineEdit("")
-        self.label_count_display.setReadOnly(True)  # Make it uneditable
-        self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
-        self.top_bar.addWidget(self.label_count_display)
-
-        # Add annotation count display
-        self.annotation_count_display = QLineEdit("Annotations: 0")
-        self.annotation_count_display.setReadOnly(True)  # Make it uneditable
-        self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.annotation_count_display.setFixedWidth(150)
-        self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
-        self.top_bar.addWidget(self.annotation_count_display)
-
-        # Scroll area for labels
+        # Scroll Area (vertical label list)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_content = QWidget()
-        self.grid_layout = QGridLayout(self.scroll_content)
-        self.grid_layout.setSpacing(0)
-        self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.labels_layout = QVBoxLayout(self.scroll_content)
+        self.labels_layout.setSpacing(0)
+        self.labels_layout.setContentsMargins(0, 0, 0, 0)
         self.scroll_area.setWidget(self.scroll_content)
 
-        # Add layouts to the groupbox layout
-        self.groupBoxLayout.addLayout(self.top_bar)
-        self.groupBoxLayout.addWidget(self.scroll_area)
+        # Bottom Status Bar
+        self.status_bar = QHBoxLayout()
+        self.label_count_display = QLineEdit("")
+        self.label_count_display.setReadOnly(True)
+        self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.label_count_display.setFixedWidth(100)
+        self.status_bar.addWidget(self.label_count_display)
 
-        # Add the groupbox to the main layout
-        self.main_layout.addWidget(self.groupBox)
+        self.annotation_count_display = QLineEdit("Annotations: 0")
+        self.annotation_count_display.setReadOnly(True)
+        self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+        self.annotation_count_display.setFixedWidth(150)
+        self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
+        self.status_bar.addWidget(self.annotation_count_display)
+        self.status_bar.addStretch()
+
+        # Add layouts to the main layout
+        self.main_layout.addLayout(self.actions_bar)
+        self.main_layout.addLayout(self.filter_bar_layout)
+        self.main_layout.addWidget(self.scroll_area)
+        self.main_layout.addLayout(self.status_bar)
 
         # Connections
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
@@ -354,9 +344,9 @@ class LabelWindow(QWidget):
         self.setAcceptDrops(True)
 
     def resizeEvent(self, event):
-        """Handle resize events to update the label grid layout."""
+        """Handle resize events (no longer reorganizes labels by row)."""
         super().resizeEvent(event)
-        self.update_labels_per_row()
+        # No need to update labels_per_row or reorganize by grid
         self.reorganize_labels()
 
     def dragEnterEvent(self, event):
@@ -374,10 +364,8 @@ class LabelWindow(QWidget):
             self.reorganize_labels()
 
     def calculate_new_index(self, pos):
-        """Calculate the grid index based on the drop position."""
-        row = pos.y() // self.label_width
-        col = pos.x() // self.label_width
-        return row * self.labels_per_row + col
+        """Calculate the new index for vertical drop based on y position."""
+        return max(0, min(len(self.labels) - 1, pos.y() // self.label_height))
 
     def update_annotation_count_state(self):
         """Update the annotation count display based on the current selection."""
@@ -394,15 +382,12 @@ class LabelWindow(QWidget):
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
-        
         # Check if we're in Explorer mode
-        if (hasattr(self.main_window, 'explorer_window') and 
-            self.main_window.explorer_window and 
-            hasattr(self.main_window.explorer_window, 'annotation_viewer')):
-            
+        if self.main_window.explorer_window and \
+            hasattr(self.main_window, 'explorer_window') and \
+            hasattr(self.main_window.explorer_window, 'annotation_viewer'):
             annotation_viewer = self.main_window.explorer_window.annotation_viewer
-
-            # --- REORDERED LOGIC ---
+           
             # Priority 1: Always check for a selection in Explorer first.
             explorer_selected_count = len(annotation_viewer.selected_widgets)
             if explorer_selected_count > 0:
@@ -412,17 +397,16 @@ class LabelWindow(QWidget):
                     text = f"Annotations: {explorer_selected_count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early, selection count is most important.
-
+            
             # Priority 2: If no selection, THEN check for isolation mode.
             if annotation_viewer.isolated_mode:
                 count = len(annotation_viewer.isolated_widgets)
                 text = f"Annotations: {count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early
-        
+            
         # --- ORIGINAL FALLBACK LOGIC (Unchanged) ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
-        
         if annotation_window_selected_count == 0:
             text = f"Annotations: {len(annotations)}"
         elif annotation_window_selected_count > 1:
@@ -434,7 +418,6 @@ class LabelWindow(QWidget):
                 text = f"Annotation: {current_idx}/{len(annotations)}"
             except ValueError:
                 text = "Annotations: ???"
-
         self.annotation_count_display.setText(text)
 
     def update_annotation_count_index(self):
@@ -486,22 +469,17 @@ class LabelWindow(QWidget):
 
     def reorganize_labels(self):
         """
-        Rearrange labels in the grid layout based on the current order and labels_per_row.
+        Rearrange labels in the vertical layout based on the current order.
         """
-        # First, clear the existing layout to remove any lingering widgets.
-        # This prevents references to deleted widgets from persisting in the layout.
-        while self.grid_layout.count():
-            item = self.grid_layout.takeAt(0)
+        # Clear the existing layout
+        while self.labels_layout.count():
+            item = self.labels_layout.takeAt(0)
             widget = item.widget()
             if widget:
-                # Setting the parent to None removes the widget from the layout's control.
                 widget.setParent(None)
-
-        # Now, add the current labels from the model back into the clean layout.
-        for i, label in enumerate(self.labels):
-            row = i // self.labels_per_row
-            col = i % self.labels_per_row
-            self.grid_layout.addWidget(label, row, col)
+        # Add labels vertically
+        for label in self.labels:
+            self.labels_layout.addWidget(label)
 
     def open_add_label_dialog(self):
         """Open the dialog to add a new label."""
@@ -673,10 +651,11 @@ class LabelWindow(QWidget):
         for label in self.labels:
             if label.id == label_id:
                 return label
-                
         print(f"Warning: Label with ID '{label_id}' not found.")
         if return_review:
-            return self.get_review_label()
+            for label in self.labels:
+                if label.short_label_code == "Review" and label.long_label_code == "Review":
+                    return label
         return None  # Return None if not found and not returning review label
 
     def get_label_by_codes(self, short_label_code, long_label_code, return_review=True):
@@ -684,13 +663,13 @@ class LabelWindow(QWidget):
         s_code = short_label_code.strip().lower()
         l_code = long_label_code.strip().lower()
         for label in self.labels:
-            if (s_code == label.short_label_code.strip().lower() and
-                    l_code == label.long_label_code.strip().lower()):
+            if s_code == label.short_label_code.strip().lower() and l_code == label.long_label_code.strip().lower():
                 return label
-
         print(f"Warning: Label with codes '{short_label_code}'/'{long_label_code}' not found.")
         if return_review:
-            return self.get_review_label()
+            for label in self.labels:
+                if label.short_label_code == "Review" and label.long_label_code == "Review":
+                    return label
         return None  # Return None if not found and not returning review label
     
     def get_label_by_short_code(self, short_label_code, return_review=True):
@@ -702,7 +681,9 @@ class LabelWindow(QWidget):
         print(f"Warning: Label with short code '{short_label_code}' not found.")
 
         if return_review:
-            return self.get_review_label()
+            for label in self.labels:
+                if label.short_label_code == "Review" and label.long_label_code == "Review":
+                    return label
         return None  # Return None if not found and not returning review label
 
     def get_label_by_long_code(self, long_label_code, return_review=True):
@@ -714,7 +695,9 @@ class LabelWindow(QWidget):
         print(f"Warning: Label with long code '{long_label_code}' not found.")
 
         if return_review:
-            return self.get_review_label()
+            for label in self.labels:
+                if label.short_label_code == "Review" and label.long_label_code == "Review":
+                    return label
         return None  # Return None if not found and not returning review label
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
@@ -722,11 +705,7 @@ class LabelWindow(QWidget):
         s_code = short_label_code.strip().lower()
         l_code = long_label_code.strip().lower()
         for label in self.labels:
-            if label_id is not None and label.id == label_id:
-                return True
-            if s_code == label.short_label_code.strip().lower():
-                return True
-            if l_code == label.long_label_code.strip().lower():
+            if s_code == label.short_label_code.strip().lower() and l_code == label.long_label_code.strip().lower():
                 return True
         return False
 
@@ -908,41 +887,20 @@ class LabelWindow(QWidget):
             self.main_window.image_window.update_image_annotations(image_path)
 
     def handle_wasd_key(self, key):
-        """Handle WASD key presses to navigate the label grid."""
-        if not self.active_label or self.label_locked:
+        """Simplified WASD navigation for vertical layout."""
+        if not self.labels:
             return
-
-        # Get all labels from grid
-        grid_labels = []
-        for i in range(self.grid_layout.count()):
-            item = self.grid_layout.itemAt(i)
-            if item and item.widget():
-                grid_labels.append(item.widget())
-
-        if not grid_labels:
+        if not self.active_label:
+            self.set_active_label(self.labels[0])
             return
-
-        try:
-            current_index = grid_labels.index(self.active_label)
-        except ValueError:
-            # If active label not in grid, select first label
-            if grid_labels:
-                self.set_active_label(grid_labels[0])
-            return
-
-        if key == Qt.Key_W:
-            new_index = current_index - self.labels_per_row
-        elif key == Qt.Key_S:
-            new_index = current_index + self.labels_per_row
-        elif key == Qt.Key_A:
-            new_index = current_index - 1 if current_index % self.labels_per_row != 0 else current_index
-        elif key == Qt.Key_D:
-            new_index = current_index + 1 if (current_index + 1) % self.labels_per_row != 0 else current_index
-        else:
-            return
-
-        if 0 <= new_index < len(grid_labels):
-            self.set_active_label(grid_labels[new_index])
+        idx = self.labels.index(self.active_label)
+        if key == 'W':  # Up
+            if idx > 0:
+                self.set_active_label(self.labels[idx - 1])
+        elif key == 'S':  # Down
+            if idx < len(self.labels) - 1:
+                self.set_active_label(self.labels[idx + 1])
+        # Left/Right removed for vertical layout
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
@@ -979,43 +937,12 @@ class LabelWindow(QWidget):
         self.label_lock_button.setChecked(False)
 
     def filter_labels(self, filter_text):
-        """Filter labels based on the filter text and rebuild the grid with matching labels"""
-        # Unselect the selected annotation
-        self.annotation_window.unselect_annotations()
-        # Unselect the active label
-        self.deselect_active_label()
-
-        # Get the filter text in lowercase
-        filter_text = filter_text.lower()
-
-        # Clear all widgets from the grid layout
-        while self.grid_layout.count():
-            item = self.grid_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-
-        # Filter labels that match the filter criteria
-        filtered_labels = [
-            label for label in self.labels
-            if filter_text in label.short_label_code.lower()
-            or filter_text in label.long_label_code.lower()
-        ]
-
-        # Add matching labels to the grid
-        for i, label in enumerate(filtered_labels):
-            row = i // self.labels_per_row
-            col = i % self.labels_per_row
-            self.grid_layout.addWidget(label, row, col)
-            label.show()
-
-        # If we have an active label that's no longer visible, select first visible label
-        if self.active_label and self.active_label not in filtered_labels:
-            if filtered_labels:
-                self.set_active_label(filtered_labels[0])
-            else:
-                self.active_label = None
-                self.delete_label_button.setEnabled(False)
-                self.edit_label_button.setEnabled(False)
+        """Filter labels by text."""
+        filter_text = filter_text.strip().lower()
+        for label in self.labels:
+            label.setVisible(
+                filter_text in label.short_label_code.lower() or filter_text in label.long_label_code.lower()
+            )
 
 
 class AddLabelDialog(QDialog):
@@ -1212,7 +1139,7 @@ class EditLabelDialog(QDialog):
                 self.label_window.merge_labels(source_label=self.label, target_label=existing_label)
                 self.accept()
             else:
-                return # User cancelled the merge.
+                return  # User cancelled the merge.
         else:
             # --- EDIT PATH --- (no changes here, logic is already handled by update_label)
             self.label_window.update_label_properties(
