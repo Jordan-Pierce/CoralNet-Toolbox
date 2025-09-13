@@ -205,15 +205,6 @@ class EmbeddingViewer(QWidget):
         # Add a stretch and separator
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self._create_separator())
-        
-        # Sprite and Dot view toggle buttons
-        self.sprite_toggle_button = QToolButton()
-        self.sprite_toggle_button.setCheckable(True)
-        self.sprite_toggle_button.setChecked(False)
-        self.sprite_toggle_button.setIcon(get_icon("sprite.png"))
-        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
-        toolbar_layout.addWidget(self.sprite_toggle_button)
 
         # Center on selection button
         self.center_on_selection_button = QPushButton()
@@ -228,6 +219,15 @@ class EmbeddingViewer(QWidget):
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self.reset_view)
         toolbar_layout.addWidget(self.home_button)
+        
+        # Sprite and Dot view toggle buttons
+        self.sprite_toggle_button = QToolButton()
+        self.sprite_toggle_button.setCheckable(True)
+        self.sprite_toggle_button.setChecked(False)
+        self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
+        toolbar_layout.addWidget(self.sprite_toggle_button)
         
         layout.addLayout(toolbar_layout)
         layout.addWidget(self.graphics_view)
@@ -277,7 +277,7 @@ class EmbeddingViewer(QWidget):
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
         else:
             self.display_mode = 'dots'
-            self.sprite_toggle_button.setIcon(get_icon("sprite.png"))
+            self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
             self.sprite_toggle_button.setToolTip("Switch to Sprites View")
 
         # Notify the scene that the geometry of items is about to change.

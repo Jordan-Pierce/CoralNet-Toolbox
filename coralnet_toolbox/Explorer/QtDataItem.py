@@ -32,7 +32,7 @@ class EmbeddingPointItem(QGraphicsObject):
     getting its state from an associated AnnotationDataItem.
     """
 
-    def __init__(self, data_item, viewer): # Add viewer parameter
+    def __init__(self, data_item, viewer):
         """
         Initializes the point item.
         Args:
@@ -42,23 +42,28 @@ class EmbeddingPointItem(QGraphicsObject):
         super(EmbeddingPointItem, self).__init__()
 
         self.data_item = data_item
-        self.viewer = viewer  # --- FIX: Store a direct reference to the viewer ---
+        self.viewer = viewer
         self.thumbnail_pixmap = None
 
-        # Set item flags
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
 
-        # Set initial appearance and position
         self.default_pen = QPen(QColor("black"), POINT_WIDTH)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
         
     def boundingRect(self):
         """Returns the bounding rectangle, which depends on the display mode."""
-        # --- FIX: Use the stored viewer reference ---
         if self.viewer and self.viewer.display_mode == 'sprites':
-            return QRectF(0, 0, SPRITE_SIZE, SPRITE_SIZE)
+            # --- FIX: Calculate width and height based on aspect ratio ---
+            ar = self.data_item.aspect_ratio
+            if ar >= 1.0:  # Wider than tall
+                width = SPRITE_SIZE
+                height = SPRITE_SIZE / ar
+            else:  # Taller than wide
+                height = SPRITE_SIZE
+                width = SPRITE_SIZE * ar
+            return QRectF(0, 0, width, height)
         else:
             return QRectF(0, 0, POINT_SIZE, POINT_SIZE)
 
@@ -73,16 +78,16 @@ class EmbeddingPointItem(QGraphicsObject):
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Use the stored viewer reference
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
         if display_mode == 'sprites':
-            # --- Draw Sprite with Border ---
             if self.thumbnail_pixmap is None:
                 source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
                 if source_pixmap and not source_pixmap.isNull():
+                    # Scale to the new dynamic bounding rect size
+                    bounding_rect_size = self.boundingRect().size().toSize()
                     self.thumbnail_pixmap = source_pixmap.scaled(
-                        int(SPRITE_SIZE), int(SPRITE_SIZE),
+                        bounding_rect_size,
                         Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
             
@@ -334,11 +339,45 @@ class AnnotationDataItem:
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
+
+        # Calculate and store aspect ratio on initialization
+        self.aspect_ratio = self._calculate_aspect_ratio()
         
         # To store pre-formatted top-k prediction details
         self.prediction_details = None
         # To store prediction probabilities for sorting
         self.prediction_probabilities = None
+
+    def _calculate_aspect_ratio(self):
+        """Calculate and return the annotation's aspect ratio."""
+        annotation = self.annotation
+        
+        if hasattr(annotation, 'cropped_bbox'):
+            min_x, min_y, max_x, max_y = annotation.cropped_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if height > 0:
+                return width / height
+
+        try:
+            top_left = annotation.get_bounding_box_top_left()
+            bottom_right = annotation.get_bounding_box_bottom_right()
+            if top_left and bottom_right:
+                width = bottom_right.x() - top_left.x()
+                height = bottom_right.y() - top_left.y()
+                if height > 0:
+                    return width / height
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            pixmap = annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull() and pixmap.height() > 0:
+                return pixmap.width() / pixmap.height()
+        except (AttributeError, TypeError):
+            pass
+        
+        return 1.0  # Default to square
         
     @property
     def effective_label(self):
