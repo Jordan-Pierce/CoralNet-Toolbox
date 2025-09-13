@@ -111,15 +111,6 @@ class EmbeddingViewer(QWidget):
         self.show_all_button.clicked.connect(self.show_all_points)
         toolbar_layout.addWidget(self.show_all_button)
         
-        # Sprite and Dot view toggle buttons
-        self.sprite_toggle_button = QToolButton()
-        self.sprite_toggle_button.setCheckable(True)
-        self.sprite_toggle_button.setChecked(False)
-        self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
-        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
-        toolbar_layout.addWidget(self.sprite_toggle_button)
-        
         toolbar_layout.addWidget(self._create_separator())
                 
         # Create a QToolButton to have both a primary action and a dropdown menu
@@ -214,6 +205,15 @@ class EmbeddingViewer(QWidget):
         # Add a stretch and separator
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self._create_separator())
+        
+        # Sprite and Dot view toggle buttons
+        self.sprite_toggle_button = QToolButton()
+        self.sprite_toggle_button.setCheckable(True)
+        self.sprite_toggle_button.setChecked(False)
+        self.sprite_toggle_button.setIcon(get_icon("sprite.png"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
+        toolbar_layout.addWidget(self.sprite_toggle_button)
 
         # Center on selection button
         self.center_on_selection_button = QPushButton()
@@ -273,11 +273,11 @@ class EmbeddingViewer(QWidget):
         """Toggles the display mode between dots and image sprites."""
         if checked:
             self.display_mode = 'sprites'
-            self.sprite_toggle_button.setIcon(get_icon("dots.png"))
+            self.sprite_toggle_button.setIcon(get_icon("dot.png"))
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
         else:
             self.display_mode = 'dots'
-            self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+            self.sprite_toggle_button.setIcon(get_icon("sprite.png"))
             self.sprite_toggle_button.setToolTip("Switch to Sprites View")
 
         # Notify the scene that the geometry of items is about to change.
