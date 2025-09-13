@@ -952,12 +952,14 @@ class Base(QDialog):
         Load the trained model and class mapping into the existing deployment dialog,
         update the status and labels, but do not show the dialog.
         """
-        output_dir_path = f"{self.params['project']}/{self.params['name']}/weights"
+        output_folder = f"{self.params['project']}/{self.params['name']}"
+        weights_folder = f"{output_folder}/weights"
+        
         # Find the best weights file (usually 'best.pt' or similar)
         best_weights = None
-        for fname in os.listdir(output_dir_path):
+        for fname in os.listdir(weights_folder):
             if fname.startswith("best") and fname.endswith(".pt"):
-                best_weights = os.path.join(output_dir_path, fname)
+                best_weights = f"{weights_folder}/{fname}"
                 break
 
         if not best_weights:
@@ -965,7 +967,7 @@ class Base(QDialog):
             return
 
         # Load class mapping if available
-        class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+        class_mapping_path = f"{output_folder}/class_mapping.json"
         class_mapping = {}
         if os.path.exists(class_mapping_path):
             try:
