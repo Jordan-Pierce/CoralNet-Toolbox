@@ -4,11 +4,14 @@ import re
 import uuid
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
-from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer
+from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag, QBrush, QColor, QDrag,
+                         QFontMetrics, QLinearGradient, QPainter, QPen)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox, QScrollArea)
+                             QPushButton, QApplication, QGroupBox, QScrollArea,
+                             QApplication, QGraphicsDropShadowEffect,
+                             QSizePolicy, QWidget)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -33,28 +36,41 @@ class Label(QWidget):
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
         self.color = color
-        self.pen_width = pen_width  # Add pen width property
+        self.pen_width = pen_width
         self.transparency = 128
         self.is_selected = False
+        self.is_hovered = False
 
-        # Animation properties
+        # Restore animation properties
         self._animated_line_offset = 0
-        self.animation_timer = QTimer()
+        self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+        self.animation_timer.setInterval(50)  # Update every 50ms
 
-        # Set the fixed height
         self.fixed_height = 30
-
-        # Remove fixed width restriction for label, allow it to expand
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(self.fixed_height)
         self.setCursor(Qt.PointingHandCursor)
-
-        # Set tooltip for long label
         self.setToolTip(self.long_label_code)
-
         self.drag_start_position = None
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(8)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setOffset(2, 2)
+        self.setGraphicsEffect(shadow)
+
+    def enterEvent(self, event):
+        """Handle mouse entering the widget."""
+        self.is_hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Handle mouse leaving the widget."""
+        self.is_hovered = False
+        self.update()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         """Handle mouse press events for selection and initiating drag."""
@@ -64,17 +80,14 @@ class Label(QWidget):
                 self.start_animation()
             else:
                 self.stop_animation()
-            self.update_selection()
-            self.selected.emit(self)  # Emit the selected signal
+            self.update()
+            self.selected.emit(self)
 
         if event.button() == Qt.RightButton:
-            self.is_selected = not self.is_selected
-            if self.is_selected:
-                self.start_animation()
-            else:
-                self.stop_animation()
-            self.update_selection()
-            self.selected.emit(self)  # Emit the selected signal
+            self.is_selected = True
+            self.start_animation()
+            self.update()
+            self.selected.emit(self)
             self.drag_start_position = event.pos()
 
     def mouseMoveEvent(self, event):
@@ -96,7 +109,7 @@ class Label(QWidget):
         if not self.is_selected:
             self.is_selected = True
             self.start_animation()
-            self.update_selection()
+            self.update()
             self.selected.emit(self)
 
     def deselect(self):
@@ -104,15 +117,15 @@ class Label(QWidget):
         if self.is_selected:
             self.is_selected = False
             self.stop_animation()
-            self.update_selection()
+            self.update()
 
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
-        self.update()  # Trigger a repaint
+        self.update()
 
     def update_selection(self):
         """Trigger a repaint to reflect selection changes."""
-        self.update()  # Trigger a repaint
+        self.update()
 
     def update_label_color(self, new_color: QColor):
         """Update the label's color and emit the colorChanged signal."""
@@ -128,58 +141,12 @@ class Label(QWidget):
     def update_pen_width(self, pen_width):
         """Update the label's pen width value."""
         self.pen_width = pen_width
-        self.update()  # Trigger a repaint
-
-    def delete_label(self):
-        """Emit the label_deleted signal and schedule the widget for deletion."""
-        self.label_deleted.emit(self)
-        self.deleteLater()
-
-    def paintEvent(self, event):
-        """Paint the label widget with its color, text, and selection state."""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # Calculate the height based on the text height
-        font_metrics = QFontMetrics(painter.font())
-        text_height = font_metrics.height()
-        self.setFixedHeight(text_height + 20)  # padding
-
-        # Draw the outer rectangle with a light transparent fill
-        outer_color = QColor(self.color)
-        outer_color.setAlpha(50)
-        painter.setBrush(QBrush(outer_color, Qt.SolidPattern))
-
-        # Set the border color based on selection status
-        if self.is_selected:
-            # Create animated pen with black color (consistent with other animated lines)
-            pen = QPen(QColor(0, 0, 0, 255), 3)  # Black, fully opaque, increased width
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
-            pen.setDashOffset(self._animated_line_offset)
-            painter.setPen(pen)
-        else:
-            # Use the label's color for the pen with the specified pen width
-            painter.setPen(QPen(self.color, self.pen_width, Qt.SolidLine))
-
-        # Draw the outer rectangle
-        painter.drawRect(0, 0, self.width(), self.height())
-
-        # Set the text color to black
-        painter.setPen(QPen(Qt.black))
-
-        # Truncate the text if it exceeds the width
-        truncated_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, self.width() - self.height())
-        painter.drawText(12, 0, self.width() - self.height(), self.height(), Qt.AlignVCenter, truncated_text)
-
-        super().paintEvent(event)
+        self.update()
         
     def _update_animated_line(self):
         """Update the animated line offset for selection animation."""
         if self.is_selected:
-            # Update the animated line offset
-            self._animated_line_offset = (self._animated_line_offset + 1) % 20  # Reset every 20 pixels
-            # Repaint the label to update the animation
+            self._animated_line_offset = (self._animated_line_offset + 1) % 20
             self.update()
 
     def start_animation(self):
@@ -192,6 +159,56 @@ class Label(QWidget):
         self.animation_timer.stop()
         self._animated_line_offset = 0
         self.update()
+
+    def delete_label(self):
+        """Emit the label_deleted signal and schedule the widget for deletion."""
+        self.label_deleted.emit(self)
+        self.deleteLater()
+
+    def paintEvent(self, event):
+        """Paint the label widget with a modern look and feel."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        corner_radius = 8.0
+
+        # --- 1. Background Gradient ---
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        base_color = QColor(self.color)
+        if self.is_hovered:
+            gradient.setColorAt(0, base_color.lighter(130))
+            gradient.setColorAt(1, base_color.lighter(110))
+        else:
+            gradient.setColorAt(0, base_color.lighter(115))
+            gradient.setColorAt(1, base_color)
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(rect, corner_radius, corner_radius)
+
+        # --- 2. MODIFIED Animated Selection Indicator ---
+        if self.is_selected:
+            # Use a darker version of the label's color for good contrast
+            pen = QPen(self.color.darker(150))
+            pen.setWidthF(2.5)  # Use setWidthF for float widths
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([4, 4])  # 4 pixels on, 4 pixels off
+            pen.setDashOffset(self._animated_line_offset)
+            painter.setPen(pen)
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), corner_radius - 1, corner_radius - 1)
+
+        # --- 3. Dynamic Text ---
+        r, g, b, _ = base_color.getRgb()
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        text_color = Qt.black if luminance > 0.5 else Qt.white
+        painter.setPen(QPen(text_color))
+
+        # --- 4. Draw Text ---
+        font_metrics = QFontMetrics(painter.font())
+        truncated_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, int(rect.width() - 24))
+        painter.drawText(rect, Qt.AlignCenter, truncated_text)
+
+        super().paintEvent(event)
 
     def to_dict(self):
         """Convert the label's properties to a dictionary."""
@@ -211,7 +228,7 @@ class Label(QWidget):
                    data['id'])
 
     def __eq__(self, other):
-        """Two labels are considered equal if their id, short, and long codes are the same."""
+        """Two labels are considered equal if their short and long codes are the same."""
         if not isinstance(other, Label):
             return NotImplemented
         return (
@@ -219,7 +236,7 @@ class Label(QWidget):
         )
 
     def __hash__(self):
-        """The hash is based on the id, short, and long codes."""
+        """The hash is based on the short and long codes."""
         return hash((self.short_label_code, self.long_label_code))
 
     def __repr__(self):
@@ -464,7 +481,7 @@ class LabelWindow(QWidget):
                 self.annotation_count_display.setText(text)
                 return  # Exit early
             
-        # --- ORIGINAL FALLBACK LOGIC (Unchanged) ---
+        # --- ORIGINAL FALLBACK LOGIC ---
         annotation_window_selected_count = len(self.annotation_window.selected_annotations)
         if annotation_window_selected_count == 0:
             text = f"Annotations: {len(annotations)}"

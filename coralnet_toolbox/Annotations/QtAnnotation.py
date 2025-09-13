@@ -260,7 +260,7 @@ class Annotation(QObject):
             # [1, 2] - Very small dots with small gaps
             # [2, 4] - Small dots with larger gaps
             # [1, 3] - Tiny dots with medium gaps
-            pen = QPen(pen_color, 4)  # Width for dotted line
+            pen = QPen(pen_color.darker(150), 4)  # Width for dotted line
             pen.setStyle(Qt.CustomDashLine)
             pen.setDashPattern([1, 2])  # Dotted pattern: 2 pixels on, 3 pixels off
             pen.setDashOffset(self._animated_line)
@@ -277,7 +277,7 @@ class Annotation(QObject):
         if not self.is_selected and not self.animation_timer.isActive():
             return
             
-        color = QColor(self.label.color)
+        color = QColor(self.label.color).darker(150) if not self.verified else QColor(self.label.color)
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen
