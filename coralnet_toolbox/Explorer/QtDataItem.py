@@ -4,9 +4,9 @@ import os
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
+from PyQt5.QtWidgets import QGraphicsObject, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 POINT_SIZE = 15
 POINT_WIDTH = 3
-
+SPRITE_SIZE = 32
 ANNOTATION_WIDTH = 5
 
 
@@ -26,60 +26,96 @@ ANNOTATION_WIDTH = 5
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class EmbeddingPointItem(QGraphicsEllipseItem):
+class EmbeddingPointItem(QGraphicsObject):
     """
-    A custom QGraphicsEllipseItem that gets its state and appearance
-    directly from an associated AnnotationDataItem.
+    A custom QGraphicsObject that can display as a dot or an image sprite,
+    getting its state from an associated AnnotationDataItem.
     """
 
-    def __init__(self, data_item):
+    def __init__(self, data_item, viewer): # Add viewer parameter
         """
         Initializes the point item.
-
         Args:
-            data_item (AnnotationDataItem): The data item that holds the state
-                                            for this point.
+            data_item (AnnotationDataItem): The data item that holds the state.
+            viewer (EmbeddingViewer): A reference to the parent viewer.
         """
-        # Initialize the ellipse with a placeholder rectangle; its position will be set later.
-        super(EmbeddingPointItem, self).__init__(0, 0, POINT_SIZE, POINT_SIZE)
+        super(EmbeddingPointItem, self).__init__()
 
-        # Store a direct reference to the data item
         self.data_item = data_item
+        self.viewer = viewer  # --- FIX: Store a direct reference to the viewer ---
+        self.thumbnail_pixmap = None
 
-        # Set the item's flags
+        # Set item flags
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
 
-        # Set initial appearance from the data_item
-        self.setPen(QPen(QColor("black"), POINT_WIDTH))
-        self.setBrush(self.data_item.effective_color)
-
-        # Set the position of the point based on the data item's embedding coordinates
+        # Set initial appearance and position
+        self.default_pen = QPen(QColor("black"), POINT_WIDTH)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
-        # Set the tooltip with detailed information
         self.setToolTip(self.data_item.get_tooltip_text())
         
+    def boundingRect(self):
+        """Returns the bounding rectangle, which depends on the display mode."""
+        # --- FIX: Use the stored viewer reference ---
+        if self.viewer and self.viewer.display_mode == 'sprites':
+            return QRectF(0, 0, SPRITE_SIZE, SPRITE_SIZE)
+        else:
+            return QRectF(0, 0, POINT_SIZE, POINT_SIZE)
+
     def update_tooltip(self):
         """Updates the tooltip by fetching the latest text from the data item."""
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def paint(self, painter, option, widget):
         """
-        Custom paint method to ensure the point's color is always in sync with
-        the AnnotationDataItem and to prevent the default selection box from
-        being drawn.
+        Custom paint method to draw either a dot or a sprite with a border.
         """
-        # Dynamically get the latest color from the central data item.
-        # This ensures that preview color changes are reflected instantly.
-        self.setBrush(self.data_item.effective_color)
-
-        # Remove the 'State_Selected' flag from the style options before painting.
-        # This is the key to preventing Qt from drawing the default dotted
-        # selection rectangle around the item.
         option.state &= ~QStyle.State_Selected
+        painter.setRenderHint(QPainter.Antialiasing)
 
-        # Call the base class's paint method to draw the ellipse
-        super(EmbeddingPointItem, self).paint(painter, option, widget)
+        # Use the stored viewer reference
+        display_mode = self.viewer.display_mode if self.viewer else 'dots'
+
+        if display_mode == 'sprites':
+            # --- Draw Sprite with Border ---
+            if self.thumbnail_pixmap is None:
+                source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
+                if source_pixmap and not source_pixmap.isNull():
+                    self.thumbnail_pixmap = source_pixmap.scaled(
+                        int(SPRITE_SIZE), int(SPRITE_SIZE),
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    )
+            
+            if self.thumbnail_pixmap:
+                painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
+
+            border_pen = QPen(self.data_item.effective_color, POINT_WIDTH)
+            if self.isSelected():
+                darker_color = self.data_item.effective_color.darker(150)
+                border_pen = QPen(darker_color, POINT_WIDTH)
+                border_pen.setStyle(Qt.CustomDashLine)
+                border_pen.setDashPattern([1, 2])
+                if self.viewer:
+                    border_pen.setDashOffset(self.viewer.animation_offset)
+
+            painter.setPen(border_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.boundingRect())
+        else:
+            # --- Draw Original Dot ---
+            if self.isSelected():
+                darker_color = self.data_item.effective_color.darker(150)
+                animated_pen = QPen(darker_color, POINT_WIDTH)
+                animated_pen.setStyle(Qt.CustomDashLine)
+                animated_pen.setDashPattern([1, 2])
+                if self.viewer:
+                    animated_pen.setDashOffset(self.viewer.animation_offset)
+                painter.setPen(animated_pen)
+            else:
+                painter.setPen(self.default_pen)
+
+            painter.setBrush(self.data_item.effective_color)
+            painter.drawEllipse(self.boundingRect())
         
         
 class AnnotationImageWidget(QWidget):

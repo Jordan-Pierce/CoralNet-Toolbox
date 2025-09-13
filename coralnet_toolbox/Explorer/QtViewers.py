@@ -70,6 +70,9 @@ class EmbeddingViewer(QWidget):
         self.isolated_mode = False
         self.isolated_points = set()
         
+        # Properties for display mode
+        self.display_mode = 'dots'  # Can be 'dots' or 'sprites'
+        
         self.is_uncertainty_analysis_available = False
 
         self.animation_offset = 0
@@ -107,6 +110,15 @@ class EmbeddingViewer(QWidget):
         self.show_all_button.setToolTip("Show all embedding points")
         self.show_all_button.clicked.connect(self.show_all_points)
         toolbar_layout.addWidget(self.show_all_button)
+        
+        # Sprite and Dot view toggle buttons
+        self.sprite_toggle_button = QToolButton()
+        self.sprite_toggle_button.setCheckable(True)
+        self.sprite_toggle_button.setChecked(False)
+        self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
+        toolbar_layout.addWidget(self.sprite_toggle_button)
         
         toolbar_layout.addWidget(self._create_separator())
                 
@@ -255,6 +267,26 @@ class EmbeddingViewer(QWidget):
 
         for point in self.points_by_id.values():
             point.setVisible(buffered_visible_rect.contains(point.pos()) or point.isSelected())
+    
+    @pyqtSlot(bool)
+    def on_display_mode_changed(self, checked):
+        """Toggles the display mode between dots and image sprites."""
+        if checked:
+            self.display_mode = 'sprites'
+            self.sprite_toggle_button.setIcon(get_icon("dots.png"))
+            self.sprite_toggle_button.setToolTip("Switch to Dots View")
+        else:
+            self.display_mode = 'dots'
+            self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+            self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+
+        # Notify the scene that the geometry of items is about to change.
+        # This is crucial for performance and correctness when bounding boxes change size.
+        for point in self.points_by_id.values():
+            point.prepareGeometryChange()
+
+        # Trigger a repaint of all visible items to reflect the new mode.
+        self.graphics_scene.update()
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -571,7 +603,7 @@ class EmbeddingViewer(QWidget):
 
         self.clear_points()
         for item in data_items:
-            point = EmbeddingPointItem(item)
+            point = EmbeddingPointItem(item, self)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
         
@@ -615,9 +647,6 @@ class EmbeddingViewer(QWidget):
         if hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.stop()
 
-        for point in self.points_by_id.values():
-            if not point.isSelected():
-                point.setPen(QPen(QColor("black"), POINT_WIDTH))
         if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.start()
 
@@ -628,7 +657,7 @@ class EmbeddingViewer(QWidget):
         self._schedule_view_update()
 
     def animate_selection(self):
-        """Animate selected points with a marching ants effect."""
+        """Animate selected points by triggering their repaint."""
         if not self.graphics_scene:
             return
         try:
@@ -636,16 +665,11 @@ class EmbeddingViewer(QWidget):
         except RuntimeError:
             return
 
+        # Update the offset that the items will use when they repaint
         self.animation_offset = (self.animation_offset + 1) % 20
+        
         for item in selected_items:
-            # Get the color directly from the source of truth
-            original_color = item.data_item.effective_color
-            darker_color = original_color.darker(150)
-            animated_pen = QPen(darker_color, POINT_WIDTH)
-            animated_pen.setStyle(Qt.CustomDashLine)
-            animated_pen.setDashPattern([1, 2])
-            animated_pen.setDashOffset(self.animation_offset)
-            item.setPen(animated_pen)
+            item.update()
 
     def render_selection_from_ids(self, selected_ids):
         """
