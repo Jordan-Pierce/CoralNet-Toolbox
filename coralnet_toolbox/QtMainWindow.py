@@ -1038,21 +1038,21 @@ class MainWindow(QMainWindow):
         # Panels layout: horizontal row under status bar
         self.panels_layout = QHBoxLayout()
 
-        # Label panel (left)
+        # Label panel (left) strict width
         self.label_layout = QVBoxLayout()
         self.label_layout.addWidget(self.label_window)
-        self.panels_layout.addLayout(self.label_layout, 15)
+        self.panels_layout.addLayout(self.label_layout, 10)
 
-        # Annotation panel (center)
+        # Annotation panel (center) strict width
         self.annotation_layout = QVBoxLayout()
         self.annotation_layout.addWidget(self.annotation_window)
-        self.panels_layout.addLayout(self.annotation_layout, 70)
+        self.panels_layout.addLayout(self.annotation_layout, 90)
 
         # Right panel (ImageWindow + ConfidenceWindow stacked vertically)
         self.right_layout = QVBoxLayout()
         self.right_layout.addWidget(self.image_window, 54)
         self.right_layout.addWidget(self.confidence_window, 46)
-        self.panels_layout.addLayout(self.right_layout, 15)
+        self.panels_layout.addLayout(self.right_layout, 25)
 
         # Add the panels row to the main layout
         self.main_layout.addLayout(self.panels_layout)

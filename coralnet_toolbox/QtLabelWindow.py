@@ -46,6 +46,8 @@ class Label(QWidget):
         # Set the fixed height
         self.fixed_height = 30
 
+        # Remove fixed width restriction for label, allow it to expand
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(self.fixed_height)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -247,8 +249,8 @@ class LabelWindow(QWidget):
         self.locked_label = None
 
         self.label_height = 30
-        self.label_width = 100
-
+        self.label_width = 50 
+        
         # Create the group box
         self.group_box = QGroupBox("LabelWindow")
         self.group_box_layout = QVBoxLayout(self.group_box)
@@ -297,17 +299,17 @@ class LabelWindow(QWidget):
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
         self.filter_bar.textChanged.connect(self.filter_labels)
-        self.filter_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.filter_bar_layout.addWidget(self.filter_bar)
-        self.filter_bar_layout.addStretch()
 
         # --- Add scroll area and label layout ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Allow scroll area to expand
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_content = QWidget()
         self.labels_layout = QVBoxLayout(self.scroll_content)
         self.labels_layout.setContentsMargins(0, 0, 0, 0)
-        self.labels_layout.setSpacing(2)
+        self.labels_layout.setSpacing(0)
         self.scroll_content.setLayout(self.labels_layout)
         self.scroll_area.setWidget(self.scroll_content)
 
@@ -318,23 +320,20 @@ class LabelWindow(QWidget):
         self.label_count_display = QLineEdit("Labels: 1")
         self.label_count_display.setReadOnly(True)
         self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.label_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.counts_layout.addWidget(self.label_count_display)
 
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)
         self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.annotation_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
         self.counts_layout.addWidget(self.annotation_count_display)
 
         self.status_bar.addLayout(self.counts_layout)
-        self.status_bar.addStretch()
 
         # Add layouts to the group box layout
         self.group_box_layout.addLayout(self.actions_bar)
         self.group_box_layout.addLayout(self.filter_bar_layout)
-        self.group_box_layout.addWidget(self.scroll_area)  # <-- Now defined!
+        self.group_box_layout.addWidget(self.scroll_area)
         self.group_box_layout.addLayout(self.status_bar)
 
         # Main layout for the LabelWindow widget
@@ -362,10 +361,17 @@ class LabelWindow(QWidget):
         self.setAcceptDrops(True)
 
     def resizeEvent(self, event):
-        """Handle resize events (no longer reorganizes labels by row)."""
+        """Handle resize events and update label widths dynamically."""
         super().resizeEvent(event)
-        # No need to update labels_per_row or reorganize by grid
+        self.update_label_width()
         self.reorganize_labels()
+
+    def update_label_width(self):
+        """Dynamically set label width based on available space."""
+        available_width = self.scroll_area.viewport().width()
+        self.label_width = max(50, available_width)  # Minimum width safeguard
+        for label in self.labels:
+            label.setMaximumWidth(self.label_width)
 
     def dragEnterEvent(self, event):
         """Accept drag events if they contain text."""
@@ -481,6 +487,7 @@ class LabelWindow(QWidget):
 
     def update_labels_per_row(self):
         """Calculate and update the number of labels per row based on width."""
+        self.update_label_width()
         available_width = self.scroll_area.width() - self.scroll_area.verticalScrollBar().width()
         self.labels_per_row = max(1, available_width // self.label_width)
         self.scroll_content.setFixedWidth(self.labels_per_row * self.label_width)
@@ -498,6 +505,9 @@ class LabelWindow(QWidget):
         # Add labels vertically
         for label in self.labels:
             self.labels_layout.addWidget(label)
+        
+        # Add a stretch to push all labels to the top
+        self.labels_layout.addStretch()
 
     def open_add_label_dialog(self):
         """Open the dialog to add a new label."""
