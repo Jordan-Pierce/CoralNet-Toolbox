@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QObject, QEvent
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -100,6 +100,10 @@ class GlobalEventFilter(QObject):
                 
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                # Check if a text input field has focus first
+                if isinstance(QApplication.focusWidget(), QLineEdit):
+                    return False  # Pass the event on to the QLineEdit
+
                 # First check if the select tool is active
                 if self.main_window.select_tool_action.isChecked():
                     selected_tool = self.annotation_window.selected_tool
@@ -155,7 +159,7 @@ class GlobalEventFilter(QObject):
 
         # Return False for other events to allow them to be processed by the target object
         return False
-
+    
     def show_exit_confirmation_dialog(self):
         # noinspection PyTypeChecker
         reply = QMessageBox.question(None,
