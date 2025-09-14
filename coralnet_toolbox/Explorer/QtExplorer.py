@@ -182,17 +182,6 @@ class ExplorerWindow(QMainWindow):
         settings_toolbox.addItem(self.model_settings_widget, "2. Model Selection")
         settings_toolbox.addItem(self.embedding_settings_widget, "3. Embedding Parameters")
         
-        # Create a vertical splitter for the top toolbox (to allow hiding/showing)
-        top_splitter = QSplitter(Qt.Vertical)
-        top_splitter.addWidget(settings_toolbox)
-        # Add an empty widget to enable collapsing the toolbox
-        empty_widget = QWidget()
-        top_splitter.addWidget(empty_widget)
-        top_splitter.setSizes([200, 0])  # Default: Show toolbox (200px), hide empty widget (0px)
-        top_splitter.setCollapsible(0, True)  # Allow collapsing the toolbox
-        top_splitter.setCollapsible(1, False)  # Prevent collapsing the empty widget
-        self.main_layout.addWidget(top_splitter)
-
         # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
         annotation_group = QGroupBox("Annotation Viewer")
@@ -210,16 +199,21 @@ class ExplorerWindow(QMainWindow):
         if not hasattr(self, 'left_panel') or not self.left_panel:
             self.left_panel = QWidget()
             self.label_layout = QVBoxLayout(self.left_panel)
-        # Insert the settings toolbox at the beginning of the existing label_layout
-        self.label_layout.insertWidget(0, settings_toolbox)
+        
+        # Add the LabelWindow above the settings toolbox
+        self.label_layout.addWidget(self.label_window)
+        # Add the settings toolbox below the label_layout
+        self.label_layout.addWidget(settings_toolbox)
+        
+        # Set fixed width for left_panel to keep it always visible and non-resizable
+        self.left_panel.setFixedWidth(250)
 
-        # Vertical stack: top splitter (toolbox) and main splitter (left panel + viewers)
-        main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.addWidget(self.left_panel)  # Fixed LabelWindow on the left
-        main_splitter.addWidget(middle_splitter)
-        main_splitter.setSizes([250, 1000])  # Adjust: More space to viewers, fixed left for LabelWindow
+        # Create horizontal layout for left panel and viewers (no splitter for fixed left panel)
+        horizontal_layout = QHBoxLayout()
+        horizontal_layout.addWidget(self.left_panel)
+        horizontal_layout.addWidget(middle_splitter)
 
-        self.main_layout.addWidget(main_splitter, 1)
+        self.main_layout.addLayout(horizontal_layout)
 
         self.buttons_layout = QHBoxLayout()
         self.buttons_layout.addStretch(1)
