@@ -1408,13 +1408,17 @@ class ExplorerWindow(QMainWindow):
             params (dict): Embedding parameters, including technique and its hyperparameters.
 
         Returns:
-            np.ndarray or None: 2D embedded features of shape (N, 2), or None on failure.
+            np.ndarray or None: 3D embedded features of shape (N, 3), or None on failure.
         """
         technique = params.get('technique', 'UMAP')
         # Default number of components to use for PCA preprocessing
         pca_components = params.get('pca_components', 50)
 
-        if len(features) <= 2:
+        
+        # We need 3 dimensions for our pseudo-3D view
+        N_COMPONENTS = 3
+        if len(features) <= N_COMPONENTS:
+        
             # Not enough samples for dimensionality reduction
             return None
 
@@ -1437,7 +1441,9 @@ class ExplorerWindow(QMainWindow):
             if technique == "UMAP":
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
                 reducer = UMAP(
-                    n_components=2,
+                    
+                    n_components=N_COMPONENTS,
+                    
                     random_state=42,
                     n_neighbors=n_neighbors,
                     min_dist=params.get('min_dist', 0.1),
@@ -1446,7 +1452,9 @@ class ExplorerWindow(QMainWindow):
             elif technique == "TSNE":
                 perplexity = min(params.get('perplexity', 30), len(features_scaled) - 1)
                 reducer = TSNE(
-                    n_components=2,
+                    
+                    n_components=N_COMPONENTS,
+                    
                     random_state=42,
                     perplexity=perplexity,
                     early_exaggeration=params.get('early_exaggeration', 12.0),
@@ -1454,7 +1462,9 @@ class ExplorerWindow(QMainWindow):
                     init='pca'
                 )
             elif technique == "PCA":
-                reducer = PCA(n_components=2, random_state=42)
+                
+                reducer = PCA(n_components=N_COMPONENTS, random_state=42)
+                
             else:
                 return None
 
@@ -1470,14 +1480,37 @@ class ExplorerWindow(QMainWindow):
 
     def _update_data_items_with_embedding(self, data_items, embedded_features):
         """Updates AnnotationDataItem objects with embedding results."""
+        
+        # This function now handles 3D data and stores the original 3D coordinates
+        if embedded_features is None or embedded_features.shape[1] != 3:
+            print("Error: Expected 3D embedded features.")
+            return
+
         scale_factor = 4000
-        min_vals, max_vals = np.min(embedded_features, axis=0), np.max(embedded_features, axis=0)
+        min_vals = np.min(embedded_features, axis=0)
+        max_vals = np.max(embedded_features, axis=0)
         range_vals = max_vals - min_vals
+        
+        # Avoid division by zero if a dimension has no variance
+        range_vals[range_vals == 0] = 1
+
         for i, item in enumerate(data_items):
-            norm_x = (embedded_features[i, 0] - min_vals[0]) / range_vals[0] if range_vals[0] > 0 else 0.5
-            norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
-            item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
-            item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
+            # Normalize each dimension to a range of [0, 1]
+            norm_coords = (embedded_features[i] - min_vals) / range_vals
+            
+            # Scale to the scene size and center around (0,0,0)
+            scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
+            
+            # Store the original, un-rotated 3D coordinates
+            item.embedding_x_3d = scaled_coords[0]
+            item.embedding_y_3d = scaled_coords[1]
+            item.embedding_z_3d = scaled_coords[2]
+
+            # Set the initial projected coordinates (no rotation)
+            item.embedding_x = item.embedding_x_3d
+            item.embedding_y = item.embedding_y_3d
+            item.embedding_z = item.embedding_z_3d # z represents depth
+
             item.embedding_id = i
 
     def run_embedding_pipeline(self):

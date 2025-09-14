@@ -53,19 +53,30 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setToolTip(self.data_item.get_tooltip_text())
         
     def boundingRect(self):
-        """Returns the bounding rectangle, which depends on the display mode."""
+        """Returns the bounding rectangle, which depends on the display mode and depth."""
+        # --- MODIFICATION START ---
+        scale_factor = 1.0
+        if self.viewer and self.viewer.z_range > 0:
+            # Normalize z from its global range to a [0, 1] range
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
+            scale_factor = 0.5 + z_normalized
+        # --- MODIFICATION END ---
+        
         if self.viewer and self.viewer.display_mode == 'sprites':
-            # --- FIX: Calculate width and height based on aspect ratio ---
             ar = self.data_item.aspect_ratio
-            if ar >= 1.0:  # Wider than tall
-                width = SPRITE_SIZE
-                height = SPRITE_SIZE / ar
-            else:  # Taller than wide
-                height = SPRITE_SIZE
-                width = SPRITE_SIZE * ar
+            if ar >= 1.0:
+                width = SPRITE_SIZE * scale_factor
+                height = (SPRITE_SIZE / ar) * scale_factor
+            else:
+                height = SPRITE_SIZE * scale_factor
+                width = (SPRITE_SIZE * ar) * scale_factor
             return QRectF(0, 0, width, height)
         else:
-            return QRectF(0, 0, POINT_SIZE, POINT_SIZE)
+            # --- MODIFICATION START ---
+            size = POINT_SIZE * scale_factor
+            return QRectF(0, 0, size, size)
+            # --- MODIFICATION END ---
 
     def update_tooltip(self):
         """Updates the tooltip by fetching the latest text from the data item."""
@@ -77,6 +88,19 @@ class EmbeddingPointItem(QGraphicsObject):
         """
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
+        
+        # --- MODIFICATION START ---
+        opacity = 255
+        if self.viewer and self.viewer.z_range > 0:
+            # Normalize z from its global range to a [0, 1] range for scaling
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            # Map normalized z to an opacity (e.g., from ~50% to 100%)
+            opacity = int(128 + 127 * z_normalized)
+
+        base_color = self.data_item.effective_color
+        effective_brush_color = QColor(base_color)
+        effective_brush_color.setAlpha(opacity)
+        # --- MODIFICATION END ---
 
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
@@ -84,7 +108,6 @@ class EmbeddingPointItem(QGraphicsObject):
             if self.thumbnail_pixmap is None:
                 source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
                 if source_pixmap and not source_pixmap.isNull():
-                    # Scale to the new dynamic bounding rect size
                     bounding_rect_size = self.boundingRect().size().toSize()
                     self.thumbnail_pixmap = source_pixmap.scaled(
                         bounding_rect_size,
@@ -94,10 +117,17 @@ class EmbeddingPointItem(QGraphicsObject):
             if self.thumbnail_pixmap:
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
-            border_pen = QPen(self.data_item.effective_color, POINT_WIDTH)
+            # --- MODIFICATION START ---
+            border_color = QColor(self.data_item.effective_color)
+            border_color.setAlpha(opacity)
+            border_pen = QPen(border_color, POINT_WIDTH)
+            # --- MODIFICATION END ---
             if self.isSelected():
                 darker_color = self.data_item.effective_color.darker(150)
+                # --- MODIFICATION START ---
+                darker_color.setAlpha(opacity)
                 border_pen = QPen(darker_color, POINT_WIDTH)
+                # --- MODIFICATION END ---
                 border_pen.setStyle(Qt.CustomDashLine)
                 border_pen.setDashPattern([1, 2])
                 if self.viewer:
@@ -110,16 +140,25 @@ class EmbeddingPointItem(QGraphicsObject):
             # --- Draw Original Dot ---
             if self.isSelected():
                 darker_color = self.data_item.effective_color.darker(150)
+                # --- MODIFICATION START ---
+                darker_color.setAlpha(opacity)
                 animated_pen = QPen(darker_color, POINT_WIDTH)
+                # --- MODIFICATION END ---
                 animated_pen.setStyle(Qt.CustomDashLine)
                 animated_pen.setDashPattern([1, 2])
                 if self.viewer:
                     animated_pen.setDashOffset(self.viewer.animation_offset)
                 painter.setPen(animated_pen)
             else:
-                painter.setPen(self.default_pen)
+                # --- MODIFICATION START ---
+                pen_color = QColor("black")
+                pen_color.setAlpha(opacity)
+                painter.setPen(QPen(pen_color, POINT_WIDTH))
+                # --- MODIFICATION END ---
 
-            painter.setBrush(self.data_item.effective_color)
+            # --- MODIFICATION START ---
+            painter.setBrush(effective_brush_color)
+            # --- MODIFICATION END ---
             painter.drawEllipse(self.boundingRect())
         
         
@@ -334,6 +373,14 @@ class AnnotationDataItem:
         
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
+        # --- MODIFICATION START ---
+        self.embedding_z = 0.0 # This will store the rotated Z-value (depth)
+        
+        # Store the original, un-rotated 3D coordinates from the embedding
+        self.embedding_x_3d = 0.0
+        self.embedding_y_3d = 0.0
+        self.embedding_z_3d = 0.0
+        # --- MODIFICATION END ---
         self.embedding_id = embedding_id
         
         self._is_selected = False
