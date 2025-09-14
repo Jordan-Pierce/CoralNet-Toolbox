@@ -221,12 +221,10 @@ class EmbeddingViewer(QWidget):
         toolbar_layout.addWidget(self.home_button)
         
         # Sprite and Dot view toggle buttons
-        self.sprite_toggle_button = QToolButton()
-        self.sprite_toggle_button.setCheckable(True)
-        self.sprite_toggle_button.setChecked(False)
+        self.sprite_toggle_button = QPushButton()
         self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
         self.sprite_toggle_button.setToolTip("Switch to Sprites View")
-        self.sprite_toggle_button.toggled.connect(self.on_display_mode_changed) 
+        self.sprite_toggle_button.clicked.connect(self.on_display_mode_changed) 
         toolbar_layout.addWidget(self.sprite_toggle_button)
         
         layout.addLayout(toolbar_layout)
@@ -268,10 +266,10 @@ class EmbeddingViewer(QWidget):
         for point in self.points_by_id.values():
             point.setVisible(buffered_visible_rect.contains(point.pos()) or point.isSelected())
     
-    @pyqtSlot(bool)
-    def on_display_mode_changed(self, checked):
+    @pyqtSlot()
+    def on_display_mode_changed(self):
         """Toggles the display mode between dots and image sprites."""
-        if checked:
+        if self.display_mode == 'dots':
             self.display_mode = 'sprites'
             self.sprite_toggle_button.setIcon(get_icon("dot.png"))
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
