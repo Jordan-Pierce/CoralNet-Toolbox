@@ -967,16 +967,28 @@ class LabelWindow(QWidget):
             self.main_window.image_window.update_image_annotations(image_path)
 
     def cycle_labels(self, direction):
-        """Cycle through labels in the specified direction (1 for down/next, -1 for up/previous)."""
-        if not self.labels:
-            return
-        if not self.active_label:
-            self.set_active_label(self.labels[0])
-            return
-        idx = self.labels.index(self.active_label)
-        new_idx = (idx + direction) % len(self.labels)
-        self.set_active_label(self.labels[new_idx])
+        """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
+        # 1. Get a list of currently visible labels from the master list.
+        visible_labels = [label for label in self.labels if label.isVisible()]
 
+        # 2. If no labels are visible (e.g., filter matches nothing), do nothing.
+        if not visible_labels:
+            return
+
+        try:
+            # 3. Find the index of the current active label within the VISIBLE list.
+            # This will raise a ValueError if the active label is not visible or doesn't exist.
+            current_idx = visible_labels.index(self.active_label)
+            
+            # 4. Calculate the new index, wrapping around the visible list.
+            new_idx = (current_idx + direction) % len(visible_labels)
+            
+            # 5. Set the new active label from the visible list.
+            self.set_active_label(visible_labels[new_idx])
+        except ValueError:
+            # This block runs if the active label was not found in the visible list.
+            # In this case, simply select the first available visible label.
+            self.set_active_label(visible_labels[0])
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
