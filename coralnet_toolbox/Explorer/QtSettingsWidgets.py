@@ -257,7 +257,7 @@ class AnnotationSettingsWidget(QGroupBox):
         
         self.images_list = QListWidget()
         self.images_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.images_list.setMinimumHeight(100)
+        self.images_list.setMinimumHeight(90)
 
         if hasattr(self.main_window, 'image_window') and hasattr(self.main_window.image_window, 'raster_manager'):
             for path in self.main_window.image_window.raster_manager.image_paths:
@@ -284,7 +284,7 @@ class AnnotationSettingsWidget(QGroupBox):
 
         self.annotation_type_list = QListWidget()
         self.annotation_type_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.annotation_type_list.setMinimumHeight(100)
+        self.annotation_type_list.setMinimumHeight(90)
         self.annotation_type_list.addItems(["PatchAnnotation",
                                             "RectangleAnnotation",
                                             "PolygonAnnotation",
@@ -311,7 +311,7 @@ class AnnotationSettingsWidget(QGroupBox):
         
         self.label_list = QListWidget()
         self.label_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.label_list.setMinimumHeight(100)
+        self.label_list.setMinimumHeight(90)
 
         if hasattr(self.main_window, 'label_window') and hasattr(self.main_window.label_window, 'labels'):
             for label in self.main_window.label_window.labels:
