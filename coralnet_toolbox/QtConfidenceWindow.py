@@ -1,3 +1,4 @@
+import os
 import warnings
 
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF
@@ -270,6 +271,10 @@ class ConfidenceWindow(QWidget):
                 # Fit the view to the scene
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
+                
+                # Create tooltip with annotation information
+                self.create_annotation_tooltip(annotation)
+                
                 # Create the bar charts
                 self.create_bar_chart()
 
@@ -288,6 +293,72 @@ class ConfidenceWindow(QWidget):
         except Exception as e:
             # Cropped image is None or some other error occurred
             print(f"Error displaying cropped image: {e}")
+
+    def create_annotation_tooltip(self, annotation):
+        """Create a formatted tooltip for the annotation displayed in the graphics view."""
+        tooltip_parts = []
+        
+        # Annotation ID
+        tooltip_parts.append(f"<b>Annotation ID:</b> {annotation.id}")
+        
+        # Label information
+        if annotation.label:
+            tooltip_parts.append(f"<b>Label:</b> {annotation.label.short_label_code}")
+            if annotation.label.long_label_code != annotation.label.short_label_code:
+                tooltip_parts.append(f"<b>Full Name:</b> {annotation.label.long_label_code}")
+        
+        # Confidence information
+        if annotation.user_confidence:
+            # Get the label with highest confidence
+            top_label = max(annotation.user_confidence.keys(), key=lambda k: annotation.user_confidence[k])
+            top_confidence = annotation.user_confidence[top_label] * 100
+            tooltip_parts.append(f"<b>User Confidence:</b> {top_confidence:.1f}% ({top_label.short_label_code})")
+        
+        if annotation.machine_confidence:
+            # Get the label with highest confidence
+            top_label = max(annotation.machine_confidence.keys(), key=lambda k: annotation.machine_confidence[k])
+            top_confidence = annotation.machine_confidence[top_label] * 100
+            tooltip_parts.append(f"<b>Machine Confidence:</b> {top_confidence:.1f}% ({top_label.short_label_code})")
+        
+        # Verification status
+        tooltip_parts.append(f"<b>Verified:</b> {'Yes' if annotation.verified else 'No'}")
+        
+        # Image path
+        if annotation.image_path:
+            tooltip_parts.append(f"<b>Source Image:</b> {os.path.basename(annotation.image_path)}")
+        
+        # Cropped image dimensions
+        if annotation.cropped_image:
+            width = annotation.cropped_image.width()
+            height = annotation.cropped_image.height()
+            tooltip_parts.append(f"<b>Cropped Dimensions:</b> {width} x {height}")
+        
+        # Area and perimeter
+        try:
+            area = annotation.get_area()
+            if area is not None:
+                tooltip_parts.append(f"<b>Area:</b> {area:.2f} pixels²")
+        except (NotImplementedError, AttributeError):
+            pass
+        
+        try:
+            perimeter = annotation.get_perimeter()
+            if perimeter is not None:
+                tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} pixels")
+        except (NotImplementedError, AttributeError):
+            pass
+        
+        # Additional data
+        if hasattr(annotation, 'data') and annotation.data:
+            data_items = []
+            for key, value in annotation.data.items():
+                data_items.append(f"<li><b>{key}:</b> {value}</li>")
+            if data_items:
+                tooltip_parts.append(f"<b>Additional Data:</b><ul>{''.join(data_items)}</ul>")
+        
+        # Set the tooltip
+        tooltip_text = "<br>".join(tooltip_parts)
+        self.graphics_view.setToolTip(tooltip_text)
 
     def create_bar_chart(self):
         """Create and populate the confidence bar chart."""

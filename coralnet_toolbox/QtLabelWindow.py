@@ -171,7 +171,6 @@ class Label(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        corner_radius = 8.0
 
         # --- 1. Background Gradient ---
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
@@ -184,7 +183,7 @@ class Label(QWidget):
             gradient.setColorAt(1, base_color)
         painter.setBrush(QBrush(gradient))
         painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(rect, corner_radius, corner_radius)
+        painter.drawRect(rect)
 
         # --- 2. MODIFIED Animated Selection Indicator ---
         if self.is_selected:
@@ -195,7 +194,7 @@ class Label(QWidget):
             pen.setDashPattern([4, 4])  # 4 pixels on, 4 pixels off
             pen.setDashOffset(self._animated_line_offset)
             painter.setPen(pen)
-            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), corner_radius - 1, corner_radius - 1)
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
         # --- 3. Dynamic Text ---
         r, g, b, _ = base_color.getRgb()

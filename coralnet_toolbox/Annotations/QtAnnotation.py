@@ -547,6 +547,7 @@ class Annotation(QObject):
 
         return {
             'Name': os.path.basename(self.image_path),
+            'Path': self.image_path,
             'Row': int(self.center_xy.y()),
             'Column': int(self.center_xy.x()),
             'Patch Size': self.annotation_size,
