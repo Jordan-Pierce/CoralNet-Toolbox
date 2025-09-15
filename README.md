@@ -301,8 +301,8 @@ If you use CoralNet-Toolbox in your research, please cite:
 
 ```bibtex
 @misc{CoralNet-Toolbox,
-  author = {Pierce, Jordan and Battista, Tim},
-  title = {CoralNet-Toolbox: AI-Powered Tools for Coral Reef Research},
+  author = {Pierce, Jordan and Battista, Tim and Kuester, Falko},
+  title = {CoralNet-Toolbox: Tools for Annotating and Developing Machine Learning Models for Benthic Imagery},
   year = {2025},
   howpublished = {\url{https://github.com/Jordan-Pierce/CoralNet-Toolbox}},
   note = {GitHub repository}
