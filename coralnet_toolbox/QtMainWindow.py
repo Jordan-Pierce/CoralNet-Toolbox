@@ -198,9 +198,8 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
         
-        self.system_monitor = None
-        
         self.explorer_window = None  # Initialized in open_explorer_window
+        self.system_monitor = None  # Initialized in open_system_monitor
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -308,12 +307,12 @@ class MainWindow(QMainWindow):
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
 
-        # Layout
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
-        self.left_layout = QVBoxLayout()
-        self.right_layout = QVBoxLayout()
+        # Layout DELETE ME
+        # self.central_widget = QWidget()
+        # self.setCentralWidget(self.central_widget)
+        # self.main_layout = QHBoxLayout(self.central_widget)
+        # self.label_layout = QVBoxLayout()
+        # self.image_layout = QVBoxLayout()
 
         # ----------------------------------------
         # Create the menu bar
@@ -1028,30 +1027,53 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
 
-        # Create left and right layouts
-        self.left_layout = QVBoxLayout()
-        self.right_layout = QVBoxLayout()
+        # Main vertical layout
+        self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Add status bar layout to left layout above the AnnotationWindow
-        self.left_layout.addLayout(self.status_bar_layout)
-        self.left_layout.addWidget(self.annotation_window, 85)
-        self.left_layout.addWidget(self.label_window, 15)
+        # Status bar in a group box
+        self.status_bar_group_box = QGroupBox("Status Bar")
+        self.status_bar_group_box.setLayout(self.status_bar_layout)
+        self.main_layout.addWidget(self.status_bar_group_box)
 
-        # Adjust the right layout with new proportions
-        self.right_layout.addWidget(self.image_window, 54)  # 54% for image window
-        self.right_layout.addWidget(self.confidence_window, 46)  # 46% for confidence window
+        # Panels layout: horizontal row under status bar 
+        # (LabelWindow, AnnotationWindow, ImageWindow + ConfidenceWindow)
+        self.panels_layout = QHBoxLayout()
 
-        # Add left and right layouts to main layout
-        self.main_layout.addLayout(self.left_layout, 85)
-        self.main_layout.addLayout(self.right_layout, 15)
+        # Label panel (left)
+        self.label_layout = QVBoxLayout()
+        self.label_layout.addWidget(self.label_window)
 
-        # Set up global event filter
+        # Annotation panel (center) (in a group box since it's a QGraphicsView)
+        self.annotation_layout = QVBoxLayout()
+        self.annotation_group_box = QGroupBox("Annotation Window")
+        group_layout = QVBoxLayout(self.annotation_group_box)
+        group_layout.addWidget(self.annotation_window)
+        self.annotation_group_box.setLayout(group_layout)
+        self.annotation_layout.addWidget(self.annotation_group_box)
+
+        # Image panel (ImageWindow + ConfidenceWindow stacked vertically)
+        self.image_layout = QVBoxLayout()
+        self.image_layout.addWidget(self.image_window, 54)
+        self.image_layout.addWidget(self.confidence_window, 46)
+        
+        # Set stretch factors to control relative sizes
+        self.panels_layout.addLayout(self.label_layout, 15)  # Strict width
+        self.panels_layout.addLayout(self.annotation_layout, 120)  # Strict width
+        self.panels_layout.addLayout(self.image_layout, 25)
+
+        # Add the panels row to the main layout
+        self.main_layout.addLayout(self.panels_layout)
+
+        # --------------------------------------------------
+        # Setup global event filter for shortcuts
+        # --------------------------------------------------
         self.global_event_filter = GlobalEventFilter(self)
         QApplication.instance().installEventFilter(self.global_event_filter)
 
+        # --------------------------------------------------
         # Enable drag and drop
+        # --------------------------------------------------
         self.setAcceptDrops(True)
 
         # -----------------------------------------
@@ -1806,9 +1828,9 @@ class MainWindow(QMainWindow):
             self.explorer_window = ExplorerWindow(self)
             
             # Move the label_window from the main layout to the explorer
-            self.left_layout.removeWidget(self.label_window)
+            self.label_layout.removeWidget(self.label_window)
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.left_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
                 
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
@@ -1838,7 +1860,7 @@ class MainWindow(QMainWindow):
         if self.explorer_window:
             # Move the label_window back to the main window's layout
             self.label_window.setParent(self.central_widget)  # Re-parent back
-            self.left_layout.addWidget(self.label_window, 15)  # Add it back to the layout
+            self.label_layout.addWidget(self.label_window, 15)  # Add it back to the layout
             self.label_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)

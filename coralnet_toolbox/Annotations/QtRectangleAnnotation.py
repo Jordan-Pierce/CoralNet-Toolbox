@@ -517,6 +517,12 @@ class RectangleAnnotation(Annotation):
                          QColor(*data['annotation_color']),
                          data['image_path'],
                          data['label_id'])
+        
+        # Set the UUID if present
+        if 'id' in data:
+            annotation.id = data['id']
+            
+        # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
 
         # Convert machine_confidence keys back to Label objects

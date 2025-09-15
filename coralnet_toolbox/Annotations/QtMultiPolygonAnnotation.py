@@ -330,7 +330,7 @@ class MultiPolygonAnnotation(Annotation):
         polygons = [PolygonAnnotation.from_dict(poly_dict, label_window) for poly_dict in data['polygons']]
 
         # Create a new MultiPolygonAnnotation instance
-        multi_polygon = cls(
+        annotation = cls(
             polygons=polygons,
             short_label_code=data.get('label_short_code'),
             long_label_code=data.get('label_long_code'),
@@ -338,9 +338,13 @@ class MultiPolygonAnnotation(Annotation):
             image_path=data.get('image_path'),
             label_id=data.get('label_id')
         )
+        
+        # Set the UUID if present
+        if 'id' in data:
+            annotation.id = data['id']
 
         # Restore additional properties from the dict
-        multi_polygon.data = data.get('data', {})
+        annotation.data = data.get('data', {})
 
         # Convert machine_confidence keys back to Label objects
         machine_confidence = {}
@@ -350,13 +354,13 @@ class MultiPolygonAnnotation(Annotation):
                 machine_confidence[label] = confidence
 
         # Set the machine confidence
-        multi_polygon.update_machine_confidence(machine_confidence, from_import=True)
+        annotation.update_machine_confidence(machine_confidence, from_import=True)
 
         # Override the verified attribute if it exists in the data
         if 'verified' in data:
-            multi_polygon.set_verified(data['verified'])
+            annotation.set_verified(data['verified'])
 
-        return multi_polygon
+        return annotation
 
     def to_yolo_segmentation(self, image_width, image_height):
         """Return YOLO segmentation format for the annotation.

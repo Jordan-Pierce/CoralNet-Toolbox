@@ -1,18 +1,18 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import os 
 
+from PyQt5.QtCore import Qt                           
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,
                              QDoubleSpinBox, QComboBox, QSpinBox, QHBoxLayout,
                              QWidget, QStackedWidget, QGridLayout, QMessageBox,
                              QDialog, QListWidget, QPushButton, QFileDialog,
                              QGraphicsView)
-from PyQt5.QtCore import Qt                           
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -57,7 +57,7 @@ class UpdateImagePaths(QDialog):
     def setup_info_layout(self):
         """Create information label explaining missing images."""
         info_label = QLabel(f"The following {len(self.missing_images)} image(s) could not be found. "
-                           "Please select a directory to search for these images.")
+                            "Please select a directory to search for these images.")
         info_label.setWordWrap(True)
         self.layout().addWidget(info_label)
     
@@ -144,11 +144,13 @@ class UpdateImagePaths(QDialog):
                 for path in still_missing:
                     self.list_widget.addItem(path)
                 
-                QMessageBox.information(self, "Images Updated", 
-                                        "Updated {updated_count} image(s). "
+                QMessageBox.information(self, 
+                                        "Images Updated", 
+                                        f"Updated {updated_count} image(s). "
                                         f"{len(still_missing)} image(s) still missing.")
             else:
-                QMessageBox.information(self, "All Images Updated", 
+                QMessageBox.information(self, 
+                                        "All Images Updated", 
                                         f"Successfully updated all {updated_count} missing image(s).")
                 self.accept()
     

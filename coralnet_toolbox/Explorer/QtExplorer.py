@@ -11,7 +11,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QSignalBlocker, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                              QMainWindow, QSplitter, QGroupBox, QMessageBox,
-                             QApplication)
+                             QApplication, QToolBox)
 
 from coralnet_toolbox.Explorer.QtViewers import AnnotationViewer
 from coralnet_toolbox.Explorer.QtViewers import EmbeddingViewer
@@ -95,7 +95,7 @@ class ExplorerWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         self.left_panel = QWidget()
-        self.left_layout = QVBoxLayout(self.left_panel)
+        self.label_layout = QVBoxLayout(self.left_panel)
 
         self.annotation_settings_widget = None
         self.model_settings_widget = None
@@ -176,14 +176,12 @@ class ExplorerWindow(QMainWindow):
         if self.embedding_viewer is None:
             self.embedding_viewer = EmbeddingViewer(self)
 
-        # Horizontal layout for the three settings panels (original horizontal layout)
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self.annotation_settings_widget, 2)
-        top_layout.addWidget(self.model_settings_widget, 1)
-        top_layout.addWidget(self.embedding_settings_widget, 1)
-        top_container = QWidget()
-        top_container.setLayout(top_layout)
-
+        # Vertical settings panel on the far left is now a QToolBox
+        settings_toolbox = QToolBox()
+        settings_toolbox.addItem(self.annotation_settings_widget, "1. Annotation Filters")
+        settings_toolbox.addItem(self.model_settings_widget, "2. Model Selection")
+        settings_toolbox.addItem(self.embedding_settings_widget, "3. Embedding Parameters")
+        
         # Horizontal splitter for the two main viewer panels
         middle_splitter = QSplitter(Qt.Horizontal)
         annotation_group = QGroupBox("Annotation Viewer")
@@ -197,19 +195,25 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
 
-        # Create a VERTICAL splitter to manage the height between the settings and viewers.
-        # This makes the top settings panel vertically resizable.
-        main_splitter = QSplitter(Qt.Vertical)
-        main_splitter.addWidget(top_container)
-        main_splitter.addWidget(middle_splitter)
+        # Left panel: Reuse existing if it has the LabelWindow, otherwise create new
+        if not hasattr(self, 'left_panel') or not self.left_panel:
+            self.left_panel = QWidget()
+            self.label_layout = QVBoxLayout(self.left_panel)
         
-        # Set initial heights to give the settings panel a bit more space by default
-        main_splitter.setSizes([250, 750]) 
+        # Add the LabelWindow above the settings toolbox
+        self.label_layout.addWidget(self.label_window)
+        # Add the settings toolbox below the label_layout
+        self.label_layout.addWidget(settings_toolbox)
+        
+        # Set fixed width for left_panel to keep it always visible and non-resizable
+        self.left_panel.setFixedWidth(300)
 
-        # Add the new main splitter to the layout instead of the individual components
-        self.main_layout.addWidget(main_splitter, 1)
+        # Create horizontal layout for left panel and viewers (no splitter for fixed left panel)
+        horizontal_layout = QHBoxLayout()
+        horizontal_layout.addWidget(self.left_panel)
+        horizontal_layout.addWidget(middle_splitter)
 
-        self.main_layout.addWidget(self.label_window)
+        self.main_layout.addLayout(horizontal_layout)
 
         self.buttons_layout = QHBoxLayout()
         self.buttons_layout.addStretch(1)
@@ -1398,24 +1402,21 @@ class ExplorerWindow(QMainWindow):
             params (dict): Embedding parameters, including technique and its hyperparameters.
 
         Returns:
-            np.ndarray or None: 2D embedded features of shape (N, 2), or None on failure.
+            np.ndarray or None: Embedded features of shape (N, 2) or (N, 3), or None on failure.
         """
         technique = params.get('technique', 'UMAP')
-        # Default number of components to use for PCA preprocessing
         pca_components = params.get('pca_components', 50)
+        n_components = params.get('dimensions', 3)
 
-        if len(features) <= 2:
-            # Not enough samples for dimensionality reduction
+        if len(features) <= n_components:
             return None
 
         try:
-            # Standardize features before reduction
             features_scaled = StandardScaler().fit_transform(features)
             
-            # Apply PCA preprocessing automatically for UMAP or TSNE
-            # (only if the feature dimension is larger than the target PCA components)
-            if technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
-                # Ensure pca_components doesn't exceed number of samples or features
+            # **Only apply PCA preprocessing for 3D embeddings**
+            is_3d = (n_components == 3)
+            if is_3d and technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
                 pca_components = min(pca_components, features_scaled.shape[0] - 1, features_scaled.shape[1])
                 print(f"Applying PCA preprocessing to {pca_components} components before {technique}")
                 pca = PCA(n_components=pca_components, random_state=42)
@@ -1427,7 +1428,7 @@ class ExplorerWindow(QMainWindow):
             if technique == "UMAP":
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
                 reducer = UMAP(
-                    n_components=2,
+                    n_components=n_components,
                     random_state=42,
                     n_neighbors=n_neighbors,
                     min_dist=params.get('min_dist', 0.1),
@@ -1436,7 +1437,7 @@ class ExplorerWindow(QMainWindow):
             elif technique == "TSNE":
                 perplexity = min(params.get('perplexity', 30), len(features_scaled) - 1)
                 reducer = TSNE(
-                    n_components=2,
+                    n_components=n_components,
                     random_state=42,
                     perplexity=perplexity,
                     early_exaggeration=params.get('early_exaggeration', 12.0),
@@ -1444,7 +1445,7 @@ class ExplorerWindow(QMainWindow):
                     init='pca'
                 )
             elif technique == "PCA":
-                reducer = PCA(n_components=2, random_state=42)
+                reducer = PCA(n_components=n_components, random_state=42)
             else:
                 return None
 
@@ -1459,15 +1460,47 @@ class ExplorerWindow(QMainWindow):
             return None
 
     def _update_data_items_with_embedding(self, data_items, embedded_features):
-        """Updates AnnotationDataItem objects with embedding results."""
+        """Updates AnnotationDataItem objects with embedding results for 2D or 3D data."""
+        if embedded_features is None:
+            print("Error: No embedded features to process.")
+            return
+
+        n_dims = embedded_features.shape[1]
+        if n_dims not in [2, 3]:
+            print(f"Error: Expected 2D or 3D embedded features, but got {n_dims}D.")
+            return
+
         scale_factor = 4000
-        min_vals, max_vals = np.min(embedded_features, axis=0), np.max(embedded_features, axis=0)
+        min_vals = np.min(embedded_features, axis=0)
+        max_vals = np.max(embedded_features, axis=0)
         range_vals = max_vals - min_vals
+        
+        # Avoid division by zero if a dimension has no variance
+        range_vals[range_vals == 0] = 1
+
         for i, item in enumerate(data_items):
-            norm_x = (embedded_features[i, 0] - min_vals[0]) / range_vals[0] if range_vals[0] > 0 else 0.5
-            norm_y = (embedded_features[i, 1] - min_vals[1]) / range_vals[1] if range_vals[1] > 0 else 0.5
-            item.embedding_x = (norm_x * scale_factor) - (scale_factor / 2)
-            item.embedding_y = (norm_y * scale_factor) - (scale_factor / 2)
+            # Normalize each dimension to a range of [0, 1]
+            norm_coords = (embedded_features[i] - min_vals) / range_vals
+            
+            # Scale to the scene size and center around (0,0,0)
+            scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
+            
+            if n_dims == 3:
+                # Store the original, un-rotated 3D coordinates
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = scaled_coords[2]
+            else:  # n_dims == 2
+                # Store the 2D coordinates and set Z to 0 for a flat plot
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = 0.0
+
+            # Set the initial projected coordinates (no rotation)
+            item.embedding_x = item.embedding_x_3d
+            item.embedding_y = item.embedding_y_3d
+            item.embedding_z = item.embedding_z_3d  # z represents depth
+
             item.embedding_id = i
 
     def run_embedding_pipeline(self):
@@ -1553,7 +1586,7 @@ class ExplorerWindow(QMainWindow):
 
             progress_bar.set_busy_mode("Updating visualization...")
             self._update_data_items_with_embedding(self.current_data_items, embedded_features)
-            self.embedding_viewer.update_embeddings(self.current_data_items)
+            self.embedding_viewer.update_embeddings(self.current_data_items, embedded_features.shape[1])
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
 

@@ -147,23 +147,36 @@ class ImportAnnotations:
 
         # Start the progress bar
         progress_bar.start_progress(total_annotations)
+        
+        skipped_count = 0
+        duplicate_count = 0
 
         try:
             # Load the annotations
             for image_path, image_annotations in filtered_annotations.items():
-                for annotation in image_annotations:
-                    if not all(key in annotation for key in keys):
+                
+                for annotation_dict in image_annotations:
+                    
+                    # Check if all required keys are present
+                    if not all(key in annotation_dict for key in keys):
+                        print(f"Warning: Missing required keys in annotation: {annotation_dict}")
+                        skipped_count += 1
+                        continue
+                    
+                    if annotation_dict['id'] in self.annotation_window.annotations_dict:
+                        print(f"Warning: Duplicate annotation ID found: {annotation_dict['id']}")
+                        duplicate_count += 1
                         continue
 
-                    annotation_type = annotation.get('type')
+                    annotation_type = annotation_dict.get('type')
                     if annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation, self.label_window)
+                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation, self.label_window)
+                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation, self.label_window)
+                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'MultiPolygonAnnotation':
-                        annotation = MultiPolygonAnnotation.from_dict(annotation, self.label_window)
+                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
 
@@ -189,6 +202,11 @@ class ImportAnnotations:
                                 f"An error occurred while importing annotations: {str(e)}")
 
         finally:
+            if skipped_count > 0:
+                print(f"Warning: Skipped {skipped_count} annotations due to missing keys.")
+            if duplicate_count > 0:
+                print(f"Warning: Skipped {duplicate_count} duplicate annotations based on ID.")
+            
             # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()

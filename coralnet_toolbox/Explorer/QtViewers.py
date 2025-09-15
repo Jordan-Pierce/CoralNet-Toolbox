@@ -2,6 +2,8 @@ import warnings
 
 import os
 
+import numpy as np
+
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -59,6 +61,16 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setMinimumHeight(200)
+        
+        # State for pseudo-3D rotation
+        self.is_rotating = False
+        self.last_mouse_pos = QPointF()
+        self.rotation_angle_y = 0.0  # Rotation around the Y-axis (horizontal drag)
+        self.rotation_angle_x = 0.0  # Rotation around the X-axis (vertical drag)
+        self.min_z = 0.0  # Used by points for scaling
+        self.max_z = 0.0  # Used by points for scaling
+        self.z_range = 0.0  # To avoid division by zero
+        self.is_3d_data = False
 
         self.rubber_band = None
         self.rubber_band_origin = QPointF()
@@ -69,6 +81,9 @@ class EmbeddingViewer(QWidget):
         # State for isolate mode
         self.isolated_mode = False
         self.isolated_points = set()
+        
+        # Properties for display mode
+        self.display_mode = 'dots'  # Can be 'dots' or 'sprites'
         
         self.is_uncertainty_analysis_available = False
 
@@ -217,6 +232,13 @@ class EmbeddingViewer(QWidget):
         self.home_button.clicked.connect(self.reset_view)
         toolbar_layout.addWidget(self.home_button)
         
+        # Sprite and Dot view toggle buttons
+        self.sprite_toggle_button = QPushButton()
+        self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+        self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+        self.sprite_toggle_button.clicked.connect(self.on_display_mode_changed) 
+        toolbar_layout.addWidget(self.sprite_toggle_button)
+        
         layout.addLayout(toolbar_layout)
         layout.addWidget(self.graphics_view)
 
@@ -255,6 +277,26 @@ class EmbeddingViewer(QWidget):
 
         for point in self.points_by_id.values():
             point.setVisible(buffered_visible_rect.contains(point.pos()) or point.isSelected())
+    
+    @pyqtSlot()
+    def on_display_mode_changed(self):
+        """Toggles the display mode between dots and image sprites."""
+        if self.display_mode == 'dots':
+            self.display_mode = 'sprites'
+            self.sprite_toggle_button.setIcon(get_icon("dot.png"))
+            self.sprite_toggle_button.setToolTip("Switch to Dots View")
+        else:
+            self.display_mode = 'dots'
+            self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+            self.sprite_toggle_button.setToolTip("Switch to Sprites View")
+
+        # Notify the scene that the geometry of items is about to change.
+        # This is crucial for performance and correctness when bounding boxes change size.
+        for point in self.points_by_id.values():
+            point.prepareGeometryChange()
+
+        # Trigger a repaint of all visible items to reflect the new mode.
+        self.graphics_scene.update()
 
     @pyqtSlot()
     def isolate_selection(self):
@@ -310,7 +352,12 @@ class EmbeddingViewer(QWidget):
             self.isolate_button.setEnabled(selection_exists)
 
     def reset_view(self):
-        """Reset the view to fit all embedding points."""
+        """Reset the view to fit all embedding points and reset rotation."""
+        
+        self.rotation_angle_y = 0.0
+        self.rotation_angle_x = 0.0
+        self._apply_rotation_and_projection() # Apply the reset rotation
+        
         self.fit_view_to_points()
         
     def center_on_selection(self):
@@ -422,21 +469,30 @@ class EmbeddingViewer(QWidget):
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
-        """Handle mouse press for selection (point or rubber band) and panning."""
-        # Ctrl+Right-Click for context menu selection 
+        """Handle mouse press for selection, panning, and rotation."""
+        
+        # Ctrl+Right-Click Drag for rotation
+        if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            # Use the new is_3d_data flag for a robust check
+            if not isinstance(item_at_pos, EmbeddingPointItem) and self.is_3d_data:
+                self.is_rotating = True
+                self.last_mouse_pos = event.pos()
+                self.graphics_view.setCursor(Qt.ClosedHandCursor)
+                event.accept()
+                return
+        
+        # Ctrl+Right-Click on a point for context menu selection
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
             if isinstance(item_at_pos, EmbeddingPointItem):
-                # 1. Clear all selections in both viewers
                 self.graphics_scene.clearSelection()
                 item_at_pos.setSelected(True)
-                self.on_selection_changed()  # Updates internal state and emits signals
+                self.on_selection_changed()
 
-                # 2. Sync annotation viewer selection
                 ann_id = item_at_pos.data_item.annotation.id
                 self.explorer_window.annotation_viewer.render_selection_from_ids({ann_id})
 
-                # 3. Update annotation window (set image, select, center)
                 explorer = self.explorer_window
                 annotation = item_at_pos.data_item.annotation
                 image_path = annotation.image_path
@@ -460,11 +516,10 @@ class EmbeddingViewer(QWidget):
             item_at_pos = self.graphics_view.itemAt(event.pos())
             if isinstance(item_at_pos, EmbeddingPointItem):
                 self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-                # The viewer (controller) directly changes the state on the data item.
                 is_currently_selected = item_at_pos.data_item.is_selected
                 item_at_pos.data_item.set_selected(not is_currently_selected)
-                item_at_pos.setSelected(not is_currently_selected)  # Keep scene selection in sync
-                self.on_selection_changed()  # Manually trigger update
+                item_at_pos.setSelected(not is_currently_selected)
+                self.on_selection_changed()
                 return
 
             self.selection_at_press = set(self.graphics_scene.selectedItems())
@@ -494,35 +549,48 @@ class EmbeddingViewer(QWidget):
             super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Handle mouse move for dynamic selection and panning."""
+        """Handle mouse move for dynamic selection, panning, and rotation."""
+        
+        if self.is_rotating:
+            delta = event.pos() - self.last_mouse_pos
+            self.last_mouse_pos = event.pos()
+
+            # Update rotation angles based on mouse movement (adjust sensitivity with a multiplier)
+            self.rotation_angle_y += delta.x() * 0.5
+            self.rotation_angle_x += delta.y() * 0.5
+            
+            self._apply_rotation_and_projection()
+            event.accept()
+            return
+
         if self.rubber_band:
-            # Update the rubber band rectangle as the mouse moves
             current_pos = self.graphics_view.mapToScene(event.pos())
             self.rubber_band.setRect(QRectF(self.rubber_band_origin, current_pos).normalized())
-            # Create a selection path from the rubber band rectangle
             path = QPainterPath()
             path.addRect(self.rubber_band.rect())
-            # Block signals to avoid recursive selectionChanged events
             self.graphics_scene.blockSignals(True)
             self.graphics_scene.setSelectionArea(path)
-            # Restore selection for items that were already selected at press
             if self.selection_at_press:
                 for item in self.selection_at_press:
                     item.setSelected(True)
             self.graphics_scene.blockSignals(False)
-            # Manually trigger selection changed logic
             self.on_selection_changed()
         elif event.buttons() == Qt.RightButton:
-            # Forward right-drag as left-drag for panning
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
             self._schedule_view_update()
         else:
-            # Default mouse move handling
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release to finalize the action and clean up."""
+        
+        if self.is_rotating:
+            self.is_rotating = False
+            self.graphics_view.unsetCursor()
+            event.accept()
+            return
+
         if self.rubber_band:
             self.graphics_scene.removeItem(self.rubber_band)
             self.rubber_band = None
@@ -562,18 +630,17 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.translate(delta.x(), delta.y())
         self._schedule_view_update()
 
-    def update_embeddings(self, data_items):
-        """Update the embedding visualization. Creates an EmbeddingPointItem for
-        each AnnotationDataItem and links them."""
-        # Reset isolation state when loading new points
-        if self.isolated_mode:
-            self.show_all_points()
-
+    def update_embeddings(self, data_items, n_dims):
+        """Update the embedding visualization and track if it's 3D."""
         self.clear_points()
+        self.is_3d_data = (n_dims == 3) # Set our new flag here
         for item in data_items:
-            point = EmbeddingPointItem(item)
+            point = EmbeddingPointItem(item, self)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
+        
+        # Perform an initial projection to set Z-range
+        self._apply_rotation_and_projection()
         
         # Ensure buttons are in the correct initial state
         self._update_toolbar_state()
@@ -615,9 +682,6 @@ class EmbeddingViewer(QWidget):
         if hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.stop()
 
-        for point in self.points_by_id.values():
-            if not point.isSelected():
-                point.setPen(QPen(QColor("black"), POINT_WIDTH))
         if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
             self.animation_timer.start()
 
@@ -628,7 +692,7 @@ class EmbeddingViewer(QWidget):
         self._schedule_view_update()
 
     def animate_selection(self):
-        """Animate selected points with a marching ants effect."""
+        """Animate selected points by triggering their repaint."""
         if not self.graphics_scene:
             return
         try:
@@ -636,16 +700,11 @@ class EmbeddingViewer(QWidget):
         except RuntimeError:
             return
 
+        # Update the offset that the items will use when they repaint
         self.animation_offset = (self.animation_offset + 1) % 20
+        
         for item in selected_items:
-            # Get the color directly from the source of truth
-            original_color = item.data_item.effective_color
-            darker_color = original_color.darker(150)
-            animated_pen = QPen(darker_color, POINT_WIDTH)
-            animated_pen.setStyle(Qt.CustomDashLine)
-            animated_pen.setDashPattern([1, 2])
-            animated_pen.setDashOffset(self.animation_offset)
-            item.setPen(animated_pen)
+            item.update()
 
     def render_selection_from_ids(self, selected_ids):
         """
@@ -675,6 +734,78 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
+            
+    def _apply_rotation_and_projection(self):
+        """
+        Applies the current rotation to all 3D points and updates their
+        projected 2D positions and depth values.
+        """
+        if not self.points_by_id:
+            return
+
+        # Get all original 3D points into a NumPy array for fast processing
+        point_items = list(self.points_by_id.values())
+        original_points_3d = np.array([
+            [p.data_item.embedding_x_3d, p.data_item.embedding_y_3d, p.data_item.embedding_z_3d]
+            for p in point_items
+        ])
+
+        # Create rotation matrices
+        theta_x = np.radians(self.rotation_angle_x)
+        theta_y = np.radians(self.rotation_angle_y)
+
+        cos_x, sin_x = np.cos(theta_x), np.sin(theta_x)
+        cos_y, sin_y = np.cos(theta_y), np.sin(theta_y)
+
+        # Rotation around X-axis
+        rot_x_matrix = np.array([
+            [1, 0, 0],
+            [0, cos_x, -sin_x],
+            [0, sin_x, cos_x]
+        ])
+
+        # Rotation around Y-axis
+        rot_y_matrix = np.array([
+            [cos_y, 0, sin_y],
+            [0, 1, 0],
+            [-sin_y, 0, cos_y]
+        ])
+
+        # Combined rotation (apply Y rotation first, then X)
+        rotation_matrix = rot_x_matrix @ rot_y_matrix
+        
+        # Apply rotation to all points at once
+        rotated_points = original_points_3d @ rotation_matrix.T
+
+        # Update min/max Z for scaling and opacity calculations
+        if len(rotated_points) > 0:
+            self.min_z = np.min(rotated_points[:, 2])
+            self.max_z = np.max(rotated_points[:, 2])
+            self.z_range = self.max_z - self.min_z
+        
+        # Call setUpdatesEnabled on the VIEW, not the SCENE
+        self.graphics_view.setUpdatesEnabled(False)
+        
+        try:
+            # Update each data item and its corresponding graphic item
+            for i, point in enumerate(point_items):
+                rotated = rotated_points[i]
+                
+                # Update the projected coordinates and depth in the data item
+                point.data_item.embedding_x = rotated[0]
+                point.data_item.embedding_y = rotated[1]
+                point.data_item.embedding_z = rotated[2]
+
+                # The change in size requires a geometry update
+                point.prepareGeometryChange()
+                point.setPos(rotated[0], rotated[1])
+        finally:
+            
+            # Re-enable updates on the VIEW
+            self.graphics_view.setUpdatesEnabled(True)
+            
+        # Trigger a repaint of the entire scene to reflect changes
+        self.graphics_scene.update()
             
             
 class AnnotationViewer(QWidget):

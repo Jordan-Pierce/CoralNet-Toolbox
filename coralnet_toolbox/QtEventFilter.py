@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QObject, QEvent
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -30,10 +30,15 @@ class GlobalEventFilter(QObject):
         # Check for explorer window first - this applies to all event types
         if hasattr(self.main_window, 'explorer_window') and self.main_window.explorer_window:
             # Special exception for WASD keys which should always work
-            if event.type() == QEvent.KeyPress and event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D] and \
+            if event.type() == QEvent.KeyPress and event.key() in [Qt.Key_Up, Qt.Key_Down] and \
                 event.modifiers() & Qt.ControlModifier:
-                self.label_window.handle_wasd_key(event.key())
-                return True
+                # Handle Ctrl+Up and Ctrl+Down for cycling labels
+                if event.key() == Qt.Key_Up:
+                    self.label_window.cycle_labels(-1)  # Cycle up/previous
+                    return True
+                if event.key() == Qt.Key_Down:
+                    self.label_window.cycle_labels(1)  # Cycle down/next
+                    return True
             
             # For all other events when explorer is visible, pass them through
             return False
@@ -41,9 +46,13 @@ class GlobalEventFilter(QObject):
         # Now handle keyboard events
         if event.type() == QEvent.KeyPress:
             if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
-                # Handle WASD keys for selecting Label
-                if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
-                    self.label_window.handle_wasd_key(event.key())
+                
+                # Handle Ctrl+Up and Ctrl+Down for cycling labels
+                if event.key() == Qt.Key_Up:
+                    self.label_window.cycle_labels(-1)  # Cycle up/previous
+                    return True
+                if event.key() == Qt.Key_Down:
+                    self.label_window.cycle_labels(1)  # Cycle down/next
                     return True
 
                 # Handle Alt key for switching between Select and Annotation tools
@@ -91,6 +100,10 @@ class GlobalEventFilter(QObject):
                 
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                # Check if a text input field has focus first
+                if isinstance(QApplication.focusWidget(), QLineEdit):
+                    return False  # Pass the event on to the QLineEdit
+
                 # First check if the select tool is active
                 if self.main_window.select_tool_action.isChecked():
                     selected_tool = self.annotation_window.selected_tool
@@ -117,7 +130,7 @@ class GlobalEventFilter(QObject):
                 return True
 
             # Handle Ctrl + Shift + S for saving project
-            if event.key() == Qt.Key_S and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
+            if event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier):
                 self.main_window.save_project_as()
                 return True
 
@@ -146,7 +159,7 @@ class GlobalEventFilter(QObject):
 
         # Return False for other events to allow them to be processed by the target object
         return False
-
+    
     def show_exit_confirmation_dialog(self):
         # noinspection PyTypeChecker
         reply = QMessageBox.question(None,

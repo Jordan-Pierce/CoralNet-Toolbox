@@ -470,7 +470,7 @@ class AnnotationWindow(QGraphicsView):
         self.centerOn(annotation_center)
     
     def center_on_annotation(self, annotation):
-        """Center and zoom in to focus on the specified annotation with dynamic padding."""
+        """Center and zoom in to focus on the specified annotation with relaxed zoom and dynamic padding."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
             annotation.create_graphics_item(self.scene)
@@ -497,15 +497,15 @@ class AnnotationWindow(QGraphicsView):
 
         # Step 3: Map ratio to padding factor (smaller annotation = more padding)
         import math
-        min_padding = 0.1  # 10%
-        max_padding = 0.5  # 50%
+        min_padding = 0.15  # 15% (relaxed from 10%)
+        max_padding = 0.35  # 35% (relaxed from 50%)
         if relative_area > 0:
-            padding_factor = max(min(0.5 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
+            padding_factor = max(min(0.35 * (1 / math.sqrt(relative_area)), max_padding), min_padding)
         else:
             padding_factor = min_padding
 
         # Step 4: Apply dynamic padding with minimum values to prevent zero width/height
-        min_padding_absolute = 1.0  # Minimum padding in pixels
+        min_padding_absolute = 2.0  # Minimum padding in pixels (relaxed from 1.0)
         padding_x = max(annotation_rect.width() * padding_factor, min_padding_absolute)
         padding_y = max(annotation_rect.height() * padding_factor, min_padding_absolute)
         padded_rect = annotation_rect.adjusted(-padding_x, -padding_y, padding_x, padding_y)
@@ -519,13 +519,15 @@ class AnnotationWindow(QGraphicsView):
             zoom_x = view_rect.width() / padded_rect.width()
         else:
             zoom_x = 1.0  # Default zoom if width is zero
-        
+
         if padded_rect.height() > 0:
             zoom_y = view_rect.height() / padded_rect.height()
         else:
             zoom_y = 1.0  # Default zoom if height is zero
-            
-        self.zoom_factor = min(zoom_x, zoom_y)
+
+        # Relax the zoom by capping the maximum zoom factor
+        max_zoom = 4.0  # Do not zoom in more than 4x
+        self.zoom_factor = min(min(zoom_x, zoom_y), max_zoom)
 
         # Signal that the view has changed
         self.viewChanged.emit(*self.get_image_dimensions())

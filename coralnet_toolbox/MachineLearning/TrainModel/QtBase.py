@@ -15,9 +15,9 @@ import ultralytics.models.yolo.classify.train as train_build
 from ultralytics.data.dataset import ClassificationDataset
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame)
+from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVBoxLayout,
+                             QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox,
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
 
 from torch.cuda import empty_cache
 
@@ -801,7 +801,8 @@ class Base(QDialog):
                         export_data[name] = value
                     except ValueError:
                         # If conversion fails, save it as a string
-                        print(f"Warning: Could not convert '{value_str}' to {type_name} for parameter '{name}'. Saving as string.")
+                        print(f"Warning: Could not convert '{value_str}' to {type_name} for parameter '{name}'. "
+                              "Saving as string.")
                         export_data[name] = value_str
 
             # Write the flat dictionary to the YAML file
@@ -920,14 +921,7 @@ class Base(QDialog):
 
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
-
-    def on_training_completed(self):
-        """
-        Handle the event when the training completes.
-        """
-        message = "Model training has successfully been completed."
-        QMessageBox.information(self, "Model Training Status", message)
-
+        
     def on_training_error(self, error_message):
         """
         Handle the event when an error occurs during training.
@@ -937,3 +931,75 @@ class Base(QDialog):
         """
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
+
+    def on_training_completed(self):
+        """
+        Handle the event when the training completes.
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Model Training Status")
+        msg_box.setText("Model training has successfully been completed.")
+        ok_button = msg_box.addButton(QMessageBox.Ok)
+        
+        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
+        msg_box.exec_()
+
+        if msg_box.clickedButton() == deploy_button:
+            self.deploy_trained_model()
+
+    def deploy_trained_model(self):
+        """
+        Load the trained model and class mapping into the existing deployment dialog,
+        update the status and labels, but do not show the dialog.
+        """
+        output_folder = f"{self.params['project']}/{self.params['name']}"
+        weights_folder = f"{output_folder}/weights"
+        
+        # Find the best weights file (usually 'best.pt' or similar)
+        best_weights = None
+        for fname in os.listdir(weights_folder):
+            if fname.startswith("best") and fname.endswith(".pt"):
+                best_weights = f"{weights_folder}/{fname}"
+                break
+
+        if not best_weights:
+            QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
+            return
+
+        # Load class mapping if available
+        class_mapping_path = f"{output_folder}/class_mapping.json"
+        class_mapping = {}
+        if os.path.exists(class_mapping_path):
+            try:
+                with open(class_mapping_path, "r") as f:
+                    class_mapping = json.load(f)
+            except Exception as e:
+                QMessageBox.warning(self, "Deploy Model", f"Failed to load class mapping: {str(e)}")
+
+        # Use the existing deployment dialog instance from main_window
+        if self.task == "classify":
+            deploy_dialog = self.main_window.classify_deploy_model_dialog
+        elif self.task == "detect":
+            deploy_dialog = self.main_window.detect_deploy_model_dialog
+        elif self.task == "segment":
+            deploy_dialog = self.main_window.segment_deploy_model_dialog
+        else:
+            QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
+            return
+
+        # Set the model path and class mapping, then load the model
+        deploy_dialog.model_path = best_weights
+        deploy_dialog.class_mapping = class_mapping
+        deploy_dialog.load_model()
+
+        # Update label window and status bar
+        if hasattr(deploy_dialog, "add_labels_to_label_window"):
+            deploy_dialog.add_labels_to_label_window()
+        if hasattr(deploy_dialog, "check_and_display_class_names"):
+            deploy_dialog.check_and_display_class_names()
+        if hasattr(deploy_dialog, "status_bar"):
+            deploy_dialog.status_bar.setText(f"Model loaded: {os.path.basename(best_weights)}")
+
+    # Do NOT show the dialog (no exec_())
+
+

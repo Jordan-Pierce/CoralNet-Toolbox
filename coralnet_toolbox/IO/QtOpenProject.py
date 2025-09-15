@@ -141,7 +141,7 @@ class OpenProject(QDialog):
 
             # Handle both new and old project formats for images and work areas
             images_data = project_data.get('images', project_data.get('image_paths'))
-            legacy_workareas = project_data.get('workareas') # For backward compatibility
+            legacy_workareas = project_data.get('workareas')  # For backward compatibility
 
             # Update main window with loaded project data
             self.import_images(images_data, legacy_workareas)
@@ -162,8 +162,6 @@ class OpenProject(QDialog):
         
         # Exit
         self.accept()
-
-    # In: QtOpenProject.py
 
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
@@ -226,7 +224,7 @@ class OpenProject(QDialog):
             self.image_window.update_search_bars()
             self.image_window.filter_images()
 
-            if self.image_window.raster_manager.image_paths:
+            if self.image_window.raster_manager.image_paths:  # TODO
                 self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
             
             progress_bar.stop_progress()
@@ -281,6 +279,8 @@ class OpenProject(QDialog):
         # Required attributes of an annotation
         keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
 
+        skipped_count = 0
+        duplicate_count = 0
         try:
             # Loop through the annotations
             for image_path, image_annotations in annotations.items():
@@ -297,26 +297,32 @@ class OpenProject(QDialog):
                         print(f"Warning: Image not found: {image_path}")
                         continue
                 
-                for annotation in image_annotations:
+                for annotation_dict in image_annotations:
                     # Check if all required keys are present
-                    if not all(key in annotation for key in keys):
-                        print(f"Warning: Missing required keys in annotation: {annotation}")
+                    if not all(key in annotation_dict for key in keys):
+                        print(f"Warning: Missing required keys in annotation: {annotation_dict}")
+                        skipped_count += 1
                         continue
                     
+                    if annotation_dict['id'] in self.annotation_window.annotations_dict:
+                        print(f"Warning: Duplicate annotation ID found: {annotation_dict['id']}")
+                        duplicate_count += 1
+                        continue
+
                     # Check if the image path was updated
                     if updated_path:
-                        annotation['image_path'] = image_path
-                    
+                        annotation_dict['image_path'] = image_path
+
                     # Get the annotation type
-                    annotation_type = annotation.get('type')
+                    annotation_type = annotation_dict.get('type')
                     if annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation, self.label_window)
+                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation, self.label_window)
+                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation, self.label_window)
+                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
                     elif annotation_type == 'MultiPolygonAnnotation':
-                        annotation = MultiPolygonAnnotation.from_dict(annotation, self.label_window)
+                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
 
@@ -339,6 +345,11 @@ class OpenProject(QDialog):
                                 f"An error occurred while importing annotations: {str(e)}")
 
         finally:
+            if skipped_count > 0:
+                print(f"Warning: Skipped {skipped_count} annotations due to missing keys.")
+            if duplicate_count > 0:
+                print(f"Warning: Skipped {duplicate_count} duplicate annotations based on ID.")
+            
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()

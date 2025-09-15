@@ -381,6 +381,10 @@ class PatchAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
 
+        # Set the UUID if present
+        if 'id' in data:
+            annotation.id = data['id']
+
         # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
 

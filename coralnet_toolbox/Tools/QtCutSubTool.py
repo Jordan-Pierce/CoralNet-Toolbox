@@ -24,6 +24,8 @@ class CutSubTool(SubTool):
         self.drawing_in_progress = False  # Whether the user is currently drawing a cut line
         self.cutting_path_item = None  # QGraphicsPathItem for the cut line
         self.cutting_points = []  # List of QPointF for the cut path
+        self.ctrl_pressed = False  # Track Ctrl key state for straight-line mode
+        self.last_click_point = None  # Store last clicked point for straight-line mode
 
     def activate(self, event, **kwargs):
         """
@@ -55,6 +57,8 @@ class CutSubTool(SubTool):
         # --- Enter Line-Drawing Mode ---
         self.drawing_in_progress = False
         self.cutting_points = []
+        self.ctrl_pressed = False
+        self.last_click_point = None
         self.annotation_window.viewport().setCursor(Qt.CrossCursor)
 
     def deactivate(self):
@@ -76,15 +80,31 @@ class CutSubTool(SubTool):
         position = self.annotation_window.mapToScene(event.pos())
         if not self.drawing_in_progress:
             self._start_drawing_cut_line(position)
+            self.last_click_point = position
         else:
-            self._finish_and_perform_cut()
+            if self.ctrl_pressed and self.last_click_point:
+                # Add a straight segment from last_click_point to position
+                self.cutting_points.append(position)
+                self.last_click_point = position
+                # Continue drawing (don't finish yet)
+            else:
+                self._finish_and_perform_cut()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events to update the cut line."""
         if not self.drawing_in_progress:
             return
         position = self.annotation_window.mapToScene(event.pos())
-        self._update_cut_line_path(position)
+        if self.ctrl_pressed and self.last_click_point:
+            # Preview a straight line from last_click_point to cursor
+            preview_points = self.cutting_points + [position]
+            path = QPainterPath(preview_points[0])
+            for point in preview_points[1:]:
+                path.lineTo(point)
+            if self.cutting_path_item:
+                self.cutting_path_item.setPath(path)
+        else:
+            self._update_cut_line_path(position)
 
     def keyPressEvent(self, event):
         """Handle key press events for cutting operations."""
@@ -97,6 +117,25 @@ class CutSubTool(SubTool):
         if event.key() == Qt.Key_Backspace:
             self._clear_cutting_line()
             return
+
+        if event.key() == Qt.Key_Control:
+            if self.drawing_in_progress and not self.ctrl_pressed:
+                self.ctrl_pressed = True
+                cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+                scene_pos = self.annotation_window.mapToScene(cursor_pos)
+                if not self.cutting_points or scene_pos != self.cutting_points[-1]:
+                    self.cutting_points.append(scene_pos)
+                self.last_click_point = scene_pos
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Control:
+            if self.drawing_in_progress and self.ctrl_pressed:
+                self.ctrl_pressed = False
+                cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+                scene_pos = self.annotation_window.mapToScene(cursor_pos)
+                if not self.cutting_points or scene_pos != self.cutting_points[-1]:
+                    self.cutting_points.append(scene_pos)
+                self.last_click_point = scene_pos
 
     def _start_drawing_cut_line(self, position):
         """Start drawing the cut line from the given position."""

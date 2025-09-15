@@ -4,9 +4,9 @@ import os
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
+from PyQt5.QtWidgets import QGraphicsObject, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 POINT_SIZE = 15
 POINT_WIDTH = 3
-
+SPRITE_SIZE = 32
 ANNOTATION_WIDTH = 5
 
 
@@ -26,60 +26,136 @@ ANNOTATION_WIDTH = 5
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class EmbeddingPointItem(QGraphicsEllipseItem):
+class EmbeddingPointItem(QGraphicsObject):
     """
-    A custom QGraphicsEllipseItem that gets its state and appearance
-    directly from an associated AnnotationDataItem.
+    A custom QGraphicsObject that can display as a dot or an image sprite,
+    getting its state from an associated AnnotationDataItem.
     """
 
-    def __init__(self, data_item):
+    def __init__(self, data_item, viewer):
         """
         Initializes the point item.
-
         Args:
-            data_item (AnnotationDataItem): The data item that holds the state
-                                            for this point.
+            data_item (AnnotationDataItem): The data item that holds the state.
+            viewer (EmbeddingViewer): A reference to the parent viewer.
         """
-        # Initialize the ellipse with a placeholder rectangle; its position will be set later.
-        super(EmbeddingPointItem, self).__init__(0, 0, POINT_SIZE, POINT_SIZE)
+        super(EmbeddingPointItem, self).__init__()
 
-        # Store a direct reference to the data item
         self.data_item = data_item
+        self.viewer = viewer
+        self.thumbnail_pixmap = None
 
-        # Set the item's flags
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
 
-        # Set initial appearance from the data_item
-        self.setPen(QPen(QColor("black"), POINT_WIDTH))
-        self.setBrush(self.data_item.effective_color)
-
-        # Set the position of the point based on the data item's embedding coordinates
+        self.default_pen = QPen(QColor("black"), POINT_WIDTH)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
-        # Set the tooltip with detailed information
         self.setToolTip(self.data_item.get_tooltip_text())
         
+    def boundingRect(self):
+        """Returns the bounding rectangle, which depends on the display mode and depth."""
+        
+        scale_factor = 1.0
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
+            # Normalize z from its global range to a [0, 1] range
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
+            scale_factor = 0.5 + z_normalized
+    
+        if self.viewer and self.viewer.display_mode == 'sprites':
+            ar = self.data_item.aspect_ratio
+            if ar >= 1.0:
+                width = SPRITE_SIZE * scale_factor
+                height = (SPRITE_SIZE / ar) * scale_factor
+            else:
+                height = SPRITE_SIZE * scale_factor
+                width = (SPRITE_SIZE * ar) * scale_factor
+            return QRectF(0, 0, width, height)
+        else:
+            
+            size = POINT_SIZE * scale_factor
+            return QRectF(0, 0, size, size)
+
     def update_tooltip(self):
         """Updates the tooltip by fetching the latest text from the data item."""
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def paint(self, painter, option, widget):
         """
-        Custom paint method to ensure the point's color is always in sync with
-        the AnnotationDataItem and to prevent the default selection box from
-        being drawn.
+        Custom paint method to draw either a dot or a sprite with a border.
         """
-        # Dynamically get the latest color from the central data item.
-        # This ensures that preview color changes are reflected instantly.
-        self.setBrush(self.data_item.effective_color)
-
-        # Remove the 'State_Selected' flag from the style options before painting.
-        # This is the key to preventing Qt from drawing the default dotted
-        # selection rectangle around the item.
         option.state &= ~QStyle.State_Selected
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Calculate scale_factor for size and opacity
+        scale_factor = 1.0
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            scale_factor = 0.5 + z_normalized  # From 0.5x to 1.5x
 
-        # Call the base class's paint method to draw the ellipse
-        super(EmbeddingPointItem, self).paint(painter, option, widget)
+        # Calculate scaled pen width for borders (clamp to avoid extremes)
+        scaled_pen_width = max(1, min(POINT_WIDTH * scale_factor, 6))  # Clamp between 1 and 6 for usability
+        
+        # Calculate opacity
+        opacity = 255
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            opacity = int(128 + 127 * z_normalized)
+
+        base_color = self.data_item.effective_color
+        effective_brush_color = QColor(base_color)
+        effective_brush_color.setAlpha(opacity)
+        
+        display_mode = self.viewer.display_mode if self.viewer else 'dots'
+
+        if display_mode == 'sprites':
+            # Ensure the pixmap is scaled to the current boundingRect size (handles dynamic scaling during rotation)
+            current_size = self.boundingRect().size().toSize()
+            if self.thumbnail_pixmap is None or self.thumbnail_pixmap.size() != current_size:
+                source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
+                if source_pixmap and not source_pixmap.isNull():
+                    self.thumbnail_pixmap = source_pixmap.scaled(
+                        current_size,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    )
+            
+            if self.thumbnail_pixmap:
+                painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
+
+            # Scaled border pen for sprites
+            border_color = QColor(self.data_item.effective_color)
+            border_color.setAlpha(opacity)
+            border_pen = QPen(border_color, scaled_pen_width)
+            if self.isSelected():
+                darker_color = self.data_item.effective_color.darker(150)
+                darker_color.setAlpha(opacity)
+                border_pen = QPen(darker_color, scaled_pen_width)
+                border_pen.setStyle(Qt.CustomDashLine)
+                border_pen.setDashPattern([1, 2])
+                if self.viewer:
+                    border_pen.setDashOffset(self.viewer.animation_offset)
+
+            painter.setPen(border_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.boundingRect())
+        else:
+            # Draw Original Dot with scaled size and pen
+            if self.isSelected():
+                darker_color = self.data_item.effective_color.darker(150)
+                darker_color.setAlpha(opacity)
+                animated_pen = QPen(darker_color, scaled_pen_width)
+                animated_pen.setStyle(Qt.CustomDashLine)
+                animated_pen.setDashPattern([1, 2])
+                if self.viewer:
+                    animated_pen.setDashOffset(self.viewer.animation_offset)
+                painter.setPen(animated_pen)
+            else:
+                pen_color = QColor("black")
+                pen_color.setAlpha(opacity)
+                painter.setPen(QPen(pen_color, scaled_pen_width))
+
+            painter.setBrush(effective_brush_color)
+            painter.drawEllipse(self.boundingRect())
         
         
 class AnnotationImageWidget(QWidget):
@@ -293,16 +369,58 @@ class AnnotationDataItem:
         
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
+        
+        self.embedding_z = 0.0  # This will store the rotated Z-value (depth)
+        
+        # Store the original, un-rotated 3D coordinates from the embedding
+        self.embedding_x_3d = 0.0
+        self.embedding_y_3d = 0.0
+        self.embedding_z_3d = 0.0
+        
         self.embedding_id = embedding_id
         
         self._is_selected = False
         self._preview_label = None
         self._original_label = annotation.label
+
+        # Calculate and store aspect ratio on initialization
+        self.aspect_ratio = self._calculate_aspect_ratio()
         
         # To store pre-formatted top-k prediction details
         self.prediction_details = None
         # To store prediction probabilities for sorting
         self.prediction_probabilities = None
+
+    def _calculate_aspect_ratio(self):
+        """Calculate and return the annotation's aspect ratio."""
+        annotation = self.annotation
+        
+        if hasattr(annotation, 'cropped_bbox'):
+            min_x, min_y, max_x, max_y = annotation.cropped_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if height > 0:
+                return width / height
+
+        try:
+            top_left = annotation.get_bounding_box_top_left()
+            bottom_right = annotation.get_bounding_box_bottom_right()
+            if top_left and bottom_right:
+                width = bottom_right.x() - top_left.x()
+                height = bottom_right.y() - top_left.y()
+                if height > 0:
+                    return width / height
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            pixmap = annotation.get_cropped_image()
+            if pixmap and not pixmap.isNull() and pixmap.height() > 0:
+                return pixmap.width() / pixmap.height()
+        except (AttributeError, TypeError):
+            pass
+        
+        return 1.0  # Default to square
         
     @property
     def effective_label(self):

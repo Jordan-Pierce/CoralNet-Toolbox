@@ -1,6 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import shutil
@@ -11,7 +9,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
-                             QHBoxLayout, QWidget)
+                             QHBoxLayout)
 
 from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
@@ -20,6 +18,9 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -47,22 +48,25 @@ class Base(QDialog):
 
         # Create group boxes
         self.info_group = QGroupBox()
-        self.dataset_group = QGroupBox()
+        self.input_dataset_group = QGroupBox()
+        self.output_dataset_group = QGroupBox()
         self.tile_config_group = QGroupBox()
         self.dataset_config_group = QGroupBox()
 
         # Setup layouts
         self.setup_info_layout()
-        self.setup_dataset_layout()
+        self.setup_input_dataset_layout()
+        self.setup_output_dataset_layout()
         self.setup_tile_config_layout()
         self.setup_dataset_config_layout()
 
         # Add info group at the top
         main_layout.addWidget(self.info_group)
-        
-        # Add dataset group below info
-        main_layout.addWidget(self.dataset_group)
-        
+
+        # Add input and output dataset groups below info
+        main_layout.addWidget(self.input_dataset_group)
+        main_layout.addWidget(self.output_dataset_group)
+
         # Create bottom row with tile config and dataset config side by side
         bottom_row_layout = QHBoxLayout()
         bottom_row_layout.addWidget(self.tile_config_group)
@@ -103,9 +107,9 @@ class Base(QDialog):
 
         self.tile_config_group.setLayout(layout)
 
-    def setup_dataset_layout(self):
-        """Set up dataset layout."""
-        self.dataset_group.setTitle("Dataset Parameters")
+    def setup_input_dataset_layout(self):
+        """Set up input dataset layout (source directory)."""
+        self.input_dataset_group.setTitle("Input Dataset Parameters")
         layout = QFormLayout()
 
         # Source Directory
@@ -117,9 +121,12 @@ class Base(QDialog):
         src_layout.addWidget(self.src_button)
         layout.addRow("Source Directory:", src_layout)
 
-        # Name of Destination Dataset
-        self.dst_name_edit = QLineEdit()
-        layout.addRow("Destination Dataset Name:", self.dst_name_edit)
+        self.input_dataset_group.setLayout(layout)
+
+    def setup_output_dataset_layout(self):
+        """Set up output dataset layout (destination directory and name)."""
+        self.output_dataset_group.setTitle("Output Dataset Parameters")
+        layout = QFormLayout()
 
         # Destination Directory
         self.dst_edit = QLineEdit()
@@ -130,7 +137,11 @@ class Base(QDialog):
         dst_layout.addWidget(self.dst_button)
         layout.addRow("Destination Directory:", dst_layout)
 
-        self.dataset_group.setLayout(layout)
+        # Name of Destination Dataset
+        self.dst_name_edit = QLineEdit()
+        layout.addRow("Destination Dataset Name:", self.dst_name_edit)
+
+        self.output_dataset_group.setLayout(layout)
 
     def setup_dataset_config_layout(self):
         """Set up dataset config layout."""
