@@ -76,9 +76,8 @@ class ImportImages:
             self.image_window.filter_images()
             
             if imported_paths:
-                self.image_window.load_image_by_path(imported_paths[-1])
+                self.image_window.load_image_by_path(imported_paths[0])
 
-            self._show_success_message()
         except Exception as e:
             self._show_error_message(str(e))
         finally:
