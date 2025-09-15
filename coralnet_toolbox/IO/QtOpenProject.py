@@ -224,8 +224,8 @@ class OpenProject(QDialog):
             self.image_window.update_search_bars()
             self.image_window.filter_images()
 
-            if self.image_window.raster_manager.image_paths:  # TODO
-                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
+            if self.image_window.raster_manager.image_paths:
+                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[0])
             
             progress_bar.stop_progress()
             progress_bar.close()
