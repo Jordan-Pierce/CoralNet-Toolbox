@@ -410,19 +410,27 @@ class LabelWindow(QWidget):
 
         # Add the group box to the main layout
         self.layout.addWidget(self.counts_group)
-
+        
+    def showEvent(self, event):
+        """Handle the show event to force a layout update, using a timer for startup."""
+        super().showEvent(event)
+        # Using QTimer.singleShot with a 0ms delay schedules this call to run
+        # as soon as the current event processing is finished. This is crucial
+        # on initial startup to ensure the parent window has fully resized
+        # before we calculate the label widths.
+        QTimer.singleShot(0, lambda: self.resizeEvent(None))
+        
     def resizeEvent(self, event):
-        """Handle resize events and update label widths dynamically."""
+        """
+        Handle resize events to explicitly set the width of the scrollable content.
+        This is the definitive fix for the resizing issue upon re-parenting.
+        """
+        # Set the minimum width of the content widget to match the viewport's width.
+        # This forces the vertical layout and its children (the labels) to expand.
+        self.scroll_content.setMinimumWidth(self.scroll_area.viewport().width())
+        
+        # Call the parent class's implementation to handle the rest of the event.
         super().resizeEvent(event)
-        self.update_label_width()
-        self.reorganize_labels()
-
-    def update_label_width(self):
-        """Dynamically set label width based on available space."""
-        available_width = self.scroll_area.viewport().width()
-        self.label_width = max(50, available_width)  # Minimum width safeguard
-        for label in self.labels:
-            label.setMaximumWidth(self.label_width)
 
     def dragEnterEvent(self, event):
         """Accept drag events if they contain text."""
@@ -538,21 +546,24 @@ class LabelWindow(QWidget):
 
     def update_labels_per_row(self):
         """Calculate and update the number of labels per row based on width."""
-        self.update_label_width()
         available_width = self.scroll_area.width() - self.scroll_area.verticalScrollBar().width()
         self.labels_per_row = max(1, available_width // self.label_width)
         self.scroll_content.setFixedWidth(self.labels_per_row * self.label_width)
 
     def reorganize_labels(self):
         """
-        Rearrange labels in the vertical layout based on the current order.
+        Rearrange labels in the vertical layout and ensure the container is correctly sized.
         """
+        # Force the container to match the viewport width before rearranging.
+        self.scroll_content.setMinimumWidth(self.scroll_area.viewport().width())
+
         # Clear the existing layout
         while self.labels_layout.count():
             item = self.labels_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.setParent(None)
+        
         # Add labels vertically
         for label in self.labels:
             self.labels_layout.addWidget(label)
@@ -1228,7 +1239,7 @@ class EditLabelDialog(QDialog):
             else:
                 return  # User cancelled the merge.
         else:
-            # --- EDIT PATH --- (no changes here, logic is already handled by update_label)
+            # --- EDIT PATH ---
             self.label_window.update_label_properties(
                 label_to_update=self.label,
                 new_short=new_short,

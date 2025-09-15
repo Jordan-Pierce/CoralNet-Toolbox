@@ -141,7 +141,7 @@ class OpenProject(QDialog):
 
             # Handle both new and old project formats for images and work areas
             images_data = project_data.get('images', project_data.get('image_paths'))
-            legacy_workareas = project_data.get('workareas') # For backward compatibility
+            legacy_workareas = project_data.get('workareas')  # For backward compatibility
 
             # Update main window with loaded project data
             self.import_images(images_data, legacy_workareas)
@@ -162,8 +162,6 @@ class OpenProject(QDialog):
         
         # Exit
         self.accept()
-
-    # In: QtOpenProject.py
 
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
@@ -226,7 +224,7 @@ class OpenProject(QDialog):
             self.image_window.update_search_bars()
             self.image_window.filter_images()
 
-            if self.image_window.raster_manager.image_paths:
+            if self.image_window.raster_manager.image_paths:  # TODO
                 self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
             
             progress_bar.stop_progress()
