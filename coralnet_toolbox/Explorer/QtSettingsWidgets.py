@@ -539,16 +539,16 @@ class ModelSettingsWidget(QGroupBox):
         model_existing_layout.setContentsMargins(5, 10, 5, 5)
 
         self.model_path_edit = QLineEdit()
-        self.model_path_edit.setPlaceholderText("Path to a compatible .pt model file...")
+        self.model_path_edit.setPlaceholderText("Path to .pt model file")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_for_model)
 
         path_layout = QHBoxLayout()
         path_layout.addWidget(self.model_path_edit)
         path_layout.addWidget(browse_button)
-        model_existing_layout.addRow("Model Path:", path_layout)
+        model_existing_layout.addRow("Path:", path_layout)
         
-        help_label = QLabel("Note: Select an Ultralytics model (.pt).")
+        help_label = QLabel("Select Ultralytics model (.pt)")
         help_label.setStyleSheet("color: gray; font-style: italic;")
         model_existing_layout.addRow("", help_label)
 
@@ -777,6 +777,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param1_label.setText("n_neighbors:")
             self.param1_slider.setRange(2, 150)
             self.param1_slider.setValue(15)
+            self.param1_value_label.setText("15") # Manually update label
 
             # Enable Row 2 for min_dist
             self.param2_label.setEnabled(True)
@@ -785,6 +786,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param2_label.setText("min_dist:")
             self.param2_slider.setRange(0, 99)
             self.param2_slider.setValue(10)
+            self.param2_value_label.setText(f"{10/100.0:.2f}") # Manually update label
             self.param2_slider.valueChanged.connect(lambda v: self.param2_value_label.setText(f"{v/100.0:.2f}"))
 
         elif technique == "TSNE":
@@ -795,14 +797,16 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param1_label.setText("Perplexity:")
             self.param1_slider.setRange(5, 50)
             self.param1_slider.setValue(30)
+            self.param1_value_label.setText("30") # Manually update label
 
-            # --- MODIFIED: Enable Row 2 for Early Exaggeration ---
+            # Enable Row 2 for Early Exaggeration
             self.param2_label.setEnabled(True)
             self.param2_slider.setEnabled(True)
             self.param2_value_label.setEnabled(True)
             self.param2_label.setText("Exaggeration:")
             self.param2_slider.setRange(50, 600)  # Represents 5.0 to 60.0
             self.param2_slider.setValue(120)      # Represents 12.0
+            self.param2_value_label.setText(f"{120/10.0:.1f}") # Manually update label
             self.param2_slider.valueChanged.connect(lambda v: self.param2_value_label.setText(f"{v/10.0:.1f}"))
 
         elif technique == "PCA":
