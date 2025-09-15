@@ -54,15 +54,14 @@ class EmbeddingPointItem(QGraphicsObject):
         
     def boundingRect(self):
         """Returns the bounding rectangle, which depends on the display mode and depth."""
-        # --- MODIFICATION START ---
+        
         scale_factor = 1.0
         if self.viewer and self.viewer.z_range > 0:
             # Normalize z from its global range to a [0, 1] range
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
             scale_factor = 0.5 + z_normalized
-        # --- MODIFICATION END ---
-        
+    
         if self.viewer and self.viewer.display_mode == 'sprites':
             ar = self.data_item.aspect_ratio
             if ar >= 1.0:
@@ -73,10 +72,9 @@ class EmbeddingPointItem(QGraphicsObject):
                 width = (SPRITE_SIZE * ar) * scale_factor
             return QRectF(0, 0, width, height)
         else:
-            # --- MODIFICATION START ---
+            
             size = POINT_SIZE * scale_factor
             return QRectF(0, 0, size, size)
-            # --- MODIFICATION END ---
 
     def update_tooltip(self):
         """Updates the tooltip by fetching the latest text from the data item."""
@@ -89,45 +87,49 @@ class EmbeddingPointItem(QGraphicsObject):
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # --- MODIFICATION START ---
+        # Calculate scale_factor for size and opacity (reused from boundingRect logic)
+        scale_factor = 1.0
+        if self.viewer and self.viewer.z_range > 0:
+            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            scale_factor = 0.5 + z_normalized  # From 0.5x to 1.5x
+
+        # Calculate scaled pen width for borders (clamp to avoid extremes)
+        scaled_pen_width = max(1, min(POINT_WIDTH * scale_factor, 6))  # Clamp between 1 and 6 for usability
+        
+        # Calculate opacity
         opacity = 255
         if self.viewer and self.viewer.z_range > 0:
-            # Normalize z from its global range to a [0, 1] range for scaling
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
-            # Map normalized z to an opacity (e.g., from ~50% to 100%)
             opacity = int(128 + 127 * z_normalized)
 
         base_color = self.data_item.effective_color
         effective_brush_color = QColor(base_color)
         effective_brush_color.setAlpha(opacity)
-        # --- MODIFICATION END ---
-
+        
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
         if display_mode == 'sprites':
-            if self.thumbnail_pixmap is None:
+            # Ensure the pixmap is scaled to the current boundingRect size (handles dynamic scaling during rotation)
+            current_size = self.boundingRect().size().toSize()
+            if self.thumbnail_pixmap is None or self.thumbnail_pixmap.size() != current_size:
                 source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
                 if source_pixmap and not source_pixmap.isNull():
-                    bounding_rect_size = self.boundingRect().size().toSize()
                     self.thumbnail_pixmap = source_pixmap.scaled(
-                        bounding_rect_size,
+                        current_size,
                         Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
             
             if self.thumbnail_pixmap:
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
-            # --- MODIFICATION START ---
+            # Scaled border pen for sprites
             border_color = QColor(self.data_item.effective_color)
             border_color.setAlpha(opacity)
-            border_pen = QPen(border_color, POINT_WIDTH)
-            # --- MODIFICATION END ---
+            border_pen = QPen(border_color, scaled_pen_width)
             if self.isSelected():
                 darker_color = self.data_item.effective_color.darker(150)
-                # --- MODIFICATION START ---
                 darker_color.setAlpha(opacity)
-                border_pen = QPen(darker_color, POINT_WIDTH)
-                # --- MODIFICATION END ---
+                border_pen = QPen(darker_color, scaled_pen_width)
                 border_pen.setStyle(Qt.CustomDashLine)
                 border_pen.setDashPattern([1, 2])
                 if self.viewer:
@@ -137,28 +139,22 @@ class EmbeddingPointItem(QGraphicsObject):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.boundingRect())
         else:
-            # --- Draw Original Dot ---
+            # Draw Original Dot with scaled size and pen
             if self.isSelected():
                 darker_color = self.data_item.effective_color.darker(150)
-                # --- MODIFICATION START ---
                 darker_color.setAlpha(opacity)
-                animated_pen = QPen(darker_color, POINT_WIDTH)
-                # --- MODIFICATION END ---
+                animated_pen = QPen(darker_color, scaled_pen_width)
                 animated_pen.setStyle(Qt.CustomDashLine)
                 animated_pen.setDashPattern([1, 2])
                 if self.viewer:
                     animated_pen.setDashOffset(self.viewer.animation_offset)
                 painter.setPen(animated_pen)
             else:
-                # --- MODIFICATION START ---
                 pen_color = QColor("black")
                 pen_color.setAlpha(opacity)
-                painter.setPen(QPen(pen_color, POINT_WIDTH))
-                # --- MODIFICATION END ---
+                painter.setPen(QPen(pen_color, scaled_pen_width))
 
-            # --- MODIFICATION START ---
             painter.setBrush(effective_brush_color)
-            # --- MODIFICATION END ---
             painter.drawEllipse(self.boundingRect())
         
         
@@ -373,14 +369,14 @@ class AnnotationDataItem:
         
         self.embedding_x = embedding_x if embedding_x is not None else 0.0
         self.embedding_y = embedding_y if embedding_y is not None else 0.0
-        # --- MODIFICATION START ---
-        self.embedding_z = 0.0 # This will store the rotated Z-value (depth)
+        
+        self.embedding_z = 0.0  # This will store the rotated Z-value (depth)
         
         # Store the original, un-rotated 3D coordinates from the embedding
         self.embedding_x_3d = 0.0
         self.embedding_y_3d = 0.0
         self.embedding_z_3d = 0.0
-        # --- MODIFICATION END ---
+        
         self.embedding_id = embedding_id
         
         self._is_selected = False
