@@ -56,7 +56,7 @@ class EmbeddingPointItem(QGraphicsObject):
         """Returns the bounding rectangle, which depends on the display mode and depth."""
         
         scale_factor = 1.0
-        if self.viewer and self.viewer.z_range > 0:
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             # Normalize z from its global range to a [0, 1] range
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             # Map normalized z to a scale factor (e.g., from 0.5x to 1.5x)
@@ -87,9 +87,9 @@ class EmbeddingPointItem(QGraphicsObject):
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Calculate scale_factor for size and opacity (reused from boundingRect logic)
+        # Calculate scale_factor for size and opacity
         scale_factor = 1.0
-        if self.viewer and self.viewer.z_range > 0:
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             scale_factor = 0.5 + z_normalized  # From 0.5x to 1.5x
 
@@ -98,7 +98,7 @@ class EmbeddingPointItem(QGraphicsObject):
         
         # Calculate opacity
         opacity = 255
-        if self.viewer and self.viewer.z_range > 0:
+        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             opacity = int(128 + 127 * z_normalized)
 

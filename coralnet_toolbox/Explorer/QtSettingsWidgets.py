@@ -727,6 +727,11 @@ class EmbeddingSettingsWidget(QGroupBox):
         self.embedding_technique_combo.currentTextChanged.connect(self._update_parameter_sliders)
         settings_layout.addRow("Technique:", self.embedding_technique_combo)
 
+        # New Dimensions ComboBox
+        self.dimensions_combo = QComboBox()
+        self.dimensions_combo.addItems(["2D", "3D"])
+        settings_layout.addRow("Dimensions:", self.dimensions_combo)
+
         # Slider 1
         self.param1_label = QLabel("Parameter 1:")
         param1_layout = QHBoxLayout()
@@ -820,6 +825,7 @@ class EmbeddingSettingsWidget(QGroupBox):
         """Returns a dictionary of the current embedding parameters."""
         params = {
             'technique': self.embedding_technique_combo.currentText(),
+            'dimensions': 3 if self.dimensions_combo.currentText() == "3D" else 2
         }
         if params['technique'] == 'UMAP':
             params['n_neighbors'] = self.param1_slider.value()

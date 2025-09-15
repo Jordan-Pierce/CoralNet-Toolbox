@@ -206,7 +206,7 @@ class ExplorerWindow(QMainWindow):
         self.label_layout.addWidget(settings_toolbox)
         
         # Set fixed width for left_panel to keep it always visible and non-resizable
-        self.left_panel.setFixedWidth(250)
+        self.left_panel.setFixedWidth(300)
 
         # Create horizontal layout for left panel and viewers (no splitter for fixed left panel)
         horizontal_layout = QHBoxLayout()
@@ -1402,28 +1402,21 @@ class ExplorerWindow(QMainWindow):
             params (dict): Embedding parameters, including technique and its hyperparameters.
 
         Returns:
-            np.ndarray or None: 3D embedded features of shape (N, 3), or None on failure.
+            np.ndarray or None: Embedded features of shape (N, 2) or (N, 3), or None on failure.
         """
         technique = params.get('technique', 'UMAP')
-        # Default number of components to use for PCA preprocessing
         pca_components = params.get('pca_components', 50)
+        n_components = params.get('dimensions', 3)
 
-        
-        # We need 3 dimensions for our pseudo-3D view
-        N_COMPONENTS = 3
-        if len(features) <= N_COMPONENTS:
-        
-            # Not enough samples for dimensionality reduction
+        if len(features) <= n_components:
             return None
 
         try:
-            # Standardize features before reduction
             features_scaled = StandardScaler().fit_transform(features)
             
-            # Apply PCA preprocessing automatically for UMAP or TSNE
-            # (only if the feature dimension is larger than the target PCA components)
-            if technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
-                # Ensure pca_components doesn't exceed number of samples or features
+            # **Only apply PCA preprocessing for 3D embeddings**
+            is_3d = (n_components == 3)
+            if is_3d and technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
                 pca_components = min(pca_components, features_scaled.shape[0] - 1, features_scaled.shape[1])
                 print(f"Applying PCA preprocessing to {pca_components} components before {technique}")
                 pca = PCA(n_components=pca_components, random_state=42)
@@ -1435,9 +1428,7 @@ class ExplorerWindow(QMainWindow):
             if technique == "UMAP":
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
                 reducer = UMAP(
-                    
-                    n_components=N_COMPONENTS,
-                    
+                    n_components=n_components,
                     random_state=42,
                     n_neighbors=n_neighbors,
                     min_dist=params.get('min_dist', 0.1),
@@ -1446,9 +1437,7 @@ class ExplorerWindow(QMainWindow):
             elif technique == "TSNE":
                 perplexity = min(params.get('perplexity', 30), len(features_scaled) - 1)
                 reducer = TSNE(
-                    
-                    n_components=N_COMPONENTS,
-                    
+                    n_components=n_components,
                     random_state=42,
                     perplexity=perplexity,
                     early_exaggeration=params.get('early_exaggeration', 12.0),
@@ -1456,9 +1445,7 @@ class ExplorerWindow(QMainWindow):
                     init='pca'
                 )
             elif technique == "PCA":
-                
-                reducer = PCA(n_components=N_COMPONENTS, random_state=42)
-                
+                reducer = PCA(n_components=n_components, random_state=42)
             else:
                 return None
 
@@ -1473,11 +1460,14 @@ class ExplorerWindow(QMainWindow):
             return None
 
     def _update_data_items_with_embedding(self, data_items, embedded_features):
-        """Updates AnnotationDataItem objects with embedding results."""
-        
-        # This function now handles 3D data and stores the original 3D coordinates
-        if embedded_features is None or embedded_features.shape[1] != 3:
-            print("Error: Expected 3D embedded features.")
+        """Updates AnnotationDataItem objects with embedding results for 2D or 3D data."""
+        if embedded_features is None:
+            print("Error: No embedded features to process.")
+            return
+
+        n_dims = embedded_features.shape[1]
+        if n_dims not in [2, 3]:
+            print(f"Error: Expected 2D or 3D embedded features, but got {n_dims}D.")
             return
 
         scale_factor = 4000
@@ -1495,15 +1485,21 @@ class ExplorerWindow(QMainWindow):
             # Scale to the scene size and center around (0,0,0)
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
             
-            # Store the original, un-rotated 3D coordinates
-            item.embedding_x_3d = scaled_coords[0]
-            item.embedding_y_3d = scaled_coords[1]
-            item.embedding_z_3d = scaled_coords[2]
+            if n_dims == 3:
+                # Store the original, un-rotated 3D coordinates
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = scaled_coords[2]
+            else:  # n_dims == 2
+                # Store the 2D coordinates and set Z to 0 for a flat plot
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = 0.0
 
             # Set the initial projected coordinates (no rotation)
             item.embedding_x = item.embedding_x_3d
             item.embedding_y = item.embedding_y_3d
-            item.embedding_z = item.embedding_z_3d # z represents depth
+            item.embedding_z = item.embedding_z_3d  # z represents depth
 
             item.embedding_id = i
 
@@ -1590,7 +1586,7 @@ class ExplorerWindow(QMainWindow):
 
             progress_bar.set_busy_mode("Updating visualization...")
             self._update_data_items_with_embedding(self.current_data_items, embedded_features)
-            self.embedding_viewer.update_embeddings(self.current_data_items)
+            self.embedding_viewer.update_embeddings(self.current_data_items, embedded_features.shape[1])
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
 

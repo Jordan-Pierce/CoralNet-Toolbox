@@ -67,9 +67,10 @@ class EmbeddingViewer(QWidget):
         self.last_mouse_pos = QPointF()
         self.rotation_angle_y = 0.0  # Rotation around the Y-axis (horizontal drag)
         self.rotation_angle_x = 0.0  # Rotation around the X-axis (vertical drag)
-        self.min_z = 0.0 # Used by points for scaling
-        self.max_z = 0.0 # Used by points for scaling
-        self.z_range = 0.0 # To avoid division by zero
+        self.min_z = 0.0  # Used by points for scaling
+        self.max_z = 0.0  # Used by points for scaling
+        self.z_range = 0.0  # To avoid division by zero
+        self.is_3d_data = False
 
         self.rubber_band = None
         self.rubber_band_origin = QPointF()
@@ -473,14 +474,13 @@ class EmbeddingViewer(QWidget):
         # Ctrl+Right-Click Drag for rotation
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
-            # Start rotation only if the click is not on a point (to preserve context menu functionality)
-            if not isinstance(item_at_pos, EmbeddingPointItem):
+            # Use the new is_3d_data flag for a robust check
+            if not isinstance(item_at_pos, EmbeddingPointItem) and self.is_3d_data:
                 self.is_rotating = True
                 self.last_mouse_pos = event.pos()
                 self.graphics_view.setCursor(Qt.ClosedHandCursor)
                 event.accept()
                 return
-        
         
         # Ctrl+Right-Click on a point for context menu selection
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
@@ -562,7 +562,6 @@ class EmbeddingViewer(QWidget):
             self._apply_rotation_and_projection()
             event.accept()
             return
-        
 
         if self.rubber_band:
             current_pos = self.graphics_view.mapToScene(event.pos())
@@ -591,7 +590,6 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.unsetCursor()
             event.accept()
             return
-        
 
         if self.rubber_band:
             self.graphics_scene.removeItem(self.rubber_band)
@@ -632,20 +630,17 @@ class EmbeddingViewer(QWidget):
         self.graphics_view.translate(delta.x(), delta.y())
         self._schedule_view_update()
 
-    def update_embeddings(self, data_items):
-        """Update the embedding visualization. Creates an EmbeddingPointItem for
-        each AnnotationDataItem and links them."""
-        # ... (existing code)
+    def update_embeddings(self, data_items, n_dims):
+        """Update the embedding visualization and track if it's 3D."""
         self.clear_points()
+        self.is_3d_data = (n_dims == 3) # Set our new flag here
         for item in data_items:
             point = EmbeddingPointItem(item, self)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
-            
         
         # Perform an initial projection to set Z-range
         self._apply_rotation_and_projection()
-        
         
         # Ensure buttons are in the correct initial state
         self._update_toolbar_state()
@@ -787,9 +782,6 @@ class EmbeddingViewer(QWidget):
             self.min_z = np.min(rotated_points[:, 2])
             self.max_z = np.max(rotated_points[:, 2])
             self.z_range = self.max_z - self.min_z
-            if self.z_range == 0:
-                self.z_range = 1.0 # Avoid division by zero
-        
         
         # Call setUpdatesEnabled on the VIEW, not the SCENE
         self.graphics_view.setUpdatesEnabled(False)
@@ -812,7 +804,6 @@ class EmbeddingViewer(QWidget):
             # Re-enable updates on the VIEW
             self.graphics_view.setUpdatesEnabled(True)
             
-
         # Trigger a repaint of the entire scene to reflect changes
         self.graphics_scene.update()
             
