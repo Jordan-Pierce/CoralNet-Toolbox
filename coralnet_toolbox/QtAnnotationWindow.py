@@ -456,7 +456,7 @@ class AnnotationWindow(QGraphicsView):
         # Center the view on the work area's center
         self.centerOn(work_area_center)
 
-    def just_center_on_annotation(self, annotation):
+    def center_on_annotation(self, annotation):
         """Center the view on the specified annotation."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
@@ -469,7 +469,7 @@ class AnnotationWindow(QGraphicsView):
         # Center the view on the annotation's center
         self.centerOn(annotation_center)
     
-    def center_on_annotation(self, annotation):
+    def center_and_zoom_on_annotation(self, annotation):
         """Center and zoom in to focus on the specified annotation with relaxed zoom and dynamic padding."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
