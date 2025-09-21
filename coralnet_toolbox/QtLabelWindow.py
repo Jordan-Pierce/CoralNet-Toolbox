@@ -4,7 +4,7 @@ import re
 import uuid
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer, pyqtProperty
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag, QBrush, QColor, QDrag,
                          QFontMetrics, QLinearGradient, QPainter, QPen)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
@@ -46,6 +46,13 @@ class Label(QWidget):
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._update_animated_line)
         self.animation_timer.setInterval(50)  # Update every 50ms
+
+        # Animation properties (updated for pulsing)
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster pulsing
 
         self.fixed_height = 30
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -149,15 +156,45 @@ class Label(QWidget):
             self._animated_line_offset = (self._animated_line_offset + 1) % 20
             self.update()
 
+    @pyqtProperty(int)  # Added for pulsing alpha
+    def pulse_alpha(self):
+        """Get the current pulse alpha for animation."""
+        return self._pulse_alpha
+    
+    @pulse_alpha.setter
+    def pulse_alpha(self, value):
+        """Set the pulse alpha and update the widget."""
+        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
+        self.update()
+    
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
+        
+        self.update()
+    
     def start_animation(self):
-        """Start the selection animation."""
+        """Start the pulsing animation."""
         if not self.animation_timer.isActive():
             self.animation_timer.start()
-
+    
     def stop_animation(self):
-        """Stop the selection animation."""
+        """Stop the pulsing animation."""
         self.animation_timer.stop()
-        self._animated_line_offset = 0
+        self._pulse_alpha = 128  # Reset to default
         self.update()
 
     def delete_label(self):
@@ -187,12 +224,13 @@ class Label(QWidget):
 
         # --- 2. MODIFIED Animated Selection Indicator ---
         if self.is_selected:
-            # Use a darker version of the label's color for good contrast
-            pen = QPen(self.color.darker(150))
+            # Use a darker version of the label's color for better visibility
+            pen_color = QColor(self.color).darker(150)  # Changed to darker for better selected appearance
+            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+            
+            pen = QPen(pen_color)
             pen.setWidthF(2.5)  # Use setWidthF for float widths
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([4, 4])  # 4 pixels on, 4 pixels off
-            pen.setDashOffset(self._animated_line_offset)
+            pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
             painter.setPen(pen)
             painter.drawRect(rect.adjusted(1, 1, -1, -1))
 

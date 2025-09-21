@@ -52,6 +52,13 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
         
+        # Animation properties (updated for pulsing)
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
+
     def boundingRect(self):
         """Returns the bounding rectangle, which depends on the display mode and depth."""
         
@@ -127,13 +134,16 @@ class EmbeddingPointItem(QGraphicsObject):
             border_color.setAlpha(opacity)
             border_pen = QPen(border_color, scaled_pen_width)
             if self.isSelected():
-                darker_color = self.data_item.effective_color.darker(150)
-                darker_color.setAlpha(opacity)
-                border_pen = QPen(darker_color, scaled_pen_width)
-                border_pen.setStyle(Qt.CustomDashLine)
-                border_pen.setDashPattern([1, 2])
-                if self.viewer:
-                    border_pen.setDashOffset(self.viewer.animation_offset)
+                # Use a darker version of the color for better visibility
+                border_color = QColor(self.data_item.effective_color).darker(150)  
+                border_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+                border_pen = QPen(border_color, scaled_pen_width)
+                border_pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
+                if not self.animation_timer.isActive():
+                    self.animation_timer.start()  # Start pulsing on selection
+            else:
+                if self.animation_timer.isActive():
+                    self.animation_timer.stop()  # Stop pulsing on deselection
 
             painter.setPen(border_pen)
             painter.setBrush(Qt.NoBrush)
@@ -141,23 +151,49 @@ class EmbeddingPointItem(QGraphicsObject):
         else:
             # Draw Original Dot with scaled size and pen
             if self.isSelected():
-                darker_color = self.data_item.effective_color.darker(150)
-                darker_color.setAlpha(opacity)
+                # Use a darker version of the color for better visibility
+                darker_color = QColor(self.data_item.effective_color).darker(150)  
+                darker_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
                 animated_pen = QPen(darker_color, scaled_pen_width)
-                animated_pen.setStyle(Qt.CustomDashLine)
-                animated_pen.setDashPattern([1, 2])
-                if self.viewer:
-                    animated_pen.setDashOffset(self.viewer.animation_offset)
+                animated_pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
+                if not self.animation_timer.isActive():
+                    self.animation_timer.start()  # Start pulsing on selection
                 painter.setPen(animated_pen)
             else:
                 pen_color = QColor("black")
                 pen_color.setAlpha(opacity)
                 painter.setPen(QPen(pen_color, scaled_pen_width))
+                if self.animation_timer.isActive():
+                    self.animation_timer.stop()  # Stop pulsing on deselection
 
             painter.setBrush(effective_brush_color)
             painter.drawEllipse(self.boundingRect())
+    
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
         
-        
+        self.update()  # Trigger repaint
+    
+    def __del__(self):
+        """Clean up the timer when the item is deleted."""
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()
+            
+
 class AnnotationImageWidget(QWidget):
     """Widget to display a single annotation image crop with selection support."""
 
@@ -172,10 +208,12 @@ class AnnotationImageWidget(QWidget):
         self.pixmap = None
         self.is_loaded = False  # Flag for lazy loading
 
-        self.animation_offset = 0
+        # Animation properties (updated for pulsing)
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
         self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_animation_frame)
-        self.animation_timer.setInterval(75)
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
 
         self.setup_ui()
         self.recalculate_aspect_ratio()  # Calculate aspect ratio from geometry
@@ -298,7 +336,7 @@ class AnnotationImageWidget(QWidget):
         else:
             if self.animation_timer.isActive():
                 self.animation_timer.stop()
-            self.animation_offset = 0
+            self._pulse_alpha = 128  # Reset to default
 
         # Trigger a repaint to show the new selection state (border, etc.)
         self.update()
@@ -309,7 +347,7 @@ class AnnotationImageWidget(QWidget):
 
     def _update_animation_frame(self):
         """Update the animation offset and schedule a repaint."""
-        self.animation_offset = (self.animation_offset + 1) % 20
+        # Removed: self.animation_offset = (self.animation_offset + 1) % 20
         self.update()
 
     def paintEvent(self, event):
@@ -325,10 +363,11 @@ class AnnotationImageWidget(QWidget):
             pen_color = QColor("black")
 
         if self.is_selected():
+            # Use a darker version of the color for better visibility
+            pen_color = pen_color.darker(150)  # Changed to darker for brighter selected appearance
+            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
             pen = QPen(pen_color, ANNOTATION_WIDTH)
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([2, 3])
-            pen.setDashOffset(self.animation_offset)
+            pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         else:
             pen = QPen(pen_color, ANNOTATION_WIDTH)
             pen.setStyle(Qt.SolidLine)
@@ -340,6 +379,25 @@ class AnnotationImageWidget(QWidget):
         half_width = (width - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
+        
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
+        
+        self.update()  # Trigger repaint
 
     def mousePressEvent(self, event):
         """Handle mouse press events for selection, delegating logic to the viewer."""
@@ -355,6 +413,11 @@ class AnnotationImageWidget(QWidget):
             else:
                 event.ignore()
         super().mousePressEvent(event)
+        
+    def __del__(self):
+        """Clean up the timer when the widget is deleted."""
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()
 
 
 class AnnotationDataItem:

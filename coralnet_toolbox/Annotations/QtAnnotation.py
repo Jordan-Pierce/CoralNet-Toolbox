@@ -62,10 +62,11 @@ class Annotation(QObject):
         self.graphics_item_group = None
         
         # Animation properties
-        self._animated_line = 0
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
         self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(75)  # Update every 50ms for smooth animation
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
@@ -215,24 +216,38 @@ class Annotation(QObject):
         if self.graphics_item_group:
             self.graphics_item_group.setVisible(visible)
         
-    @pyqtProperty(float)
-    def animated_line(self):
-        """Get the current animated line offset for animation."""
-        return self._animated_line
+    @pyqtProperty(int)  # Changed to int for QColor compatibility
+    def pulse_alpha(self):
+        """Get the current pulse alpha for animation."""
+        return self._pulse_alpha
     
-    @animated_line.setter
-    def animated_line(self, value):
-        """Set the animated line offset and update pen styles."""
-        self._animated_line = value
+    @pulse_alpha.setter
+    def pulse_alpha(self, value):
+        """Set the pulse alpha and update pen styles."""
+        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
         self._update_pen_styles()
     
-    def _update_animated_line(self):
-        """Update the animated line offset for animation."""
-        self._animated_line = (self._animated_line + 1) % 20  # Reset every 20 pixels
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
+
         self._update_pen_styles()
     
     def animate(self, force=False):
-        """Start the animation for selected annotations.
+        """Start the pulsing animation for selected annotations.
         
         Args:
             force (bool): If True, force animation even if annotation is not selected
@@ -242,28 +257,24 @@ class Annotation(QObject):
                 self.animation_timer.start()
     
     def deanimate(self):
-        """Stop the animation for deselected annotations."""
+        """Stop the pulsing animation for deselected annotations."""
         self.animation_timer.stop()
+        self._pulse_alpha = 128  # Reset to default
         self.update_graphics_item()
     
     def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""
-        # Set pen style based on selection state OR if animation is active (for forced animation)
         if self.is_selected or self.animation_timer.isActive():
             # Use same color if verified, black if not verified
             if self.verified:
                 pen_color = QColor(base_color)  # Create a copy
-                pen_color.setAlpha(255)  # Pen should always be fully opaque
             else:
-                pen_color = QColor(0, 0, 0, 255)  # Black, fully opaque
+                pen_color = QColor(0, 0, 0)  # Black
             
-            # [1, 2] - Very small dots with small gaps
-            # [2, 4] - Small dots with larger gaps
-            # [1, 3] - Tiny dots with medium gaps
-            pen = QPen(pen_color.darker(150), 4)  # Width for dotted line
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([1, 2])  # Dotted pattern: 2 pixels on, 3 pixels off
-            pen.setDashOffset(self._animated_line)
+            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+            
+            pen = QPen(pen_color.lighter(150), 4)  # Changed to lighter for brighter selected appearance
+            pen.setStyle(Qt.DotLine)  # Predefined dotted line
             return pen
         else:
             # Use label color with solid line for unselected items, always opaque
@@ -272,12 +283,12 @@ class Annotation(QObject):
             return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
     
     def _update_pen_styles(self):
-        """Update pen styles with current animated line offset."""
+        """Update pen styles with current pulse alpha."""
         # Only update if selected OR if animation is running (for forced animation)
         if not self.is_selected and not self.animation_timer.isActive():
             return
             
-        color = QColor(self.label.color).darker(150) if not self.verified else QColor(self.label.color)
+        color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  # Changed to lighter for consistency
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen
