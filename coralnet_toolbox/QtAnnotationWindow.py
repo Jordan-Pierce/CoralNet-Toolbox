@@ -1,6 +1,6 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -9,14 +9,17 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessa
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
     PolygonAnnotation,
-    RectangleAnnotation
+    RectangleAnnotation,
+    MultiPolygonAnnotation,
+    MaskAnnotation,
 )
 
 from coralnet_toolbox.Tools import (
     PanTool,
     PatchTool,
-    PolygonTool,
     RectangleTool,
+    PolygonTool,
+    BrushTool,
     SAMTool,
     SeeAnythingTool,
     SelectTool,
@@ -28,9 +31,11 @@ from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.utilities import rasterio_open
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -74,7 +79,10 @@ class AnnotationWindow(QGraphicsView):
         self.selected_annotations = []  # Stores the selected annotations
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
-
+                
+        self.mask_annotation = None  # Holds the single mask annotation for the image
+        self.mask_tools = {"brush", "fill", "eraser"}  # Defines which tools trigger mask mode
+        
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -91,7 +99,10 @@ class AnnotationWindow(QGraphicsView):
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
-
+        
+        # NOTE: You will need to create and import these new tool classes
+        # from coralnet_toolbox.Tools import BrushTool, FillTool, EraserTool
+        
         self.tools = {
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
@@ -101,7 +112,11 @@ class AnnotationWindow(QGraphicsView):
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
-            "work_area": WorkAreaTool(self)
+            "work_area": WorkAreaTool(self),
+            # Add the new mask-specific tools
+            "brush": BrushTool(self),
+            # "fill": FillTool(self),
+            # "eraser": EraserTool(self)
         }
 
     def dragEnterEvent(self, event):
@@ -131,21 +146,37 @@ class AnnotationWindow(QGraphicsView):
         self.viewChanged.emit(*self.get_image_dimensions())
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events for the active tool."""
+        """Handle mouse press events for the active tool."""        
+        # Panning should be active in both modes, so we call it first.
         if self.active_image:
             self.tools["pan"].mousePressEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mousePressEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mousePressEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mousePressEvent(event)
+        
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse movement events for the active tool."""
+        # Panning should be active in both modes
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mouseMoveEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mouseMoveEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mouseMoveEvent(event)
+        
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
 
@@ -156,11 +187,19 @@ class AnnotationWindow(QGraphicsView):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
+        # Panning should be active in both modes
         if self.active_image:
             self.tools["pan"].mouseReleaseEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mouseReleaseEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mouseReleaseEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mouseReleaseEvent(event)
+        
         self.toggle_cursor_annotation()
         self.drag_start_pos = None
         super().mouseReleaseEvent(event)
@@ -200,10 +239,37 @@ class AnnotationWindow(QGraphicsView):
         return self.selected_tool
 
     def set_selected_tool(self, tool):
-        """Set the currently active tool and deactivate the previous one."""
+        """Set the currently active tool and update the UI layers for the correct editing mode."""
         if self.selected_tool:
             self.tools[self.selected_tool].deactivate()
+        
         self.selected_tool = tool
+        
+        if self.selected_tool in self.mask_tools:
+            # --- ENTERING MASK EDITING MODE ---
+            self.unselect_annotations()  # Clear any selected vector annotations
+            if self.mask_annotation and self.mask_annotation.graphics_item:
+                # Make the mask layer fully opaque for clear editing
+                self.mask_annotation.graphics_item.setOpacity(1.0)
+            
+            # De-emphasize and disable vector annotations to prevent distraction
+            for annotation in self.annotations_dict.values():
+                if annotation.graphics_item_group:
+                    annotation.graphics_item_group.setOpacity(0.25)
+                    annotation.graphics_item_group.setEnabled(False)
+
+        else:
+            # --- ENTERING ANNOTATION (VECTOR) EDITING MODE ---
+            if self.mask_annotation and self.mask_annotation.graphics_item:
+                # Return the mask layer to semi-transparent for context
+                self.mask_annotation.graphics_item.setOpacity(0.6)
+
+            # Restore full visibility and interactivity to vector annotations
+            for annotation in self.annotations_dict.values():
+                if annotation.graphics_item_group:
+                    annotation.graphics_item_group.setOpacity(1.0)
+                    annotation.graphics_item_group.setEnabled(True)
+
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
 
@@ -406,7 +472,30 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.image_window.table_model.update_raster_data(image_path)
 
         self.tools["zoom"].reset_zoom()
-        self.scene.addItem(QGraphicsPixmapItem(self.pixmap_image))
+        
+        # Add the base image pixmap and set its Z-value to be at the bottom
+        base_image_item = QGraphicsPixmapItem(self.pixmap_image)
+        base_image_item.setZValue(-10)
+        self.scene.addItem(base_image_item)
+
+        # Initialize the Mask Annotation layer for this image
+        height, width = self.pixmap_image.height(), self.pixmap_image.width()
+        mask_data = np.zeros((height, width), dtype=np.uint16)
+        label_map = self.main_window.label_window.get_label_map()
+
+        self.mask_annotation = MaskAnnotation(
+            image_path=image_path,
+            mask_data=mask_data,
+            label_map=label_map,
+            rasterio_src=self.rasterio_image
+        )
+        self.mask_annotation.create_graphics_item(self.scene)
+        # Set the mask's Z-value to sit above the image but below annotations
+        if self.mask_annotation.graphics_item:
+            self.mask_annotation.graphics_item.setZValue(-5)
+            # Make the mask semi-transparent by default for context
+            self.mask_annotation.graphics_item.setOpacity(0.6)
+                
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.tools["zoom"].calculate_min_zoom()
 

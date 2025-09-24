@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self.patch_icon = get_icon("patch.png")
         self.rectangle_icon = get_icon("rectangle.png")
         self.polygon_icon = get_icon("polygon.png")
+        self.brush_icon = get_icon("brush.png")
         self.sam_icon = get_icon("wizard.png")
         self.see_anything_icon = get_icon("eye.png")
         self.tile_icon = get_icon("tile.png")
@@ -728,6 +729,12 @@ class MainWindow(QMainWindow):
                         "• Press Backspace to cancel the current polygon.\n"
                         "• A semi-transparent preview shows the polygon while drawing."),
             
+            "brush": ("Brush Tool\n\n"
+                      "Create freehand brush annotations by clicking and dragging.\n"
+                      "• Left-click and drag to paint brush strokes on the canvas.\n"
+                      "• Hold Ctrl and use the mouse wheel to adjust brush size.\n"
+                      "• A semi-transparent preview shows the brush stroke while drawing."),
+
             "sam": ("Segment Anything (SAM) Tool\n\n"
                     "Generates AI-powered segmentations.\n"
                     "• Left-click to create a working area, then left-click again to confirm.\n"
@@ -807,6 +814,14 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setToolTip(self.tool_descriptions["polygon"])
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
+
+        self.toolbar.addSeparator()
+
+        self.brush_tool_action = QAction(self.brush_icon, "Brush", self)
+        self.brush_tool_action.setCheckable(True)
+        self.brush_tool_action.setToolTip(self.tool_descriptions["brush"])
+        self.brush_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.brush_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -1221,6 +1236,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1234,6 +1250,7 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1247,6 +1264,7 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1260,11 +1278,26 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
                 self.toolChanged.emit("polygon")
+            else:
+                self.toolChanged.emit(None)
+                
+        elif action == self.brush_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+
+                self.toolChanged.emit("brush")
             else:
                 self.toolChanged.emit(None)
 
@@ -1280,6 +1313,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
@@ -1299,6 +1333,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
@@ -1312,6 +1347,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
 
@@ -1329,6 +1365,7 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.brush_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
         self.work_area_tool_action.setChecked(False)
@@ -1346,6 +1383,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1355,6 +1393,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1364,6 +1403,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1373,6 +1413,17 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
+            self.brush_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            
+        elif tool == "brush":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1382,6 +1433,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1391,6 +1443,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
@@ -1400,6 +1453,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
@@ -1409,6 +1463,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)

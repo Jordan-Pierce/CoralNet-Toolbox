@@ -9,9 +9,9 @@ import numpy as np
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
 
-from PyQt5.QtCore import Qt, QPointF, QRectF, QPolygonF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
-from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush
+from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
