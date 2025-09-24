@@ -244,6 +244,9 @@ class AnnotationWindow(QGraphicsView):
         
         if self.selected_tool in self.mask_tools:
             # --- ENTERING MASK EDITING MODE ---
+            # Rasterize existing vector annotations onto the mask layer before proceeding.
+            self.rasterize_annotations()
+
             self.unselect_annotations()  # Clear any selected vector annotations
             if self.mask_annotation and self.mask_annotation.graphics_item:
                 # Update mask opacity based on current transparency
@@ -546,8 +549,22 @@ class AnnotationWindow(QGraphicsView):
         """
         if self.mask_annotation:
             self.mask_annotation.label_map = self.main_window.label_window.get_label_map()
-            # Optional: Trigger a scene update if the mask visuals need refreshing (e.g., for any UI feedback)
-            # self.scene.update()
+            self.scene.update()
+            
+    def rasterize_annotations(self):
+        """
+        Tells the current mask_annotation to rasterize all vector annotations
+        for the current image onto itself.
+        """
+        if not self.mask_annotation:
+            return
+
+        annotations = self.get_image_annotations()
+        if not annotations:
+            return
+            
+        # The MaskAnnotation now handles all the complex logic internally.
+        self.mask_annotation.rasterize_annotations(annotations)
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""

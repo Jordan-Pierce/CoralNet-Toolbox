@@ -260,6 +260,69 @@ class MaskAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
 
+    def _rasterize_annotation_group(self, annotations: list, class_id: int):
+        """Burns a list of vector annotations OF THE SAME CLASS (Label) into the mask."""
+        height, width = self.mask_data.shape
+        # Using Format_Alpha8 for an 8-bit stencil is correct and efficient.
+        stencil = QImage(width, height, QImage.Format_Alpha8)
+        stencil.fill(Qt.transparent)
+
+        painter = QPainter(stencil)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor("white")))
+        
+        for anno in annotations:
+            path = anno.get_painter_path()
+            painter.drawPath(path)
+        painter.end()
+
+        # Get the stride (bytes per line), which may include padding
+        stride = stencil.bytesPerLine()
+
+        # Get a pointer to the raw image data
+        ptr = stencil.bits()
+        ptr.setsize(stencil.byteCount())
+
+        # Create a NumPy array view that understands the padded memory layout.
+        # This is a zero-copy operation.
+        arr_view = np.ndarray(shape=(height, width), 
+                              buffer=ptr, 
+                              dtype=np.uint8, 
+                              strides=(stride, 1))
+
+        # Create a new, contiguous copy of the array and perform the boolean operation.
+        stencil_np = np.copy(arr_view) > 0
+
+        self.mask_data[stencil_np] = class_id
+
+    def rasterize_annotations(self, all_annotations: list):
+        """
+        Groups a list of vector annotations by label and rasterizes each group
+        onto this mask's data layer.
+        """
+        if not all_annotations:
+            return
+
+        # Group annotations by their label ID for efficient batch processing
+        annotations_by_label = {}
+        for anno in all_annotations:
+            if anno.label.id not in annotations_by_label:
+                annotations_by_label[anno.label.id] = []
+            annotations_by_label[anno.label.id].append(anno)
+
+        # Invert this mask's label_map to easily look up class_id from a Label's ID
+        id_to_class_id_map = {label.id: cid for cid, label in self.label_map.items()}
+
+        # For each label group, burn the corresponding annotations into the mask
+        for label_id, annos_to_burn in annotations_by_label.items():
+            class_id = id_to_class_id_map.get(label_id)
+            if class_id:
+                # Call the internal helper to do the actual drawing
+                self._rasterize_annotation_group(annos_to_burn, class_id)
+        
+        # After all groups are rasterized, update the graphics item to show the changes
+        self.update_graphics_item()
+
     # --- Analysis & Information Retrieval Methods ---
 
     def get_class_statistics(self) -> dict:
