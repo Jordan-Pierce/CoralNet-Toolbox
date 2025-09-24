@@ -5,8 +5,11 @@ from .QtPatchAnnotation import PatchAnnotation
 from .QtPolygonAnnotation import PolygonAnnotation
 from .QtRectangleAnnotation import RectangleAnnotation
 from .QtMultiPolygonAnnotation import MultiPolygonAnnotation
+from .QtMaskAnnotation import MaskAnnotation
 
 __all__ = ["Annotation", 
            "PatchAnnotation", 
            "PolygonAnnotation", 
-           "RectangleAnnotation"]
+           "RectangleAnnotation",
+           "MultiPolygonAnnotation",
+           "MaskAnnotation"]
