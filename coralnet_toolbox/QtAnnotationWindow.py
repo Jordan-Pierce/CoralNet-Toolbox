@@ -390,12 +390,6 @@ class AnnotationWindow(QGraphicsView):
             self.current_mask_annotation.update_transparency(transparency)
             self.current_mask_annotation.update_graphics_item()
         
-        # Also update the brush cursor if active (to ensure it reflects the new transparency)
-        if self.selected_tool == "brush" and hasattr(self.tools["brush"], "update_cursor_annotation"):
-            # Trigger a cursor update (it will use the updated transparency from the active label)
-            scene_pos = self.mapToScene(self.mapFromGlobal(self.cursor().pos()))  # Approximate current mouse position
-            self.tools["brush"].update_cursor_annotation(scene_pos)
-        
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""
         if annotation.show_message:
