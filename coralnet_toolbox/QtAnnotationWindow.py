@@ -74,6 +74,7 @@ class AnnotationWindow(QGraphicsView):
         self.image_annotations_dict = {}  # Dictionary to store annotations by image path
 
         self.selected_annotations = []  # Stores the selected annotations
+        self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
                 
@@ -242,8 +243,10 @@ class AnnotationWindow(QGraphicsView):
         
         if self.selected_tool in self.mask_tools:
             # --- ENTERING MASK EDITING MODE ---
-            # Rasterize existing vector annotations onto the mask layer before proceeding.
-            self.rasterize_annotations()
+            # Cache and rasterize existing vector annotations onto the mask layer.
+            self.rasterized_annotations_cache = self.get_image_annotations()
+            if self.current_mask_annotation and self.rasterized_annotations_cache:
+                self.rasterize_annotations()
 
             self.unselect_annotations()  # Clear any selected vector annotations
             if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
@@ -252,22 +255,26 @@ class AnnotationWindow(QGraphicsView):
                 transparency = active_label.transparency if active_label else 128
                 self.set_mask_transparency(transparency)
             
-            # De-emphasize and disable vector annotations to prevent distraction
-            for annotation in self.annotations_dict.values():
+            # Hide the vector annotations that were just rasterized
+            for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
-                    annotation.graphics_item_group.setOpacity(0.25)
-                    annotation.graphics_item_group.setEnabled(False)
+                    annotation.set_visibility(False)
         else:
-            # --- ENTERING ANNOTATION (VECTOR) EDITING MODE ---
+            # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
+            # Unrasterize the vector annotations from the mask layer
+            self.unrasterize_annotations()
+
             if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
                 # Set mask to default semi-transparent for context
                 self.current_mask_annotation.graphics_item.setOpacity(0.6)
             
-            # Restore full visibility and interactivity to vector annotations
-            for annotation in self.annotations_dict.values():
+            # Restore visibility to the cached vector annotations
+            for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
-                    annotation.graphics_item_group.setOpacity(1.0)
-                    annotation.graphics_item_group.setEnabled(True)
+                    annotation.set_visibility(True)
+
+            # Clear the cache
+            self.rasterized_annotations_cache = []
         
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
@@ -552,6 +559,13 @@ class AnnotationWindow(QGraphicsView):
         project_labels = self.main_window.label_window.labels
         return raster.get_mask_annotation(project_labels)
             
+    def unrasterize_annotations(self):
+        """
+        Tells the current mask_annotation to clear all rasterized vector data.
+        """
+        if self.current_mask_annotation:
+            self.current_mask_annotation.unrasterize_annotations()
+
     def rasterize_annotations(self):
         """
         Tells the current mask_annotation to rasterize all vector annotations

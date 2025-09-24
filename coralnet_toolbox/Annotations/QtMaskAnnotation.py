@@ -319,9 +319,24 @@ class MaskAnnotation(Annotation):
         # After all groups are rasterized, update the graphics item to show the changes
         self.update_graphics_item()
 
+    def unrasterize_annotations(self):
+        """
+        Clears all pixels that were rasterized from vector annotations.
+        This is identified by finding all pixels marked with the LOCK_BIT.
+        """
+        # Find all pixels that have the lock bit set.
+        locked_pixels = self.mask_data >= self.LOCK_BIT
+        
+        # Reset these pixels back to 0 (unclassified).
+        self.mask_data[locked_pixels] = 0
+        
+        # After clearing the pixels, update the graphics item to show the changes.
+        self.update_graphics_item()
+        self.annotationUpdated.emit(self)
+
     def clear_pixels_for_class(self, class_id: int):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
-        if class_id == 0: # Cannot clear background class
+        if class_id == 0:  # Cannot clear background class
             return
 
         # Create a boolean mask of all pixels whose real class ID matches.
@@ -461,7 +476,7 @@ class MaskAnnotation(Annotation):
         annotation = cls(
             image_path=data['image_path'],
             mask_data=mask_data,
-            initial_labels=list(label_window.labels) # Pass the full list
+            initial_labels=list(label_window.labels)  # Pass the full list
         )
         annotation.id = data.get('id', annotation.id)
         annotation.data = data.get('data', {})
