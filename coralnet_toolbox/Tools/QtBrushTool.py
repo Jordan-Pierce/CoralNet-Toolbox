@@ -104,7 +104,16 @@ class BrushTool(Tool):
         brush_color = QColor(label_color)
         brush_color.setAlpha(transparency)
         self.cursor_annotation.setBrush(brush_color)
-        self.cursor_annotation.setPen(QPen(Qt.NoPen))  # Fixed: Use QPen(Qt.NoPen) instead of Qt.NoPen
+        
+        # Create a darker border color by darkening the label color
+        border_color = QColor(label_color)
+        border_color = border_color.darker(150)  # Make the border 50% darker than the fill
+        border_color.setAlpha(max(transparency + 50, 255))  # Make border more opaque than fill
+        
+        # Set the pen for the border
+        pen = QPen(border_color)
+        pen.setWidth(2)  # Set border width to 2 pixels
+        self.cursor_annotation.setPen(pen)
         
         # Add to the scene
         self.annotation_window.scene.addItem(self.cursor_annotation)
