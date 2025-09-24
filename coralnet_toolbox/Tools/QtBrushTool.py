@@ -62,7 +62,7 @@ class BrushTool(Tool):
     
     def mouseReleaseEvent(self, event):
         """Called when the mouse is released."""
-        pass # No action needed on release
+        pass  # No action needed on release
 
     def wheelEvent(self, event):
         """Handles mouse wheel events for adjusting brush size when Ctrl is held."""
@@ -122,19 +122,19 @@ class BrushTool(Tool):
 
     def _apply_brush(self, event):
         """Applies the brush mask to the main mask_annotation."""
-        # Ensure that a mask and a label are active
-        if not self.annotation_window.mask_annotation or not self.annotation_window.selected_label:
+        # Get the current mask annotation from the annotation window
+        mask_anno = self.annotation_window.current_mask_annotation
+        
+        # Ensure that a mask and a selected label are active
+        if not mask_anno or not self.annotation_window.selected_label:
             return
             
         # Get the mouse position in the scene's coordinate system
         scene_pos = self.annotation_window.mapToScene(event.pos())
         
-        # Find the class ID from the mask annotation's label map
-        class_id = None
-        for cid, label in self.annotation_window.mask_annotation.label_map.items():
-            if label.id == self.annotation_window.selected_label.id:
-                class_id = cid
-                break
+        # The old loop is replaced with a fast, direct lookup using the new mapping system.
+        selected_label_id = self.annotation_window.selected_label.id
+        class_id = mask_anno.label_id_to_class_id_map.get(selected_label_id)
         
         if class_id is None:
             return  # Label not found in map, cannot apply brush
@@ -144,7 +144,7 @@ class BrushTool(Tool):
         brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
         
         # Call the update_mask method on the MaskAnnotation object
-        self.annotation_window.mask_annotation.update_mask(
+        mask_anno.update_mask(
             brush_location=brush_location,
             brush_mask=self.brush_mask,
             new_class_id=class_id

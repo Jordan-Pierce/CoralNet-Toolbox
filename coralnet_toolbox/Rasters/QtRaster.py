@@ -12,6 +12,8 @@ import numpy as np
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
 
+from coralnet_toolbox.Annotations import MaskAnnotation
+
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
@@ -71,6 +73,9 @@ class Raster(QObject):
         
         self.label_set: Set[str] = set()  # Add sets for efficient lookups
         self.label_to_types_map = {}  # This replaces annotation_types and annotation_type_set
+        
+        # Add a new attribute to hold the MaskAnnotation, initialized to None.
+        self.mask_annotation: Optional[MaskAnnotation] = None
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
@@ -257,7 +262,7 @@ class Raster(QObject):
         # Clear previous data
         self.label_counts.clear()
         self.label_set.clear()
-        self.label_to_types_map.clear() # Clear the new map
+        self.label_to_types_map.clear()  # Clear the new map
 
         # Use a defaultdict to simplify the aggregation logic
         temp_map = defaultdict(set)
@@ -370,6 +375,28 @@ class Raster(QObject):
             return False
             
         return True
+    
+    def get_mask_annotation(self, project_labels: list) -> MaskAnnotation:
+        """
+        Gets the mask annotation for this raster, creating it if it doesn't exist.
+        This is the "lazy loading" mechanism.
+
+        Args:
+            project_labels (list): The current list of all Label objects from the LabelWindow.
+
+        Returns:
+            MaskAnnotation: The mask annotation object for this raster.
+        """
+        if self.mask_annotation is None:
+            # Create the mask on its first request
+            mask_data = np.zeros((self.height, self.width), dtype=np.uint16)
+            self.mask_annotation = MaskAnnotation(
+                image_path=self.image_path,
+                mask_data=mask_data,
+                initial_labels=project_labels,
+                rasterio_src=self.rasterio_src
+            )
+        return self.mask_annotation
     
     def add_work_area(self, work_area):
         """
@@ -487,6 +514,7 @@ class Raster(QObject):
         
         # Clear annotations and work areas
         self.annotations = []
+        self.mask_annotation = None
         self.work_areas = []
         
         # Force garbage collection

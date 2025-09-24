@@ -1,6 +1,6 @@
 import warnings
 
-import numpy as np
+from typing import Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -10,7 +10,6 @@ from coralnet_toolbox.Annotations import (
     PatchAnnotation,
     PolygonAnnotation,
     RectangleAnnotation,
-    MultiPolygonAnnotation,
     MaskAnnotation,
 )
 
@@ -26,8 +25,6 @@ from coralnet_toolbox.Tools import (
     ZoomTool,
     WorkAreaTool
 )
-
-from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
 
@@ -80,8 +77,6 @@ class AnnotationWindow(QGraphicsView):
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
                 
-        self.mask_annotation = None  # Holds the single mask annotation for the image
-        self.mask_tools = {"brush", "fill", "eraser"}  # Defines which tools trigger mask mode
         
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -110,11 +105,14 @@ class AnnotationWindow(QGraphicsView):
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
-            # Add the new mask-specific tools
             "brush": BrushTool(self),
             # "fill": FillTool(self),
             # "eraser": EraserTool(self)
         }
+        # Defines which tools trigger mask mode
+        self.mask_tools = {"brush", 
+                           "fill", 
+                           "eraser"}  
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
@@ -248,7 +246,7 @@ class AnnotationWindow(QGraphicsView):
             self.rasterize_annotations()
 
             self.unselect_annotations()  # Clear any selected vector annotations
-            if self.mask_annotation and self.mask_annotation.graphics_item:
+            if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
                 # Update mask opacity based on current transparency
                 active_label = self.main_window.label_window.active_label
                 transparency = active_label.transparency if active_label else 128
@@ -261,9 +259,9 @@ class AnnotationWindow(QGraphicsView):
                     annotation.graphics_item_group.setEnabled(False)
         else:
             # --- ENTERING ANNOTATION (VECTOR) EDITING MODE ---
-            if self.mask_annotation and self.mask_annotation.graphics_item:
+            if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
                 # Set mask to default semi-transparent for context
-                self.mask_annotation.graphics_item.setOpacity(0.6)
+                self.current_mask_annotation.graphics_item.setOpacity(0.6)
             
             # Restore full visibility and interactivity to vector annotations
             for annotation in self.annotations_dict.values():
@@ -381,19 +379,19 @@ class AnnotationWindow(QGraphicsView):
         
     def set_mask_transparency(self, transparency):
         """Update the mask annotation's transparency to reflect the current transparency value."""
-        if self.mask_annotation:
+        if self.current_mask_annotation:
             # Update the mask's transparency attribute and re-render the pixmap
-            self.mask_annotation.transparency = transparency
-            self.mask_annotation.update_graphics_item()
+            self.current_mask_annotation.transparency = transparency
+            self.current_mask_annotation.update_graphics_item()
             
             # Apply mode-specific opacity on top of the rendered transparency
-            if self.mask_annotation.graphics_item:
+            if self.current_mask_annotation.graphics_item:
                 if self.selected_tool in self.mask_tools:
                     # In mask editing mode, set full opacity for accurate brush previews
-                    self.mask_annotation.graphics_item.setOpacity(1.0)
+                    self.current_mask_annotation.graphics_item.setOpacity(1.0)
                 else:
                     # In annotation mode, apply semi-transparency for context
-                    self.mask_annotation.graphics_item.setOpacity(0.6)
+                    self.current_mask_annotation.graphics_item.setOpacity(0.6)
         
         # Also update the brush cursor if active (to ensure it reflects the new transparency)
         if self.selected_tool == "brush" and hasattr(self.tools["brush"], "update_cursor_annotation"):
@@ -478,50 +476,43 @@ class AnnotationWindow(QGraphicsView):
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
             return
-            
+        
+        # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
         # Get QImage and convert to QPixmap for display
         q_image = raster.get_qimage()
         if q_image is None or q_image.isNull():
             return
-            
+        
+        # Convert and set the QPixmap
         self.pixmap_image = QPixmap.fromImage(q_image)
-
         self.current_image_path = image_path
         self.active_image = True
 
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
-
-        self.tools["zoom"].reset_zoom()
         
         # Add the base image pixmap and set its Z-value to be at the bottom
         base_image_item = QGraphicsPixmapItem(self.pixmap_image)
         base_image_item.setZValue(-10)
         self.scene.addItem(base_image_item)
 
-        # Initialize the Mask Annotation layer for this image
-        height, width = self.pixmap_image.height(), self.pixmap_image.width()
-        mask_data = np.zeros((height, width), dtype=np.uint16)
-        label_map = self.main_window.label_window.get_label_map()
+        # Get the persistent mask from the raster. This call will lazy-load it if needed.
+        mask_annotation = self.current_mask_annotation
+        if mask_annotation:
+            # The mask might have a graphics item from a previous session, so ensure it's created/added.
+            mask_annotation.create_graphics_item(self.scene)
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.setZValue(-5)
+                mask_annotation.graphics_item.setOpacity(0.6)
 
-        self.mask_annotation = MaskAnnotation(
-            image_path=image_path,
-            mask_data=mask_data,
-            label_map=label_map,
-            rasterio_src=self.rasterio_image
-        )
-        self.mask_annotation.create_graphics_item(self.scene)
-        # Set the mask's Z-value to sit above the image but below annotations
-        if self.mask_annotation.graphics_item:
-            self.mask_annotation.graphics_item.setZValue(-5)
-            # Make the mask semi-transparent by default for context
-            self.mask_annotation.graphics_item.setOpacity(0.6)
-                
+        # Update the zoom tool's state
+        self.tools["zoom"].reset_zoom()
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.tools["zoom"].calculate_min_zoom()
 
+        # Toggle the cursor annotation to reflect the new image and label state
         self.toggle_cursor_annotation()
 
         # Load all associated annotations
@@ -542,21 +533,31 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         
     def update_mask_label_map(self):
-        """Update the label_map in the current MaskAnnotation to reflect changes in LabelWindow.
+        """Update the label_map in the current MaskAnnotation to reflect changes in LabelWindow."""
+        if self.current_mask_annotation:
+            # Call the new sync method instead of just overwriting the map.
+            all_current_labels = self.main_window.label_window.labels
+            self.current_mask_annotation.sync_label_map(all_current_labels)
+            
+    @property
+    def current_mask_annotation(self) -> Optional[MaskAnnotation]:
+        """A helper property to get the MaskAnnotation for the currently active image."""
+        if not self.current_image_path:
+            return None
+        raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+        if not raster:
+            return None
         
-        This ensures BrushTool can paint with newly added/removed labels without reloading the image.
-        If no mask_annotation exists (e.g., no image loaded), this is a no-op.
-        """
-        if self.mask_annotation:
-            self.mask_annotation.label_map = self.main_window.label_window.get_label_map()
-            self.scene.update()
+        # This will get the existing mask or create it on the first call
+        project_labels = self.main_window.label_window.labels
+        return raster.get_mask_annotation(project_labels)
             
     def rasterize_annotations(self):
         """
         Tells the current mask_annotation to rasterize all vector annotations
         for the current image onto itself.
         """
-        if not self.mask_annotation:
+        if not self.current_mask_annotation:
             return
 
         annotations = self.get_image_annotations()
@@ -564,7 +565,7 @@ class AnnotationWindow(QGraphicsView):
             return
             
         # The MaskAnnotation now handles all the complex logic internally.
-        self.mask_annotation.rasterize_annotations(annotations)
+        self.current_mask_annotation.rasterize_annotations(annotations)
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""

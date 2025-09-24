@@ -908,6 +908,10 @@ class LabelWindow(QWidget):
                 # Re-apply the label to trigger a style update if needed (e.g., color change)
                 annotation.update_label(label_to_update)
 
+        # Also, force the mask annotation to re-render to show the new color.
+        if self.annotation_window.mask_annotation:
+            self.annotation_window.mask_annotation.update_graphics_item()
+
         # Force a repaint of the label widget itself and reorganize the grid
         label_to_update.update()
         self.reorganize_labels()
@@ -922,49 +926,57 @@ class LabelWindow(QWidget):
         """
         print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
         
+        # Iterate through ALL rasters to update every existing mask.
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            if raster.mask_annotation is not None:
+                mask_anno = raster.mask_annotation
+                
+                source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
+                target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
+
+                if source_cid and target_cid:
+                    # Find all pixels belonging to the source class
+                    pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
+                    # Re-assign them to the target class, preserving their locked status
+                    mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
+
+                    # Clean up the old source label from the mask's maps
+                    mask_anno.class_id_to_label_map.pop(source_cid, None)
+                    mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
+
         # --- GLOBAL CLEANUP OPERATION ---
-        # This is the crucial new logic to handle the "plot twist".
-        # We must iterate through every annotation in the project.
         all_annotations = self.annotation_window.annotations_dict.values()
         
         for annotation in all_annotations:
-            # Task 1: Re-label annotations that have `source_label` as their primary label.
-            # This will trigger the logic inside `annotation.update_label`.
             if annotation.label == source_label:
                 annotation.update_label(target_label)
 
-            # Task 2: Scrub the now-defunct `source_label` from the machine_confidence
-            # of ALL annotations, regardless of their primary label. This prevents
-            # dangling references to a label that no longer exists.
             if annotation.machine_confidence:
-                # Safely pop the source_label key. It does nothing if the key isn't present.
                 annotation.machine_confidence.pop(source_label, None)
 
         # --- FINALIZING THE MERGE ---
-
-        # Update the active label if it was the one being merged
         if self.active_label == source_label:
             self.set_active_label(target_label)
             
-        # Remove the source label from the list and delete it
         if source_label in self.labels:
             self.labels.remove(source_label)
             source_label.deleteLater()
 
-        # Update UI
         self.update_label_count()
         self.reorganize_labels()
 
-        # Refresh the main annotation view to show all changes
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
             self.annotation_window.set_image(current_image_path)
-            # Update annotation count after merge
             self.update_annotation_count()
             
-        # Update the label map in the annotation window
         self.annotation_window.update_mask_label_map()
-            
+
+        # After the merge, refresh the view of the currently displayed mask.
+        current_mask = self.annotation_window.current_mask_annotation
+        if current_mask:
+            current_mask.update_graphics_item()
+
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
         if (label.short_label_code == "Review" and
@@ -993,6 +1005,25 @@ class LabelWindow(QWidget):
 
             if result == QMessageBox.No:
                 return
+
+        # Iterate through ALL rasters in the project to update every existing mask.
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            # Only act on masks that have already been created (lazy-loading).
+            if raster.mask_annotation is not None:
+                mask_anno = raster.mask_annotation
+                
+                # Get the class ID using the fast, direct lookup.
+                class_id_to_clear = mask_anno.label_id_to_class_id_map.get(label.id)
+                if class_id_to_clear:
+                    mask_anno.clear_pixels_for_class(class_id_to_clear)
+                    # Remove the label from the mask's internal maps to keep them clean
+                    mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
+                    mask_anno.label_id_to_class_id_map.pop(label.id, None)
+
+        # If the currently visible mask was affected, refresh its view
+        current_mask = self.annotation_window.current_mask_annotation
+        if current_mask:
+            current_mask.update_graphics_item()
 
         # Store affected image paths before deletion to update them later
         affected_images = set()
