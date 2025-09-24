@@ -1093,11 +1093,6 @@ class ImageWindow(QWidget):
                     # Delete the annotations
                     self.annotation_window.delete_image_annotations(path)
                     
-                    # Clear the mask_annotation to ensure semantic segmentation data is reset
-                    raster = self.raster_manager.get_raster(path)
-                    if raster:
-                        raster.mask_annotation = None
-                    
                     # Update the raster
                     self.update_image_annotations(path)
                     

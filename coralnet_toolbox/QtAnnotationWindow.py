@@ -1096,6 +1096,15 @@ class AnnotationWindow(QGraphicsView):
             # If all annotations were deleted, remove the image path from the dictionary
             if not self.image_annotations_dict.get(image_path, []):
                 del self.image_annotations_dict[image_path]
+            
+            # Clear the mask_annotation to ensure semantic segmentation data is reset
+            raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+            if raster and raster.mask_annotation:
+                # Remove the mask annotation's graphics item from the scene if it's displayed
+                if (raster.mask_annotation.graphics_item and
+                    raster.mask_annotation.graphics_item.scene() == self.scene):
+                    self.scene.removeItem(raster.mask_annotation.graphics_item)
+                raster.mask_annotation = None
 
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""

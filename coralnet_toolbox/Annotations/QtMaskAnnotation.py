@@ -1,6 +1,5 @@
 import warnings
 
-import zlib
 import base64
 import rasterio
 
@@ -8,6 +7,7 @@ import numpy as np
 
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
+from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
@@ -17,50 +17,6 @@ from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Helper Functions for Serialization
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-def rle_encode(mask):
-    """
-    Encodes a 2D numpy array using Run-Length Encoding.
-    Returns a compressed string representation.
-    """
-    pixels = mask.flatten()
-    pixels = np.append(pixels, -1)  # Append a sentinel value
-    runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
-    runs[1:] = runs[1:] - runs[:-1]
-    values = pixels[np.cumsum(np.append(0, runs[:-1]))]
-    
-    # Pair values and runs, then convert to a string
-    rle_pairs = ",".join([f"{v},{r}" for v, r in zip(values, runs)])
-    
-    # Further compress with zlib and encode in base64 for JSON compatibility
-    compressed = zlib.compress(rle_pairs.encode('utf-8'))
-    return base64.b64encode(compressed).decode('ascii')
-
-
-def rle_decode(rle_string, shape):
-    """
-    Decodes a Run-Length Encoded string back into a 2D numpy array.
-    """
-    # Decode from base64 and decompress with zlib
-    decoded_b64 = base64.b64decode(rle_string)
-    decompressed = zlib.decompress(decoded_b64).decode('utf-8')
-    
-    # Parse the value,run pairs
-    pairs = decompressed.split(',')
-    values = [int(v) for v in pairs[0::2]]
-    runs = [int(r) for r in pairs[1::2]]
-    
-    # Reconstruct the pixel array
-    pixels = np.repeat(values, runs)
-    
-    # Reshape to the original 2D mask dimensions
-    return pixels.reshape(shape)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -446,7 +402,17 @@ class MaskAnnotation(Annotation):
     def to_dict(self):
         """Serialize the annotation to a dictionary, with RLE for the mask."""
         base_dict = super().to_dict()
-        rle_string = rle_encode(self.mask_data)
+        
+        # Encode each class's binary mask using pycocotools
+        rle_list = []
+        unique_classes = np.unique(self.mask_data)
+        for class_id in unique_classes:
+            if class_id == 0:
+                continue
+            binary_mask = (self.mask_data == class_id).astype(np.uint8)
+            rle = mask.encode(np.asfortranarray(binary_mask))
+            rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
+            rle_list.append({'class_id': int(class_id), 'rle': rle})
         
         # Convert the label map to a serializable format
         serializable_label_map = {}
@@ -455,7 +421,7 @@ class MaskAnnotation(Annotation):
 
         base_dict.update({
             'shape': self.mask_data.shape,
-            'rle_mask': rle_string,
+            'rle_masks': rle_list,
             'label_map': serializable_label_map
         })
         return base_dict
@@ -469,7 +435,14 @@ class MaskAnnotation(Annotation):
             raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
         # Decode the RLE mask data
-        mask_data = rle_decode(data['rle_mask'], data['shape'])
+        shape = data['shape']
+        mask_data = np.zeros(shape, dtype=np.uint16)
+        for item in data['rle_masks']:
+            class_id = item['class_id']
+            rle = item['rle']
+            rle['counts'] = base64.b64decode(rle['counts'])
+            binary_mask = mask.decode(rle).astype(bool)
+            mask_data[binary_mask] = class_id
 
         # Create the base annotation instance. It will have a generic label map initially.
         annotation = cls(
