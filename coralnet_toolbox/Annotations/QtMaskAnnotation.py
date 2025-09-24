@@ -463,23 +463,48 @@ class MaskAnnotation(Annotation):
     @classmethod
     def from_dict(cls, data, label_window):
         """Instantiate a MaskAnnotation from a dictionary."""
-        # This method would need to be updated to handle the new stable mapping
-        # if project saving/loading is implemented. For now, it reflects the old way.
-        label_map = {}
-        for cid_str, short_code in data['label_map'].items():
-            label = label_window.get_label_by_short_code(short_code)
-            if label:
-                label_map[int(cid_str)] = label
+        # Get all labels currently in the project. This is needed for the constructor.
+        all_project_labels = list(label_window.labels)
+        if not all_project_labels:
+            raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
+        # Decode the RLE mask data
         mask_data = rle_decode(data['rle_mask'], data['shape'])
 
+        # Create the base annotation instance. It will have a generic label map initially.
         annotation = cls(
             image_path=data['image_path'],
             mask_data=mask_data,
-            initial_labels=list(label_window.labels)  # Pass the full list
+            initial_labels=all_project_labels
         )
+        
+        # Clear the generic maps created by the constructor.
+        annotation.class_id_to_label_map.clear()
+        annotation.label_id_to_class_id_map.clear()
+        
+        max_id_found = 0
+        if 'label_map' in data and data['label_map']:
+            # Iterate through the saved map {class_id: short_code}
+            for cid_str, short_code in data['label_map'].items():
+                class_id = int(cid_str)
+                label = label_window.get_label_by_short_code(short_code)
+                
+                if label:
+                    # Rebuild the maps with the correct associations
+                    annotation.class_id_to_label_map[class_id] = label
+                    annotation.label_id_to_class_id_map[label.id] = class_id
+                    if class_id > max_id_found:
+                        max_id_found = class_id
+                else:
+                    print(f"Warning: Label with short code '{short_code}' not found in project during mask import.")
+
+        # Ensure the next class ID is set correctly to avoid future conflicts.
+        annotation.next_class_id = max_id_found + 1
+
+        # Restore other annotation properties
         annotation.id = data.get('id', annotation.id)
         annotation.data = data.get('data', {})
+        
         return annotation
 
     @classmethod

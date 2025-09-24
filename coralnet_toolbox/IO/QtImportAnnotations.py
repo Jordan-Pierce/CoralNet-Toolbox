@@ -12,6 +12,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -169,19 +170,27 @@ class ImportAnnotations:
                         continue
 
                     annotation_type = annotation_dict.get('type')
-                    if annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'MultiPolygonAnnotation':
-                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                    else:
-                        raise ValueError(f"Unknown annotation type: {annotation_type}")
 
-                    # Add annotation to the dict
-                    self.annotation_window.add_annotation_to_dict(annotation)
+                    if annotation_type == 'MaskAnnotation':
+                        # Deserialize the mask and assign it to the correct raster
+                        annotation = MaskAnnotation.from_dict(annotation_dict, self.label_window)
+                        raster = self.image_window.raster_manager.get_raster(image_path)
+                        if raster:
+                            raster.mask_annotation = annotation
+                    else:  # This handles all vector annotation types
+                        if annotation_type == 'PatchAnnotation':
+                            annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'PolygonAnnotation':
+                            annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'RectangleAnnotation':
+                            annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'MultiPolygonAnnotation':
+                            annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                        else:
+                            raise ValueError(f"Unknown annotation type: {annotation_type}")
+
+                        # Add vector annotation to the dict
+                        self.annotation_window.add_annotation_to_dict(annotation)
 
                     # Update the progress bar
                     progress_bar.update_progress()

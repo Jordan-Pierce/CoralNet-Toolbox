@@ -9,6 +9,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -62,27 +63,22 @@ class ExportAnnotations:
 
                 # Convert annotation to dictionary based on its type
                 if isinstance(annotation, PatchAnnotation):
-                    annotation_dict = {
-                        'type': 'PatchAnnotation',
-                        **annotation.to_dict()
-                    }
+                    annotation_type = 'PatchAnnotation'
                 elif isinstance(annotation, PolygonAnnotation):
-                    annotation_dict = {
-                        'type': 'PolygonAnnotation',
-                        **annotation.to_dict()
-                    }
+                    annotation_type = 'PolygonAnnotation'
                 elif isinstance(annotation, RectangleAnnotation):
-                    annotation_dict = {
-                        'type': 'RectangleAnnotation',
-                        **annotation.to_dict()
-                    }
+                    annotation_type = 'RectangleAnnotation'
                 elif isinstance(annotation, MultiPolygonAnnotation):
-                    annotation_dict = {
-                        'type': 'MultiPolygonAnnotation',
-                        **annotation.to_dict()
-                    }
+                    annotation_type = 'MultiPolygonAnnotation'
+                elif isinstance(annotation, MaskAnnotation):
+                    annotation_type = 'MaskAnnotation'
                 else:
                     raise ValueError(f"Unknown annotation type: {type(annotation)}")
+
+                annotation_dict = {
+                    'type': annotation_type,
+                    **annotation.to_dict()
+                }
 
                 export_dict[image_path].append(annotation_dict)
                 progress_bar.update_progress()

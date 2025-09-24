@@ -12,11 +12,15 @@ from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLa
                              QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
-from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
+
+from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.Common.QtUpdateImagePaths import UpdateImagePaths
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -313,21 +317,32 @@ class OpenProject(QDialog):
                     if updated_path:
                         annotation_dict['image_path'] = image_path
 
-                    # Get the annotation type
                     annotation_type = annotation_dict.get('type')
-                    if annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'MultiPolygonAnnotation':
-                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                    
+                    if annotation_type == 'MaskAnnotation':
+                        # Deserialize the mask and assign it to the correct raster
+                        annotation = MaskAnnotation.from_dict(annotation_dict, self.label_window)
+                        raster = self.image_window.raster_manager.get_raster(image_path)
+                        if raster:
+                            raster.mask_annotation = annotation
+                    elif annotation_type in ['PatchAnnotation', 
+                                             'PolygonAnnotation', 
+                                             'RectangleAnnotation', 
+                                             'MultiPolygonAnnotation']:
+                        # Handle vector annotations as before
+                        if annotation_type == 'PatchAnnotation':
+                            annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'PolygonAnnotation':
+                            annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'RectangleAnnotation':
+                            annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
+                        elif annotation_type == 'MultiPolygonAnnotation':
+                            annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                        
+                        # Add vector annotation to the main dictionary
+                        self.annotation_window.add_annotation_to_dict(annotation)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
-
-                    # Add annotation to the dict
-                    self.annotation_window.add_annotation_to_dict(annotation)
                     
                     # Update the progress bar
                     progress_bar.update_progress()
