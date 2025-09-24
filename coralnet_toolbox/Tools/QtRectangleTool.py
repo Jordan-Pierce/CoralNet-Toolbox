@@ -187,8 +187,9 @@ class RectangleTool(Tool):
             self.cursor_annotation = self.create_annotation(scene_pos)
             if self.cursor_annotation:
                 # Make the cursor annotation semi-transparent to distinguish it from actual annotations
-                transparency = self.annotation_window.main_window.label_window.active_label.transparency
-                self.cursor_annotation.transparency = transparency
+                active_label = self.annotation_window.main_window.label_window.active_label
+                transparency = active_label.transparency if active_label else 128
+                self.cursor_annotation.update_transparency(transparency)
                 self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):

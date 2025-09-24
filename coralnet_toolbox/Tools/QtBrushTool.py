@@ -132,10 +132,10 @@ class BrushTool(Tool):
     def _apply_brush(self, event):
         """Applies the brush mask to the main mask_annotation."""
         # Get the current mask annotation from the annotation window
-        mask_anno = self.annotation_window.current_mask_annotation
+        mask_annotation = self.annotation_window.current_mask_annotation
         
         # Ensure that a mask and a selected label are active
-        if not mask_anno or not self.annotation_window.selected_label:
+        if not mask_annotation or not self.annotation_window.selected_label:
             return
             
         # Get the mouse position in the scene's coordinate system
@@ -143,7 +143,7 @@ class BrushTool(Tool):
         
         # The old loop is replaced with a fast, direct lookup using the new mapping system.
         selected_label_id = self.annotation_window.selected_label.id
-        class_id = mask_anno.label_id_to_class_id_map.get(selected_label_id)
+        class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
         
         if class_id is None:
             return  # Label not found in map, cannot apply brush
@@ -153,7 +153,7 @@ class BrushTool(Tool):
         brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
         
         # Call the update_mask method on the MaskAnnotation object
-        mask_anno.update_mask(
+        mask_annotation.update_mask(
             brush_location=brush_location,
             brush_mask=self.brush_mask,
             new_class_id=class_id

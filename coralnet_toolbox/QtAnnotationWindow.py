@@ -250,7 +250,7 @@ class AnnotationWindow(QGraphicsView):
 
             self.unselect_annotations()  # Clear any selected vector annotations
             if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
-                # Update mask opacity based on current transparency
+                # Update mask transparency based on current transparency
                 active_label = self.main_window.label_window.active_label
                 transparency = active_label.transparency if active_label else 128
                 self.set_mask_transparency(transparency)
@@ -263,15 +263,14 @@ class AnnotationWindow(QGraphicsView):
             # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
             # Unrasterize the vector annotations from the mask layer
             self.unrasterize_annotations()
-
-            if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
-                # Set mask to default semi-transparent for context
-                self.current_mask_annotation.graphics_item.setOpacity(0.6)
-            
+            # Get current transparency
+            active_label = self.main_window.label_window.active_label
+            transparency = active_label.transparency if active_label else 128
             # Restore visibility to the cached vector annotations
             for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
                     annotation.set_visibility(True)
+                    annotation.update_transparency(transparency)
 
             # Clear the cache
             self.rasterized_annotations_cache = []
@@ -388,17 +387,8 @@ class AnnotationWindow(QGraphicsView):
         """Update the mask annotation's transparency to reflect the current transparency value."""
         if self.current_mask_annotation:
             # Update the mask's transparency attribute and re-render the pixmap
-            self.current_mask_annotation.transparency = transparency
+            self.current_mask_annotation.update_transparency(transparency)
             self.current_mask_annotation.update_graphics_item()
-            
-            # Apply mode-specific opacity on top of the rendered transparency
-            if self.current_mask_annotation.graphics_item:
-                if self.selected_tool in self.mask_tools:
-                    # In mask editing mode, set full opacity for accurate brush previews
-                    self.current_mask_annotation.graphics_item.setOpacity(1.0)
-                else:
-                    # In annotation mode, apply semi-transparency for context
-                    self.current_mask_annotation.graphics_item.setOpacity(0.6)
         
         # Also update the brush cursor if active (to ensure it reflects the new transparency)
         if self.selected_tool == "brush" and hasattr(self.tools["brush"], "update_cursor_annotation"):
@@ -512,7 +502,6 @@ class AnnotationWindow(QGraphicsView):
             mask_annotation.create_graphics_item(self.scene)
             if mask_annotation.graphics_item:
                 mask_annotation.graphics_item.setZValue(-5)
-                mask_annotation.graphics_item.setOpacity(0.6)
 
         # Update the zoom tool's state
         self.tools["zoom"].reset_zoom()
@@ -559,13 +548,6 @@ class AnnotationWindow(QGraphicsView):
         project_labels = self.main_window.label_window.labels
         return raster.get_mask_annotation(project_labels)
             
-    def unrasterize_annotations(self):
-        """
-        Tells the current mask_annotation to clear all rasterized vector data.
-        """
-        if self.current_mask_annotation:
-            self.current_mask_annotation.unrasterize_annotations()
-
     def rasterize_annotations(self):
         """
         Tells the current mask_annotation to rasterize all vector annotations
@@ -580,6 +562,13 @@ class AnnotationWindow(QGraphicsView):
             
         # The MaskAnnotation now handles all the complex logic internally.
         self.current_mask_annotation.rasterize_annotations(annotations)
+        
+    def unrasterize_annotations(self):
+        """
+        Tells the current mask_annotation to clear all rasterized vector data.
+        """
+        if self.current_mask_annotation:
+            self.current_mask_annotation.unrasterize_annotations()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""

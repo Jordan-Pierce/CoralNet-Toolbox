@@ -216,8 +216,11 @@ class PolygonTool(Tool):
                 self.annotation_window.selected_label.id,
                 self.annotation_window.main_window.label_window.active_label.transparency 
             )
-            annotation.create_graphics_item(self.annotation_window.scene)
             self.cursor_annotation = annotation
+            active_label = self.annotation_window.main_window.label_window.active_label
+            transparency = active_label.transparency if active_label else 128
+            self.cursor_annotation.update_transparency(transparency)
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
