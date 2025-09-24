@@ -1,6 +1,8 @@
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QColor, QPen  # Added QPen to imports
+from PyQt5.QtWidgets import QGraphicsEllipseItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -16,11 +18,15 @@ class BrushTool(Tool):
         # Call the parent constructor to set up annotation_window, etc.
         super().__init__(annotation_window)
         
+        # Disable crosshair for this tool
+        self.show_crosshair = False
+        
         # You can set a specific cursor for this tool
         self.cursor = Qt.CrossCursor 
         
         self.brush_size = 30
         self.brush_mask = self._create_circular_brush()
+        self.painting = False  # Flag to track if painting mode is active
 
     def _create_circular_brush(self):
         """Creates a circular boolean numpy array to use as the brush shape."""
@@ -29,21 +35,90 @@ class BrushTool(Tool):
         return x**2 + y**2 <= radius**2
 
     def mousePressEvent(self, event):
-        """Handles the initial click to apply the brush."""
-        if event.buttons() & Qt.LeftButton:
-            self._apply_brush(event)
+        """Handles left-click to toggle painting mode and apply brush if starting."""
+        if event.button() == Qt.LeftButton:
+            self.painting = not self.painting
+            if self.painting:
+                self._apply_brush(event)
 
     def mouseMoveEvent(self, event):
-        """Handles mouse dragging and shows the crosshair."""
-        # Call the parent method to handle drawing the crosshair
+        """Handles mouse dragging, shows the brush circle, and applies brush if painting is active."""
+        # Call the parent method to handle any base logic (crosshair is disabled)
         super().mouseMoveEvent(event)
         
-        if event.buttons() & Qt.LeftButton:
+        # Handle brush circle display
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        
+        if (cursor_in_window and self.active and 
+            self.annotation_window.selected_label):
+            self.update_cursor_annotation(scene_pos)
+        else:
+            self.clear_cursor_annotation()
+        
+        # Apply brush if painting is active
+        if self.painting:
             self._apply_brush(event)
     
     def mouseReleaseEvent(self, event):
         """Called when the mouse is released."""
         pass # No action needed on release
+
+    def wheelEvent(self, event):
+        """Handles mouse wheel events for adjusting brush size when Ctrl is held."""
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.brush_size = max(1, self.brush_size + 5)  # Increase size, min 1
+            else:
+                self.brush_size = max(1, self.brush_size - 5)  # Decrease size, min 1
+            
+            # Recreate the brush mask with the new size
+            self.brush_mask = self._create_circular_brush()
+            
+            # Update the cursor annotation to reflect the new brush size
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.update_cursor_annotation(scene_pos)
+
+    def create_cursor_annotation(self, scene_pos: QPointF = None):
+        """Create a circular cursor annotation representing the brush."""
+        if (not scene_pos or not self.annotation_window.selected_label or 
+            not self.annotation_window.active_image or 
+            not self.annotation_window.main_window.label_window.active_label):
+            self.clear_cursor_annotation()
+            return
+            
+        # First ensure any existing cursor annotation is removed
+        self.clear_cursor_annotation()
+        
+        # Get the label's color and transparency
+        label_color = self.annotation_window.selected_label.color
+        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+        
+        # Create the ellipse item for the brush circle
+        radius = self.brush_size / 2.0
+        rect = QRectF(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
+        self.cursor_annotation = QGraphicsEllipseItem(rect)
+        
+        # Set the color with transparency
+        brush_color = QColor(label_color)
+        brush_color.setAlpha(transparency)
+        self.cursor_annotation.setBrush(brush_color)
+        self.cursor_annotation.setPen(QPen(Qt.NoPen))  # Fixed: Use QPen(Qt.NoPen) instead of Qt.NoPen
+        
+        # Add to the scene
+        self.annotation_window.scene.addItem(self.cursor_annotation)
+
+    def update_cursor_annotation(self, scene_pos: QPointF = None):
+        """Update the cursor annotation position."""
+        self.clear_cursor_annotation()
+        self.create_cursor_annotation(scene_pos)
+
+    def clear_cursor_annotation(self):
+        """Clear the current cursor annotation if it exists."""
+        if self.cursor_annotation and self.cursor_annotation.scene():
+            self.annotation_window.scene.removeItem(self.cursor_annotation)
+            self.cursor_annotation = None
 
     def _apply_brush(self, event):
         """Applies the brush mask to the main mask_annotation."""
@@ -53,12 +128,24 @@ class BrushTool(Tool):
             
         # Get the mouse position in the scene's coordinate system
         scene_pos = self.annotation_window.mapToScene(event.pos())
-        # Get the class ID from the currently selected label
-        class_id = int(self.annotation_window.selected_label.id)
-
+        
+        # Find the class ID from the mask annotation's label map
+        class_id = None
+        for cid, label in self.annotation_window.mask_annotation.label_map.items():
+            if label.id == self.annotation_window.selected_label.id:
+                class_id = cid
+                break
+        
+        if class_id is None:
+            return  # Label not found in map, cannot apply brush
+        
+        # Adjust brush_location to center the brush at the cursor position
+        radius = self.brush_size / 2.0
+        brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
+        
         # Call the update_mask method on the MaskAnnotation object
         self.annotation_window.mask_annotation.update_mask(
-            brush_location=scene_pos,
+            brush_location=brush_location,
             brush_mask=self.brush_mask,
             new_class_id=class_id
         )

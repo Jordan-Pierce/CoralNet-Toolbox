@@ -165,7 +165,8 @@ class MaskAnnotation(Annotation):
         pixmap = self._render_mask_to_pixmap()
         self.graphics_item = QGraphicsPixmapItem(pixmap)
         self.graphics_item.setPos(self.offset)
-        super().create_graphics_item(scene)
+        # Directly add to scene without calling super(), as pixmap items don't support setBrush
+        scene.addItem(self.graphics_item)
 
     def update_graphics_item(self):
         """Update the pixmap if the mask data has changed."""
@@ -198,6 +199,12 @@ class MaskAnnotation(Annotation):
 
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        
+    def update_transparency(self, transparency):
+        """Update the transparency of the mask annotation and re-render the graphics item."""
+        if self.transparency != transparency:
+            self.transparency = transparency
+            self.update_graphics_item()
 
     # --- Data Manipulation & Editing Methods ---
 

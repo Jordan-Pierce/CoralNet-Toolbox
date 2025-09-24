@@ -303,17 +303,12 @@ class MainWindow(QMainWindow):
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
+        # Connect to transparency changes to update mask opacity dynamically
+        self.label_window.transparencyChanged.connect(self.annotation_window.set_mask_transparency)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-
-        # Layout DELETE ME
-        # self.central_widget = QWidget()
-        # self.setCentralWidget(self.central_widget)
-        # self.main_layout = QHBoxLayout(self.central_widget)
-        # self.label_layout = QVBoxLayout()
-        # self.image_layout = QVBoxLayout()
 
         # ----------------------------------------
         # Create the menu bar
@@ -1595,8 +1590,11 @@ class MainWindow(QMainWindow):
     def update_label_transparency(self, value):
         """Update the label transparency value in LabelWindow, AnnotationWindow and the Slider"""
         if self.explorer_window:
-            return  # Do not update transparency if explorer window is open
+            return  # TODO (Consider removing) Do not update transparency if explorer window is open
         
+        # Explicitly tell the annotation window to update its mask transparency.
+        self.annotation_window.set_mask_transparency(value)
+
         if self.all_labels_button.isChecked():
             # Set transparency for all labels in LabelWindow, AnnotationWindow
             self.label_window.set_all_labels_transparency(value)

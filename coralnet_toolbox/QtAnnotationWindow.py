@@ -100,9 +100,6 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
-        # NOTE: You will need to create and import these new tool classes
-        # from coralnet_toolbox.Tools import BrushTool, FillTool, EraserTool
-        
         self.tools = {
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
@@ -249,30 +246,31 @@ class AnnotationWindow(QGraphicsView):
             # --- ENTERING MASK EDITING MODE ---
             self.unselect_annotations()  # Clear any selected vector annotations
             if self.mask_annotation and self.mask_annotation.graphics_item:
-                # Make the mask layer fully opaque for clear editing
-                self.mask_annotation.graphics_item.setOpacity(1.0)
+                # Update mask opacity based on current transparency
+                active_label = self.main_window.label_window.active_label
+                transparency = active_label.transparency if active_label else 128
+                self.set_mask_transparency(transparency)
             
             # De-emphasize and disable vector annotations to prevent distraction
             for annotation in self.annotations_dict.values():
                 if annotation.graphics_item_group:
                     annotation.graphics_item_group.setOpacity(0.25)
                     annotation.graphics_item_group.setEnabled(False)
-
         else:
             # --- ENTERING ANNOTATION (VECTOR) EDITING MODE ---
             if self.mask_annotation and self.mask_annotation.graphics_item:
-                # Return the mask layer to semi-transparent for context
+                # Set mask to default semi-transparent for context
                 self.mask_annotation.graphics_item.setOpacity(0.6)
-
+            
             # Restore full visibility and interactivity to vector annotations
             for annotation in self.annotations_dict.values():
                 if annotation.graphics_item_group:
                     annotation.graphics_item_group.setOpacity(1.0)
                     annotation.graphics_item_group.setEnabled(True)
-
+        
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
-
+        
         self.unselect_annotations()
         self.toggle_cursor_annotation()
 
@@ -377,7 +375,29 @@ class AnnotationWindow(QGraphicsView):
     
         self.scene.update()
         self.viewport().update()
-
+        
+    def set_mask_transparency(self, transparency):
+        """Update the mask annotation's transparency to reflect the current transparency value."""
+        if self.mask_annotation:
+            # Update the mask's transparency attribute and re-render the pixmap
+            self.mask_annotation.transparency = transparency
+            self.mask_annotation.update_graphics_item()
+            
+            # Apply mode-specific opacity on top of the rendered transparency
+            if self.mask_annotation.graphics_item:
+                if self.selected_tool in self.mask_tools:
+                    # In mask editing mode, set full opacity for accurate brush previews
+                    self.mask_annotation.graphics_item.setOpacity(1.0)
+                else:
+                    # In annotation mode, apply semi-transparency for context
+                    self.mask_annotation.graphics_item.setOpacity(0.6)
+        
+        # Also update the brush cursor if active (to ensure it reflects the new transparency)
+        if self.selected_tool == "brush" and hasattr(self.tools["brush"], "update_cursor_annotation"):
+            # Trigger a cursor update (it will use the updated transparency from the active label)
+            scene_pos = self.mapToScene(self.mapFromGlobal(self.cursor().pos()))  # Approximate current mouse position
+            self.tools["brush"].update_cursor_annotation(scene_pos)
+        
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""
         if annotation.show_message:
@@ -517,6 +537,17 @@ class AnnotationWindow(QGraphicsView):
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
         self.current_image_path = image_path
+        
+    def update_mask_label_map(self):
+        """Update the label_map in the current MaskAnnotation to reflect changes in LabelWindow.
+        
+        This ensures BrushTool can paint with newly added/removed labels without reloading the image.
+        If no mask_annotation exists (e.g., no image loaded), this is a no-op.
+        """
+        if self.mask_annotation:
+            self.mask_annotation.label_map = self.main_window.label_window.get_label_map()
+            # Optional: Trigger a scene update if the mask visuals need refreshing (e.g., for any UI feedback)
+            # self.scene.update()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""

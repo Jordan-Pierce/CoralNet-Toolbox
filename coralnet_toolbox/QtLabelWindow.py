@@ -661,6 +661,7 @@ class LabelWindow(QWidget):
         # Update filter bars and label count
         self.update_label_count()
         self.main_window.image_window.update_search_bars()
+        self.annotation_window.update_mask_label_map()
         QApplication.processEvents()
 
         return label
@@ -827,6 +828,10 @@ class LabelWindow(QWidget):
                 if label.short_label_code == "Review" and label.long_label_code == "Review":
                     return label
         return None  # Return None if not found and not returning review label
+    
+    def get_label_map(self):
+        """Return a dictionary mapping class IDs (integers starting from 1) to Label objects."""
+        return {i + 1: label for i, label in enumerate(self.labels)}
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
         """Check if a label with the given codes or ID already exists (case-insensitive for codes)."""
@@ -957,6 +962,9 @@ class LabelWindow(QWidget):
             # Update annotation count after merge
             self.update_annotation_count()
             
+        # Update the label map in the annotation window
+        self.annotation_window.update_mask_label_map()
+            
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
         if (label.short_label_code == "Review" and
@@ -1013,6 +1021,9 @@ class LabelWindow(QWidget):
         # Explicitly update affected images in the image window
         for image_path in affected_images:
             self.main_window.image_window.update_image_annotations(image_path)
+            
+        # Update the label map in the annotation window
+        self.annotation_window.update_mask_label_map()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
