@@ -19,6 +19,8 @@ from coralnet_toolbox.Tools import (
     RectangleTool,
     PolygonTool,
     BrushTool,
+    EraseTool,
+    FillTool,
     SAMTool,
     SeeAnythingTool,
     SelectTool,
@@ -78,7 +80,6 @@ class AnnotationWindow(QGraphicsView):
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
                 
-        
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -107,13 +108,13 @@ class AnnotationWindow(QGraphicsView):
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
             "brush": BrushTool(self),
-            # "fill": FillTool(self),
-            # "eraser": EraserTool(self)
+            "fill": FillTool(self),
+            "erase": EraseTool(self)
         }
         # Defines which tools trigger mask mode
         self.mask_tools = {"brush", 
                            "fill", 
-                           "eraser"}  
+                           "erase"}  
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
