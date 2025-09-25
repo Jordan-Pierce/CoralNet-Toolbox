@@ -143,7 +143,7 @@ class Label(QWidget):
 
     def update_transparency(self, transparency):
         """Update the label's transparency value."""
-        self.transparency = transparency
+        self.transparency = max(0, min(255, transparency))
 
     def update_pen_width(self, pen_width):
         """Update the label's pen width value."""

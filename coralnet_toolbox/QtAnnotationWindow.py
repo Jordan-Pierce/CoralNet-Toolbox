@@ -387,6 +387,7 @@ class AnnotationWindow(QGraphicsView):
         
     def set_mask_transparency(self, transparency):
         """Update the mask annotation's transparency to reflect the current transparency value."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.current_mask_annotation:
             # Update the mask's transparency attribute and re-render the pixmap
             self.current_mask_annotation.update_transparency(transparency)

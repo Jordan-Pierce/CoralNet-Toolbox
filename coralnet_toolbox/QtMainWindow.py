@@ -1706,6 +1706,8 @@ class MainWindow(QMainWindow):
         if self.explorer_window:
             return  # TODO (Consider removing) Do not update transparency if explorer window is open
         
+        value = max(0, min(255, value))  # Clamp to valid range
+        
         # Explicitly tell the annotation window to update its mask transparency.
         self.annotation_window.set_mask_transparency(value)
 

@@ -73,10 +73,15 @@ class EraseTool(Tool):
             self._apply_eraser(event)
     
     def keyPressEvent(self, event):
-        """Handles key press events, toggle shape with Ctrl+Shift."""
+        """Handles key press events, toggle shape with Ctrl+Shift, clear with Ctrl+Delete/Backspace."""
         modifiers = event.modifiers()
+        key = event.key()
+        
         if ((modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier)) and self.active:
             self._toggle_shape()
+        elif ((modifiers & Qt.ControlModifier) and (key == Qt.Key_Delete or key == Qt.Key_Backspace)) and self.active:
+            self._clear_non_locked_pixels()
+        
         super().keyPressEvent(event)
 
     def _toggle_shape(self):
@@ -88,6 +93,15 @@ class EraseTool(Tool):
             cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
             scene_pos = self.annotation_window.mapToScene(cursor_pos)
             self.update_cursor_annotation(scene_pos)
+
+    def _clear_non_locked_pixels(self):
+        """Clears all non-locked pixels in the current mask annotation."""
+        mask_annotation = self.annotation_window.current_mask_annotation
+        if mask_annotation:
+            # Set all non-locked pixels to 0 (background)
+            mask_annotation.mask_data[mask_annotation.mask_data < mask_annotation.LOCK_BIT] = 0
+            mask_annotation.update_graphics_item()
+            mask_annotation.annotationUpdated.emit(mask_annotation)
 
     def wheelEvent(self, event):
         """Handles mouse wheel events for adjusting eraser size when Ctrl is held."""

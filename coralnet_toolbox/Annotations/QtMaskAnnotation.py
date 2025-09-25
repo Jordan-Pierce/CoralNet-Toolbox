@@ -188,6 +188,7 @@ class MaskAnnotation(Annotation):
         
     def update_transparency(self, transparency):
         """Update the transparency of the mask annotation and re-render the graphics item."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.transparency != transparency:
             self.transparency = transparency
             self.update_graphics_item()
