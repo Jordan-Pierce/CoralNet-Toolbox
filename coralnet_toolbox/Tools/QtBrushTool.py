@@ -25,14 +25,27 @@ class BrushTool(Tool):
         self.cursor = Qt.CrossCursor 
         
         self.brush_size = 90
-        self.brush_mask = self._create_circular_brush()
+        self.shape = 'circle'  # 'circle' or 'square'
+        self.brush_mask = self._create_brush_mask()
         self.painting = False  # Flag to track if painting mode is active
+
+    def _create_brush_mask(self):
+        """Creates a boolean numpy array for the brush shape."""
+        if self.shape == 'circle':
+            return self._create_circular_brush()
+        elif self.shape == 'square':
+            return self._create_square_brush()
 
     def _create_circular_brush(self):
         """Creates a circular boolean numpy array to use as the brush shape."""
         radius = self.brush_size // 2
         y, x = np.ogrid[-radius: radius + 1, -radius: radius + 1]
         return x**2 + y**2 <= radius**2
+
+    def _create_square_brush(self):
+        """Creates a square boolean numpy array to use as the brush shape."""
+        size = self.brush_size
+        return np.ones((size, size), dtype=bool)
 
     def mousePressEvent(self, event):
         """Handles left-click to toggle painting mode and apply brush if starting."""
@@ -60,9 +73,21 @@ class BrushTool(Tool):
         if self.painting:
             self._apply_brush(event)
     
-    def mouseReleaseEvent(self, event):
-        """Called when the mouse is released."""
-        pass  # No action needed on release
+    def keyPressEvent(self, event):
+        """Handles key press events, toggle shape with Ctrl."""
+        if event.key() == Qt.Key_Control and self.active:
+            self._toggle_shape()
+        super().keyPressEvent(event)
+
+    def _toggle_shape(self):
+        """Toggles between circle and square brush shapes."""
+        self.shape = 'square' if self.shape == 'circle' else 'circle'
+        self.brush_mask = self._create_brush_mask()
+        # Update cursor if visible
+        if self.cursor_annotation:
+            cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+            scene_pos = self.annotation_window.mapToScene(cursor_pos)
+            self.update_cursor_annotation(scene_pos)
 
     def wheelEvent(self, event):
         """Handles mouse wheel events for adjusting brush size when Ctrl is held."""
@@ -95,10 +120,14 @@ class BrushTool(Tool):
         label_color = self.annotation_window.selected_label.color
         transparency = self.annotation_window.main_window.label_window.active_label.transparency
         
-        # Create the ellipse item for the brush circle
+        # Create the item for the brush shape
         radius = self.brush_size / 2.0
         rect = QRectF(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
-        self.cursor_annotation = QGraphicsEllipseItem(rect)
+        if self.shape == 'circle':
+            self.cursor_annotation = QGraphicsEllipseItem(rect)
+        else:  # square
+            from PyQt5.QtWidgets import QGraphicsRectItem
+            self.cursor_annotation = QGraphicsRectItem(rect)
         
         # Set the color with transparency
         brush_color = QColor(label_color)
@@ -161,4 +190,4 @@ class BrushTool(Tool):
             brush_location=brush_location,
             brush_mask=self.brush_mask,
             new_class_id=class_id
-        )
+        ) 

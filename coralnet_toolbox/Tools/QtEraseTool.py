@@ -25,14 +25,27 @@ class EraseTool(Tool):
         self.cursor = Qt.CrossCursor 
         
         self.brush_size = 90
-        self.brush_mask = self._create_circular_brush()
+        self.shape = 'circle'  # 'circle' or 'square'
+        self.brush_mask = self._create_brush_mask()
         self.erasing = False  # Flag to track if erasing mode is active
+
+    def _create_brush_mask(self):
+        """Creates a boolean numpy array for the brush shape."""
+        if self.shape == 'circle':
+            return self._create_circular_brush()
+        elif self.shape == 'square':
+            return self._create_square_brush()
 
     def _create_circular_brush(self):
         """Creates a circular boolean numpy array to use as the brush shape."""
         radius = self.brush_size // 2
         y, x = np.ogrid[-radius: radius + 1, -radius: radius + 1]
         return x**2 + y**2 <= radius**2
+
+    def _create_square_brush(self):
+        """Creates a square boolean numpy array to use as the brush shape."""
+        size = self.brush_size
+        return np.ones((size, size), dtype=bool)
 
     def mousePressEvent(self, event):
         """Handles left-click to toggle erasing mode and apply eraser if starting."""
@@ -59,9 +72,21 @@ class EraseTool(Tool):
         if self.erasing:
             self._apply_eraser(event)
     
-    def mouseReleaseEvent(self, event):
-        """Called when the mouse is released."""
-        pass  # No action needed on release
+    def keyPressEvent(self, event):
+        """Handles key press events, toggle shape with Ctrl."""
+        if event.key() == Qt.Key_Control and self.active:
+            self._toggle_shape()
+        super().keyPressEvent(event)
+
+    def _toggle_shape(self):
+        """Toggles between circle and square eraser shapes."""
+        self.shape = 'square' if self.shape == 'circle' else 'circle'
+        self.brush_mask = self._create_brush_mask()
+        # Update cursor if visible
+        if self.cursor_annotation:
+            cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+            scene_pos = self.annotation_window.mapToScene(cursor_pos)
+            self.update_cursor_annotation(scene_pos)
 
     def wheelEvent(self, event):
         """Handles mouse wheel events for adjusting eraser size when Ctrl is held."""
@@ -90,10 +115,14 @@ class EraseTool(Tool):
         # First ensure any existing cursor annotation is removed
         self.clear_cursor_annotation()
         
-        # Create the ellipse item for the eraser circle
+        # Create the item for the eraser shape
         radius = self.brush_size / 2.0
         rect = QRectF(scene_pos.x() - radius, scene_pos.y() - radius, self.brush_size, self.brush_size)
-        self.cursor_annotation = QGraphicsEllipseItem(rect)
+        if self.shape == 'circle':
+            self.cursor_annotation = QGraphicsEllipseItem(rect)
+        else:  # square
+            from PyQt5.QtWidgets import QGraphicsRectItem
+            self.cursor_annotation = QGraphicsRectItem(rect)
         
         # Set transparent fill
         brush_color = QColor(0, 0, 0, 0)  # Fully transparent
