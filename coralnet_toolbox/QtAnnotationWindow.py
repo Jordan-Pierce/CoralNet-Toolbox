@@ -237,6 +237,7 @@ class AnnotationWindow(QGraphicsView):
     def set_selected_tool(self, tool):
         """Set the currently active tool and update the UI layers for the correct editing mode."""
         if self.selected_tool:
+            self.tools[self.selected_tool].stop_current_drawing()
             self.tools[self.selected_tool].deactivate()
         
         self.selected_tool = tool
@@ -456,6 +457,10 @@ class AnnotationWindow(QGraphicsView):
         # Calculate GDIs for Windows if needed
         self.main_window.check_windows_gdi_count()
         
+        # Stop any current drawing operation before switching images
+        if self.selected_tool and self.selected_tool in self.tools:
+            self.tools[self.selected_tool].stop_current_drawing()
+        
         # Clean up
         self.clear_scene()
 
@@ -540,8 +545,17 @@ class AnnotationWindow(QGraphicsView):
         
         # This will get the existing mask or create it on the first call
         project_labels = self.main_window.label_window.labels
-        return raster.get_mask_annotation(project_labels)
-            
+        mask_annotation = raster.get_mask_annotation(project_labels)
+
+        # If the mask exists but its visual item hasn't been added to the scene, create it now.
+        # This handles the case where the mask is re-created after being deleted.
+        if mask_annotation and (not mask_annotation.graphics_item or not mask_annotation.graphics_item.scene()):
+            mask_annotation.create_graphics_item(self.scene)
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.setZValue(-5)  # Ensure it's layered correctly below annotations
+
+        return mask_annotation
+
     def rasterize_annotations(self):
         """
         Tells the current mask_annotation to rasterize all vector annotations
@@ -1100,12 +1114,12 @@ class AnnotationWindow(QGraphicsView):
         # TODO: Currently mask_annotations are treated separately.
         # Clear the mask_annotation to ensure semantic segmentation data is reset
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
-        if raster and raster.mask_annotation:
-            # Remove the mask annotation's graphics item from the scene if it's displayed
-            if (raster.mask_annotation.graphics_item and
-                raster.mask_annotation.graphics_item.scene() == self.scene):
-                self.scene.removeItem(raster.mask_annotation.graphics_item)
-            raster.mask_annotation = None
+        if raster:
+            raster.delete_mask_annotation()
+        
+        # Always update the viewport
+        self.scene.update()
+        self.viewport().update()
 
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""

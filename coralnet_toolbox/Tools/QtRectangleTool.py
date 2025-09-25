@@ -111,6 +111,12 @@ class RectangleTool(Tool):
         self.drawing_continuous = False
         self.clear_cursor_annotation()
 
+    def stop_current_drawing(self):
+        """Force stop of current rectangle drawing if in progress."""
+        if self.drawing_continuous:
+            self.drawing_continuous = False
+            self.clear_cursor_annotation()
+
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None

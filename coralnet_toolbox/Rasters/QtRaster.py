@@ -396,6 +396,9 @@ class Raster(QObject):
                 initial_labels=project_labels,
                 rasterio_src=self.rasterio_src
             )
+        else:
+            # Ensure the mask is synced with the current project labels
+            self.mask_annotation.sync_label_map(project_labels)
         return self.mask_annotation
     
     def add_work_area(self, work_area):
@@ -497,6 +500,12 @@ class Raster(QObject):
     def clear_work_areas(self):
         """Clear all work areas."""
         self.work_areas.clear()
+        
+    def delete_mask_annotation(self):
+        """Removes the mask annotation and its graphics item, then resets the attribute."""
+        if self.mask_annotation:
+            self.mask_annotation.remove_from_scene()
+            self.mask_annotation = None
         
     def cleanup(self):
         """Release all resources associated with this raster."""

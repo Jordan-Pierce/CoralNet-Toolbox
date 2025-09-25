@@ -24,7 +24,7 @@ class BrushTool(Tool):
         # You can set a specific cursor for this tool
         self.cursor = Qt.CrossCursor 
         
-        self.brush_size = 30
+        self.brush_size = 90
         self.brush_mask = self._create_circular_brush()
         self.painting = False  # Flag to track if painting mode is active
 
@@ -128,6 +128,10 @@ class BrushTool(Tool):
         if self.cursor_annotation and self.cursor_annotation.scene():
             self.annotation_window.scene.removeItem(self.cursor_annotation)
             self.cursor_annotation = None
+
+    def stop_current_drawing(self):
+        """Force stop of current drawing by stopping painting mode."""
+        self.painting = False
 
     def _apply_brush(self, event):
         """Applies the brush mask to the main mask_annotation."""

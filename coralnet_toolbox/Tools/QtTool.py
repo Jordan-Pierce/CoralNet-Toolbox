@@ -71,6 +71,13 @@ class Tool:
     def wheelEvent(self, event: QMouseEvent):
         pass
         
+    def stop_current_drawing(self):
+        """
+        Force stop of the current drawing operation if one is in progress.
+        Subclasses should override this to implement tool-specific stopping logic.
+        """
+        pass
+        
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """
         Create and display a cursor annotation at the given position.

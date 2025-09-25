@@ -137,6 +137,16 @@ class CutSubTool(SubTool):
                     self.cutting_points.append(scene_pos)
                 self.last_click_point = scene_pos
 
+    def stop_current_drawing(self):
+        """Force stop of current cutting if in progress."""
+        if self.drawing_in_progress:
+            self.drawing_in_progress = False
+            self.cutting_points = []
+            if self.cutting_path_item:
+                self.annotation_window.scene.removeItem(self.cutting_path_item)
+                self.cutting_path_item = None
+            self.annotation_window.scene.update()
+
     def _start_drawing_cut_line(self, position):
         """Start drawing the cut line from the given position."""
         self.drawing_in_progress = True

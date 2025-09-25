@@ -191,6 +191,12 @@ class MaskAnnotation(Annotation):
         if self.transparency != transparency:
             self.transparency = transparency
             self.update_graphics_item()
+            
+    def remove_from_scene(self):
+        """Removes the graphics item from its scene, if it exists."""
+        if self.graphics_item and self.graphics_item.scene():
+            self.graphics_item.scene().removeItem(self.graphics_item)
+            self.graphics_item = None
 
     # --- Data Manipulation & Editing Methods ---
 
@@ -440,9 +446,16 @@ class MaskAnnotation(Annotation):
         for item in data['rle_masks']:
             class_id = item['class_id']
             rle = item['rle']
-            rle['counts'] = base64.b64decode(rle['counts'])
-            binary_mask = mask.decode(rle).astype(bool)
-            mask_data[binary_mask] = class_id
+            try:
+                rle['counts'] = base64.b64decode(rle['counts'])
+                binary_mask = mask.decode(rle).astype(bool)
+                if binary_mask.shape != shape:
+                    print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
+                    continue
+                mask_data[binary_mask] = class_id
+            except Exception as e:
+                print(f"Error decoding RLE for class {class_id}: {e}")
+                continue
 
         # Create the base annotation instance. It will have a generic label map initially.
         annotation = cls(

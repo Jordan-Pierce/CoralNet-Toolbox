@@ -130,6 +130,14 @@ class PolygonTool(Tool):
         self.clear_cursor_annotation()
         self.last_click_point = None
 
+    def stop_current_drawing(self):
+        """Force stop of current polygon drawing if in progress."""
+        if self.drawing_continuous:
+            self.points = []
+            self.drawing_continuous = False
+            self.clear_cursor_annotation()
+            self.last_click_point = None
+
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None

@@ -45,3 +45,10 @@ class SubTool(ABC):
     def keyReleaseEvent(self, event: QKeyEvent):
         """Handle key release events for this specific sub-tool."""
         pass
+
+    def stop_current_drawing(self):
+        """
+        Force stop of the current drawing operation if one is in progress.
+        Subclasses should override this to implement sub-tool-specific stopping logic.
+        """
+        pass
