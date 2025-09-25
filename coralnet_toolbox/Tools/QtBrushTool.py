@@ -74,8 +74,9 @@ class BrushTool(Tool):
             self._apply_brush(event)
     
     def keyPressEvent(self, event):
-        """Handles key press events, toggle shape with Ctrl."""
-        if event.key() == Qt.Key_Control and self.active:
+        """Handles key press events, toggle shape with Ctrl+Shift."""
+        modifiers = event.modifiers()
+        if ((modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier)) and self.active:
             self._toggle_shape()
         super().keyPressEvent(event)
 

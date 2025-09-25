@@ -216,7 +216,10 @@ class MaskAnnotation(Annotation):
         labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
         region_label = labeled_array[y, x]
         
-        self.mask_data[labeled_array == region_label] = new_class_id
+        # Only fill pixels that are part of the region and not locked
+        region_mask = labeled_array == region_label
+        unlocked_region_mask = region_mask & (self.mask_data < self.LOCK_BIT)
+        self.mask_data[unlocked_region_mask] = new_class_id
         
         self.update_graphics_item()
         self.annotationUpdated.emit(self)

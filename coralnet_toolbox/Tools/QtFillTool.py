@@ -55,31 +55,23 @@ class FillTool(Tool):
         pass
 
     def _apply_fill(self, event):
-        """Fills the contiguous region under the cursor with the selected label or blank."""
+        """Fills the contiguous region under the cursor with the selected label."""
         # Get the current mask annotation from the annotation window
         mask_annotation = self.annotation_window.current_mask_annotation
         
-        # Ensure that a mask is active
-        if not mask_annotation:
+        # Ensure that a mask and a selected label are active
+        if not mask_annotation or not self.annotation_window.selected_label:
             return
             
         # Get the mouse position in the scene's coordinate system
         scene_pos = self.annotation_window.mapToScene(event.pos())
         
-        # Check if Ctrl is held and active label is "Review" (id == -1)
-        ctrl_held = event.modifiers() & Qt.ControlModifier
-        active_label = self.annotation_window.main_window.label_window.active_label
-        if ctrl_held and active_label and active_label.id == -1:
-            new_class_id = 0  # Fill with blank
-        else:
-            # Ensure selected label is active
-            if not self.annotation_window.selected_label:
-                return
-            # Get the selected label's class ID
-            selected_label_id = self.annotation_window.selected_label.id
-            new_class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
-            if new_class_id is None:
-                return  # Label not found in map
+        # Get the selected label's class ID
+        selected_label_id = self.annotation_window.selected_label.id
+        new_class_id = mask_annotation.label_id_to_class_id_map.get(selected_label_id)
+        
+        if new_class_id is None:
+            return  # Label not found in map
         
         # Call the fill_region method on the MaskAnnotation object
         mask_annotation.fill_region(scene_pos, new_class_id)
