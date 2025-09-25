@@ -494,14 +494,6 @@ class AnnotationWindow(QGraphicsView):
         base_image_item.setZValue(-10)
         self.scene.addItem(base_image_item)
 
-        # Get the persistent mask from the raster. This call will lazy-load it if needed.
-        mask_annotation = self.current_mask_annotation
-        if mask_annotation:
-            # The mask might have a graphics item from a previous session, so ensure it's created/added.
-            mask_annotation.create_graphics_item(self.scene)
-            if mask_annotation.graphics_item:
-                mask_annotation.graphics_item.setZValue(-5)
-
         # Update the zoom tool's state
         self.tools["zoom"].reset_zoom()
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -894,7 +886,10 @@ class AnnotationWindow(QGraphicsView):
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
-        # Crop annotations (if image_path and annotations are provided, they are used)
+        # First load the mask annotation if it exists
+        self.load_mask_annotation()
+        
+        # Then crop annotations (if image_path and annotations are provided, they are used)
         annotations = self.crop_annotations(image_path, annotations)
 
         if not len(annotations):
@@ -932,6 +927,28 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.close()
 
         QApplication.processEvents()
+        self.viewport().update()
+        
+    def load_mask_annotation(self):
+        """Load the mask annotation for the current image, if it exists."""
+        if not self.current_image_path:
+            return
+
+        mask_annotation = self.current_mask_annotation
+        if not mask_annotation:
+            return
+
+        # Remove the graphics item from its current scene if it exists
+        if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
+            mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
+
+        # Create the graphics item (scene previously cleared)
+        mask_annotation.create_graphics_item(self.scene)
+        # Set the Z-value to be above the base image but below annotations
+        if mask_annotation.graphics_item:
+            mask_annotation.graphics_item.setZValue(-5)
+
+        # Update the view
         self.viewport().update()
 
     def get_image_annotations(self, image_path=None):
@@ -1111,7 +1128,6 @@ class AnnotationWindow(QGraphicsView):
             if not self.image_annotations_dict.get(image_path, []):
                 del self.image_annotations_dict[image_path]
             
-        # TODO: Currently mask_annotations are treated separately.
         # Clear the mask_annotation to ensure semantic segmentation data is reset
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if raster:

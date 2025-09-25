@@ -196,7 +196,9 @@ class MaskAnnotation(Annotation):
         """Removes the graphics item from its scene, if it exists."""
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
+            
+        # Remove the graphics item reference
+        self.graphics_item = None
 
     # --- Data Manipulation & Editing Methods ---
 
@@ -441,7 +443,7 @@ class MaskAnnotation(Annotation):
             raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
         # Decode the RLE mask data
-        shape = data['shape']
+        shape = tuple(data['shape'])
         mask_data = np.zeros(shape, dtype=np.uint16)
         for item in data['rle_masks']:
             class_id = item['class_id']

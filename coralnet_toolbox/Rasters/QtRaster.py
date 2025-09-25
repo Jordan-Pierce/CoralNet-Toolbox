@@ -523,8 +523,9 @@ class Raster(QObject):
         
         # Clear annotations and work areas
         self.annotations = []
-        self.mask_annotation = None
         self.work_areas = []
+        # Clear mask annotation if it exists
+        self.delete_mask_annotation()
         
         # Force garbage collection
         gc.collect()
