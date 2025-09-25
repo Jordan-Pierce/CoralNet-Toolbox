@@ -1,6 +1,5 @@
 import warnings
 
-import zlib
 import base64
 import rasterio
 
@@ -8,10 +7,11 @@ import numpy as np
 
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
+from pycocotools import mask
 
-from PyQt5.QtCore import Qt, QPointF, QRectF, QPolygonF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
-from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush
+from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -20,59 +20,17 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Helper Functions for Serialization
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-def rle_encode(mask):
-    """
-    Encodes a 2D numpy array using Run-Length Encoding.
-    Returns a compressed string representation.
-    """
-    pixels = mask.flatten()
-    pixels = np.append(pixels, -1)  # Append a sentinel value
-    runs = np.where(pixels[1:] != pixels[:-1])[0] + 1
-    runs[1:] = runs[1:] - runs[:-1]
-    values = pixels[np.cumsum(np.append(0, runs[:-1]))]
-    
-    # Pair values and runs, then convert to a string
-    rle_pairs = ",".join([f"{v},{r}" for v, r in zip(values, runs)])
-    
-    # Further compress with zlib and encode in base64 for JSON compatibility
-    compressed = zlib.compress(rle_pairs.encode('utf-8'))
-    return base64.b64encode(compressed).decode('ascii')
-
-
-def rle_decode(rle_string, shape):
-    """
-    Decodes a Run-Length Encoded string back into a 2D numpy array.
-    """
-    # Decode from base64 and decompress with zlib
-    decoded_b64 = base64.b64decode(rle_string)
-    decompressed = zlib.decompress(decoded_b64).decode('utf-8')
-    
-    # Parse the value,run pairs
-    pairs = decompressed.split(',')
-    values = [int(v) for v in pairs[0::2]]
-    runs = [int(r) for r in pairs[1::2]]
-    
-    # Reconstruct the pixel array
-    pixels = np.repeat(values, runs)
-    
-    # Reshape to the original 2D mask dimensions
-    return pixels.reshape(shape)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
 class MaskAnnotation(Annotation):
+    LOCK_BIT = 2**15  # For uint16, this is 32768
+
     def __init__(self,
                  image_path: str,
                  mask_data: np.ndarray,
-                 label_map: dict,
+                 initial_labels: list,
                  transparency: int = 128,
                  show_msg: bool = False,
                  rasterio_src=None):
@@ -83,15 +41,15 @@ class MaskAnnotation(Annotation):
         Args:
             image_path (str): Path to the source image.
             mask_data (np.ndarray): 2D numpy array of integer class IDs, matching image dimensions.
-            label_map (dict): A map of {class_id: Label_object}.
+            initial_labels (list): A list of all Label_objects currently in the project.
             transparency (int): The alpha value for displaying the mask overlay.
             rasterio_src: Optional rasterio dataset object for the source image.
         """
         # For a full-image mask, the concept of a single "primary label" is ambiguous.
         # We'll use the first available label as a placeholder to satisfy the base class.
-        if not label_map:
-            raise ValueError("label_map cannot be empty.")
-        placeholder_label = next(iter(label_map.values()))
+        if not initial_labels:
+            raise ValueError("initial_labels cannot be empty.")
+        placeholder_label = initial_labels[0]
 
         super().__init__(
             short_label_code=placeholder_label.short_label_code,
@@ -104,13 +62,29 @@ class MaskAnnotation(Annotation):
         )
         
         self.mask_data = mask_data
-        self.label_map = label_map
-        self.offset = QPointF(0, 0)  # A full-image mask has no offset
-        self.rasterio_src = rasterio_src  # Store rasterio source if provided
         
-        # Set geometric properties from mask
+        self.class_id_to_label_map = {}  # Replaces the old label_map
+        self.label_id_to_class_id_map = {}
+        self.next_class_id = 1  # Start class IDs at 1 (0 is background)
+        self.sync_label_map(initial_labels)
+
+        self.offset = QPointF(0, 0)
+        self.rasterio_src = rasterio_src
+        
         self.set_centroid()
         self.set_cropped_bbox()
+
+    def sync_label_map(self, current_labels_in_project: list):
+        """Ensures the internal maps are synced with the project's labels,
+           assigning new, stable IDs to any new labels without changing existing ones."""
+        
+        # Add any new labels from the project list to our maps
+        for label in current_labels_in_project:
+            if label.id not in self.label_id_to_class_id_map:
+                new_id = self.next_class_id
+                self.class_id_to_label_map[new_id] = label
+                self.label_id_to_class_id_map[label.id] = new_id
+                self.next_class_id += 1
 
     def set_centroid(self):
         """Set the centroid to the center of the image."""
@@ -128,13 +102,16 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         
         # Create a color map for fast lookup from class ID to RGBA color
-        max_id = max(self.label_map.keys()) if self.label_map else 0
+        max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
         color_map = np.zeros((max_id + 1, 4), dtype=np.uint8)
-        for class_id, label in self.label_map.items():
+        for class_id, label in self.class_id_to_label_map.items():
             color = label.color
             color_map[class_id] = [color.red(), color.green(), color.blue(), self.transparency]
 
-        colored_mask = color_map[self.mask_data]
+        # Get the real class IDs by removing the lock bit before color mapping.
+        real_class_ids = self.mask_data % self.LOCK_BIT
+        colored_mask = color_map[real_class_ids]
+        
         q_image = QImage(colored_mask.data, width, height, QImage.Format_RGBA8888)
         
         return QPixmap.fromImage(q_image)
@@ -165,7 +142,8 @@ class MaskAnnotation(Annotation):
         pixmap = self._render_mask_to_pixmap()
         self.graphics_item = QGraphicsPixmapItem(pixmap)
         self.graphics_item.setPos(self.offset)
-        super().create_graphics_item(scene)
+        # Directly add to scene without calling super(), as pixmap items don't support setBrush
+        scene.addItem(self.graphics_item)
 
     def update_graphics_item(self):
         """Update the pixmap if the mask data has changed."""
@@ -175,7 +153,7 @@ class MaskAnnotation(Annotation):
         super().update_graphics_item()
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
-        """Modify the mask data based on a brush stroke."""
+        """Modify the mask data based on a brush stroke, avoiding locked pixels."""
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
         mask_h, mask_w = self.mask_data.shape
@@ -189,15 +167,39 @@ class MaskAnnotation(Annotation):
             return
 
         target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
+        
+        # Find which pixels in the target area are already locked.
+        locked_pixels = target_slice >= self.LOCK_BIT
+        
         brush_x_offset = clipped_x_start - x_start
         brush_y_offset = clipped_y_start - y_start
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
 
-        target_slice[clipped_brush_mask] = new_class_id
+        # Subtract the locked pixels from the brush mask. The brush can only paint
+        # where the original brush mask is True AND the target pixel is NOT locked.
+        final_brush_mask = clipped_brush_mask & ~locked_pixels
+        
+        # Apply the final, protected brush mask.
+        target_slice[final_brush_mask] = new_class_id
 
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        
+    def update_transparency(self, transparency):
+        """Update the transparency of the mask annotation and re-render the graphics item."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
+        if self.transparency != transparency:
+            self.transparency = transparency
+            self.update_graphics_item()
+            
+    def remove_from_scene(self):
+        """Removes the graphics item from its scene, if it exists."""
+        if self.graphics_item and self.graphics_item.scene():
+            self.graphics_item.scene().removeItem(self.graphics_item)
+            
+        # Remove the graphics item reference
+        self.graphics_item = None
 
     # --- Data Manipulation & Editing Methods ---
 
@@ -215,7 +217,10 @@ class MaskAnnotation(Annotation):
         labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
         region_label = labeled_array[y, x]
         
-        self.mask_data[labeled_array == region_label] = new_class_id
+        # Only fill pixels that are part of the region and not locked
+        region_mask = labeled_array == region_label
+        unlocked_region_mask = region_mask & (self.mask_data < self.LOCK_BIT)
+        self.mask_data[unlocked_region_mask] = new_class_id
         
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
@@ -226,32 +231,87 @@ class MaskAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
 
-    def import_annotations(self, annotations: list, class_id: int):
-        """Burns a list of vector annotations into the mask with a given class ID."""
+    def _rasterize_annotation_group(self, annotations: list, class_id: int):
+        """Burns a list of vector annotations OF THE SAME CLASS into the mask."""
         height, width = self.mask_data.shape
-        # Use Format_Alpha8 for an efficient 8-bit stencil mask
         stencil = QImage(width, height, QImage.Format_Alpha8)
         stencil.fill(Qt.transparent)
 
         painter = QPainter(stencil)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor("white")))  # Opaque white
+        painter.setBrush(QBrush(QColor("white")))
         
         for anno in annotations:
             path = anno.get_painter_path()
             painter.drawPath(path)
         painter.end()
 
-        # Convert the QImage stencil to a boolean numpy array
+        # Fix for QImage memory padding issue
+        stride = stencil.bytesPerLine()
         ptr = stencil.bits()
         ptr.setsize(stencil.byteCount())
-        stencil_np = np.array(ptr).reshape(height, width) > 0  # True where painted
 
-        # Update the mask data where the stencil is True
-        self.mask_data[stencil_np] = class_id
+        arr_view = np.ndarray(shape=(height, width), 
+                              buffer=ptr, 
+                              dtype=np.uint8, 
+                              strides=(stride, 1))
+
+        stencil_np = np.copy(arr_view) > 0
+
+        # Add the LOCK_BIT to the class_id to mark these pixels as protected.
+        self.mask_data[stencil_np] = class_id + self.LOCK_BIT
+
+    def rasterize_annotations(self, all_annotations: list):
+        """
+        Groups a list of vector annotations by label and rasterizes each group
+        onto this mask's data layer.
+        """
+        if not all_annotations:
+            return
+
+        # Group annotations by their label ID for efficient batch processing
+        annotations_by_label = {}
+        for anno in all_annotations:
+            if anno.label.id not in annotations_by_label:
+                annotations_by_label[anno.label.id] = []
+            annotations_by_label[anno.label.id].append(anno)
+
+        # For each label group, burn the corresponding annotations into the mask
+        for label_id, annos_to_burn in annotations_by_label.items():
+            # Now a fast, direct O(1) dictionary lookup using the UUID!
+            class_id = self.label_id_to_class_id_map.get(label_id)
+            if class_id:
+                # Call the internal helper to do the actual drawing
+                self._rasterize_annotation_group(annos_to_burn, class_id)
         
+        # After all groups are rasterized, update the graphics item to show the changes
+        self.update_graphics_item()
+
+    def unrasterize_annotations(self):
+        """
+        Clears all pixels that were rasterized from vector annotations.
+        This is identified by finding all pixels marked with the LOCK_BIT.
+        """
+        # Find all pixels that have the lock bit set.
+        locked_pixels = self.mask_data >= self.LOCK_BIT
+        
+        # Reset these pixels back to 0 (unclassified).
+        self.mask_data[locked_pixels] = 0
+        
+        # After clearing the pixels, update the graphics item to show the changes.
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+
+    def clear_pixels_for_class(self, class_id: int):
+        """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
+        if class_id == 0:  # Cannot clear background class
+            return
+
+        # Create a boolean mask of all pixels whose real class ID matches.
+        pixels_to_clear = (self.mask_data % self.LOCK_BIT) == class_id
+        
+        # Set these pixels back to 0 (unclassified).
+        self.mask_data[pixels_to_clear] = 0
 
     # --- Analysis & Information Retrieval Methods ---
 
@@ -265,7 +325,7 @@ class MaskAnnotation(Annotation):
         class_ids, counts = np.unique(self.mask_data[self.mask_data > 0], return_counts=True)
         
         for cid, count in zip(class_ids, counts):
-            label = self.label_map.get(int(cid))
+            label = self.class_id_to_label_map.get(int(cid))
             if label:
                 stats[label.short_label_code] = {
                     "pixel_count": int(count),
@@ -302,7 +362,7 @@ class MaskAnnotation(Annotation):
             points = [QPointF(p[1] - 1, p[0] - 1) for p in contour]
             if len(points) > 2:  # Must have at least 3 points for a valid polygon
                 # Use the label associated with the class_id for the new annotation
-                label = self.label_map[class_id]
+                label = self.class_id_to_label_map[class_id]
                 anno = PolygonAnnotation(
                     points=points,
                     short_label_code=label.short_label_code,
@@ -354,43 +414,100 @@ class MaskAnnotation(Annotation):
     def to_dict(self):
         """Serialize the annotation to a dictionary, with RLE for the mask."""
         base_dict = super().to_dict()
-        rle_string = rle_encode(self.mask_data)
+        
+        # Encode each class's binary mask using pycocotools
+        rle_list = []
+        unique_classes = np.unique(self.mask_data)
+        for class_id in unique_classes:
+            if class_id == 0:
+                continue
+            binary_mask = (self.mask_data == class_id).astype(np.uint8)
+            rle = mask.encode(np.asfortranarray(binary_mask))
+            rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
+            rle_list.append({'class_id': int(class_id), 'rle': rle})
+        
+        # Convert the label map to a serializable format
+        serializable_label_map = {}
+        for cid, label in self.class_id_to_label_map.items():
+            serializable_label_map[cid] = label.short_label_code
+
         base_dict.update({
             'shape': self.mask_data.shape,
-            'rle_mask': rle_string,
-            'label_map': {cid: label.short_label_code for cid, label in self.label_map.items()}
+            'rle_masks': rle_list,
+            'label_map': serializable_label_map
         })
         return base_dict
 
     @classmethod
     def from_dict(cls, data, label_window):
         """Instantiate a MaskAnnotation from a dictionary."""
-        label_map = {}
-        for cid_str, short_code in data['label_map'].items():
-            label = label_window.get_label_by_short_code(short_code)
-            if label:
-                label_map[int(cid_str)] = label
+        # Get all labels currently in the project. This is needed for the constructor.
+        all_project_labels = list(label_window.labels)
+        if not all_project_labels:
+            raise ValueError("Cannot import a MaskAnnotation without any labels loaded in the project.")
 
-        mask_data = rle_decode(data['rle_mask'], data['shape'])
+        # Decode the RLE mask data
+        shape = tuple(data['shape'])
+        mask_data = np.zeros(shape, dtype=np.uint16)
+        for item in data['rle_masks']:
+            class_id = item['class_id']
+            rle = item['rle']
+            try:
+                rle['counts'] = base64.b64decode(rle['counts'])
+                binary_mask = mask.decode(rle).astype(bool)
+                if binary_mask.shape != shape:
+                    print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
+                    continue
+                mask_data[binary_mask] = class_id
+            except Exception as e:
+                print(f"Error decoding RLE for class {class_id}: {e}")
+                continue
 
+        # Create the base annotation instance. It will have a generic label map initially.
         annotation = cls(
             image_path=data['image_path'],
             mask_data=mask_data,
-            label_map=label_map
+            initial_labels=all_project_labels
         )
+        
+        # Clear the generic maps created by the constructor.
+        annotation.class_id_to_label_map.clear()
+        annotation.label_id_to_class_id_map.clear()
+        
+        max_id_found = 0
+        if 'label_map' in data and data['label_map']:
+            # Iterate through the saved map {class_id: short_code}
+            for cid_str, short_code in data['label_map'].items():
+                class_id = int(cid_str)
+                label = label_window.get_label_by_short_code(short_code)
+                
+                if label:
+                    # Rebuild the maps with the correct associations
+                    annotation.class_id_to_label_map[class_id] = label
+                    annotation.label_id_to_class_id_map[label.id] = class_id
+                    if class_id > max_id_found:
+                        max_id_found = class_id
+                else:
+                    print(f"Warning: Label with short code '{short_code}' not found in project during mask import.")
+
+        # Ensure the next class ID is set correctly to avoid future conflicts.
+        annotation.next_class_id = max_id_found + 1
+
+        # Restore other annotation properties
         annotation.id = data.get('id', annotation.id)
         annotation.data = data.get('data', {})
+        
         return annotation
 
     @classmethod
-    def from_rasterio(cls, file_path: str, image_path: str, label_map: dict):
+    def from_rasterio(cls, file_path: str, image_path: str, all_labels: list):
         """Creates a MaskAnnotation instance by loading data from a raster file."""
         with rasterio.open(file_path) as src:
             mask_data = src.read(1)
             return cls(
                 image_path=image_path,
                 mask_data=mask_data,
-                label_map=label_map,
+                initial_labels=all_labels,
                 rasterio_src=src
             )
 

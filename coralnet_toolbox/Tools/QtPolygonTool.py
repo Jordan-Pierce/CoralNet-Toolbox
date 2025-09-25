@@ -130,6 +130,14 @@ class PolygonTool(Tool):
         self.clear_cursor_annotation()
         self.last_click_point = None
 
+    def stop_current_drawing(self):
+        """Force stop of current polygon drawing if in progress."""
+        if self.drawing_continuous:
+            self.points = []
+            self.drawing_continuous = False
+            self.clear_cursor_annotation()
+            self.last_click_point = None
+
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None
@@ -216,8 +224,11 @@ class PolygonTool(Tool):
                 self.annotation_window.selected_label.id,
                 self.annotation_window.main_window.label_window.active_label.transparency 
             )
-            annotation.create_graphics_item(self.annotation_window.scene)
             self.cursor_annotation = annotation
+            active_label = self.annotation_window.main_window.label_window.active_label
+            transparency = active_label.transparency if active_label else 128
+            self.cursor_annotation.update_transparency(transparency)
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""

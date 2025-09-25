@@ -1,6 +1,6 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from typing import Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -9,14 +9,18 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessa
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
     PolygonAnnotation,
-    RectangleAnnotation
+    RectangleAnnotation,
+    MaskAnnotation,
 )
 
 from coralnet_toolbox.Tools import (
     PanTool,
     PatchTool,
-    PolygonTool,
     RectangleTool,
+    PolygonTool,
+    BrushTool,
+    EraseTool,
+    FillTool,
     SAMTool,
     SeeAnythingTool,
     SelectTool,
@@ -24,13 +28,13 @@ from coralnet_toolbox.Tools import (
     WorkAreaTool
 )
 
-from coralnet_toolbox.QtWorkArea import WorkArea
-
 from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import rasterio_open
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -72,9 +76,10 @@ class AnnotationWindow(QGraphicsView):
         self.image_annotations_dict = {}  # Dictionary to store annotations by image path
 
         self.selected_annotations = []  # Stores the selected annotations
+        self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
-
+                
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -91,7 +96,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
-
+        
         self.tools = {
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
@@ -101,8 +106,15 @@ class AnnotationWindow(QGraphicsView):
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
-            "work_area": WorkAreaTool(self)
+            "work_area": WorkAreaTool(self),
+            "brush": BrushTool(self),
+            "fill": FillTool(self),
+            "erase": EraseTool(self)
         }
+        # Defines which tools trigger mask mode
+        self.mask_tools = {"brush", 
+                           "fill", 
+                           "erase"}  
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
@@ -131,21 +143,37 @@ class AnnotationWindow(QGraphicsView):
         self.viewChanged.emit(*self.get_image_dimensions())
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events for the active tool."""
+        """Handle mouse press events for the active tool."""        
+        # Panning should be active in both modes, so we call it first.
         if self.active_image:
             self.tools["pan"].mousePressEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mousePressEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mousePressEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mousePressEvent(event)
+        
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse movement events for the active tool."""
+        # Panning should be active in both modes
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mouseMoveEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mouseMoveEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mouseMoveEvent(event)
+        
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
 
@@ -156,11 +184,19 @@ class AnnotationWindow(QGraphicsView):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events for the active tool."""
+        # Panning should be active in both modes
         if self.active_image:
             self.tools["pan"].mouseReleaseEvent(event)
-        if self.selected_tool:
-            self.tools[self.selected_tool].mouseReleaseEvent(event)
 
+        # Check if a tool is selected before proceeding
+        if self.selected_tool:
+            # If the selected tool is a mask tool, delegate the event to it
+            if self.selected_tool in self.mask_tools:
+                self.tools[self.selected_tool].mouseReleaseEvent(event)
+            # Otherwise, use the original logic for vector annotation tools
+            else:
+                self.tools[self.selected_tool].mouseReleaseEvent(event)
+        
         self.toggle_cursor_annotation()
         self.drag_start_pos = None
         super().mouseReleaseEvent(event)
@@ -200,13 +236,50 @@ class AnnotationWindow(QGraphicsView):
         return self.selected_tool
 
     def set_selected_tool(self, tool):
-        """Set the currently active tool and deactivate the previous one."""
+        """Set the currently active tool and update the UI layers for the correct editing mode."""
         if self.selected_tool:
+            self.tools[self.selected_tool].stop_current_drawing()
             self.tools[self.selected_tool].deactivate()
+        
         self.selected_tool = tool
+        
+        if self.selected_tool in self.mask_tools:
+            # --- ENTERING MASK EDITING MODE ---
+            # Cache and rasterize existing vector annotations onto the mask layer.
+            self.rasterized_annotations_cache = self.get_image_annotations()
+            if self.current_mask_annotation and self.rasterized_annotations_cache:
+                self.rasterize_annotations()
+
+            self.unselect_annotations()  # Clear any selected vector annotations
+            if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
+                # Update mask transparency based on current transparency
+                active_label = self.main_window.label_window.active_label
+                transparency = active_label.transparency if active_label else 128
+                self.set_mask_transparency(transparency)
+            
+            # Hide the vector annotations that were just rasterized
+            for annotation in self.rasterized_annotations_cache:
+                if annotation.graphics_item_group:
+                    annotation.set_visibility(False)
+        else:
+            # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
+            # Unrasterize the vector annotations from the mask layer
+            self.unrasterize_annotations()
+            # Get current transparency
+            active_label = self.main_window.label_window.active_label
+            transparency = active_label.transparency if active_label else 128
+            # Restore visibility to the cached vector annotations
+            for annotation in self.rasterized_annotations_cache:
+                if annotation.graphics_item_group:
+                    annotation.set_visibility(True)
+                    annotation.update_transparency(transparency)
+
+            # Clear the cache
+            self.rasterized_annotations_cache = []
+        
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
-
+        
         self.unselect_annotations()
         self.toggle_cursor_annotation()
 
@@ -311,7 +384,15 @@ class AnnotationWindow(QGraphicsView):
     
         self.scene.update()
         self.viewport().update()
-
+        
+    def set_mask_transparency(self, transparency):
+        """Update the mask annotation's transparency to reflect the current transparency value."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
+        if self.current_mask_annotation:
+            # Update the mask's transparency attribute and re-render the pixmap
+            self.current_mask_annotation.update_transparency(transparency)
+            self.current_mask_annotation.update_graphics_item()
+        
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""
         if annotation.show_message:
@@ -378,6 +459,10 @@ class AnnotationWindow(QGraphicsView):
         # Calculate GDIs for Windows if needed
         self.main_window.check_windows_gdi_count()
         
+        # Stop any current drawing operation before switching images
+        if self.selected_tool and self.selected_tool in self.tools:
+            self.tools[self.selected_tool].stop_current_drawing()
+        
         # Clean up
         self.clear_scene()
 
@@ -389,27 +474,34 @@ class AnnotationWindow(QGraphicsView):
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
             return
-            
+        
+        # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
         # Get QImage and convert to QPixmap for display
         q_image = raster.get_qimage()
         if q_image is None or q_image.isNull():
             return
-            
+        
+        # Convert and set the QPixmap
         self.pixmap_image = QPixmap.fromImage(q_image)
-
         self.current_image_path = image_path
         self.active_image = True
 
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
+        
+        # Add the base image pixmap and set its Z-value to be at the bottom
+        base_image_item = QGraphicsPixmapItem(self.pixmap_image)
+        base_image_item.setZValue(-10)
+        self.scene.addItem(base_image_item)
 
+        # Update the zoom tool's state
         self.tools["zoom"].reset_zoom()
-        self.scene.addItem(QGraphicsPixmapItem(self.pixmap_image))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.tools["zoom"].calculate_min_zoom()
 
+        # Toggle the cursor annotation to reflect the new image and label state
         self.toggle_cursor_annotation()
 
         # Load all associated annotations
@@ -428,6 +520,57 @@ class AnnotationWindow(QGraphicsView):
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
         self.current_image_path = image_path
+        
+    def update_mask_label_map(self):
+        """Update the label_map in the current MaskAnnotation to reflect changes in LabelWindow."""
+        if self.current_mask_annotation:
+            # Call the new sync method instead of just overwriting the map.
+            all_current_labels = self.main_window.label_window.labels
+            self.current_mask_annotation.sync_label_map(all_current_labels)
+            
+    @property
+    def current_mask_annotation(self) -> Optional[MaskAnnotation]:
+        """A helper property to get the MaskAnnotation for the currently active image."""
+        if not self.current_image_path:
+            return None
+        raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+        if not raster:
+            return None
+        
+        # This will get the existing mask or create it on the first call
+        project_labels = self.main_window.label_window.labels
+        mask_annotation = raster.get_mask_annotation(project_labels)
+
+        # If the mask exists but its visual item hasn't been added to the scene, create it now.
+        # This handles the case where the mask is re-created after being deleted.
+        if mask_annotation and (not mask_annotation.graphics_item or not mask_annotation.graphics_item.scene()):
+            mask_annotation.create_graphics_item(self.scene)
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.setZValue(-5)  # Ensure it's layered correctly below annotations
+
+        return mask_annotation
+
+    def rasterize_annotations(self):
+        """
+        Tells the current mask_annotation to rasterize all vector annotations
+        for the current image onto itself.
+        """
+        if not self.current_mask_annotation:
+            return
+
+        annotations = self.get_image_annotations()
+        if not annotations:
+            return
+            
+        # The MaskAnnotation now handles all the complex logic internally.
+        self.current_mask_annotation.rasterize_annotations(annotations)
+        
+    def unrasterize_annotations(self):
+        """
+        Tells the current mask_annotation to clear all rasterized vector data.
+        """
+        if self.current_mask_annotation:
+            self.current_mask_annotation.unrasterize_annotations()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
@@ -745,7 +888,10 @@ class AnnotationWindow(QGraphicsView):
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
-        # Crop annotations (if image_path and annotations are provided, they are used)
+        # First load the mask annotation if it exists
+        self.load_mask_annotation()
+        
+        # Then crop annotations (if image_path and annotations are provided, they are used)
         annotations = self.crop_annotations(image_path, annotations)
 
         if not len(annotations):
@@ -783,6 +929,28 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.close()
 
         QApplication.processEvents()
+        self.viewport().update()
+        
+    def load_mask_annotation(self):
+        """Load the mask annotation for the current image, if it exists."""
+        if not self.current_image_path:
+            return
+
+        mask_annotation = self.current_mask_annotation
+        if not mask_annotation:
+            return
+
+        # Remove the graphics item from its current scene if it exists
+        if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
+            mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
+
+        # Create the graphics item (scene previously cleared)
+        mask_annotation.create_graphics_item(self.scene)
+        # Set the Z-value to be above the base image but below annotations
+        if mask_annotation.graphics_item:
+            mask_annotation.graphics_item.setZValue(-5)
+
+        # Update the view
         self.viewport().update()
 
     def get_image_annotations(self, image_path=None):
@@ -961,6 +1129,15 @@ class AnnotationWindow(QGraphicsView):
             # If all annotations were deleted, remove the image path from the dictionary
             if not self.image_annotations_dict.get(image_path, []):
                 del self.image_annotations_dict[image_path]
+            
+        # Clear the mask_annotation to ensure semantic segmentation data is reset
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+        if raster:
+            raster.delete_mask_annotation()
+        
+        # Always update the viewport
+        self.scene.update()
+        self.viewport().update()
 
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""

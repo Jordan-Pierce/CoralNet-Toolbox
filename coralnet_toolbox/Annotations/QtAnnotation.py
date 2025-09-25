@@ -195,9 +195,11 @@ class Annotation(QObject):
         if self.graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            self.graphics_item.setBrush(QBrush(color))
-            
-            self.graphics_item.setPen(self._create_pen(color))
+            # Only set brush and pen if the item supports them (e.g., shape items, not pixmaps)
+            if hasattr(self.graphics_item, 'setBrush'):
+                self.graphics_item.setBrush(QBrush(color))
+            if hasattr(self.graphics_item, 'setPen'):
+                self.graphics_item.setPen(self._create_pen(color))
             
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
