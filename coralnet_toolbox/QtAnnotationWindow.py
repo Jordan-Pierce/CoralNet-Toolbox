@@ -237,13 +237,19 @@ class AnnotationWindow(QGraphicsView):
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and update the UI layers for the correct editing mode."""
+        
+        if tool not in self.tools:
+            return  # Invalid tool, do nothing
+        
+        previous_tool = self.selected_tool  # Track the previous tool for mode comparison
+        
         if self.selected_tool:
             self.tools[self.selected_tool].stop_current_drawing()
             self.tools[self.selected_tool].deactivate()
-        
         self.selected_tool = tool
         
-        if self.selected_tool in self.mask_tools:
+        # Only enter mask mode if switching from a non-mask tool (or no tool) to a mask tool
+        if self.selected_tool in self.mask_tools and (not previous_tool or previous_tool not in self.mask_tools):
             # --- ENTERING MASK EDITING MODE ---
             # Cache and rasterize existing vector annotations onto the mask layer.
             self.rasterized_annotations_cache = self.get_image_annotations()
@@ -261,7 +267,9 @@ class AnnotationWindow(QGraphicsView):
             for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
                     annotation.set_visibility(False)
-        else:
+        
+        # Only exit mask mode if switching from a mask tool to a non-mask tool
+        elif self.selected_tool not in self.mask_tools and previous_tool and previous_tool in self.mask_tools:
             # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
             # Unrasterize the vector annotations from the mask layer
             self.unrasterize_annotations()
@@ -282,7 +290,7 @@ class AnnotationWindow(QGraphicsView):
         
         self.unselect_annotations()
         self.toggle_cursor_annotation()
-
+        
     def set_selected_label(self, label):
         """Set the currently selected label and update selected annotations if needed."""
         # Make cursor busy
