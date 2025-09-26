@@ -117,6 +117,7 @@ class MaskAnnotation(Annotation):
         self.annotation_size = int(max(width, height))
 
     def _update_qimage(self, full_update=True, update_rect=None):
+        """Update the QImage used for rendering the mask overlay."""
         height, width = self.mask_data.shape
         max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
         color_map = np.zeros((max_id + 1, 4), dtype=np.uint8)
@@ -251,7 +252,7 @@ class MaskAnnotation(Annotation):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.transparency != transparency:
             self.transparency = transparency
-            self.update_graphics_item()
+            # self.update_graphics_item()  # TODO Fix?
             
     def remove_from_scene(self):
         """Removes the graphics item from its scene, if it exists."""

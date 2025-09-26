@@ -382,7 +382,7 @@ class AnnotationWindow(QGraphicsView):
             annotation.set_visibility(True)
             # Update transparency to match active label
             active_label = self.main_window.label_window.active_label
-            if active_label:
+            if active_label and not isinstance(annotation, MaskAnnotation):  # TODO Fix?
                 annotation.update_transparency(active_label.transparency)
         else:
             # Hide the annotation
