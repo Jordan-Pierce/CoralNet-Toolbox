@@ -27,7 +27,8 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Add color palette for consistent tracking colors
-TRACKING_COLORS = sv.ColorPalette.from_hex(["#E6194B", 
+TRACKING_COLORS = sv.ColorPalette.from_hex(["#FFFFFF",
+                                            "#E6194B", 
                                             "#3CB44B", 
                                             "#FFE119", 
                                             "#3C76D1", 
@@ -197,14 +198,14 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
         color: sv.Color = sv.Color.RED,
         thickness: int = 2,
         text_color: sv.Color = sv.Color.BLACK,
-        text_scale: float = 0.7,
+        text_scale: float = 0.7,  # Increased from 0.4 for larger font
         text_thickness: int = 2,
         text_padding: int = 10,
         show_current_count: bool = True,
         opacity: float = 0,
         show_zone_id: bool = True,
         show_cumulative_count: bool = True,
-        show_entry_exit: bool = True,  # NEW: Show entry/exit counts
+        show_entry_exit: bool = True,
         text_position: str = "top_left"
     ):
         """
@@ -326,13 +327,21 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
             rect_x2 = start_x + max_width // 2 + self.text_padding
             rect_y2 = start_y + total_height // 2 + self.text_padding
         
-        # Draw semi-transparent background using the zone's color
-        overlay = annotated_scene.copy()
-        # Use the zone's color for the background with slight brightening to improve readability
-        bg_color = self.color.as_bgr()
-        cv2.rectangle(overlay, (rect_x1, rect_y1), (rect_x2, rect_y2), bg_color, -1)
-        # Apply transparency (0.7 = 70% original image, 0.3 = 30% overlay)
-        annotated_scene = cv2.addWeighted(annotated_scene, 0.7, overlay, 0.3, 0)
+        # Clip the background rectangle to the zone's bounding box to prevent bleeding outside
+        rect_x1 = max(rect_x1, min_x)
+        rect_y1 = max(rect_y1, min_y)
+        rect_x2 = min(rect_x2, max_x)
+        rect_y2 = min(rect_y2, max_y)
+        
+        # Only draw the background if it has valid dimensions
+        if rect_x2 > rect_x1 and rect_y2 > rect_y1:
+            # Draw semi-transparent background using the zone's color
+            overlay = annotated_scene.copy()
+            # Use the zone's color for the background with slight brightening to improve readability
+            bg_color = self.color.as_bgr()
+            cv2.rectangle(overlay, (rect_x1, rect_y1), (rect_x2, rect_y2), bg_color, -1)
+            # Apply transparency (0.7 = 70% original image, 0.3 = 30% overlay)
+            annotated_scene = cv2.addWeighted(annotated_scene, 0.7, overlay, 0.3, 0)
         
         # Draw each line of text
         current_y = start_y
@@ -443,7 +452,7 @@ class RegionZoneManager:
                 zone=zone,
                 color=zone_color,
                 thickness=1,
-                text_scale=0.4,
+                text_scale=0.7,  # Increased from 0.4 for larger font
                 opacity=0.1,
                 text_position="top_left"
             )
@@ -891,4 +900,3 @@ class InferenceEngine:
         self.model = None
         torch.cuda.empty_cache()
         gc.collect()
-            

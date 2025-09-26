@@ -75,7 +75,6 @@ from coralnet_toolbox.MachineLearning import (
     BatchClassify as ClassifyBatchInferenceDialog,
     BatchDetect as DetectBatchInferenceDialog,
     BatchSegment as SegmentBatchInferenceDialog,
-    VideoClassify as ClassifyVideoInferenceDialog,
     VideoDetect as DetectVideoInferenceDialog,
     VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
@@ -256,7 +255,6 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.classify_video_inference_dialog = ClassifyVideoInferenceDialog(self)
         self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
         self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
@@ -591,10 +589,6 @@ class MainWindow(QMainWindow):
         
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
-        # Video Inference Classification
-        self.ml_classify_video_inference_action = QAction("Classify", self)
-        self.ml_classify_video_inference_action.triggered.connect(self.open_classify_video_inference_dialog)
-        # self.ml_video_inference_menu.addAction(self.ml_classify_video_inference_action)  TODO
         # Video Inference Detection
         self.ml_detect_video_inference_action = QAction("Detect", self)
         self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)
