@@ -257,30 +257,21 @@ class AnnotationWindow(QGraphicsView):
                 self.rasterize_annotations()
 
             self.unselect_annotations()  # Clear any selected vector annotations
-            if self.current_mask_annotation and self.current_mask_annotation.graphics_item:
-                # Update mask transparency based on current transparency
-                active_label = self.main_window.label_window.active_label
-                transparency = active_label.transparency if active_label else 128
-                self.set_mask_transparency(transparency)
             
             # Hide the vector annotations that were just rasterized
             for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
-                    annotation.set_visibility(False)
+                    self.set_annotation_visibility(annotation, force_visibility=False)
         
         # Only exit mask mode if switching from a mask tool to a non-mask tool
         elif self.selected_tool not in self.mask_tools and previous_tool and previous_tool in self.mask_tools:
             # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
             # Unrasterize the vector annotations from the mask layer
             self.unrasterize_annotations()
-            # Get current transparency
-            active_label = self.main_window.label_window.active_label
-            transparency = active_label.transparency if active_label else 128
             # Restore visibility to the cached vector annotations
             for annotation in self.rasterized_annotations_cache:
                 if annotation.graphics_item_group:
-                    annotation.set_visibility(True)
-                    annotation.update_transparency(transparency)
+                    self.set_annotation_visibility(annotation, force_visibility=True)
 
             # Clear the cache
             self.rasterized_annotations_cache = []
@@ -370,15 +361,30 @@ class AnnotationWindow(QGraphicsView):
             # Emit that the annotation size has changed
             self.annotationSizeChanged.emit(self.annotation_size)
             
-    def set_annotation_visibility(self, annotation):
-        """Set the visibility of an annotation and update its graphics item."""
-        # Set visibility based on hide button state
-        if self.main_window.hide_action.isChecked():
-            # Hide button is pressed - hide the annotation
-            annotation.set_visibility(False)
+    def set_annotation_visibility(self, annotation, force_visibility=None):
+        """Set the visibility of an annotation and update its graphics item.
+        
+        Args:
+            annotation: The annotation to update
+            force_visibility: If provided, force this visibility state regardless of hide button.
+                            If None, use hide button state.
+        """
+        # Determine visibility based on force_visibility or hide button state
+        if force_visibility is not None:
+            visible = force_visibility
         else:
-            # Hide button is not pressed - show the annotation
+            visible = not self.main_window.hide_action.isChecked()
+        
+        if visible:
+            # Show the annotation
             annotation.set_visibility(True)
+            # Update transparency to match active label
+            active_label = self.main_window.label_window.active_label
+            if active_label:
+                annotation.update_transparency(active_label.transparency)
+        else:
+            # Hide the annotation
+            annotation.set_visibility(False)
             
     def set_label_visibility(self, visible):
         """Set the visibility for all labels."""
@@ -386,20 +392,12 @@ class AnnotationWindow(QGraphicsView):
         self.blockSignals(True)
         try:
             for annotation in self.annotations_dict.values():
-                self.set_annotation_visibility(annotation)
+                self.set_annotation_visibility(annotation, force_visibility=visible)
         finally:
             self.blockSignals(False)
     
         self.scene.update()
         self.viewport().update()
-        
-    def set_mask_transparency(self, transparency):
-        """Update the mask annotation's transparency to reflect the current transparency value."""
-        transparency = max(0, min(255, transparency))  # Clamp to valid range
-        if self.current_mask_annotation:
-            # Update the mask's transparency attribute and re-render the pixmap
-            self.current_mask_annotation.update_transparency(transparency)
-            self.current_mask_annotation.update_graphics_item()
         
     def is_annotation_moveable(self, annotation):
         """Check if an annotation can be moved and show a warning if not."""
@@ -548,13 +546,6 @@ class AnnotationWindow(QGraphicsView):
         # This will get the existing mask or create it on the first call
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
-
-        # If the mask exists but its visual item hasn't been added to the scene, create it now.
-        # This handles the case where the mask is re-created after being deleted.
-        if mask_annotation and (not mask_annotation.graphics_item or not mask_annotation.graphics_item.scene()):
-            mask_annotation.create_graphics_item(self.scene)
-            if mask_annotation.graphics_item:
-                mask_annotation.graphics_item.setZValue(-5)  # Ensure it's layered correctly below annotations
 
         return mask_annotation
 

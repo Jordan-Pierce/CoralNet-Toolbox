@@ -305,8 +305,6 @@ class MainWindow(QMainWindow):
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
-        # Connect to transparency changes to update mask opacity dynamically
-        self.label_window.transparencyChanged.connect(self.annotation_window.set_mask_transparency)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
@@ -1714,14 +1712,9 @@ class MainWindow(QMainWindow):
 
     def update_label_transparency(self, value):
         """Update the label transparency value in LabelWindow, AnnotationWindow and the Slider"""
-        if self.explorer_window:
-            return  # TODO (Consider removing) Do not update transparency if explorer window is open
+        # Clamp value between 0 and 255
+        value = max(0, min(255, value))
         
-        value = max(0, min(255, value))  # Clamp to valid range
-        
-        # Explicitly tell the annotation window to update its mask transparency.
-        self.annotation_window.set_mask_transparency(value)
-
         if self.all_labels_button.isChecked():
             # Set transparency for all labels in LabelWindow, AnnotationWindow
             self.label_window.set_all_labels_transparency(value)

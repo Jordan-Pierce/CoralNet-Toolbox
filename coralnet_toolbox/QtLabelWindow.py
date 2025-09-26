@@ -661,7 +661,7 @@ class LabelWindow(QWidget):
         # Update filter bars and label count
         self.update_label_count()
         self.main_window.image_window.update_search_bars()
-        self.annotation_window.update_mask_label_map()
+        self.sync_all_masks_with_labels()
         QApplication.processEvents()
 
         return label
@@ -707,6 +707,9 @@ class LabelWindow(QWidget):
                 for annotation in self.annotation_window.annotations_dict.values():
                     if annotation.label.id == self.active_label.id:
                         annotation.update_transparency(transparency)
+                
+                # Update mask transparency
+                self.set_mask_transparency(transparency)
             finally:
                 self.annotation_window.blockSignals(False)
     
@@ -726,11 +729,28 @@ class LabelWindow(QWidget):
     
             for annotation in self.annotation_window.annotations_dict.values():
                 annotation.update_transparency(transparency)
+            
+            # Update mask transparency
+            self.set_mask_transparency(transparency)
         finally:
             self.annotation_window.blockSignals(False)
     
         self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
+
+    def sync_all_masks_with_labels(self):
+        """Sync all existing mask annotations with the current project labels."""
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            if raster.mask_annotation:
+                raster.mask_annotation.sync_label_map(self.labels)
+
+    def set_mask_transparency(self, transparency):
+        """Update the mask annotation's transparency for the current image."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
+        mask = self.annotation_window.current_mask_annotation
+        if mask:
+            mask.update_transparency(transparency)
+            mask.update_graphics_item()
 
     def deselect_active_label(self):
         """Deselect the currently active label."""
@@ -915,6 +935,7 @@ class LabelWindow(QWidget):
         # Force a repaint of the label widget itself and reorganize the grid
         label_to_update.update()
         self.reorganize_labels()
+        self.sync_all_masks_with_labels()
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
     def merge_labels(self, source_label, target_label):
@@ -970,7 +991,7 @@ class LabelWindow(QWidget):
             self.annotation_window.set_image(current_image_path)
             self.update_annotation_count()
             
-        self.annotation_window.update_mask_label_map()
+        self.sync_all_masks_with_labels()
 
         # After the merge, refresh the view of the currently displayed mask.
         current_mask = self.annotation_window.current_mask_annotation
@@ -1054,7 +1075,7 @@ class LabelWindow(QWidget):
             self.main_window.image_window.update_image_annotations(image_path)
             
         # Update the label map in the annotation window
-        self.annotation_window.update_mask_label_map()
+        self.sync_all_masks_with_labels()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
