@@ -237,7 +237,13 @@ Examples:
         action='store_true',
         help='Show all visualization windows (result, depth, detection). By default, only the result frame is shown.'
     )
-    
+
+    # Add --no-depth-viz argument
+    parser.add_argument(
+        '--no-depth-viz',
+        action='store_true',
+        help='Disable depth map visualization into the output frame (depth is still used for processing).'
+    )
     
     return parser.parse_args()
 
@@ -286,8 +292,9 @@ def main():
     # Feature toggles
     enable_tracking = not args.no_tracking
     enable_bev = not args.no_bev
+    enable_depth = not args.no_depth_viz
     enable_display = not args.no_display
-    show_all_frames = args.yes_display
+    show_all_frames = args.yes_display and not args.no_depth_viz
     
     # Frame range parameters
     start_frame = args.start_at
@@ -632,35 +639,36 @@ def main():
             cv2.putText(result_frame, text, (x_offset, y_offset),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # Add depth map to the corner of the result frame
-            try:
-                # Calculate depth map dimensions based on frame size
-                depth_size_factor = 0.25  # Percentage of frame height
-                depth_height = int(height * depth_size_factor)
-                
-                # Maintain original aspect ratio
-                depth_aspect_ratio = width / height
-                depth_width = int(depth_height * depth_aspect_ratio)
-                
-                # Make sure depth visualization doesn't exceed 1/3 of the frame width
-                if depth_width > width // 3:
-                    depth_width = width // 3
-                    depth_height = int(depth_width / depth_aspect_ratio)
-                
-                # Resize depth map
-                depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
-                
-                # Overlay on the top-left corner
-                result_frame[0:depth_height, 0:depth_width] = depth_resized
-                
-                # Add a border around the depth visualization
-                cv2.rectangle(result_frame, 
-                              (0, 0), 
-                              (depth_width, depth_height), 
-                              (255, 255, 255), 1)
-                
-            except Exception as e:
-                print(f"Error adding depth map to result: {e}")
+            # Add depth map to the corner of the result frame if enabled
+            if enable_depth:
+                try:
+                    # Calculate depth map dimensions based on frame size
+                    depth_size_factor = 0.25  # Percentage of frame height
+                    depth_height = int(height * depth_size_factor)
+                    
+                    # Maintain original aspect ratio
+                    depth_aspect_ratio = width / height
+                    depth_width = int(depth_height * depth_aspect_ratio)
+                    
+                    # Make sure depth visualization doesn't exceed 1/3 of the frame width
+                    if depth_width > width // 3:
+                        depth_width = width // 3
+                        depth_height = int(depth_width / depth_aspect_ratio)
+                    
+                    # Resize depth map
+                    depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
+                    
+                    # Overlay on the top-left corner
+                    result_frame[0:depth_height, 0:depth_width] = depth_resized
+                    
+                    # Add a border around the depth visualization
+                    cv2.rectangle(result_frame, 
+                                  (0, 0), 
+                                  (depth_width, depth_height), 
+                                  (255, 255, 255), 1)
+                    
+                except Exception as e:
+                    print(f"Error adding depth map to result: {e}")
             
             # Write frame to output video (only if writer is valid)
             if out is not None and out.isOpened():
@@ -670,7 +678,9 @@ def main():
             if enable_display:
                 cv2.imshow("3D Object Detection", result_frame)
                 if show_all_frames:
-                    cv2.imshow("Depth Map", depth_colored)
+                    # Only show depth map if not disabled
+                    if enable_depth:
+                        cv2.imshow("Depth Map", depth_colored)
                     cv2.imshow("Object Detection", detection_frame)
                     
             # Check for key press again at the end of the loop
