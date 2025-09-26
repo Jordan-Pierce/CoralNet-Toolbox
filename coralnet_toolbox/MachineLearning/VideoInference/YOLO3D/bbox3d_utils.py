@@ -379,7 +379,7 @@ class BBox3DEstimator:
         
         return corners_2d.T
     
-    def draw_box_3d(self, image, box_3d, color=(0, 255, 0), thickness=2):
+    def draw_box_3d(self, image, box_3d, color=(0, 255, 0), thickness=1):
         """
         Draw enhanced 3D bounding box on image with better depth perception
         
@@ -387,7 +387,7 @@ class BBox3DEstimator:
             image (numpy.ndarray): Image to draw on
             box_3d (dict): 3D bounding box parameters
             color (tuple): Color in BGR format
-            thickness (int): Line thickness
+            thickness (int): Line thickness (default: 1 for thinner boxes)
             
         Returns:
             numpy.ndarray: Image with 3D box drawn
@@ -498,10 +498,9 @@ class BBox3DEstimator:
         # Draw a vertical line from the bottom of the box to the ground
         # This helps with depth perception
         ground_y = y2 + int(height * 0.2)  # A bit below the bottom of the box
-        cv2.line(image, (int((x1 + x2) / 2), y2), (int((x1 + x2) / 2), ground_y), color, thickness)
-        
+        cv2.line(image, (int((x1 + x2) / 2), y2), (int((x1 + x2) / 2), ground_y), color, 1)
         # Draw a small circle at the bottom to represent the ground contact point
-        cv2.circle(image, (int((x1 + x2) / 2), ground_y), thickness * 2, color, -1)
+        cv2.circle(image, (int((x1 + x2) / 2), ground_y), 2, color, -1)
         
         return image
     
