@@ -197,8 +197,8 @@ class BBox3DEstimator:
             box_3d['location'][1],
             box_3d['location'][2],
             box_3d['dimensions'][1],  # width
-            box_3d['dimensions'][0],  # height
-            box_3d['dimensions'][2],  # length
+            box_3d['dimensions'][2],  # height
+            box_3d['dimensions'][0],  # length
             box_3d['orientation'],
             0, 0, 0, 0  # Initial velocities
         ])
@@ -264,8 +264,8 @@ class BBox3DEstimator:
             box_3d['location'][1],
             box_3d['location'][2],
             box_3d['dimensions'][1],  # width
-            box_3d['dimensions'][0],  # height
-            box_3d['dimensions'][2],  # length
+            box_3d['dimensions'][2],  # height
+            box_3d['dimensions'][0],  # length
             box_3d['orientation']
         ])
         
@@ -485,7 +485,7 @@ class BBox3DEstimator:
 
         # Draw volume if dimensions are valid
         if volume is not None:
-            cv2.putText(image, f"V:{volume:.5f} mm³", (x1, text_y), 
+            cv2.putText(image, f"V:{(volume * 1000000):.1f} cm3", (x1, text_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
             text_y -= 12
 

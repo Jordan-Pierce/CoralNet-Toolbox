@@ -479,6 +479,11 @@ def main():
     
     print("Starting processing...")
     
+    # Variables for cumulative volume calculation
+    cumulative_volume_m3 = 0.0
+    previous_tracked_ids = set()
+    track_data = {}  # Stores the last known data (e.g., volume) for each track ID
+    
     # Main loop
     current_frame = 0
     while True:
@@ -536,6 +541,23 @@ def main():
                 depth_colored = np.zeros((height, width, 3), dtype=np.uint8)
                 cv2.putText(depth_colored, "Depth Error", (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                
+            if enable_tracking:
+                # Get the set of currently active track IDs from this frame's detections
+                current_tracked_ids = {det[3] for det in detections if det[3] is not None}
+
+                # Determine which IDs have disappeared since the last frame
+                disappeared_ids = previous_tracked_ids - current_tracked_ids
+
+                # For each disappeared track, add its last known volume to the cumulative total
+                if disappeared_ids:
+                    for track_id in disappeared_ids:
+                        if track_id in track_data:
+                            cumulative_volume_m3 += track_data[track_id]['volume']
+                            del track_data[track_id]  # Clean up the old track data
+
+                # Update the set of previous IDs for the next frame's comparison
+                previous_tracked_ids = current_tracked_ids
             
             # Step 3: 3D Bounding Box Estimation
             boxes_3d = []
@@ -571,6 +593,7 @@ def main():
                     
                     # Keep track of active IDs for tracker cleanup
                     if obj_id is not None:
+                        track_data[obj_id] = {'volume': box_3d['volume']}
                         active_ids.append(obj_id)
                         
                 except Exception as e:
@@ -579,7 +602,7 @@ def main():
             
             # Clean up trackers for objects that are no longer detected
             bbox3d_estimator.cleanup_trackers(active_ids)
-            
+                
             # Step 4: Visualization
             # Draw boxes on the result frame
             for box_3d in boxes_3d:
@@ -645,12 +668,19 @@ def main():
                 detector.all_tracks_seen.update(detector.tracking_trajectories.keys())
                 total_tracks = len(detector.all_tracks_seen)
                 text_tracks = f"Tracks Current: {current_tracks} | Total: {total_tracks}"
+                
+            # Calculate volume statistics
+            text_volume = ""
+            if boxes_3d:
+                # Only count volumes for currently tracked objects (those with object_id)
+                text_volume = f"Cumulative Vol: {(cumulative_volume_m3):.1f} m3"
 
             # Calculate text size for right alignment
             (text_width_main, text_height_main), _ = cv2.getTextSize(text_main, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
             (text_width_tracks, text_height_tracks), _ = cv2.getTextSize(text_tracks, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            box_width = max(text_width_main, text_width_tracks) + 24  # padding
-            box_height = text_height_main + text_height_tracks + 32  # padding and gap
+            (text_width_volume, text_height_volume), _ = cv2.getTextSize(text_volume, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            box_width = max(text_width_main, text_width_tracks, text_width_volume) + 24  # padding
+            box_height = text_height_main + text_height_tracks + text_height_volume + 40  # padding and gaps
 
             # Calculate position dynamically based on frame size - top-right corner
             margin_x = int(width * 0.00)  # 0% from right edge
@@ -660,10 +690,11 @@ def main():
             x_offset = box_x1 + 12  # 12px left padding inside box
 
             # Calculate vertical centering for text
-            total_text_height = text_height_main + text_height_tracks + 8  # gap
+            total_text_height = text_height_main + text_height_tracks + text_height_volume + 16  # gaps
             center_y = box_y1 + box_height / 2
             y_offset_main = int(center_y - total_text_height / 2 + text_height_main)
             y_offset_tracks = int(y_offset_main + text_height_main + 8)  # 8px gap between lines
+            y_offset_volume = int(y_offset_tracks + text_height_tracks + 8)  # 8px gap between lines
 
             # Draw semi-transparent white box behind the text
             overlay = result_frame.copy()
@@ -679,6 +710,10 @@ def main():
             # Place tracks info below main text
             if enable_tracking:
                 cv2.putText(result_frame, text_tracks, (x_offset, y_offset_tracks),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            # Place volume info below tracks text
+            if text_volume:
+                cv2.putText(result_frame, text_volume, (x_offset, y_offset_volume),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
             # Add depth map to the corner of the result frame if enabled
