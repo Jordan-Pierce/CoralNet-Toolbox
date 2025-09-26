@@ -111,25 +111,6 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         self.cropped_bbox = (0, 0, width, height)
         self.annotation_size = int(max(width, height))
-
-    # def _update_qimage(self, full_update=True, update_rect=None):
-    #     """Update the QImage used for rendering the mask overlay."""
-    #     height, width = self.mask_data.shape
-    #     max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
-    #     color_map = np.zeros((max_id + 1, 4), dtype=np.uint8)
-    #     for class_id, label in self.class_id_to_label_map.items():
-    #         color = label.color
-    #         color_map[class_id] = [color.red(), color.green(), color.blue(), self.transparency]
-
-    #     real_class_ids = self.mask_data % self.LOCK_BIT
-    #     if full_update or self.colored_mask is None:
-    #         self.colored_mask = color_map[real_class_ids]
-    #         self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
-    #     else:
-    #         # Update only the specified rect
-    #         if update_rect:
-    #             x1, y1, x2, y2 = update_rect
-    #             self.colored_mask[y1:y2, x1:x2] = color_map[real_class_ids[y1:y2, x1:x2]]
                 
     def _update_qimage(self, full_update=True, update_rect=None):
         """Update the QImage used for rendering the mask overlay."""
