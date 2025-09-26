@@ -159,7 +159,6 @@ class MainWindow(QMainWindow):
         self.hide_icon = get_icon("hide.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
-        self.all_icon = get_icon("all.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -939,26 +938,11 @@ class MainWindow(QMainWindow):
         opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
         opaque_icon.setToolTip("Opaque")
 
-        # Add an action to select all next to the transparency slider
-        self.all_labels_action = QAction(self.all_icon, "", self)
-        self.all_labels_action.setCheckable(True)
-        self.all_labels_action.setChecked(True)
-        self.all_labels_action.triggered.connect(self.update_label_transparency)
-        
-        # Create button to hold the action
-        self.all_labels_button = QToolButton()
-
-        # Set tooltip on both the action and button to ensure it shows
-        self.all_labels_action.setToolTip("Select All Labels")
-        self.all_labels_button.setToolTip("Select All Labels")
-        self.all_labels_button.setDefaultAction(self.all_labels_action)
-
         # Add widgets to the transparency layout
         transparency_layout.addWidget(self.hide_button)
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
-        transparency_layout.addWidget(self.all_labels_button)
 
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
@@ -1190,6 +1174,49 @@ class MainWindow(QMainWindow):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragMoveEvent(event)
+                
+    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
+        """
+        Modular method to enable/disable widgets and actions in the main window.
+        - enable_list: list of widgets/actions to enable
+        - disable_list: list of widgets/actions to disable
+        If both are None, enables everything.
+        """
+        # All main widgets/actions to consider
+        all_widgets = [
+            self.toolbar,
+            self.menu_bar,
+            self.image_window,
+            self.label_window,
+            self.confidence_window,
+            self.annotation_window,
+            # Status bar widgets
+            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
+        ]
+        # Remove None entries (in case any status bar slot is empty)
+        all_widgets = [w for w in all_widgets if w is not None]
+
+        # If neither list is provided, enable everything
+        if enable_list is None and disable_list is None:
+            for w in all_widgets:
+                w.setEnabled(True)
+            return
+
+        # Disable everything by default
+        for w in all_widgets:
+            w.setEnabled(False)
+            
+        # Enable specified widgets/actions
+        if enable_list:
+            for w in enable_list:
+                if w is not None:
+                    w.setEnabled(True)
+                    
+        # Disable specified widgets/actions (overrides enable if both present)
+        if disable_list:
+            for w in disable_list:
+                if w is not None:
+                    w.setEnabled(False)
                 
     def switch_back_to_tool(self):
         """Switches back to the tool used to create the currently selected annotation."""        
@@ -1685,16 +1712,54 @@ class MainWindow(QMainWindow):
         self.view_dimensions_label.setText(f"View: {height} x {width}")
         
     def toggle_annotations_visibility(self, hide):
-        """Toggle the visibility of annotations based on the hide button state."""
-        # Toggle the visibility of annotations in AnnotationWindow and LabelWindow
-        self.annotation_window.set_label_visibility(not hide)
+        """Toggle the visibility of annotations based on the hide button state and linked labels."""
+        # Determine the desired visibility state for linked items
+        is_visible_for_linked = not hide
 
+        # Get the list of all labels that are linked via their checkbox
+        linked_labels = self.label_window.get_linked_labels()
+        linked_label_ids = {label.id for label in linked_labels}
+
+        if not linked_label_ids:
+            return  # Do nothing if no labels are linked
+
+        self.annotation_window.blockSignals(True)
+        try:
+            # 1. Toggle visibility for all VECTOR annotations associated with the linked labels
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id in linked_label_ids:
+                    self.annotation_window.set_annotation_visibility(annotation, force_visibility=is_visible_for_linked)
+
+            # 2. Update per-label visibility for the MASK annotation
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                # Get the mask's current set of visible labels
+                current_mask_visible_ids = mask.visible_label_ids.copy()
+
+                if hide:
+                    # If hiding, remove the linked labels from the visible set
+                    new_mask_visible_ids = current_mask_visible_ids - linked_label_ids
+                else:
+                    # If showing, add the linked labels to the visible set
+                    new_mask_visible_ids = current_mask_visible_ids | linked_label_ids
+                
+                # Pass the new complete set of visible IDs to the mask
+                mask.update_visible_labels(new_mask_visible_ids)
+
+        finally:
+            self.annotation_window.blockSignals(False)
+
+        # Update the button's tooltip
         if hide:
             self.hide_action.setToolTip("Show Annotations")
             self.hide_button.setToolTip("Show Annotations")
         else:
             self.hide_action.setToolTip("Hide Annotations")
             self.hide_button.setToolTip("Hide Annotations")
+            
+        # Refresh the scene to show all changes
+        self.annotation_window.scene.update()
+        self.annotation_window.viewport().update()
 
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
@@ -1705,23 +1770,46 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
-        """Update the label transparency value in LabelWindow, AnnotationWindow and the Slider"""
+        """Update the transparency for all labels and annotations where the checkbox is checked."""
         # Clamp value between 0 and 255
         value = max(0, min(255, value))
         
-        if self.all_labels_button.isChecked():
-            # Set transparency for all labels in LabelWindow, AnnotationWindow
-            self.label_window.set_all_labels_transparency(value)
-        else:
-            # Set transparency for the active label in LabelWindow, AnnotationWindow
-            self.label_window.set_active_label_transparency(value)
+        # Get the list of all labels that are linked to the slider via their checkbox
+        linked_labels = self.label_window.get_linked_labels()
+        if not linked_labels:
+            return  # No labels are linked, so do nothing
+
+        # Create a set of linked label IDs for efficient lookup
+        linked_label_ids = {label.id for label in linked_labels}
+
+        # Block signals for a smoother batch update
+        self.annotation_window.blockSignals(True)
+        try:
+            # 1. Update the Label widgets themselves
+            for label in linked_labels:
+                label.update_transparency(value)
+
+            # 2. Update all vector annotations associated with the linked labels
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id in linked_label_ids:
+                    annotation.update_transparency(value)
             
-        # Update the slider value
+            # 3. Update the global transparency of the mask annotation layer
+            self.label_window.set_mask_transparency(value)
+
+        finally:
+            self.annotation_window.blockSignals(False)
+            
+        # Update the slider's position to match the value
         self.update_transparency_slider(value)
         
-        # Update the transparency in the currently selected tool (if any)
+        # Update the transparency in the currently selected tool (if applicable)
         if self.annotation_window.selected_tool == "see_anything":
             self.annotation_window.tools["see_anything"].update_transparency(value)
+            
+        # Refresh the scene to show all changes
+        self.annotation_window.scene.update()
+        self.annotation_window.viewport().update()
 
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
@@ -1926,49 +2014,6 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
-        """
-        Modular method to enable/disable widgets and actions in the main window.
-        - enable_list: list of widgets/actions to enable
-        - disable_list: list of widgets/actions to disable
-        If both are None, enables everything.
-        """
-        # All main widgets/actions to consider
-        all_widgets = [
-            self.toolbar,
-            self.menu_bar,
-            self.image_window,
-            self.label_window,
-            self.confidence_window,
-            self.annotation_window,
-            # Status bar widgets
-            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
-        ]
-        # Remove None entries (in case any status bar slot is empty)
-        all_widgets = [w for w in all_widgets if w is not None]
-
-        # If neither list is provided, enable everything
-        if enable_list is None and disable_list is None:
-            for w in all_widgets:
-                w.setEnabled(True)
-            return
-
-        # Disable everything by default
-        for w in all_widgets:
-            w.setEnabled(False)
-            
-        # Enable specified widgets/actions
-        if enable_list:
-            for w in enable_list:
-                if w is not None:
-                    w.setEnabled(True)
-                    
-        # Disable specified widgets/actions (overrides enable if both present)
-        if disable_list:
-            for w in disable_list:
-                if w is not None:
-                    w.setEnabled(False)
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
@@ -1988,9 +2033,7 @@ class MainWindow(QMainWindow):
         
         try:
             self.untoggle_all_tools()
-            # Set the transparency value ahead of time
-            self.update_transparency_slider(0)
-            
+
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
             
@@ -2002,7 +2045,8 @@ class MainWindow(QMainWindow):
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
                 enable_list=[self.annotation_window, 
-                             self.label_window],
+                             self.label_window,
+                             self.transparency_widget],
                 disable_list=[self.toolbar, 
                               self.menu_bar, 
                               self.image_window, 
