@@ -549,17 +549,8 @@ def main():
                     class_name = detector.get_class_names()[class_id]
                     
                     # Get depth in the region of the bounding box
-                    # Try different methods for depth estimation
-                    if class_name.lower() in ['person', 'cat', 'dog']:
-                        # For people and animals, use the center point depth
-                        center_x = int((bbox[0] + bbox[2]) / 2)
-                        center_y = int((bbox[1] + bbox[3]) / 2)
-                        depth_value = depth_estimator.get_depth_at_point(depth_map, center_x, center_y)
-                        depth_method = 'center'
-                    else:
-                        # For other objects, use the median depth in the region
-                        depth_value = depth_estimator.get_depth_in_region(depth_map, bbox, method='median')
-                        depth_method = 'median'
+                    depth_value = depth_estimator.get_depth_in_region(depth_map, bbox, method='median')
+                    depth_method = 'median'
                     
                     # Create a simplified 3D box representation
                     box_3d = {
@@ -571,6 +562,11 @@ def main():
                         'score': score
                     }
                     
+                    # Calculate 3D bounding box 
+                    estimated_3d_box = bbox3d_estimator.estimate_3d_box(bbox, depth_value)
+                    
+                    # Add estimated 3D box data
+                    box_3d.update(estimated_3d_box)
                     boxes_3d.append(box_3d)
                     
                     # Keep track of active IDs for tracker cleanup

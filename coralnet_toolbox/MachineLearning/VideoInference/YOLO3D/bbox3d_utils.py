@@ -73,6 +73,7 @@ class BBox3DEstimator:
         
         # Use default dimensions (height, width, length)
         dimensions = self.default_dimensions
+        volume = dimensions[0] * dimensions[1] * dimensions[2]
         
         # Convert depth to distance - use a larger range for better visualization
         distance = 1.0 + depth_value * 9.0
@@ -85,6 +86,7 @@ class BBox3DEstimator:
         
         # Create 3D box
         box_3d = {
+            'volume': volume,
             'dimensions': dimensions,
             'location': location,
             'orientation': orientation,
@@ -464,22 +466,28 @@ class BBox3DEstimator:
         alpha = 0.3  # Transparency factor
         cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
         
-        # Get class name and object ID
-        class_name = box_3d['class_name']
+        # Get object ID
         obj_id = box_3d['object_id'] if 'object_id' in box_3d else None
+        
+        # Calculate volume
+        volume = box_3d['volume'] if 'volume' in box_3d else None
         
         # Draw text information
         text_y = y1 - 10
         font_scale = 0.35  # Reduced font size
         font_thickness = 1
+        
+        # Draw class name if available
         if obj_id is not None:
             cv2.putText(image, f"ID:{obj_id}", (x1, text_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
             text_y -= 12
 
-        cv2.putText(image, class_name, (x1, text_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
-        text_y -= 12
+        # Draw volume if dimensions are valid
+        if volume is not None:
+            cv2.putText(image, f"V:{volume:.5f} mm³", (x1, text_y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+            text_y -= 12
 
         # Get depth information if available
         if 'depth_value' in box_3d:
