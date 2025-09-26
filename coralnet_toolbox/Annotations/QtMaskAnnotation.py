@@ -10,7 +10,7 @@ from skimage.measure import find_contours
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem
 from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
@@ -23,6 +23,21 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class MaskGraphicsItem(QGraphicsItem):
+    def __init__(self, mask_annotation):
+        super().__init__()
+        self.mask_annotation = mask_annotation
+        self.setFlag(QGraphicsItem.ItemUsesExtendedStyleOption, True)
+
+    def boundingRect(self):
+        height, width = self.mask_annotation.mask_data.shape
+        return QRectF(0, 0, width, height)
+
+    def paint(self, painter, option, widget):
+        if self.mask_annotation.qimage:
+            painter.drawImage(0, 0, self.mask_annotation.qimage)
 
 
 class MaskAnnotation(Annotation):
@@ -72,6 +87,9 @@ class MaskAnnotation(Annotation):
         self.offset = QPointF(0, 0)
         self.rasterio_src = rasterio_src
         
+        self.colored_mask = None
+        self.qimage = None
+        
         self.set_centroid()
         self.set_cropped_bbox()
 
@@ -98,24 +116,23 @@ class MaskAnnotation(Annotation):
         self.cropped_bbox = (0, 0, width, height)
         self.annotation_size = int(max(width, height))
 
-    def _render_mask_to_pixmap(self) -> QPixmap:
-        """Converts the numpy mask_data into a colored QPixmap for display."""
+    def _update_qimage(self, full_update=True, update_rect=None):
         height, width = self.mask_data.shape
-        
-        # Create a color map for fast lookup from class ID to RGBA color
         max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
         color_map = np.zeros((max_id + 1, 4), dtype=np.uint8)
         for class_id, label in self.class_id_to_label_map.items():
             color = label.color
             color_map[class_id] = [color.red(), color.green(), color.blue(), self.transparency]
 
-        # Get the real class IDs by removing the lock bit before color mapping.
         real_class_ids = self.mask_data % self.LOCK_BIT
-        colored_mask = color_map[real_class_ids]
-        
-        q_image = QImage(colored_mask.data, width, height, QImage.Format_RGBA8888)
-        
-        return QPixmap.fromImage(q_image)
+        if full_update or self.colored_mask is None:
+            self.colored_mask = color_map[real_class_ids]
+            self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+        else:
+            # Update only the specified rect
+            if update_rect:
+                x1, y1, x2, y2 = update_rect
+                self.colored_mask[y1:y2, x1:x2] = color_map[real_class_ids[y1:y2, x1:x2]]
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if a point is within the mask's classified area."""
@@ -140,97 +157,94 @@ class MaskAnnotation(Annotation):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create a QGraphicsPixmapItem to display the mask."""
-        pixmap = self._render_mask_to_pixmap()
-        self.graphics_item = QGraphicsPixmapItem(pixmap)
-        self.graphics_item.setPos(self.offset)
-        # Directly add to scene without calling super(), as pixmap items don't support setBrush
+        self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
-    def update_graphics_item(self):
+    def update_graphics_item(self, update_rect=None):
         """Update the pixmap if the mask data has changed."""
-        overall_start_time = time.time()
-        
-        if self.graphics_item:
-            start_time = time.time()
-            pixmap = self._render_mask_to_pixmap()
-            end_time = time.time()
-            print(f"_render_mask_to_pixmap took {end_time - start_time:.4f} seconds")
-            start_time = time.time()
-            self.graphics_item.setPixmap(pixmap)
-            end_time = time.time()
-            print(f"self.graphics_item.setPixmap took {end_time - start_time:.4f} seconds")
-
         start_time = time.time()
-        super().update_graphics_item()
-        end_time = time.time()
-        print(f"super().update_graphics_item() took {end_time - start_time:.4f} seconds")
+        print(f"Starting update_graphics_item at {start_time}")
         
-        overall_end_time = time.time()
-        print(f"update_graphics_item took {overall_end_time - overall_start_time:.4f} seconds")
+        self._update_qimage(full_update=update_rect is None, update_rect=update_rect)
+        mid_time = time.time()
+        print(f"After _update_qimage at {mid_time}, elapsed: {mid_time - start_time}")
+        
+        if update_rect:
+            self.graphics_item.update(QRectF(update_rect[0], 
+                                             update_rect[1], 
+                                             update_rect[2] - update_rect[0], 
+                                             update_rect[3] - update_rect[1]))
+        else:
+            self.graphics_item.update()
+        
+        end_time = time.time()
+        print(f"Finished update_graphics_item at {end_time}, total elapsed: {end_time - start_time}")
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """Modify the mask data based on a brush stroke, avoiding locked pixels."""
-        overall_start_time = time.time()
-        
         start_time = time.time()
+        print(f"Starting update_mask at {start_time}")
+        
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
         mask_h, mask_w = self.mask_data.shape
-
+        
+        init_time = time.time()
+        print(f"After initial calculations at {init_time}, elapsed: {init_time - start_time}")
+        
         x_end = min(x_start + brush_w, mask_w)
         y_end = min(y_start + brush_h, mask_h)
         clipped_x_start = max(x_start, 0)
         clipped_y_start = max(y_start, 0)
-
+        
+        clip_time = time.time()
+        print(f"After clipping calculations at {clip_time}, elapsed: {clip_time - init_time}")
+        
         if clipped_x_start >= x_end or clipped_y_start >= y_end:
             return
-        end_time = time.time()
-        print(f"Initial calculations took {end_time - start_time:.4f} seconds")
-
-        start_time = time.time()
-        target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
-        end_time = time.time()
-        print(f"Getting target_slice took {end_time - start_time:.4f} seconds")
         
-        start_time = time.time()
+        target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
+        
+        slice_time = time.time()
+        print(f"After target slice at {slice_time}, elapsed: {slice_time - clip_time}")
+        
         # Find which pixels in the target area are already locked.
         locked_pixels = target_slice >= self.LOCK_BIT
-        end_time = time.time()
-        print(f"Finding locked_pixels took {end_time - start_time:.4f} seconds")
         
-        start_time = time.time()
+        lock_time = time.time()
+        print(f"After finding locked pixels at {lock_time}, elapsed: {lock_time - slice_time}")
+        
         brush_x_offset = clipped_x_start - x_start
         brush_y_offset = clipped_y_start - y_start
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
-        end_time = time.time()
-        print(f"Calculating offsets and clipped_brush_mask took {end_time - start_time:.4f} seconds")
-
-        start_time = time.time()
+        
+        brush_clip_time = time.time()
+        print(f"After clipping brush mask at {brush_clip_time}, elapsed: {brush_clip_time - lock_time}")
+        
         # Subtract the locked pixels from the brush mask. The brush can only paint
         # where the original brush mask is True AND the target pixel is NOT locked.
         final_brush_mask = clipped_brush_mask & ~locked_pixels
-        end_time = time.time()
-        print(f"Computing final_brush_mask took {end_time - start_time:.4f} seconds")
         
-        start_time = time.time()
+        final_mask_time = time.time()
+        print(f"After creating final brush mask at {final_mask_time}, elapsed: {final_mask_time - brush_clip_time}")
+        
         # Apply the final, protected brush mask.
         target_slice[final_brush_mask] = new_class_id
-        end_time = time.time()
-        print(f"Applying the mask took {end_time - start_time:.4f} seconds")
-
-        start_time = time.time()
-        self.update_graphics_item()
-        end_time = time.time()
-        print(f"update_graphics_item took {end_time - start_time:.4f} seconds")
         
-        start_time = time.time()
+        apply_time = time.time()
+        print(f"After applying mask at {apply_time}, elapsed: {apply_time - final_mask_time}")
+        
+        changed_rect = (clipped_x_start, clipped_y_start, x_end, y_end)
+        self.update_graphics_item(update_rect=changed_rect)
+        
+        update_time = time.time()
+        print(f"After update_graphics_item at {update_time}, elapsed: {update_time - apply_time}")
+        
         self.annotationUpdated.emit(self)
-        end_time = time.time()
-        print(f"annotationUpdated.emit took {end_time - start_time:.4f} seconds")
         
-        overall_end_time = time.time()
-        print(f"update_mask took {overall_end_time - overall_start_time:.4f} seconds")
+        end_time = time.time()
+        print(f"Finished update_mask at {end_time}, total elapsed: {end_time - start_time}")
         
     def update_transparency(self, transparency):
         """Update the transparency of the mask annotation and re-render the graphics item."""
@@ -424,8 +438,8 @@ class MaskAnnotation(Annotation):
         """Saves the mask to a PNG file."""
         if use_label_colors:
             # Use rendering logic to create a colored image
-            pixmap = self._render_mask_to_pixmap()
-            pixmap.toImage().save(path)
+            self._update_qimage()
+            self.qimage.save(path)
         else:
             # Save the raw class IDs as a grayscale image
             height, width = self.mask_data.shape
