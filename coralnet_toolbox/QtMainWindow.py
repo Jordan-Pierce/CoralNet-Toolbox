@@ -730,12 +730,15 @@ class MainWindow(QMainWindow):
                       "Create freehand brush annotations by clicking and dragging.\n"
                       "• Left-click and drag to paint brush strokes on the canvas.\n"
                       "• Hold Ctrl and use the mouse wheel to adjust brush size.\n"
+                      "• Press Ctrl + Shift to switch between a circle and square brush shape.\n"
                       "• A semi-transparent preview shows the brush stroke while drawing."),
 
             "erase": ("Erase Tool\n\n"
                       "Erase pixels from mask annotations.\n"
                       "• Left-click and drag to erase pixels.\n"
                       "• Hold Ctrl and use the mouse wheel to adjust eraser size.\n"
+                      "• Press Ctrl + Shift to switch between a circle and square eraser shape.\n"
+                      "• Press Ctrl + (Backspace or Delete) to clear the mask annotation on the current image.\n"
                       "• A semi-transparent preview shows the eraser while drawing."),
 
             "fill": ("Fill Tool\n\n"
@@ -1201,6 +1204,14 @@ class MainWindow(QMainWindow):
         # Get the currently selected tool from AnnotationWindow
         selected_tool = self.annotation_window.get_selected_tool()
         
+        # Semantic-specif annotation tools toggle
+        if selected_tool == 'brush':
+            self.choose_specific_tool('erase')
+            return
+        elif selected_tool == 'erase':
+            self.choose_specific_tool('brush')
+            return
+                
         if selected_tool != "select":
             self.choose_specific_tool("select")
             return
