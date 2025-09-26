@@ -245,6 +245,15 @@ Examples:
         help='Disable depth map visualization into the output frame (depth is still used for processing).'
     )
     
+    # Object dimensions argument
+    parser.add_argument(
+        '--object-dimensions',
+        type=float,
+        nargs=3,
+        default=[1.0, 1.0, 1.0],
+        help='Default dimensions for detected objects [length, width, height] in meters'
+    )
+    
     return parser.parse_args()
 
 
@@ -300,6 +309,9 @@ def main():
     start_frame = args.start_at
     end_frame = args.end_at
     
+    # Object dimensions
+    object_dimensions = args.object_dimensions
+    
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
     # ===============================================
@@ -317,6 +329,7 @@ def main():
     print(f"Tracking: {'enabled' if enable_tracking else 'disabled'}")
     print(f"Bird's Eye View: {'enabled' if enable_bev else 'disabled'}")
     print(f"Display: {'enabled' if enable_display else 'disabled'}")
+    print(f"Object dimensions: {object_dimensions} (L, W, H in meters)")
     
     # Initialize models with the detected device
     print("\nInitializing models...")
@@ -405,7 +418,7 @@ def main():
         
     # Initialize 3D bounding box estimator with default parameters
     # Simplified approach - focus on 2D detection with depth information
-    bbox3d_estimator = BBox3DEstimator()
+    bbox3d_estimator = BBox3DEstimator(default_dimensions=object_dimensions)
     
     # Initialize Bird's Eye View if enabled
     if enable_bev:

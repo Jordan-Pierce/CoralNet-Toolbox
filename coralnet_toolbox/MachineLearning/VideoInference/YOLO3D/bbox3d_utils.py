@@ -33,16 +33,18 @@ class BBox3DEstimator:
     """
     3D bounding box estimation from 2D detections and depth
     """
-    def __init__(self, camera_matrix=None, projection_matrix=None):
+    def __init__(self, camera_matrix=None, projection_matrix=None, default_dimensions=None):
         """
         Initialize the 3D bounding box estimator
         
         Args:
             camera_matrix (numpy.ndarray): Camera intrinsic matrix (3x3)
             projection_matrix (numpy.ndarray): Camera projection matrix (3x4)
+            default_dimensions (list): Default dimensions [length, width, height] for objects
         """
         self.K = camera_matrix if camera_matrix is not None else DEFAULT_K
         self.P = projection_matrix if projection_matrix is not None else DEFAULT_P
+        self.default_dimensions = default_dimensions if default_dimensions is not None else [1.0, 1.0, 1.0]
         
         # Initialize Kalman filters for tracking 3D boxes
         self.kf_trackers = {}
@@ -70,8 +72,7 @@ class BBox3DEstimator:
         center_y = (y1 + y2) / 2
         
         # Use default dimensions (height, width, length)
-        default_dim = 1.0
-        dimensions = [default_dim, default_dim, default_dim]
+        dimensions = self.default_dimensions
         
         # Convert depth to distance - use a larger range for better visualization
         distance = 1.0 + depth_value * 9.0
