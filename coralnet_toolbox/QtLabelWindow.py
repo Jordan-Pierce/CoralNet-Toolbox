@@ -23,15 +23,89 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class LabelDisplay(QWidget):
+    """A widget responsible for the visual rendering and interaction of a label."""
+    selected = pyqtSignal()  # Signal to emit when this display part is selected
+
+    def __init__(self, label_instance, parent=None):
+        super().__init__(parent)
+        self.label = label_instance  # Reference back to the main Label container
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)  # Ensure hover events are captured accurately
+
+    def enterEvent(self, event):
+        """Handle mouse entering the widget."""
+        self.label.is_hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Handle mouse leaving the widget."""
+        self.label.is_hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press events for selection."""
+        # We only care about left-clicks for selection here
+        if event.button() == Qt.LeftButton:
+            self.selected.emit()
+        # Right-clicks are now handled by the main Label widget for drag-and-drop
+        super().mousePressEvent(event)
+        
+    def paintEvent(self, event):
+        """Paint the label widget with a modern look and feel."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+
+        # --- 1. Background Gradient ---
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        base_color = QColor(self.label.color)
+        if self.label.is_hovered:
+            gradient.setColorAt(0, base_color.lighter(130))
+            gradient.setColorAt(1, base_color.lighter(110))
+        else:
+            gradient.setColorAt(0, base_color.lighter(115))
+            gradient.setColorAt(1, base_color)
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(rect)
+
+        # --- 2. Animated Selection Indicator ---
+        if self.label.is_selected:
+            pen_color = QColor(self.label.color).darker(150)
+            pen_color.setAlpha(self.label.pulse_alpha)
+            pen = QPen(pen_color)
+            pen.setWidthF(2.5)
+            pen.setStyle(Qt.DotLine)
+            painter.setPen(pen)
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
+
+        # --- 3. Dynamic Text Color ---
+        r, g, b, _ = base_color.getRgb()
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        text_color = Qt.black if luminance > 0.5 else Qt.white
+        painter.setPen(QPen(text_color))
+
+        # --- 4. Draw Text ---
+        font_metrics = QFontMetrics(painter.font())
+        truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(rect.width() - 10))
+        painter.drawText(rect, Qt.AlignCenter, truncated_text)
+        
+
 class Label(QWidget):
     colorChanged = pyqtSignal(QColor)
-    selected = pyqtSignal(object)  # Signal to emit the selected label
-    label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
+    selected = pyqtSignal(object)
+    label_deleted = pyqtSignal(object)
 
     def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, pen_width=2):
         """Initialize the Label widget."""
         super().__init__()
 
+        # --- Basic properties ---
         self.id = str(uuid.uuid4()) if label_id is None else label_id
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
@@ -40,26 +114,37 @@ class Label(QWidget):
         self.transparency = 128
         self.is_selected = False
         self.is_hovered = False
+        self.drag_start_position = None
 
-        # Restore animation properties
-        self._animated_line_offset = 0
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # Update every 50ms
+        # --- Layout and Child Widgets ---
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(5)
 
-        # Animation properties (updated for pulsing)
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
+        # 1. The visual display part of the label
+        self.display_widget = LabelDisplay(self)
+        self.display_widget.selected.connect(self._handle_selection)
+
+        # 2. The checkbox
+        self.link_checkbox = QCheckBox()
+        self.link_checkbox.setChecked(True)
+        self.link_checkbox.setToolTip("Link this label's transparency to the slider")
+        
+        # Add widgets to the layout
+        layout.addWidget(self.display_widget)
+        layout.addWidget(self.link_checkbox)
+
+        # --- Animation properties ---
+        self._pulse_alpha = 128
+        self._pulse_direction = 1
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster pulsing
+        self.animation_timer.setInterval(50)
 
-        self.fixed_height = 30
+        # --- Widget settings ---
+        self.setFixedHeight(30)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(self.fixed_height)
-        self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(self.long_label_code)
-        self.drag_start_position = None
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(8)
@@ -67,72 +152,70 @@ class Label(QWidget):
         shadow.setOffset(2, 2)
         self.setGraphicsEffect(shadow)
 
-    def enterEvent(self, event):
-        """Handle mouse entering the widget."""
-        self.is_hovered = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        """Handle mouse leaving the widget."""
-        self.is_hovered = False
-        self.update()
-        super().leaveEvent(event)
+    def _handle_selection(self):
+        """Internal slot to handle clicks from the display widget."""
+        self.is_selected = not self.is_selected
+        if self.is_selected:
+            self.start_animation()
+        else:
+            self.stop_animation()
+        self.display_widget.update()  # Triggers a repaint of the child widget
+        self.selected.emit(self)
 
     def mousePressEvent(self, event):
-        """Handle mouse press events for selection and initiating drag."""
-        if event.button() == Qt.LeftButton:
-            self.is_selected = not self.is_selected
-            if self.is_selected:
-                self.start_animation()
-            else:
-                self.stop_animation()
-            self.update()
-            self.selected.emit(self)
-
+        """Handle mouse press events for initiating drag."""
         if event.button() == Qt.RightButton:
-            self.is_selected = True
-            self.start_animation()
-            self.update()
-            self.selected.emit(self)
+            if not self.is_selected:
+                self._handle_selection()  # Select the label if not already selected
             self.drag_start_position = event.pos()
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for dragging."""
         if event.buttons() == Qt.RightButton and self.drag_start_position:
+            if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                return
             drag = QDrag(self)
             mime_data = QMimeData()
             mime_data.setText(self.id)
             drag.setMimeData(mime_data)
             drag.exec_(Qt.MoveAction)
+            self.drag_start_position = None  # Reset after drag
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release events to stop dragging."""
         if event.button() == Qt.RightButton:
             self.drag_start_position = None
+        super().mouseReleaseEvent(event)
+
+    @property
+    def is_linked(self):
+        """Returns True if the checkbox is checked, False otherwise."""
+        return self.link_checkbox.isChecked()
 
     def select(self):
-        """Select the label."""
+        """Programmatically select the label."""
         if not self.is_selected:
             self.is_selected = True
             self.start_animation()
-            self.update()
+            self.display_widget.update()
             self.selected.emit(self)
 
     def deselect(self):
-        """Deselect the label."""
+        """Programmatically deselect the label."""
         if self.is_selected:
             self.is_selected = False
             self.stop_animation()
-            self.update()
+            self.display_widget.update()
 
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
-        self.update()
+        self.display_widget.update()
 
     def update_selection(self):
         """Trigger a repaint to reflect selection changes."""
-        self.update()
+        self.display_widget.update()
 
     def update_label_color(self, new_color: QColor):
         """Update the label's color and emit the colorChanged signal."""
@@ -148,15 +231,9 @@ class Label(QWidget):
     def update_pen_width(self, pen_width):
         """Update the label's pen width value."""
         self.pen_width = pen_width
-        self.update()
-        
-    def _update_animated_line(self):
-        """Update the animated line offset for selection animation."""
-        if self.is_selected:
-            self._animated_line_offset = (self._animated_line_offset + 1) % 20
-            self.update()
+        self.update_color()
 
-    @pyqtProperty(int)  # Added for pulsing alpha
+    @pyqtProperty(int)
     def pulse_alpha(self):
         """Get the current pulse alpha for animation."""
         return self._pulse_alpha
@@ -164,28 +241,25 @@ class Label(QWidget):
     @pulse_alpha.setter
     def pulse_alpha(self, value):
         """Set the pulse alpha and update the widget."""
-        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
-        self.update()
-    
+        self._pulse_alpha = int(max(0, min(255, value)))
+        self.display_widget.update()
+
     def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        """Update the pulse alpha for a heartbeat-like effect."""
         if self._pulse_direction == 1:
-            # Quick increase (systole-like)
             self._pulse_alpha += 30
         else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+            self._pulse_alpha -= 10
 
-        # Check direction before clamping to ensure smooth transition
         if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_alpha = 255
             self._pulse_direction = -1
         elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_alpha = 50
             self._pulse_direction = 1
         
-        self.update()
-    
+        self.display_widget.update()
+
     def start_animation(self):
         """Start the pulsing animation."""
         if not self.animation_timer.isActive():
@@ -194,58 +268,13 @@ class Label(QWidget):
     def stop_animation(self):
         """Stop the pulsing animation."""
         self.animation_timer.stop()
-        self._pulse_alpha = 128  # Reset to default
-        self.update()
+        self._pulse_alpha = 128
+        self.display_widget.update()
 
     def delete_label(self):
         """Emit the label_deleted signal and schedule the widget for deletion."""
         self.label_deleted.emit(self)
         self.deleteLater()
-
-    def paintEvent(self, event):
-        """Paint the label widget with a modern look and feel."""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-
-        # --- 1. Background Gradient ---
-        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        base_color = QColor(self.color)
-        if self.is_hovered:
-            gradient.setColorAt(0, base_color.lighter(130))
-            gradient.setColorAt(1, base_color.lighter(110))
-        else:
-            gradient.setColorAt(0, base_color.lighter(115))
-            gradient.setColorAt(1, base_color)
-        painter.setBrush(QBrush(gradient))
-        painter.setPen(Qt.NoPen)
-        painter.drawRect(rect)
-
-        # --- 2. MODIFIED Animated Selection Indicator ---
-        if self.is_selected:
-            # Use a darker version of the label's color for better visibility
-            pen_color = QColor(self.color).darker(150)  # Changed to darker for better selected appearance
-            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-            
-            pen = QPen(pen_color)
-            pen.setWidthF(2.5)  # Use setWidthF for float widths
-            pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
-            painter.setPen(pen)
-            painter.drawRect(rect.adjusted(1, 1, -1, -1))
-
-        # --- 3. Dynamic Text ---
-        r, g, b, _ = base_color.getRgb()
-        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-        text_color = Qt.black if luminance > 0.5 else Qt.white
-        painter.setPen(QPen(text_color))
-
-        # --- 4. Draw Text ---
-        font_metrics = QFontMetrics(painter.font())
-        truncated_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, int(rect.width() - 24))
-        painter.drawText(rect, Qt.AlignCenter, truncated_text)
-
-        super().paintEvent(event)
 
     def to_dict(self):
         """Convert the label's properties to a dictionary."""
@@ -265,23 +294,19 @@ class Label(QWidget):
                    data['id'])
 
     def __eq__(self, other):
-        """Two labels are considered equal if their short and long codes are the same."""
+        """Two labels are considered equal if their IDs are the same."""
         if not isinstance(other, Label):
             return NotImplemented
-        return (
-            self.short_label_code == other.short_label_code and self.long_label_code == other.long_label_code
-        )
+        return self.id == other.id
 
     def __hash__(self):
-        """The hash is based on the short and long codes."""
-        return hash((self.short_label_code, self.long_label_code))
+        """The hash is based on the label's unique ID."""
+        return hash(self.id)
 
     def __repr__(self):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
-                f"short_label_code='{self.short_label_code}', "
-                f"long_label_code='{self.long_label_code}', "
-                f"color={self.color.name()})")
+                f"short_label_code='{self.short_label_code}')")
         
     def __del__(self):
         """Clean up the timer when the label is deleted."""
@@ -379,6 +404,14 @@ class LabelWindow(QWidget):
         self.label_lock_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.label_lock_button.setFixedHeight(self.label_height)
         self.actions_bar.addWidget(self.label_lock_button)
+
+        self.toggle_all_button = QPushButton()
+        self.toggle_all_button.setIcon(get_icon("all.png"))
+        self.toggle_all_button.setToolTip("Toggle All Labels")
+        self.toggle_all_button.clicked.connect(self.toggle_all_labels)
+        self.toggle_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.toggle_all_button.setFixedHeight(self.label_height)
+        self.actions_bar.addWidget(self.toggle_all_button)
 
         # Filter/Search Bar
         self.filter_bar_layout = QHBoxLayout()
@@ -665,6 +698,10 @@ class LabelWindow(QWidget):
         QApplication.processEvents()
 
         return label
+    
+    def get_linked_labels(self):
+        """Get a list of all labels whose transparency checkbox is checked."""
+        return [label for label in self.labels if label.is_linked]
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
@@ -688,55 +725,6 @@ class LabelWindow(QWidget):
             self.edit_label_button.setEnabled(self.active_label is not None)
 
         self.scroll_area.ensureWidgetVisible(self.active_label)
-
-    def set_active_label_transparency(self, transparency):
-        """Set the transparency for the active label and its associated annotations."""
-        if not self.active_label:
-            return
-    
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-    
-        if self.active_label.transparency != transparency:
-            # Block signals for batch update
-            self.annotation_window.blockSignals(True)
-            try:
-                # Update the active label's transparency
-                self.active_label.update_transparency(transparency)
-                # Update the transparency of all annotations with the active label
-                for annotation in self.annotation_window.annotations_dict.values():
-                    if annotation.label.id == self.active_label.id:
-                        annotation.update_transparency(transparency)
-                
-                # Update mask transparency
-                self.set_mask_transparency(transparency)
-            finally:
-                self.annotation_window.blockSignals(False)
-    
-            self.annotation_window.scene.update()
-            self.annotation_window.viewport().update()
-    
-        # Make cursor normal again
-        QApplication.restoreOverrideCursor()
-    
-    def set_all_labels_transparency(self, transparency):
-        """Set the transparency for all labels and annotations."""
-        # Block signals for batch update
-        self.annotation_window.blockSignals(True)
-        try:
-            for label in self.labels:
-                label.update_transparency(transparency)
-    
-            for annotation in self.annotation_window.annotations_dict.values():
-                annotation.update_transparency(transparency)
-            
-            # Update mask transparency
-            self.set_mask_transparency(transparency)
-        finally:
-            self.annotation_window.blockSignals(False)
-    
-        self.annotation_window.scene.update()
-        self.annotation_window.viewport().update()
 
     def sync_all_masks_with_labels(self):
         """Sync all existing mask annotations with the current project labels."""
@@ -1134,6 +1122,20 @@ class LabelWindow(QWidget):
         """Unlock the label lock by unchecking the lock button."""
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
+
+    def toggle_all_labels(self):
+        """Toggle all label checkboxes: check all if not all checked, uncheck all if all checked."""
+        if not self.labels:
+            return
+        
+        # Check if all labels are currently checked
+        all_checked = all(label.is_linked for label in self.labels)
+        
+        # Toggle: if all checked, uncheck all; otherwise check all
+        new_state = not all_checked
+        
+        for label in self.labels:
+            label.link_checkbox.setChecked(new_state)
 
     def filter_labels(self, filter_text):
         """Filter labels by text."""

@@ -18,7 +18,6 @@ from .BatchInference.QtClassify import Classify as BatchClassify
 from .BatchInference.QtDetect import Detect as BatchDetect
 from .BatchInference.QtSegment import Segment as BatchSegment
 
-from .VideoInference.QtClassify import Classify as VideoClassify
 from .VideoInference.QtDetect import Detect as VideoDetect
 from .VideoInference.QtSegment import Segment as VideoSegment
 
@@ -50,7 +49,6 @@ __all__ = [
     'BatchClassify',
     'BatchDetect', 
     'BatchSegment',
-    'VideoClassify',
     'VideoDetect',
     'VideoSegment',
     'ImportDetect', 

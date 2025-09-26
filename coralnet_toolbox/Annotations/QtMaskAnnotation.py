@@ -53,16 +53,8 @@ class MaskAnnotation(Annotation):
         """
         Initialize a full-image semantic segmentation annotation.
         There should only be one MaskAnnotation per image.
-
-        Args:
-            image_path (str): Path to the source image.
-            mask_data (np.ndarray): 2D numpy array of integer class IDs, matching image dimensions.
-            initial_labels (list): A list of all Label_objects currently in the project.
-            transparency (int): The alpha value for displaying the mask overlay.
-            rasterio_src: Optional rasterio dataset object for the source image.
         """
-        # For a full-image mask, the concept of a single "primary label" is ambiguous.
-        # We'll use the first available label as a placeholder to satisfy the base class.
+        # --- This block is for context ---
         if not initial_labels:
             raise ValueError("initial_labels cannot be empty.")
         placeholder_label = initial_labels[0]
@@ -79,14 +71,18 @@ class MaskAnnotation(Annotation):
         
         self.mask_data = mask_data.astype(np.uint8)
         
-        self.class_id_to_label_map = {}  # Replaces the old label_map
+        self.class_id_to_label_map = {}
         self.label_id_to_class_id_map = {}
-        self.next_class_id = 1  # Start class IDs at 1 (0 is background)
+        self.next_class_id = 1
         self.sync_label_map(initial_labels)
+
+        # --- NEW: Initialize the visible labels set to include all known labels ---
+        self.visible_label_ids = set(self.label_id_to_class_id_map.keys())
 
         self.offset = QPointF(0, 0)
         self.rasterio_src = rasterio_src
         
+        # --- This block is for context ---
         self.colored_mask = None
         self.qimage = None
         
@@ -115,15 +111,19 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         self.cropped_bbox = (0, 0, width, height)
         self.annotation_size = int(max(width, height))
-
+                
     def _update_qimage(self, full_update=True, update_rect=None):
         """Update the QImage used for rendering the mask overlay."""
         height, width = self.mask_data.shape
         max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
         color_map = np.zeros((max_id + 1, 4), dtype=np.uint8)
+
         for class_id, label in self.class_id_to_label_map.items():
             color = label.color
-            color_map[class_id] = [color.red(), color.green(), color.blue(), self.transparency]
+            # MODIFIED: Get transparency directly from the Label object itself.
+            # The global self.transparency is no longer used for rendering individual classes.
+            alpha = label.transparency if label.id in self.visible_label_ids else 0
+            color_map[class_id] = [color.red(), color.green(), color.blue(), alpha]
 
         real_class_ids = self.mask_data % self.LOCK_BIT
         if full_update or self.colored_mask is None:
@@ -253,6 +253,16 @@ class MaskAnnotation(Annotation):
         if self.transparency != transparency:
             self.transparency = transparency
             # self.update_graphics_item()  # TODO Fix?
+            
+    def update_visible_labels(self, visible_ids: set):
+        """
+        Updates the set of visible label IDs and triggers a redraw of the mask.
+
+        Args:
+            visible_ids (set): A set containing the UUIDs of labels that should be visible.
+        """
+        self.visible_label_ids = visible_ids
+        self.update_graphics_item()
             
     def remove_from_scene(self):
         """Removes the graphics item from its scene, if it exists."""
