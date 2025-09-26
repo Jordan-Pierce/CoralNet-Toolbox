@@ -82,6 +82,8 @@ class ObjectDetector:
         
         # Initialize tracking trajectories
         self.tracking_trajectories = {}
+        # Track all unique IDs seen for total tracks
+        self.all_tracks_seen = set()
     
     def detect(self, image, track=True):
         """

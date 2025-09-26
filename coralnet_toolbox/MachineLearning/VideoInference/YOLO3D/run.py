@@ -627,17 +627,50 @@ def main():
                 fps_value = frame_count / elapsed_time
                 fps_display = f"FPS: {fps_value:.1f}"
 
-            # Add FPS and device info to the result frame (top-right corner)
-            text = f"{fps_display} | Device: {device} | Frame: {current_frame}"
+            # Add FPS, device info, frame count, and tracks info to the result frame (top-right corner)
+            text_main = f"{fps_display} | Device: {device} | Frame: {current_frame}"
+            text_tracks = ""
+            if enable_tracking:
+                current_tracks = len(detector.tracking_trajectories)
+                # Use a set to keep track of all unique tracks seen so far
+                detector.all_tracks_seen.update(detector.tracking_trajectories.keys())
+                total_tracks = len(detector.all_tracks_seen)
+                text_tracks = f"Tracks Current: {current_tracks} | Total: {total_tracks}"
 
             # Calculate text size for right alignment
-            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            x_offset = width - text_width - 10  # 10px from right edge
-            y_offset = 30  # Fixed offset from top edge
+            (text_width_main, text_height_main), _ = cv2.getTextSize(text_main, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            (text_width_tracks, text_height_tracks), _ = cv2.getTextSize(text_tracks, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            box_width = max(text_width_main, text_width_tracks) + 24  # padding
+            box_height = text_height_main + text_height_tracks + 32  # padding and gap
 
-            # Place text on the result frame (top-right corner)
-            cv2.putText(result_frame, text, (x_offset, y_offset),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # Calculate position dynamically based on frame size - top-right corner
+            margin_x = int(width * 0.00)  # 0% from right edge
+            margin_y = int(height * 0.00)  # 0% from top edge
+            box_x1 = width - box_width - margin_x
+            box_y1 = margin_y
+            x_offset = box_x1 + 12  # 12px left padding inside box
+
+            # Calculate vertical centering for text
+            total_text_height = text_height_main + text_height_tracks + 8  # gap
+            center_y = box_y1 + box_height / 2
+            y_offset_main = int(center_y - total_text_height / 2 + text_height_main)
+            y_offset_tracks = int(y_offset_main + text_height_main + 8)  # 8px gap between lines
+
+            # Draw semi-transparent white box behind the text
+            overlay = result_frame.copy()
+            box_x2 = box_x1 + box_width
+            box_y2 = box_y1 + box_height
+            cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (255, 255, 255), -1)
+            alpha = 0.7
+            cv2.addWeighted(overlay, alpha, result_frame, 1 - alpha, 0, result_frame)
+
+            # Place main text on the result frame (top-left corner)
+            cv2.putText(result_frame, text_main, (x_offset, y_offset_main),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            # Place tracks info below main text
+            if enable_tracking:
+                cv2.putText(result_frame, text_tracks, (x_offset, y_offset_tracks),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
             # Add depth map to the corner of the result frame if enabled
             if enable_depth:
