@@ -36,6 +36,8 @@ from coralnet_toolbox.utilities import rasterio_open
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import time
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -537,16 +539,19 @@ class AnnotationWindow(QGraphicsView):
     @property
     def current_mask_annotation(self) -> Optional[MaskAnnotation]:
         """A helper property to get the MaskAnnotation for the currently active image."""
+        start_time = time.time()
         if not self.current_image_path:
+            print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
             return None
         raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
         if not raster:
+            print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
             return None
         
         # This will get the existing mask or create it on the first call
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
-
+        print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
         return mask_annotation
 
     def rasterize_annotations(self):
@@ -554,22 +559,28 @@ class AnnotationWindow(QGraphicsView):
         Tells the current mask_annotation to rasterize all vector annotations
         for the current image onto itself.
         """
+        start_time = time.time()
         if not self.current_mask_annotation:
+            print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
             return
 
         annotations = self.get_image_annotations()
         if not annotations:
+            print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
             return
             
         # The MaskAnnotation now handles all the complex logic internally.
         self.current_mask_annotation.rasterize_annotations(annotations)
+        print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
         
     def unrasterize_annotations(self):
         """
         Tells the current mask_annotation to clear all rasterized vector data.
         """
+        start_time = time.time()
         if self.current_mask_annotation:
             self.current_mask_annotation.unrasterize_annotations()
+        print(f"unrasterize_annotations took {time.time() - start_time:.4f} seconds")
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
@@ -868,6 +879,7 @@ class AnnotationWindow(QGraphicsView):
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""
+        start_time = time.time()
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -884,9 +896,11 @@ class AnnotationWindow(QGraphicsView):
         
         # Update the view
         self.viewport().update()
+        print(f"load_annotation took {time.time() - start_time:.4f} seconds")
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
+        start_time = time.time()
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
@@ -894,8 +908,9 @@ class AnnotationWindow(QGraphicsView):
         annotations = self.crop_annotations(image_path, annotations)
 
         if not len(annotations):
+            print(f"load_annotations took {time.time() - start_time:.4f} seconds")
             return
-
+        
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, title="Loading Annotations")
@@ -929,16 +944,20 @@ class AnnotationWindow(QGraphicsView):
 
         QApplication.processEvents()
         self.viewport().update()
-        
+        print(f"load_annotations took {time.time() - start_time:.4f} seconds")
+
     def load_mask_annotation(self):
         """Load the mask annotation for the current image, if it exists."""
+        start_time = time.time()
         if not self.current_image_path:
+            print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
             return
 
         mask_annotation = self.current_mask_annotation
         if not mask_annotation:
+            print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
             return
-
+        
         # Remove the graphics item from its current scene if it exists
         if mask_annotation.graphics_item and mask_annotation.graphics_item.scene():
             mask_annotation.graphics_item.scene().removeItem(mask_annotation.graphics_item)
@@ -951,6 +970,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Update the view
         self.viewport().update()
+        print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
@@ -973,6 +993,7 @@ class AnnotationWindow(QGraphicsView):
 
     def crop_annotations(self, image_path=None, annotations=None, return_annotations=True, verbose=True):
         """Crop the image around each annotation for the specified image path."""
+        start_time = time.time()
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -984,8 +1005,9 @@ class AnnotationWindow(QGraphicsView):
 
         if not annotations:
             QApplication.restoreOverrideCursor()
+            print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
             return []
-
+        
         progress_bar = None
         if verbose:
             progress_bar = ProgressBar(self, title="Cropping Annotations")
@@ -1009,8 +1031,10 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.close()
 
         if return_annotations:
+            print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
             return annotations
-        
+        print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
+
     def add_annotation_from_tool(self, annotation):
         """Add a new annotation at the specified position using the current tool."""
 

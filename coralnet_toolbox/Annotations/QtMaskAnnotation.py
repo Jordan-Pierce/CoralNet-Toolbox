@@ -15,6 +15,7 @@ from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+import time
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -25,7 +26,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class MaskAnnotation(Annotation):
-    LOCK_BIT = 2**15  # For uint16, this is 32768
+    LOCK_BIT = 2**7  # For uint8, this is 128
 
     def __init__(self,
                  image_path: str,
@@ -61,7 +62,7 @@ class MaskAnnotation(Annotation):
             show_msg=show_msg
         )
         
-        self.mask_data = mask_data
+        self.mask_data = mask_data.astype(np.uint8)
         
         self.class_id_to_label_map = {}  # Replaces the old label_map
         self.label_id_to_class_id_map = {}
@@ -147,13 +148,31 @@ class MaskAnnotation(Annotation):
 
     def update_graphics_item(self):
         """Update the pixmap if the mask data has changed."""
+        overall_start_time = time.time()
+        
         if self.graphics_item:
+            start_time = time.time()
             pixmap = self._render_mask_to_pixmap()
+            end_time = time.time()
+            print(f"_render_mask_to_pixmap took {end_time - start_time:.4f} seconds")
+            start_time = time.time()
             self.graphics_item.setPixmap(pixmap)
+            end_time = time.time()
+            print(f"self.graphics_item.setPixmap took {end_time - start_time:.4f} seconds")
+
+        start_time = time.time()
         super().update_graphics_item()
+        end_time = time.time()
+        print(f"super().update_graphics_item() took {end_time - start_time:.4f} seconds")
+        
+        overall_end_time = time.time()
+        print(f"update_graphics_item took {overall_end_time - overall_start_time:.4f} seconds")
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """Modify the mask data based on a brush stroke, avoiding locked pixels."""
+        overall_start_time = time.time()
+        
+        start_time = time.time()
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
         mask_h, mask_w = self.mask_data.shape
@@ -165,26 +184,53 @@ class MaskAnnotation(Annotation):
 
         if clipped_x_start >= x_end or clipped_y_start >= y_end:
             return
+        end_time = time.time()
+        print(f"Initial calculations took {end_time - start_time:.4f} seconds")
 
+        start_time = time.time()
         target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
+        end_time = time.time()
+        print(f"Getting target_slice took {end_time - start_time:.4f} seconds")
         
+        start_time = time.time()
         # Find which pixels in the target area are already locked.
         locked_pixels = target_slice >= self.LOCK_BIT
+        end_time = time.time()
+        print(f"Finding locked_pixels took {end_time - start_time:.4f} seconds")
         
+        start_time = time.time()
         brush_x_offset = clipped_x_start - x_start
         brush_y_offset = clipped_y_start - y_start
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
+        end_time = time.time()
+        print(f"Calculating offsets and clipped_brush_mask took {end_time - start_time:.4f} seconds")
 
+        start_time = time.time()
         # Subtract the locked pixels from the brush mask. The brush can only paint
         # where the original brush mask is True AND the target pixel is NOT locked.
         final_brush_mask = clipped_brush_mask & ~locked_pixels
+        end_time = time.time()
+        print(f"Computing final_brush_mask took {end_time - start_time:.4f} seconds")
         
+        start_time = time.time()
         # Apply the final, protected brush mask.
         target_slice[final_brush_mask] = new_class_id
+        end_time = time.time()
+        print(f"Applying the mask took {end_time - start_time:.4f} seconds")
 
+        start_time = time.time()
         self.update_graphics_item()
+        end_time = time.time()
+        print(f"update_graphics_item took {end_time - start_time:.4f} seconds")
+        
+        start_time = time.time()
         self.annotationUpdated.emit(self)
+        end_time = time.time()
+        print(f"annotationUpdated.emit took {end_time - start_time:.4f} seconds")
+        
+        overall_end_time = time.time()
+        print(f"update_mask took {overall_end_time - overall_start_time:.4f} seconds")
         
     def update_transparency(self, transparency):
         """Update the transparency of the mask annotation and re-render the graphics item."""
@@ -448,7 +494,7 @@ class MaskAnnotation(Annotation):
 
         # Decode the RLE mask data
         shape = tuple(data['shape'])
-        mask_data = np.zeros(shape, dtype=np.uint16)
+        mask_data = np.zeros(shape, dtype=np.uint8)
         for item in data['rle_masks']:
             class_id = item['class_id']
             rle = item['rle']
