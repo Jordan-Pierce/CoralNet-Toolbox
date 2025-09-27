@@ -253,30 +253,38 @@ class AnnotationWindow(QGraphicsView):
         # Only enter mask mode if switching from a non-mask tool (or no tool) to a mask tool
         if self.selected_tool in self.mask_tools and (not previous_tool or previous_tool not in self.mask_tools):
             # --- ENTERING MASK EDITING MODE ---
-            # Cache and rasterize existing vector annotations onto the mask layer.
-            self.rasterized_annotations_cache = self.get_image_annotations()
-            if self.current_mask_annotation and self.rasterized_annotations_cache:
-                self.rasterize_annotations()
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                # Cache and rasterize existing vector annotations onto the mask layer.
+                self.rasterized_annotations_cache = self.get_image_annotations()
+                if self.current_mask_annotation and self.rasterized_annotations_cache:
+                    self.rasterize_annotations()
 
-            self.unselect_annotations()  # Clear any selected vector annotations
-            
-            # Hide the vector annotations that were just rasterized
-            for annotation in self.rasterized_annotations_cache:
-                if annotation.graphics_item_group:
-                    self.set_annotation_visibility(annotation, force_visibility=False)
-        
+                self.unselect_annotations()  # Clear any selected vector annotations
+                
+                # Hide the vector annotations that were just rasterized
+                for annotation in self.rasterized_annotations_cache:
+                    if annotation.graphics_item_group:
+                        self.set_annotation_visibility(annotation, force_visibility=False)
+            finally:
+                QApplication.restoreOverrideCursor()
+
         # Only exit mask mode if switching from a mask tool to a non-mask tool
         elif self.selected_tool not in self.mask_tools and previous_tool and previous_tool in self.mask_tools:
-            # --- EXITING MASK EDITING MODE / ENTERING ANNOTATION (VECTOR) EDITING MODE ---
-            # Unrasterize the vector annotations from the mask layer
-            self.unrasterize_annotations()
-            # Restore visibility to the cached vector annotations
-            for annotation in self.rasterized_annotations_cache:
-                if annotation.graphics_item_group:
-                    self.set_annotation_visibility(annotation, force_visibility=True)
+            # --- EXITING MASK EDITING MODE ---
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                # Unrasterize the vector annotations from the mask layer
+                self.unrasterize_annotations()
+                # Restore visibility to the cached vector annotations
+                for annotation in self.rasterized_annotations_cache:
+                    if annotation.graphics_item_group:
+                        self.set_annotation_visibility(annotation, force_visibility=True)
 
-            # Clear the cache
-            self.rasterized_annotations_cache = []
+                # Clear the cache
+                self.rasterized_annotations_cache = []
+            finally:
+                QApplication.restoreOverrideCursor()
         
         if self.selected_tool:
             self.tools[self.selected_tool].activate()

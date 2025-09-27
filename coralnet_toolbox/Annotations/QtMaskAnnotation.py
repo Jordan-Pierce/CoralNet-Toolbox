@@ -315,7 +315,6 @@ class MaskAnnotation(Annotation):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.transparency != transparency:
             self.transparency = transparency
-            # self.update_graphics_item()  # TODO Fix?
             
     def update_visible_labels(self, visible_ids: set):
         """
@@ -394,31 +393,75 @@ class MaskAnnotation(Annotation):
 
         # Add the LOCK_BIT to the class_id to mark these pixels as protected.
         self.mask_data[stencil_np] = class_id + self.LOCK_BIT
+        
+    def _create_stencil_for_group(self, annotations: list) -> np.ndarray:
+        """Creates a boolean numpy stencil for a list of annotations using QPainter."""
+        height, width = self.mask_data.shape
+        # Use a memory-efficient 1-bit format for the stencil
+        stencil_image = QImage(width, height, QImage.Format_Mono)
+        stencil_image.fill(0)  # 0 is transparent/off
+
+        painter = QPainter(stencil_image)
+        # 1 is the color that will be "on"
+        painter.setPen(QColor(1, 1, 1))
+        painter.setBrush(QColor(1, 1, 1))
+        
+        for anno in annotations:
+            # get_painter_path() is an assumed method on vector annotation objects
+            path = anno.get_painter_path()
+            painter.drawPath(path)
+        painter.end()
+
+        # Efficiently convert the QImage buffer to a numpy array
+        ptr = stencil_image.bits()
+        ptr.setsize(stencil_image.byteCount())
+        
+        # Note: QImage.Format_Mono pads each line to be a multiple of 32 bits.
+        # We must account for this by using the correct stride (bytesPerLine).
+        arr_view = np.frombuffer(ptr, dtype=np.uint8).reshape((height, stencil_image.bytesPerLine()))
+        
+        # The final boolean mask is derived by un-packing the bits and slicing to the correct width
+        packed = np.unpackbits(arr_view, axis=1)
+        return packed[:, :width].astype(bool)
 
     def rasterize_annotations(self, all_annotations: list):
         """
-        Groups a list of vector annotations by label and rasterizes each group
-        onto this mask's data layer.
+        Efficiently rasterizes a list of vector annotations onto the mask's data layer
+        by creating a single update mask and applying it in one operation.
         """
         if not all_annotations:
             return
 
+        # Create a temporary array to accumulate all changes. This avoids
+        # modifying the large self.mask_data array multiple times.
+        update_layer = np.zeros_like(self.mask_data, dtype=np.uint8)
+
         # Group annotations by their label ID for efficient batch processing
         annotations_by_label = {}
         for anno in all_annotations:
+            # Ensure the annotation is a vector type that can be rasterized
+            if not hasattr(anno, 'get_painter_path'):
+                continue
             if anno.label.id not in annotations_by_label:
                 annotations_by_label[anno.label.id] = []
             annotations_by_label[anno.label.id].append(anno)
 
-        # For each label group, burn the corresponding annotations into the mask
+        # Create stencils and populate the update layer
         for label_id, annos_to_burn in annotations_by_label.items():
-            # Now a fast, direct O(1) dictionary lookup using the UUID!
             class_id = self.label_id_to_class_id_map.get(label_id)
             if class_id:
-                # Call the internal helper to do the actual drawing
-                self._rasterize_annotation_group(annos_to_burn, class_id)
+                # Create a boolean stencil for the entire group of annotations
+                stencil = self._create_stencil_for_group(annos_to_burn)
+                # Place the new class ID (with lock bit) onto our update layer
+                update_layer[stencil] = class_id + self.LOCK_BIT
         
-        # After all groups are rasterized, update the graphics item to show the changes
+        # Find where the updates need to be applied
+        pixels_to_update = update_layer > 0
+        
+        # Apply the accumulated changes to the main data mask in one efficient operation
+        self.mask_data[pixels_to_update] = update_layer[pixels_to_update]
+        
+        # Trigger a single, full redraw of the canvas to show all the changes
         self.update_graphics_item()
 
     def unrasterize_annotations(self):
