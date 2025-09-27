@@ -76,15 +76,17 @@ class MaskAnnotation(Annotation):
         self.next_class_id = 1
         self.sync_label_map(initial_labels)
 
-        # --- NEW: Initialize the visible labels set to include all known labels ---
         self.visible_label_ids = set(self.label_id_to_class_id_map.keys())
 
         self.offset = QPointF(0, 0)
         self.rasterio_src = rasterio_src
         
-        # --- This block is for context ---
+        # Initialize the colored canvas and QImage once at creation time.
+        # This moves the expensive, one-time image generation from the first
+        # brush stroke to the object's creation.
         self.colored_mask = None
         self.qimage = None
+        self._initialize_canvas()
         
         self.set_centroid()
         self.set_cropped_bbox()
@@ -100,6 +102,65 @@ class MaskAnnotation(Annotation):
                 self.class_id_to_label_map[new_id] = label
                 self.label_id_to_class_id_map[label.id] = new_id
                 self.next_class_id += 1
+                
+    def _build_color_map(self):
+        """Builds a numpy array mapping class IDs to RGBA colors."""
+        # Ensure the map is large enough to handle locked class IDs
+        max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
+        map_size = max(256, max_id + self.LOCK_BIT + 1)
+        color_map = np.zeros((map_size, 4), dtype=np.uint8)
+
+        for class_id, label in self.class_id_to_label_map.items():
+            color = label.color
+            alpha = label.transparency if label.id in self.visible_label_ids else 0
+            
+            # Set the color for both the normal and the locked version of the class ID
+            rgba = [color.red(), color.green(), color.blue(), alpha]
+            color_map[class_id] = rgba
+            if class_id + self.LOCK_BIT < map_size:
+                color_map[class_id + self.LOCK_BIT] = rgba
+
+        return color_map
+    
+    def _initialize_canvas(self):
+        """
+        Creates the initial color canvas and QImage. This is the one-time expensive
+        operation that happens when the mask is first loaded.
+        """
+        height, width = self.mask_data.shape
+        color_map = self._build_color_map()
+        
+        # Create the full-size 4-channel RGBA numpy array
+        self.colored_mask = color_map[self.mask_data]
+        
+        # Create a QImage that is a VIEW on the numpy array's data buffer.
+        # Modifying the numpy array will now automatically update the QImage.
+        self.qimage = QImage(self.colored_mask.data, width, height, QImage.Format_RGBA8888)
+
+    def _update_full_canvas(self):
+        """Regenerates the entire color canvas. Used for global changes like label color edits."""
+        color_map = self._build_color_map()
+        # Update the existing colored_mask array in-place
+        np.copyto(self.colored_mask, color_map[self.mask_data])
+
+    def _update_canvas_slice(self, update_rect):
+        """
+        Efficiently updates only a small rectangular slice of the color canvas.
+        Used for tools like the brush.
+        """
+        x1, y1, x2, y2 = update_rect
+        
+        # Get the slice of the data that has changed
+        data_slice = self.mask_data[y1:y2, x1:x2]
+        
+        # Rebuild the color map in case label properties have changed
+        color_map = self._build_color_map()
+        
+        # Perform the color lookup ONLY for the small data slice
+        color_slice = color_map[data_slice]
+        
+        # Update the corresponding slice in our persistent color canvas
+        self.colored_mask[y1:y2, x1:x2] = color_slice
 
     def set_centroid(self):
         """Set the centroid to the center of the image."""
@@ -163,19 +224,21 @@ class MaskAnnotation(Annotation):
 
     def update_graphics_item(self, update_rect=None):
         """Update the pixmap if the mask data has changed."""
+        if self.graphics_item is None:
+            return
+        
         start_time = time.time()
-        print(f"Starting update_graphics_item at {start_time}")
-        
-        self._update_qimage(full_update=update_rect is None, update_rect=update_rect)
-        mid_time = time.time()
-        print(f"After _update_qimage at {mid_time}, elapsed: {mid_time - start_time}")
-        
         if update_rect:
-            self.graphics_item.update(QRectF(update_rect[0], 
-                                             update_rect[1], 
-                                             update_rect[2] - update_rect[0], 
-                                             update_rect[3] - update_rect[1]))
+            # A small area changed (e.g., brush stroke) - THE FAST PATH
+            self._update_canvas_slice(update_rect)
+            qt_rect = QRectF(update_rect[0], 
+                             update_rect[1], 
+                             update_rect[2] - update_rect[0], 
+                             update_rect[3] - update_rect[1])
+            self.graphics_item.update(qt_rect)
         else:
+            # A global change happened (e.g., label color changed) - THE SLOW PATH
+            self._update_full_canvas()
             self.graphics_item.update()
         
         end_time = time.time()
