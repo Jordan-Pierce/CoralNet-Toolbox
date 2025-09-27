@@ -15,7 +15,7 @@ class FillTool(Tool):
         super().__init__(annotation_window)
         
         # Disable crosshair for this tool
-        self.show_crosshair = False
+        self.show_crosshair = True
         
         # You can set a specific cursor for this tool
         self.cursor = Qt.CrossCursor
