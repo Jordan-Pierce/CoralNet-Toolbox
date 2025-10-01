@@ -1771,16 +1771,13 @@ class MainWindow(QMainWindow):
 
     def update_label_transparency(self, value):
         """Update the transparency for all labels and annotations where the checkbox is checked."""
-        # Store the original value for UI updates
-        original_value = value
-        
         # Clamp the transparency value to valid range
         transparency = max(0, min(255, value))
         
         # Get all linked labels (those with checkbox checked)
         linked_labels = self.label_window.get_linked_labels()
         
-        # OPTIMIZED: Batch update transparency for linked labels without triggering individual updates
+        # Update transparency for linked labels without triggering individual updates
         for label in linked_labels:
             # Update the label's transparency value directly without triggering UI updates
             label.transparency = transparency
@@ -1792,21 +1789,20 @@ class MainWindow(QMainWindow):
             self.transparency_slider.setValue(transparency)
             self.transparency_slider.blockSignals(False)
     
-        # Update selected annotations transparency (vector annotations)
-        for annotation in self.annotation_window.selected_annotations:
+        # FIXED: Update transparency for ALL vector annotations based on their label's checkbox state
+        # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
+        # Mask annotations are handled separately through the raster system
+        for annotation in self.annotation_window.annotations_dict.values():
+            # Update each vector annotation based on its label's checkbox state
             if annotation.label in linked_labels:
+                # Label is checked - use the slider transparency value
                 annotation.update_transparency(transparency)
+            else:
+                # Label is not checked - use the label's individual transparency value
+                annotation.update_transparency(annotation.label.transparency)
     
-        # OPTIMIZED: Handle mask annotation updates more efficiently
+        # Handle mask annotation updates separately (only in mask editing mode)
         if self.annotation_window._is_in_mask_editing_mode():
-            active_label = self.label_window.active_label
-            if active_label and active_label in linked_labels:
-                # Use the optimized single-label transparency update
-                mask = self.annotation_window.current_mask_annotation
-                if mask:
-                    mask._update_label_transparency_only(active_label.id, transparency)
-        else:
-            # Only update mask when not in editing mode (original behavior for other modes)
             self.label_window.set_mask_transparency(transparency)
 
     def get_uncertainty_thresh(self):

@@ -384,10 +384,9 @@ class AnnotationWindow(QGraphicsView):
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency to match active label
-            active_label = self.main_window.label_window.active_label
-            if active_label and not isinstance(annotation, MaskAnnotation):  # TODO Fix?
-                annotation.update_transparency(active_label.transparency)
+            # Update transparency to match the annotation's own label transparency (not active label)
+            if not hasattr(annotation, 'mask_data'):  # Skip mask annotations
+                annotation.update_transparency(annotation.label.transparency)
         else:
             # Hide the annotation
             annotation.set_visibility(False)
