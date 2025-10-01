@@ -1771,45 +1771,43 @@ class MainWindow(QMainWindow):
 
     def update_label_transparency(self, value):
         """Update the transparency for all labels and annotations where the checkbox is checked."""
-        # Clamp value between 0 and 255
-        value = max(0, min(255, value))
+        # Store the original value for UI updates
+        original_value = value
         
-        # Get the list of all labels that are linked to the slider via their checkbox
+        # Clamp the transparency value to valid range
+        transparency = max(0, min(255, value))
+        
+        # Get all linked labels (those with checkbox checked)
         linked_labels = self.label_window.get_linked_labels()
-        if not linked_labels:
-            return  # No labels are linked, so do nothing
-
-        # Create a set of linked label IDs for efficient lookup
-        linked_label_ids = {label.id for label in linked_labels}
-
-        # Block signals for a smoother batch update
-        self.annotation_window.blockSignals(True)
-        try:
-            # 1. Update the Label widgets themselves
-            for label in linked_labels:
-                label.update_transparency(value)
-
-            # 2. Update all vector annotations associated with the linked labels
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id in linked_label_ids:
-                    annotation.update_transparency(value)
-            
-            # 3. Update the global transparency of the mask annotation layer
-            self.label_window.set_mask_transparency(value)
-
-        finally:
-            self.annotation_window.blockSignals(False)
-            
-        # Update the slider's position to match the value
-        self.update_transparency_slider(value)
         
-        # Update the transparency in the currently selected tool (if applicable)
-        if self.annotation_window.selected_tool == "see_anything":
-            self.annotation_window.tools["see_anything"].update_transparency(value)
-            
-        # Refresh the scene to show all changes
-        self.annotation_window.scene.update()
-        self.annotation_window.viewport().update()
+        # OPTIMIZED: Batch update transparency for linked labels without triggering individual updates
+        for label in linked_labels:
+            # Update the label's transparency value directly without triggering UI updates
+            label.transparency = transparency
+    
+        # Update transparency slider position
+        if self.transparency_slider.value() != transparency:
+            # Temporarily block signals to prevent infinite recursion
+            self.transparency_slider.blockSignals(True)
+            self.transparency_slider.setValue(transparency)
+            self.transparency_slider.blockSignals(False)
+    
+        # Update selected annotations transparency (vector annotations)
+        for annotation in self.annotation_window.selected_annotations:
+            if annotation.label in linked_labels:
+                annotation.update_transparency(transparency)
+    
+        # OPTIMIZED: Handle mask annotation updates more efficiently
+        if self.annotation_window._is_in_mask_editing_mode():
+            active_label = self.label_window.active_label
+            if active_label and active_label in linked_labels:
+                # Use the optimized single-label transparency update
+                mask = self.annotation_window.current_mask_annotation
+                if mask:
+                    mask._update_label_transparency_only(active_label.id, transparency)
+        else:
+            # Only update mask when not in editing mode (original behavior for other modes)
+            self.label_window.set_mask_transparency(transparency)
 
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""

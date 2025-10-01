@@ -222,6 +222,42 @@ class MaskAnnotation(Annotation):
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
+    def _update_label_transparency_only(self, label_id: str, new_transparency: int):
+        """
+        Efficiently update transparency for a single label without regenerating the entire canvas.
+        This is much faster than update_graphics_item() for transparency-only changes.
+        """
+        if not self.graphics_item:
+            return
+        
+        # Find the class ID for this label
+        class_id = self.label_id_to_class_id_map.get(label_id)
+        if class_id is None:
+            return
+        
+        # Update only the pixels belonging to this class ID
+        # Find pixels with this class ID (both normal and locked versions)
+        normal_pixels = self.mask_data == class_id
+        locked_pixels = self.mask_data == (class_id + self.LOCK_BIT)
+        
+        if not np.any(normal_pixels) and not np.any(locked_pixels):
+            return  # No pixels to update
+        
+        # Get the label's color
+        label = self.class_id_to_label_map.get(class_id)
+        if not label:
+            return
+        
+        # Create the new RGBA values
+        new_rgba = [label.color.red(), label.color.green(), label.color.blue(), new_transparency]
+        
+        # Update only the affected pixels in the colored_mask
+        self.colored_mask[normal_pixels] = new_rgba
+        self.colored_mask[locked_pixels] = new_rgba
+        
+        # Trigger a minimal graphics update
+        self.graphics_item.update()
+
     def update_graphics_item(self, update_rect=None):
         """Update the pixmap if the mask data has changed."""
         if self.graphics_item is None:
@@ -237,10 +273,31 @@ class MaskAnnotation(Annotation):
                              update_rect[3] - update_rect[1])
             self.graphics_item.update(qt_rect)
         else:
-            # A global change happened (e.g., label color changed) - THE SLOW PATH
-            self._update_full_canvas()
-            self.graphics_item.update()
-        
+            # OPTIMIZED: Check if this is just a transparency update vs actual data change
+            # If we're in mask editing mode and this is called from transparency change,
+            # we can skip the expensive full update
+            annotation_window = None
+            
+            # Try to get reference to annotation window to check editing mode
+            try:
+                # This is a bit of a hack, but necessary to avoid expensive updates
+                from PyQt5.QtWidgets import QApplication
+                main_window = QApplication.instance().activeWindow()
+                if hasattr(main_window, 'annotation_window'):
+                    annotation_window = main_window.annotation_window
+            except:
+                pass
+                
+            # If we can't determine the context, fall back to full update
+            if annotation_window and annotation_window._is_in_mask_editing_mode():
+                # In mask editing mode, avoid expensive full updates for transparency changes
+                # Just trigger a repaint without rebuilding the canvas
+                self.graphics_item.update()
+            else:
+                # A global change happened (e.g., label color changed) - THE SLOW PATH
+                self._update_full_canvas()
+                self.graphics_item.update()
+    
         end_time = time.time()
         print(f"Finished update_graphics_item at {end_time}, total elapsed: {end_time - start_time}")
 
