@@ -204,6 +204,22 @@ The main window consists of several components:
   - <kbd>Mouse Movement</kbd>: Shows a preview of the polygon as you draw
   - <kbd>Backspace</kbd>: Cancel the current polygon annotation
 
+- **Brush Tool**: After selecting the tool
+  - Left-click and drag to paint brush strokes on the canvas.
+  - Hold Ctrl and use the mouse wheel to adjust brush size.
+  - Press Ctrl + Shift to switch between a circle and square brush shape.
+  - A semi-transparent preview shows the brush stroke while drawing.
+
+- **Erase Tool**: After selecting the tool
+  - Left-click and drag to erase pixels.
+  - Hold Ctrl and use the mouse wheel to adjust eraser size.
+  - Press Ctrl + Shift to switch between a circle and square eraser shape.
+  - Press Ctrl + (Backspace or Delete) to clear the mask annotation on the current image.
+  - A semi-transparent preview shows the eraser while drawing.
+
+- **Fill Tool**: After selecting the tool
+  - Left-click to fill the region under the cursor with the selected label.
+
 - **SAM Tool**: After a model is loaded
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
   - <kbd>Backspace</kbd>: Cancel drawing the current work area
