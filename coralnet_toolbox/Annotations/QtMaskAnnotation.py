@@ -10,7 +10,7 @@ from skimage.measure import find_contours
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem, QApplication
 from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
@@ -403,6 +403,9 @@ class MaskAnnotation(Annotation):
         old_class_id = self.mask_data[y, x]
         if old_class_id == new_class_id:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
         region_label = labeled_array[y, x]
@@ -410,13 +413,28 @@ class MaskAnnotation(Annotation):
         # Only fill pixels that are part of the region and not locked
         region_mask = labeled_array == region_label
         unlocked_region_mask = region_mask & (self.mask_data < self.LOCK_BIT)
-        self.mask_data[unlocked_region_mask] = new_class_id
         
-        # Force a full canvas update since fill operations can change large areas
-        # Unlike brush strokes which are localized, fills can affect scattered regions
-        self._update_full_canvas()
-        if self.graphics_item:
-            self.graphics_item.update()
+        # Calculate bounding rectangle of the affected area BEFORE modifying the data
+        if np.any(unlocked_region_mask):
+            # Find the bounding box of pixels that will be changed
+            coords = np.where(unlocked_region_mask)
+            y_min, y_max = coords[0].min(), coords[0].max() + 1
+            x_min, x_max = coords[1].min(), coords[1].max() + 1
+            
+            # Apply the fill operation
+            self.mask_data[unlocked_region_mask] = new_class_id
+            
+            # Use localized update instead of full canvas rebuild
+            # This provides the same optimization benefits as the brush tool
+            update_rect = (x_min, y_min, x_max, y_max)
+            self.update_graphics_item(update_rect=update_rect)
+        else:
+            # No pixels to update - region is completely locked
+            QApplication.restoreOverrideCursor()
+            return
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
         
         self.annotationUpdated.emit(self)
 
