@@ -734,6 +734,10 @@ class LabelWindow(QWidget):
 
     def set_mask_transparency(self, transparency):
         """Update the mask annotation's transparency for the current image."""
+        # Only update mask annotations when in mask editing mode to avoid unnecessary computations
+        if not self.annotation_window._is_in_mask_editing_mode():
+            return
+            
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
@@ -916,8 +920,8 @@ class LabelWindow(QWidget):
                 # Re-apply the label to trigger a style update if needed (e.g., color change)
                 annotation.update_label(label_to_update)
 
-        # Also, force the mask annotation to re-render to show the new color.
-        if self.annotation_window.mask_annotation:
+        # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
+        if self.annotation_window.mask_annotation and self.annotation_window._is_in_mask_editing_mode():
             self.annotation_window.mask_annotation.update_graphics_item()
 
         # Force a repaint of the label widget itself and reorganize the grid
@@ -981,9 +985,9 @@ class LabelWindow(QWidget):
             
         self.sync_all_masks_with_labels()
 
-        # After the merge, refresh the view of the currently displayed mask.
+        # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:
+        if current_mask and self.annotation_window._is_in_mask_editing_mode():
             current_mask.update_graphics_item()
 
     def delete_label(self, label):
@@ -1029,9 +1033,9 @@ class LabelWindow(QWidget):
                     mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
                     mask_anno.label_id_to_class_id_map.pop(label.id, None)
 
-        # If the currently visible mask was affected, refresh its view
+        # If the currently visible mask was affected, refresh its view (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:
+        if current_mask and self.annotation_window._is_in_mask_editing_mode():
             current_mask.update_graphics_item()
 
         # Store affected image paths before deletion to update them later

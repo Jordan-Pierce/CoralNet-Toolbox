@@ -118,6 +118,10 @@ class AnnotationWindow(QGraphicsView):
                            "fill", 
                            "erase"}  
 
+    def _is_in_mask_editing_mode(self):
+        """Check if the annotation window is currently in mask editing mode."""
+        return self.selected_tool and self.selected_tool in self.mask_tools
+
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
         event.ignore()
