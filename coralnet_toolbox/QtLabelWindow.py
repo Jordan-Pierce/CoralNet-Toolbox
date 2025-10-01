@@ -744,13 +744,15 @@ class LabelWindow(QWidget):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
-            # OPTIMIZED: Only update the active label's transparency, not the entire mask
-            active_label = self.active_label
-            if active_label and active_label.id in mask.visible_label_ids:
-                # Update only the active label's transparency
-                active_label.update_transparency(transparency)
-                # Use efficient partial update instead of full graphics item update
-                mask._update_label_transparency_only(active_label.id, transparency)
+            # Update transparency for all linked labels
+            linked_labels = self.get_linked_labels()
+            if linked_labels:
+                for label in linked_labels:
+                    if label.id in mask.visible_label_ids:
+                        # Update the label's transparency
+                        label.update_transparency(transparency)
+                        # Use efficient partial update for this label
+                        mask._update_label_transparency_only(label.id, transparency)
             else:
                 # Fallback to original behavior for edge cases
                 mask.update_transparency(transparency)
