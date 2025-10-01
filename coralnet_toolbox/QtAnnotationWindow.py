@@ -431,6 +431,12 @@ class AnnotationWindow(QGraphicsView):
         
         # Clear our reference to any cursor annotation
         self.cursor_annotation = None
+        
+    def update_scene(self):
+        """Update the graphics scene and its items."""
+        self.scene.update()
+        self.viewport().update()
+        QApplication.processEvents()
             
     def clear_scene(self):
         """Clear the graphics scene and reset related variables."""

@@ -412,7 +412,12 @@ class MaskAnnotation(Annotation):
         unlocked_region_mask = region_mask & (self.mask_data < self.LOCK_BIT)
         self.mask_data[unlocked_region_mask] = new_class_id
         
-        self.update_graphics_item()
+        # Force a full canvas update since fill operations can change large areas
+        # Unlike brush strokes which are localized, fills can affect scattered regions
+        self._update_full_canvas()
+        if self.graphics_item:
+            self.graphics_item.update()
+        
         self.annotationUpdated.emit(self)
 
     def replace_class(self, old_class_id: int, new_class_id: int):
