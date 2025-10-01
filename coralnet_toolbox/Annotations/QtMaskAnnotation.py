@@ -426,58 +426,106 @@ class MaskAnnotation(Annotation):
 
     def rasterize_annotations(self, all_annotations: list):
         """
-        Efficiently rasterizes a list of vector annotations onto the mask's data layer
-        by creating a single update mask and applying it in one operation.
+        Mark pixels covered by vector annotations as locked to prevent painting over them.
+        Uses an efficient polygon fill algorithm instead of expensive QPainter operations.
+        Vector annotations remain visible while their pixel areas become protected.
+        
+        Args:
+            all_annotations: List of vector annotations to protect
         """
         if not all_annotations:
             return
 
-        # Create a temporary array to accumulate all changes. This avoids
-        # modifying the large self.mask_data array multiple times.
-        update_layer = np.zeros_like(self.mask_data, dtype=np.uint8)
-
-        # Group annotations by their label ID for efficient batch processing
-        annotations_by_label = {}
-        for anno in all_annotations:
-            # Ensure the annotation is a vector type that can be rasterized
-            if not hasattr(anno, 'get_painter_path'):
+        height, width = self.mask_data.shape
+        
+        # Process each annotation to mark its pixels as locked
+        for annotation in all_annotations:
+            if not hasattr(annotation, 'get_polygon'):
                 continue
-            if anno.label.id not in annotations_by_label:
-                annotations_by_label[anno.label.id] = []
-            annotations_by_label[anno.label.id].append(anno)
-
-        # Create stencils and populate the update layer
-        for label_id, annos_to_burn in annotations_by_label.items():
-            class_id = self.label_id_to_class_id_map.get(label_id)
-            if class_id:
-                # Create a boolean stencil for the entire group of annotations
-                stencil = self._create_stencil_for_group(annos_to_burn)
-                # Place the new class ID (with lock bit) onto our update layer
-                update_layer[stencil] = class_id + self.LOCK_BIT
-        
-        # Find where the updates need to be applied
-        pixels_to_update = update_layer > 0
-        
-        # Apply the accumulated changes to the main data mask in one efficient operation
-        self.mask_data[pixels_to_update] = update_layer[pixels_to_update]
-        
-        # Trigger a single, full redraw of the canvas to show all the changes
-        self.update_graphics_item()
+                
+            try:
+                # Get the polygon points for this annotation
+                polygon = annotation.get_polygon()
+                if polygon is None or polygon.isEmpty():
+                    continue
+                
+                # Convert QPolygonF to a list of (x, y) tuples
+                points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
+                if len(points) < 3:  # Need at least 3 points for a polygon
+                    continue
+                
+                # Use a simple polygon fill algorithm to mark pixels as locked
+                self._mark_polygon_pixels_as_locked(points, width, height)
+                
+            except Exception as e:
+                # Skip annotations that cause errors rather than failing completely
+                print(f"Warning: Could not rasterize annotation {annotation.id}: {e}")
+                continue
 
     def unrasterize_annotations(self):
         """
-        Clears all pixels that were rasterized from vector annotations.
-        This is identified by finding all pixels marked with the LOCK_BIT.
+        Remove lock protection from all pixels that were marked as locked.
+        This allows mask editing over previously protected vector annotation areas.
         """
-        # Find all pixels that have the lock bit set.
+        # Find all pixels that have the lock bit set and remove it
         locked_pixels = self.mask_data >= self.LOCK_BIT
         
-        # Reset these pixels back to 0 (unclassified).
-        self.mask_data[locked_pixels] = 0
+        # Remove the lock bit from these pixels, keeping their original class
+        self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
+    
+    def _mark_polygon_pixels_as_locked(self, points, width, height):
+        """
+        Efficiently mark pixels inside a polygon as locked using a scanline fill algorithm.
+        This is much faster than QPainter for simple polygon filling.
         
-        # After clearing the pixels, update the graphics item to show the changes.
-        self.update_graphics_item()
-        self.annotationUpdated.emit(self)
+        Args:
+            points: List of (x, y) tuples defining the polygon vertices
+            width: Image width
+            height: Image height
+        """
+        if len(points) < 3:
+            return
+            
+        # Convert to integer coordinates and clip to image bounds
+        int_points = []
+        for x, y in points:
+            x = max(0, min(width - 1, int(x)))
+            y = max(0, min(height - 1, int(y)))
+            int_points.append((x, y))
+        
+        # Find bounding box to limit scan area
+        min_y = min(p[1] for p in int_points)
+        max_y = max(p[1] for p in int_points)
+        
+        # For each scanline (row) in the bounding box
+        for y in range(min_y, max_y + 1):
+            # Find intersections of the scanline with polygon edges
+            intersections = []
+            n_points = len(int_points)
+            
+            for i in range(n_points):
+                j = (i + 1) % n_points
+                x1, y1 = int_points[i]
+                x2, y2 = int_points[j]
+                
+                # Check if edge crosses the scanline
+                if (y1 <= y < y2) or (y2 <= y < y1):
+                    # Calculate intersection x-coordinate
+                    if y2 != y1:  # Avoid division by zero
+                        x_intersect = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+                        intersections.append(int(x_intersect))
+            
+            # Sort intersections and fill between pairs
+            intersections.sort()
+            for i in range(0, len(intersections) - 1, 2):
+                x_start = max(0, min(width - 1, intersections[i]))
+                x_end = max(0, min(width - 1, intersections[i + 1]))
+                
+                # Mark pixels in this horizontal segment as locked
+                for x in range(x_start, x_end + 1):
+                    current_val = self.mask_data[y, x]
+                    if current_val < self.LOCK_BIT:  # Only lock if not already locked
+                        self.mask_data[y, x] = current_val + self.LOCK_BIT
 
     def clear_pixels_for_class(self, class_id: int):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""

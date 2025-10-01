@@ -255,17 +255,14 @@ class AnnotationWindow(QGraphicsView):
             # --- ENTERING MASK EDITING MODE ---
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
-                # Cache and rasterize existing vector annotations onto the mask layer.
+                # Cache and protect existing vector annotations by marking their pixels as locked
+                # This prevents users from painting over vector annotation areas while keeping them visible
                 self.rasterized_annotations_cache = self.get_image_annotations()
                 if self.current_mask_annotation and self.rasterized_annotations_cache:
                     self.rasterize_annotations()
 
                 self.unselect_annotations()  # Clear any selected vector annotations
-                
-                # Hide the vector annotations that were just rasterized
-                for annotation in self.rasterized_annotations_cache:
-                    if annotation.graphics_item_group:
-                        self.set_annotation_visibility(annotation, force_visibility=False)
+                # Note: We do NOT hide vector annotations - they remain visible
             finally:
                 QApplication.restoreOverrideCursor()
 
@@ -274,13 +271,8 @@ class AnnotationWindow(QGraphicsView):
             # --- EXITING MASK EDITING MODE ---
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
-                # Unrasterize the vector annotations from the mask layer
+                # Remove protection from vector annotation pixels
                 self.unrasterize_annotations()
-                # Restore visibility to the cached vector annotations
-                for annotation in self.rasterized_annotations_cache:
-                    if annotation.graphics_item_group:
-                        self.set_annotation_visibility(annotation, force_visibility=True)
-
                 # Clear the cache
                 self.rasterized_annotations_cache = []
             finally:
@@ -564,31 +556,27 @@ class AnnotationWindow(QGraphicsView):
 
     def rasterize_annotations(self):
         """
-        Tells the current mask_annotation to rasterize all vector annotations
-        for the current image onto itself.
+        Mark vector annotation pixels as protected (locked) to prevent painting over them.
+        Vector annotations remain visible, but their pixel locations become off-limits for mask editing.
+        This provides pixel-level protection without expensive visual operations.
         """
-        start_time = time.time()
         if not self.current_mask_annotation:
-            print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
             return
 
         annotations = self.get_image_annotations()
         if not annotations:
-            print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
             return
             
-        # The MaskAnnotation now handles all the complex logic internally.
+        # The MaskAnnotation handles the efficient protection marking internally
         self.current_mask_annotation.rasterize_annotations(annotations)
-        print(f"rasterize_annotations took {time.time() - start_time:.4f} seconds")
         
     def unrasterize_annotations(self):
         """
-        Tells the current mask_annotation to clear all rasterized vector data.
+        Remove protection from vector annotation pixels, allowing mask editing over those areas again.
+        This clears the locked status from pixels that were protected during mask editing mode.
         """
-        start_time = time.time()
         if self.current_mask_annotation:
             self.current_mask_annotation.unrasterize_annotations()
-        print(f"unrasterize_annotations took {time.time() - start_time:.4f} seconds")
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
