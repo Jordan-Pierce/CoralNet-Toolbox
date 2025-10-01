@@ -1,8 +1,8 @@
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QColor, QPen  # Added QPen to imports
-from PyQt5.QtWidgets import QGraphicsEllipseItem
+from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -49,10 +49,18 @@ class BrushTool(Tool):
 
     def mousePressEvent(self, event):
         """Handles left-click to toggle painting mode and apply brush if starting."""
-        if event.button() == Qt.LeftButton:
-            self.painting = not self.painting
-            if self.painting:
-                self._apply_brush(event)
+        if not self.annotation_window.selected_label:
+            QMessageBox.warning(self.annotation_window,
+                                "No Label Selected",
+                                "A label must be selected before using the brush tool.")
+            return
+        
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+        
+        self.painting = not self.painting
+        if self.painting:
+            self._apply_brush(event)
 
     def mouseMoveEvent(self, event):
         """Handles mouse dragging, shows the brush circle, and applies brush if painting is active."""

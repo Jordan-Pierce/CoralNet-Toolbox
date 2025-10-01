@@ -40,7 +40,7 @@ class PolygonTool(Tool):
         self.last_click_point = None
 
     def mousePressEvent(self, event: QMouseEvent):
-        
+        """Handles mouse press events for starting, continuing, or finishing polygon drawing."""
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -78,7 +78,8 @@ class PolygonTool(Tool):
         else:
             self.cancel_annotation()
 
-    def mouseMoveEvent(self, event: QMouseEvent):       
+    def mouseMoveEvent(self, event: QMouseEvent):     
+        """Handles mouse move events for updating the polygon preview and crosshair."""  
         # Tool-specific behavior (non-crosshair related) for mouse move events
         if self.drawing_continuous:
             active_image = self.annotation_window.active_image
@@ -96,6 +97,7 @@ class PolygonTool(Tool):
                     self.update_cursor_annotation(scene_pos)
 
     def keyPressEvent(self, event: QKeyEvent):
+        """Handles key press events for canceling annotation or toggling straight line mode."""
         if event.key() == Qt.Key_Backspace:
             self.cancel_annotation()
         elif event.key() == Qt.Key_Control:
@@ -111,6 +113,7 @@ class PolygonTool(Tool):
                 self.update_cursor_annotation(scene_pos)  # Update preview for straight line
 
     def keyReleaseEvent(self, event: QKeyEvent):
+        """Handles key release events for toggling back to free-hand mode."""
         if event.key() == Qt.Key_Control:
             # Check if drawing is active and if Ctrl was actually pressed
             if self.drawing_continuous and self.ctrl_pressed:
@@ -125,6 +128,7 @@ class PolygonTool(Tool):
                 self.update_cursor_annotation(scene_pos)  # Update preview for free-hand
 
     def cancel_annotation(self):
+        """Cancels the current polygon drawing operation."""
         self.points = []
         self.drawing_continuous = False
         self.clear_cursor_annotation()
@@ -139,6 +143,7 @@ class PolygonTool(Tool):
             self.last_click_point = None
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
+        """Creates a PolygonAnnotation from the current points."""
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None
 

@@ -1,4 +1,5 @@
 from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -22,8 +23,16 @@ class FillTool(Tool):
 
     def mousePressEvent(self, event):
         """Handles left-click to fill the region under the cursor."""
-        if event.button() == Qt.LeftButton:
-            self._apply_fill(event)
+        if not self.annotation_window.selected_label:
+            QMessageBox.warning(self.annotation_window,
+                                "No Label Selected",
+                                "A label must be selected before using the fill tool.")
+            return
+        
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+        
+        self._apply_fill(event)
 
     def mouseMoveEvent(self, event):
         """Handles mouse movement, shows crosshair if enabled."""
