@@ -39,6 +39,9 @@ class Tool:
         
         # Ensure crosshair is properly cleared when deactivating tool
         self.clear_crosshair()
+        
+        # Stop any current drawing operation
+        self.stop_current_drawing()
 
     def mousePressEvent(self, event: QMouseEvent):
         pass

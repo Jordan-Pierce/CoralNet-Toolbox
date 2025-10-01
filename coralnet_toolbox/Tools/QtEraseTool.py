@@ -129,63 +129,16 @@ class EraseTool(Tool):
             self.update_cursor_annotation(scene_pos)
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
-        """Create a cursor annotation showing the underlying image pixels."""
-        if not (scene_pos and self.annotation_window.active_image):
+        """Create a cursor annotation showing the eraser shape."""
+        if not scene_pos:
             self.clear_cursor_annotation()
             return
             
         # First ensure any existing cursor annotation is removed
         self.clear_cursor_annotation()
         
-        # Get the image data for the cursor area
-        x, y = int(scene_pos.x()), int(scene_pos.y())
-        radius = self.brush_size // 2
-        size = self.brush_size
-        
-        # Use rasterio to read the image window
-        rasterio_image = self.annotation_window.rasterio_image
-        if rasterio_image:
-            try:
-                window = rasterio_image.window(x - radius, y - radius, size, size)
-                data = rasterio_image.read(window=window)
-                
-                # Convert to QImage
-                if data.shape[0] == 3:  # RGB
-                    h, w = data.shape[1], data.shape[2]
-                    # Transpose to (h, w, 3)
-                    rgb_data = np.transpose(data, (1, 2, 0))
-                    qimage = QImage(rgb_data.data, w, h, QImage.Format_RGB888)
-                elif data.shape[0] == 4:  # RGBA
-                    h, w = data.shape[1], data.shape[2]
-                    rgba_data = np.transpose(data, (1, 2, 0))
-                    qimage = QImage(rgba_data.data, w, h, QImage.Format_RGBA8888)
-                else:
-                    # Fallback to ellipse
-                    self._create_fallback_cursor(scene_pos)
-                    return
-                
-                pixmap = QPixmap.fromImage(qimage)
-                self.cursor_annotation = QGraphicsPixmapItem(pixmap)
-                self.cursor_annotation.setPos(scene_pos.x() - radius, scene_pos.y() - radius)
-                
-                # Set mask for shape
-                if self.shape == 'circle':
-                    mask_pixmap = QPixmap(size, size)
-                    mask_pixmap.fill(Qt.transparent)
-                    painter = QPainter(mask_pixmap)
-                    painter.setBrush(Qt.white)
-                    painter.drawEllipse(0, 0, size, size)
-                    painter.end()
-                    self.cursor_annotation.setMask(mask_pixmap.mask())
-                
-                self.annotation_window.scene.addItem(self.cursor_annotation)
-                
-            except Exception:
-                # Fallback
-                self._create_fallback_cursor(scene_pos)
-        else:
-            # Fallback
-            self._create_fallback_cursor(scene_pos)
+        # Create the shape annotation
+        self._create_fallback_cursor(scene_pos)
 
     def _create_fallback_cursor(self, scene_pos):
         """Fallback cursor when image data unavailable."""
