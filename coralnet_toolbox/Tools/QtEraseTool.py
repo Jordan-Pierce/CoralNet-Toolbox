@@ -2,7 +2,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QColor, QPen, QPainter, QPixmap, QImage
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsPixmapItem
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsPixmapItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -96,12 +96,21 @@ class EraseTool(Tool):
 
     def _clear_non_locked_pixels(self):
         """Clears all non-locked pixels in the current mask annotation."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+            
         mask_annotation = self.annotation_window.current_mask_annotation
         if mask_annotation:
             # Set all non-locked pixels to 0 (background)
             mask_annotation.mask_data[mask_annotation.mask_data < mask_annotation.LOCK_BIT] = 0
-            mask_annotation.update_graphics_item()
+            # Force a full canvas update since we've changed potentially the entire image
+            mask_annotation._update_full_canvas()
+            if mask_annotation.graphics_item:
+                mask_annotation.graphics_item.update()
             mask_annotation.annotationUpdated.emit(mask_annotation)
+            
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def wheelEvent(self, event):
         """Handles mouse wheel events for adjusting eraser size when Ctrl is held."""

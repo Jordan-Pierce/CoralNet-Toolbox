@@ -310,8 +310,11 @@ class Label(QWidget):
         
     def __del__(self):
         """Clean up the timer when the label is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
+        try:
+            if hasattr(self, 'animation_timer') and self.animation_timer:
+                self.animation_timer.stop()
+        except RuntimeError:
+            pass
 
 
 class LabelWindow(QWidget):
