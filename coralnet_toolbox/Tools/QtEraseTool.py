@@ -49,6 +49,9 @@ class EraseTool(Tool):
 
     def mousePressEvent(self, event):
         """Handles left-click to toggle erasing mode and apply eraser if starting."""
+        if event.button() != Qt.LeftButton:
+            return
+            
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -181,6 +184,11 @@ class EraseTool(Tool):
             self.annotation_window.scene.removeItem(self.cursor_annotation)
             self.cursor_annotation = None
 
+    def deactivate(self):
+        """Deactivate the erase tool and stop any current operations."""
+        self.erasing = False
+        super().deactivate()
+        
     def stop_current_drawing(self):
         """Force stop of current drawing by stopping erasing mode."""
         self.erasing = False

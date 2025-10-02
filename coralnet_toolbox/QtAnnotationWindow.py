@@ -244,18 +244,26 @@ class AnnotationWindow(QGraphicsView):
     def set_selected_tool(self, tool):
         """Set the currently active tool and update the UI layers for the correct editing mode."""
         
-        if tool not in self.tools:
-            return  # Invalid tool, do nothing
-        
         previous_tool = self.selected_tool  # Track the previous tool for mode comparison
         
+        # Always deactivate the current tool if one is active
         if self.selected_tool:
             self.tools[self.selected_tool].stop_current_drawing()
             self.tools[self.selected_tool].deactivate()
+            
+        # If tool is None or invalid, just deactivate and return
+        if tool is None or tool not in self.tools:
+            self.selected_tool = None
+            self.unselect_annotations()
+            return
+        
         self.selected_tool = tool
         
         # Only enter mask mode if switching from a non-mask tool (or no tool) to a mask tool
-        if self.selected_tool in self.mask_tools and (not previous_tool or previous_tool not in self.mask_tools):
+        entering_mask_mode = (self.selected_tool and
+                              self.selected_tool in self.mask_tools and
+                              (not previous_tool or previous_tool not in self.mask_tools))
+        if entering_mask_mode:
             # --- ENTERING MASK EDITING MODE ---
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
@@ -270,8 +278,11 @@ class AnnotationWindow(QGraphicsView):
             finally:
                 QApplication.restoreOverrideCursor()
 
-        # Only exit mask mode if switching from a mask tool to a non-mask tool
-        elif self.selected_tool not in self.mask_tools and previous_tool and previous_tool in self.mask_tools:
+        # Only exit mask mode if switching from a mask tool to a non-mask tool (or None)
+        exiting_mask_mode = ((not self.selected_tool or 
+                             self.selected_tool not in self.mask_tools) and
+                             previous_tool and previous_tool in self.mask_tools)
+        if exiting_mask_mode:
             # --- EXITING MASK EDITING MODE ---
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:

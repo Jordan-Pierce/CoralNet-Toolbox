@@ -23,6 +23,9 @@ class FillTool(Tool):
 
     def mousePressEvent(self, event):
         """Handles left-click to fill the region under the cursor."""
+        if event.button() != Qt.LeftButton:
+            return
+            
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",

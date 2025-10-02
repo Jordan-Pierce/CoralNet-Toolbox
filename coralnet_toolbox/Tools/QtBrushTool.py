@@ -49,6 +49,9 @@ class BrushTool(Tool):
 
     def mousePressEvent(self, event):
         """Handles left-click to toggle painting mode and apply brush if starting."""
+        if event.button() != Qt.LeftButton:
+            return
+            
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -167,6 +170,11 @@ class BrushTool(Tool):
             self.annotation_window.scene.removeItem(self.cursor_annotation)
             self.cursor_annotation = None
 
+    def deactivate(self):
+        """Deactivate the brush tool and stop any current operations."""
+        self.painting = False
+        super().deactivate()
+        
     def stop_current_drawing(self):
         """Force stop of current drawing by stopping painting mode."""
         self.painting = False
