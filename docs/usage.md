@@ -9,15 +9,17 @@ This guide provides instructions on how to use the application, including key fu
 - **RectangleAnnotation**: Represents a rectangular annotation
 - **PolygonAnnotation**: Represents a polygonal annotation
   - **MultiPolygonAnnotation**: Represents multiple, non-overlapping polygonal annotations
+- **MaskAnnotation**: Represents a segmentation mask (one mask per image)
 
 ## Computer Vision Tasks
 - **Classification**: Assign a label to an image (Patch)
 - **Detection**: Detect objects in an image (Rectangle)
-- **Segmentation**: Segment objects in an image (Polygon)
+- **Instance Segmentation**: Segment objects in an image (Polygon)
+- **Semantic Segmentation**: Segment the entire image (Mask)
 
 ## Thresholds for Computer Vision Tasks
 - **Patch Size**: Adjust the patch size in the status bar
-- **Uncertaint** Threshold: Adjust the uncertainty threshold in the status bar
+- **Uncertainty** Threshold: Adjust the uncertainty threshold in the status bar
 - **IoU Threshold**: Adjust the IoU threshold in the status bar
 - **Area Threshold**: Adjust the min and max area threshold in the status bar
 
@@ -46,7 +48,7 @@ The main window consists of several components:
   - **Import CoralNet Annotations**: Load annotation data from a CoralNet CSV file
   - **Import TagLab Annotations**: Load annotation data from a TagLab JSON file
   - **Import Viscore Annotations**: Load annotation data from a Viscore CSV file
-  - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Segmentation)
+  - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file
@@ -57,7 +59,7 @@ The main window consists of several components:
   - **Export CoralNet Annotations**: Save annotation data to a CoralNet CSV file
   - **Export TagLab Annotations**: Save annotation data to a TagLab JSON file
   - **Export Viscore Annotations**: Save annotation data to a Viscore CSV file
-  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation)
+  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Instance Segmentation)
 
 - **Explorer**:
   - **Annotation Settings**: Select images, annotation types, and labels to include / filter press apply
@@ -134,7 +136,7 @@ The main window consists of several components:
   - **Train Model**: Train a machine learning model
   - **Evaluate Model**: Evaluate a trained model
   - **Optimize Model**: Convert model format
-  - **Deploy Model**: Make predictions using a trained model (Classification, Detection, Segmentation)
+  - **Deploy Model**: Make predictions using a trained model (Classification, Detection, Instance Segmentation)
   - **Batch Inference**: Perform batch inferences
   - **Video Inference**: Perform inferencing on videos in real-time, view analytics
 
@@ -334,7 +336,7 @@ The main window consists of several components:
   - When the PatchTool is active, this switches back to the SelectTool
 
 - **Machine Learning, SAM, See Anything (YOLOE), and Transformers**: After a model is loaded
-  - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label
+  - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label using Classification model
   - <kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model
   - <kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model
   - <kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using FastSAM model
