@@ -18,18 +18,18 @@ YOLO_MODELS = {
     'YOLOv8 (X-Large)': 'yolov8x-cls.pt',
     
     # YOLOv11 classification models
-    'YOLOv11 (Nano)': 'yolov11n-cls.pt',
-    'YOLOv11 (Small)': 'yolov11s-cls.pt',
-    'YOLOv11 (Medium)': 'yolov11m-cls.pt',
-    'YOLOv11 (Large)': 'yolov11l-cls.pt',
-    'YOLOv11 (X-Large)': 'yolov11x-cls.pt',
+    'YOLOv11 (Nano)': 'yolo11n-cls.pt',
+    'YOLOv11 (Small)': 'yolo11s-cls.pt',
+    'YOLOv11 (Medium)': 'yolo11m-cls.pt',
+    'YOLOv11 (Large)': 'yolo11l-cls.pt',
+    'YOLOv11 (X-Large)': 'yolo11x-cls.pt',
     
     # YOLOv12 classification models
-    'YOLOv12 (Nano)': 'yolov12n-cls.pt',
-    'YOLOv12 (Small)': 'yolov12s-cls.pt',
-    'YOLOv12 (Medium)': 'yolov12m-cls.pt',
-    'YOLOv12 (Large)': 'yolov12l-cls.pt',
-    'YOLOv12 (X-Large)': 'yolov12x-cls.pt',
+    # 'YOLOv12 (Nano)': 'yolo12n-cls.pt',
+    # 'YOLOv12 (Small)': 'yolo12s-cls.pt',
+    # 'YOLOv12 (Medium)': 'yolo12m-cls.pt',
+    # 'YOLOv12 (Large)': 'yolo12l-cls.pt',
+    # 'YOLOv12 (X-Large)': 'yolo12x-cls.pt',
 }
 
 

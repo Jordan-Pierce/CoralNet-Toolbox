@@ -66,12 +66,7 @@ class Classify(Base):
                            'yolo11s-cls.pt',
                            'yolo11m-cls.pt',
                            'yolo11l-cls.pt',
-                           'yolo11x-cls.pt',
-                           'yolo12n-cls.pt',
-                           'yolo12s-cls.pt',
-                           'yolo12m-cls.pt',
-                           'yolo12l-cls.pt',
-                           'yolo12x-cls.pt']
+                           'yolo11x-cls.pt']
         
         self.model_combo.addItems(standard_models)
 
