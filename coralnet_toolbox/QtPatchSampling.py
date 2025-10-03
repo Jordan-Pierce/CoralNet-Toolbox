@@ -610,31 +610,45 @@ class PatchSamplingDialog(QDialog):
 
                 for x, y, size in annotations_coords:
                     # Determine label based on propagation
+                    used_label = sample_label  # Default to the selected sample label
                     if propagate:
                         center = QPointF(x + size // 2, y + size // 2)
-                        existing = self.annotation_window.get_image_annotations(image_path)
-                        found = next(
-                            (
-                                a for a in existing
-                                if a.get_polygon().containsPoint(
-                                    center, Qt.OddEvenFill
-                                )
-                            ),
-                            None
-                        )
-                        used_label = found.label if found else sample_label
-                    else:
-                        used_label = sample_label
-                    # Create the annotation with center point
-                    new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
-                                                     size,
-                                                     used_label.short_label_code,
-                                                     used_label.long_label_code,
-                                                     used_label.color,
-                                                     image_path,
-                                                     used_label.id,
-                                                     transparency=self.main_window.get_transparency_value())
-
+                        
+                        # First, check the MaskAnnotation for label propagation (since masks and vectors don't overlap, this is safe)
+                        mask_annotation = self.annotation_window.current_mask_annotation
+                        if mask_annotation and image_path == mask_annotation.image_path:
+                            class_id = mask_annotation.get_class_at_point(center)
+                            if class_id > 0:  # Valid class ID (not background)
+                                mask_label = mask_annotation.class_id_to_label_map.get(class_id)
+                                if mask_label:
+                                    used_label = mask_label
+                        # Note: No need to check vectors here if mask provided a label, as they don't overlap
+                        
+                        # If no mask label (or no mask), check vector annotations
+                        if used_label == sample_label:  # Only check vectors if mask didn't provide a label
+                            existing = self.annotation_window.get_image_annotations(image_path)
+                            found = next(
+                                (
+                                    a for a in existing
+                                    if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
+                                ),
+                                None
+                            )
+                            if found:
+                                used_label = found.label
+        
+                    # Create the annotation with the determined label
+                    new_annotation = PatchAnnotation(
+                        QPointF(x + size // 2, y + size // 2),
+                        size,
+                        used_label.short_label_code,
+                        used_label.long_label_code,
+                        used_label.color,
+                        image_path,
+                        used_label.id,
+                        transparency=self.main_window.get_transparency_value()
+                    )
+                    
                     # Add annotation to the annotation window
                     self.annotation_window.add_annotation_to_dict(new_annotation)
                     sampled_annotations.append(new_annotation)
