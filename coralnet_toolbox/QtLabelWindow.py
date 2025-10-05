@@ -717,10 +717,17 @@ class LabelWindow(QWidget):
         self.active_label.select()
         self.labelSelected.emit(selected_label)
 
-        # Update the transparency slider with the new label's transparency
-        self.transparencyChanged.emit(self.active_label.transparency)
-        # Update annotations (locked, transparency)
-        self.update_annotations_with_label(selected_label)
+        # OPTIMIZED: Only emit transparency change if it's actually different
+        # This prevents expensive mask updates when just switching labels
+        current_transparency = self.active_label.transparency
+        if not hasattr(self, '_last_emitted_transparency') or self._last_emitted_transparency != current_transparency:
+            self._last_emitted_transparency = current_transparency
+            self.transparencyChanged.emit(current_transparency)
+        
+        # OPTIMIZED: Skip expensive annotation updates in mask editing mode
+        # Vector annotations don't need updates when switching labels in mask mode
+        if not self.annotation_window._is_in_mask_editing_mode():
+            self.update_annotations_with_label(selected_label)
 
         # Only enable edit/delete buttons if not locked
         if not self.label_locked:
@@ -744,6 +751,13 @@ class LabelWindow(QWidget):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
+            # OPTIMIZED: Only update if we're actually changing transparency via slider
+            # Skip expensive updates when just switching between labels
+            if hasattr(self, '_last_transparency_update') and self._last_transparency_update == transparency:
+                return
+                
+            self._last_transparency_update = transparency
+            
             # Update transparency for all linked labels
             linked_labels = self.get_linked_labels()
             if linked_labels:
@@ -770,6 +784,10 @@ class LabelWindow(QWidget):
 
     def update_annotations_with_label(self, label):
         """Update selected annotations based on the properties of the given label."""
+        # OPTIMIZED: Skip this expensive operation in mask editing mode
+        if self.annotation_window._is_in_mask_editing_mode():
+            return
+            
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
