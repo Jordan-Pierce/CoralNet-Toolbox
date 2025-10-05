@@ -43,20 +43,22 @@ class ExportAnnotations:
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        total_annotations = len(list(self.annotation_window.annotations_dict.values()))
+        # Combine vector annotations with any existing mask annotations
+        all_annotations = list(self.annotation_window.annotations_dict.values())
+        for image_path in self.image_window.raster_manager.image_paths:
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if raster and raster.mask_annotation:
+                all_annotations.append(raster.mask_annotation)
+
+        total_annotations = len(all_annotations)
         progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
         progress_bar.show()
         progress_bar.start_progress(total_annotations)
 
         try:
             export_dict = {}
-            for annotation in self.annotation_window.annotations_dict.values():
+            for annotation in all_annotations:
                 image_path = annotation.image_path
-
-                # Verify the image path exists in the raster manager
-                if image_path not in self.image_window.raster_manager.image_paths:
-                    # Skip annotations for images that are not in the raster manager
-                    continue
 
                 if image_path not in export_dict:
                     export_dict[image_path] = []
