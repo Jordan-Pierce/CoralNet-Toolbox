@@ -1771,6 +1771,9 @@ class MainWindow(QMainWindow):
 
     def update_label_transparency(self, value):
         """Update the transparency for all labels and annotations where the checkbox is checked."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Clamp the transparency value to valid range
         transparency = max(0, min(255, value))
         
@@ -1810,6 +1813,9 @@ class MainWindow(QMainWindow):
                 self._last_mask_transparency = transparency
                 self.label_window.set_mask_transparency(transparency)
 
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+        
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
         return self.uncertainty_thresh
