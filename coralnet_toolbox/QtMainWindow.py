@@ -1804,12 +1804,11 @@ class MainWindow(QMainWindow):
                 # Label is not checked - use the label's individual transparency value
                 annotation.update_transparency(annotation.label.transparency)
     
-        # Handle mask annotation updates separately (only in mask editing mode)
-        if self.annotation_window._is_in_mask_editing_mode():
-            # Transparency changes are now instant with render-time approach!
-            mask = self.annotation_window.current_mask_annotation
-            if mask:
-                self.label_window.set_mask_transparency(transparency)
+        # Handle mask annotation updates - transparency is just visual so always sync
+        # Transparency changes are now instant with render-time approach!
+        mask = self.annotation_window.current_mask_annotation
+        if mask:
+            self.label_window.set_mask_transparency(transparency)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()

@@ -740,10 +740,6 @@ class LabelWindow(QWidget):
 
     def set_mask_transparency(self, transparency):
         """Update the mask annotation's transparency for the current image."""
-        # Only update mask annotations when in mask editing mode to avoid unnecessary computations
-        if not self.annotation_window._is_in_mask_editing_mode():
-            return
-        
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
