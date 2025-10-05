@@ -396,8 +396,9 @@ class AnnotationWindow(QGraphicsView):
             # Show the annotation
             annotation.set_visibility(True)
             # Update transparency to match the annotation's own label transparency (not active label)
-            if not hasattr(annotation, 'mask_data'):  # Skip mask annotations
+            if not hasattr(annotation, 'mask_data'):  # Vector annotations only
                 annotation.update_transparency(annotation.label.transparency)
+            # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
             # Hide the annotation
             annotation.set_visibility(False)
@@ -407,8 +408,21 @@ class AnnotationWindow(QGraphicsView):
         # Block signals for batch update
         self.blockSignals(True)
         try:
+            # Handle vector annotations
             for annotation in self.annotations_dict.values():
                 self.set_annotation_visibility(annotation, force_visibility=visible)
+            
+            # Handle mask annotation visibility - synchronize with vector annotations
+            mask = self.current_mask_annotation
+            if mask:
+                if visible:
+                    # Show mask by making all linked labels visible
+                    linked_labels = self.main_window.label_window.get_linked_labels()
+                    visible_label_ids = {label.id for label in linked_labels}
+                    mask.update_visible_labels(visible_label_ids)
+                else:
+                    # Hide mask by clearing all visible labels
+                    mask.update_visible_labels(set())
         finally:
             self.blockSignals(False)
     
