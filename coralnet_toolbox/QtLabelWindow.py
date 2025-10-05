@@ -717,12 +717,8 @@ class LabelWindow(QWidget):
         self.active_label.select()
         self.labelSelected.emit(selected_label)
 
-        # OPTIMIZED: Only emit transparency change if it's actually different
-        # This prevents expensive mask updates when just switching labels
-        current_transparency = self.active_label.transparency
-        if not hasattr(self, '_last_emitted_transparency') or self._last_emitted_transparency != current_transparency:
-            self._last_emitted_transparency = current_transparency
-            self.transparencyChanged.emit(current_transparency)
+        # Transparency changes are now instant - emit freely!
+        self.transparencyChanged.emit(self.active_label.transparency)
         
         # OPTIMIZED: Skip expensive annotation updates in mask editing mode
         # Vector annotations don't need updates when switching labels in mask mode
@@ -751,26 +747,19 @@ class LabelWindow(QWidget):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
-            # OPTIMIZED: Only update if we're actually changing transparency via slider
-            # Skip expensive updates when just switching between labels
-            if hasattr(self, '_last_transparency_update') and self._last_transparency_update == transparency:
-                return
-                
-            self._last_transparency_update = transparency
-            
+            # ULTRA-FAST: New render-time transparency approach - no caching needed!
             # Update transparency for all linked labels
             linked_labels = self.get_linked_labels()
             if linked_labels:
                 for label in linked_labels:
                     if label.id in mask.visible_label_ids:
-                        # Update the label's transparency
+                        # Update the label's transparency - now instant!
                         label.update_transparency(transparency)
-                        # Use efficient partial update for this label
-                        mask._update_label_transparency_only(label.id, transparency)
+                # Single call to update the mask - transparency applied at render time
+                mask.update_transparency(transparency)
             else:
                 # Fallback to original behavior for edge cases
                 mask.update_transparency(transparency)
-                mask.update_graphics_item()
 
     def deselect_active_label(self):
         """Deselect the currently active label."""

@@ -1806,11 +1806,9 @@ class MainWindow(QMainWindow):
     
         # Handle mask annotation updates separately (only in mask editing mode)
         if self.annotation_window._is_in_mask_editing_mode():
-            # OPTIMIZED: Only update mask transparency if it actually changed
-            # This prevents expensive mask updates when just switching between labels
+            # Transparency changes are now instant with render-time approach!
             mask = self.annotation_window.current_mask_annotation
-            if mask and (not hasattr(self, '_last_mask_transparency') or self._last_mask_transparency != transparency):
-                self._last_mask_transparency = transparency
+            if mask:
                 self.label_window.set_mask_transparency(transparency)
 
         # Restore cursor

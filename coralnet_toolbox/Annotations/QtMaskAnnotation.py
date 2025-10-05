@@ -37,7 +37,14 @@ class MaskGraphicsItem(QGraphicsItem):
 
     def paint(self, painter, option, widget):
         if self.mask_annotation.qimage:
+            # ULTRA-FAST: Apply transparency at render time, not to the numpy array
+            # This makes transparency changes instant without touching any pixel data
+            transparency = self.mask_annotation.get_current_transparency()
+            if transparency < 255:
+                painter.setOpacity(transparency / 255.0)
             painter.drawImage(0, 0, self.mask_annotation.qimage)
+            if transparency < 255:
+                painter.setOpacity(1.0)  # Reset opacity for other drawing operations
 
 
 class MaskAnnotation(Annotation):
@@ -112,7 +119,9 @@ class MaskAnnotation(Annotation):
 
         for class_id, label in self.class_id_to_label_map.items():
             color = label.color
-            alpha = label.transparency if label.id in self.visible_label_ids else 0
+            # OPTIMIZED: Always use full alpha (255) in the numpy array
+            # Transparency is now applied at render time for instant updates
+            alpha = 255 if label.id in self.visible_label_ids else 0
             
             # Set the color for both the normal and the locked version of the class ID
             rgba = [color.red(), color.green(), color.blue(), alpha]
@@ -222,40 +231,6 @@ class MaskAnnotation(Annotation):
         self.graphics_item = MaskGraphicsItem(self)
         scene.addItem(self.graphics_item)
 
-    def _update_label_transparency_only(self, label_id: str, new_transparency: int):
-        """
-        Efficiently update transparency for a single label without regenerating the entire canvas.
-        This is much faster than update_graphics_item() for transparency-only changes.
-        """
-        if not self.graphics_item:
-            return
-        
-        # Find the class ID for this label
-        class_id = self.label_id_to_class_id_map.get(label_id)
-        if class_id is None:
-            return
-        
-        # Update only the pixels belonging to this class ID
-        # Find pixels with this class ID (both normal and locked versions)
-        normal_pixels = self.mask_data == class_id
-        locked_pixels = self.mask_data == (class_id + self.LOCK_BIT)
-        
-        if not np.any(normal_pixels) and not np.any(locked_pixels):
-            return  # No pixels to update
-        
-        # Get the label's color
-        label = self.class_id_to_label_map.get(class_id)
-        if not label:
-            return
-        
-        # ULTRA-FAST: Update only the alpha channel (index 3) instead of full RGBA
-        # This avoids creating new arrays and copying RGB values that haven't changed
-        self.colored_mask[normal_pixels, 3] = new_transparency
-        self.colored_mask[locked_pixels, 3] = new_transparency
-        
-        # Trigger a minimal graphics update
-        self.graphics_item.update()
-
     def update_graphics_item(self, update_rect=None):
         """Update the pixmap if the mask data has changed."""
         if self.graphics_item is None:
@@ -283,7 +258,7 @@ class MaskAnnotation(Annotation):
                 main_window = QApplication.instance().activeWindow()
                 if hasattr(main_window, 'annotation_window'):
                     annotation_window = main_window.annotation_window
-            except:
+            except Exception:
                 pass
                 
             # If we can't determine the context, fall back to full update
@@ -365,18 +340,38 @@ class MaskAnnotation(Annotation):
         end_time = time.time()
         print(f"Finished update_mask at {end_time}, total elapsed: {end_time - start_time}")
         
+    def get_current_transparency(self):
+        """Get the current transparency value for rendering."""
+        # Try to get the active label's transparency from the application
+        try:
+            from PyQt5.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app:
+                main_window = app.activeWindow()
+                if hasattr(main_window, 'label_window') and hasattr(main_window.label_window, 'active_label'):
+                    active_label = main_window.label_window.active_label
+                    if active_label:
+                        return active_label.transparency
+        except Exception:
+            pass
+        return self.transparency
+    
     def update_transparency(self, transparency):
-        """Update the transparency of the mask annotation and re-render the graphics item."""
+        """Update the transparency of the mask annotation - now instant with render-time transparency!"""
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.transparency != transparency:
             self.transparency = transparency
-            # OPTIMIZED: Use fast alpha-only update instead of full canvas rebuild
-            # Update all visible labels with the new transparency
+            # ULTRA-FAST: No numpy array modifications needed!
+            # Transparency is applied at render time in paint()
+            # Just update the label objects and trigger a repaint
             for label_id in self.visible_label_ids:
                 label = next((lbl for lbl in self.class_id_to_label_map.values() if lbl.id == label_id), None)
                 if label:
                     label.transparency = transparency
-                    self._update_label_transparency_only(label_id, transparency)
+            
+            # Simple repaint - no expensive array operations!
+            if self.graphics_item:
+                self.graphics_item.update()
             
     def update_visible_labels(self, visible_ids: set):
         """
