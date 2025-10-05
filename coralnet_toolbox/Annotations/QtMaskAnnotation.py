@@ -2,6 +2,7 @@ import warnings
 
 import base64
 import rasterio
+import time
 
 import numpy as np
 
@@ -15,7 +16,6 @@ from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-import time
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -248,12 +248,10 @@ class MaskAnnotation(Annotation):
         if not label:
             return
         
-        # Create the new RGBA values
-        new_rgba = [label.color.red(), label.color.green(), label.color.blue(), new_transparency]
-        
-        # Update only the affected pixels in the colored_mask
-        self.colored_mask[normal_pixels] = new_rgba
-        self.colored_mask[locked_pixels] = new_rgba
+        # ULTRA-FAST: Update only the alpha channel (index 3) instead of full RGBA
+        # This avoids creating new arrays and copying RGB values that haven't changed
+        self.colored_mask[normal_pixels, 3] = new_transparency
+        self.colored_mask[locked_pixels, 3] = new_transparency
         
         # Trigger a minimal graphics update
         self.graphics_item.update()
@@ -372,6 +370,13 @@ class MaskAnnotation(Annotation):
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         if self.transparency != transparency:
             self.transparency = transparency
+            # OPTIMIZED: Use fast alpha-only update instead of full canvas rebuild
+            # Update all visible labels with the new transparency
+            for label_id in self.visible_label_ids:
+                label = next((lbl for lbl in self.class_id_to_label_map.values() if lbl.id == label_id), None)
+                if label:
+                    label.transparency = transparency
+                    self._update_label_transparency_only(label_id, transparency)
             
     def update_visible_labels(self, visible_ids: set):
         """
