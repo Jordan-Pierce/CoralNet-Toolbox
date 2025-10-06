@@ -82,6 +82,7 @@ from coralnet_toolbox.MachineLearning import (
     ExportClassify as ClassifyExportDatasetDialog,
     ExportDetect as DetectExportDatasetDialog,
     ExportSegment as SegmentExportDatasetDialog,
+    ExportSemantic as SemanticExportDatasetDialog,
     EvalClassify as ClassifyEvaluateModelDialog,
     EvalDetect as DetectEvaluateModelDialog,
     EvalSegment as SegmentEvaluateModelDialog,
@@ -237,6 +238,7 @@ class MainWindow(QMainWindow):
         self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
         self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
+        self.semantic_export_dataset_dialog = SemanticExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
         self.classify_tune_model_dialog = ClassifyTuneDialog(self)
         self.detect_tune_model_dialog = DetectTuneDialog(self)
@@ -429,6 +431,10 @@ class MainWindow(QMainWindow):
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
+        # Export Semantic Segmentation Dataset
+        self.export_semantic_dataset_action = QAction("Semantic", self)
+        self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
         # Add a separator
         self.file_menu.addSeparator()
@@ -2192,6 +2198,28 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_export_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_semantic_export_dataset_dialog(self):
+        """Open the Semantic Export Dataset dialog to export semantic segmentation datasets."""
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.semantic_export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

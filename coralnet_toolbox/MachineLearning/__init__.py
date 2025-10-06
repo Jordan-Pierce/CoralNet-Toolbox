@@ -27,6 +27,7 @@ from .ImportDataset.QtSegment import Segment as ImportSegment
 from .ExportDataset.QtClassify import Classify as ExportClassify
 from .ExportDataset.QtDetect import Detect as ExportDetect
 from .ExportDataset.QtSegment import Segment as ExportSegment
+from .ExportDataset.QtSemantic import Semantic as ExportSemantic
 
 from .EvaluateModel.QtClassify import Classify as EvalClassify
 from .EvaluateModel.QtDetect import Detect as EvalDetect
@@ -56,6 +57,7 @@ __all__ = [
     'ExportClassify', 
     'ExportDetect', 
     'ExportSegment',
+    'ExportSemantic',
     'EvalClassify', 
     'EvalDetect', 
     'EvalSegment',
