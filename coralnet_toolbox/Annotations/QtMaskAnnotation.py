@@ -2,12 +2,14 @@ import warnings
 
 import base64
 import rasterio
-import time
 
 import numpy as np
 
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
+
+from shapely.geometry import Polygon
+from rasterio.features import rasterize
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -624,6 +626,44 @@ class MaskAnnotation(Annotation):
         
         # Set these pixels back to 0 (unclassified).
         self.mask_data[pixels_to_clear] = 0
+        
+    def clear_pixels_for_annotations(self, annotations_to_clear: list):
+        """
+        Rasterizes a list of vector annotations and sets the corresponding
+        pixels in the mask_data to 0 (unclassified).
+        """
+        if not annotations_to_clear:
+            return
+
+        # 1. Convert all annotation polygons to Shapely Polygons.
+        geometries = []
+        for anno in annotations_to_clear:
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
+
+        if not geometries:
+            return
+
+        # 2. Rasterize all shapes at once into a boolean mask.
+        # This creates a numpy array where 'True' indicates a pixel is covered
+        # by at least one of the vector annotations.
+        height, width = self.mask_data.shape
+        clear_mask = rasterize(
+            geometries,
+            out_shape=(height, width),
+            fill=0,
+            default_value=1,
+            dtype=np.uint8
+        ).astype(bool)
+
+        # 3. Apply the mask to the data, setting pixels to 0.
+        self.mask_data[clear_mask] = 0
+
+        # 4. Trigger a full repaint of the mask to show the changes.
+        self.update_graphics_item()
 
     # --- Analysis & Information Retrieval Methods ---
 

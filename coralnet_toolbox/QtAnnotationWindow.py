@@ -1,6 +1,5 @@
 import warnings
 
-import time
 from typing import Optional
 
 from rtree import index
@@ -252,28 +251,42 @@ class AnnotationWindow(QGraphicsView):
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and update the UI layers for the correct editing mode."""
-        # Always deactivate the current tool if one is active
+        
+        previous_tool = self.selected_tool
+        
         if self.selected_tool:
             self.tools[self.selected_tool].stop_current_drawing()
             self.tools[self.selected_tool].deactivate()
             
-        # If tool is None or invalid, just deactivate and return
         if tool is None or tool not in self.tools:
             self.selected_tool = None
             self.unselect_annotations()
             return
         
-        # Set the new tool
         self.selected_tool = tool
-        
-        if self.selected_tool and self.selected_tool in self.mask_tools:
-            # When entering mask mode, we simply unselect any vector annotations.
+
+        # Switch between mask editing mode and vector annotation mode
+        if self.selected_tool in self.mask_tools and previous_tool not in self.mask_tools:
+            mask_anno = self.current_mask_annotation
+            vector_annos = self.get_image_annotations()
+            
+            if mask_anno and vector_annos:
+                # This ensures new vector annotations "erase" any underlying mask data.
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    mask_anno.clear_pixels_for_annotations(vector_annos)
+                finally:
+                    QApplication.restoreOverrideCursor()
+
             self.unselect_annotations()
         
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
         
-        self.unselect_annotations()
+        # Unselect annotations unless we are in select mode.
+        if self.selected_tool != "select":
+            self.unselect_annotations()
+
         self.toggle_cursor_annotation()
         
     def set_selected_label(self, label):
@@ -552,19 +565,15 @@ class AnnotationWindow(QGraphicsView):
     @property
     def current_mask_annotation(self) -> Optional[MaskAnnotation]:
         """A helper property to get the MaskAnnotation for the currently active image."""
-        start_time = time.time()
         if not self.current_image_path:
-            print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
             return None
         raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
         if not raster:
-            print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
             return None
         
         # This will get the existing mask or create it on the first call
         project_labels = self.main_window.label_window.labels
         mask_annotation = raster.get_mask_annotation(project_labels)
-        print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
         return mask_annotation
     
     def get_intersecting_annotations(self, target_rect: QRectF):
@@ -913,7 +922,6 @@ class AnnotationWindow(QGraphicsView):
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""
-        start_time = time.time()
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -930,11 +938,9 @@ class AnnotationWindow(QGraphicsView):
         
         # Update the view
         self.viewport().update()
-        print(f"load_annotation took {time.time() - start_time:.4f} seconds")
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
-        start_time = time.time()
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
@@ -942,7 +948,6 @@ class AnnotationWindow(QGraphicsView):
         annotations = self.crop_annotations(image_path, annotations)
 
         if not len(annotations):
-            print(f"load_annotations took {time.time() - start_time:.4f} seconds")
             return
         
         # Make cursor busy
@@ -978,18 +983,14 @@ class AnnotationWindow(QGraphicsView):
 
         QApplication.processEvents()
         self.viewport().update()
-        print(f"load_annotations took {time.time() - start_time:.4f} seconds")
 
     def load_mask_annotation(self):
         """Load the mask annotation for the current image, if it exists."""
-        start_time = time.time()
         if not self.current_image_path:
-            print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
             return
 
         mask_annotation = self.current_mask_annotation
         if not mask_annotation:
-            print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
             return
         
         # Remove the graphics item from its current scene if it exists
@@ -1004,7 +1005,6 @@ class AnnotationWindow(QGraphicsView):
 
         # Update the view
         self.viewport().update()
-        print(f"load_mask_annotation took {time.time() - start_time:.4f} seconds")
 
     def get_image_annotations(self, image_path=None):
         """Get all annotations for the specified image path or current image."""
@@ -1027,7 +1027,6 @@ class AnnotationWindow(QGraphicsView):
 
     def crop_annotations(self, image_path=None, annotations=None, return_annotations=True, verbose=True):
         """Crop the image around each annotation for the specified image path."""
-        start_time = time.time()
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -1039,7 +1038,6 @@ class AnnotationWindow(QGraphicsView):
 
         if not annotations:
             QApplication.restoreOverrideCursor()
-            print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
             return []
         
         progress_bar = None
@@ -1065,9 +1063,7 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.close()
 
         if return_annotations:
-            print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
             return annotations
-        print(f"crop_annotations took {time.time() - start_time:.4f} seconds")
 
     def add_annotation_from_tool(self, annotation):
         """Add a new annotation at the specified position using the current tool."""
