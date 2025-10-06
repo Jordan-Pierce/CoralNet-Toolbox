@@ -3,8 +3,11 @@ import os
 import gc
 import random 
 import shutil
+import yaml
 import numpy as np
 from PIL import Image
+from rasterio.features import rasterize
+from shapely.geometry import Polygon, box
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, QTableWidgetItem)
@@ -43,9 +46,10 @@ class Semantic(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text
-        info_text = ("Export semantic segmentation masks from MaskAnnotations. "
-                     "This exports pixel-level class labels for semantic segmentation training. "
-                     "The table shows which class labels are present in each mask annotation.")
+        info_text = ("Export semantic segmentation masks in YOLO format. "
+                     "Supports both MaskAnnotations and vector annotations (Patches, Rectangles, Polygons). "
+                     "Vector annotations will be rasterized into semantic masks. "
+                     "This exports pixel-level class labels for semantic segmentation training.")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)
@@ -56,30 +60,27 @@ class Semantic(Base):
         self.layout.addWidget(group_box)
 
     def create_annotation_layout(self):
-        """Creates the annotation type checkboxes layout group box - overridden for semantic."""
+        """Creates the annotation type checkboxes layout group box - supports all annotation types for semantic."""
         group_box = QGroupBox("Annotation Types")
         layout = QVBoxLayout()
 
-        # For semantic segmentation, we only work with mask annotations
+        # For semantic segmentation, we support both mask and vector annotations
         self.include_masks_checkbox = QCheckBox("Include Mask Annotations")
         self.include_masks_checkbox.setChecked(True)
         self.include_masks_checkbox.setEnabled(True)
         
-        # Add placeholders for compatibility with base class
+        # Enable vector annotation types - these will be rasterized into semantic masks
         self.include_patches_checkbox = QCheckBox("Include Patch Annotations")
-        self.include_patches_checkbox.setChecked(False)
-        self.include_patches_checkbox.setEnabled(False)
-        self.include_patches_checkbox.setVisible(False)
+        self.include_patches_checkbox.setChecked(True)
+        self.include_patches_checkbox.setEnabled(True)
         
         self.include_rectangles_checkbox = QCheckBox("Include Rectangle Annotations") 
-        self.include_rectangles_checkbox.setChecked(False)
-        self.include_rectangles_checkbox.setEnabled(False)
-        self.include_rectangles_checkbox.setVisible(False)
+        self.include_rectangles_checkbox.setChecked(True)
+        self.include_rectangles_checkbox.setEnabled(True)
         
         self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
-        self.include_polygons_checkbox.setChecked(False)
-        self.include_polygons_checkbox.setEnabled(False)
-        self.include_polygons_checkbox.setVisible(False)
+        self.include_polygons_checkbox.setChecked(True)
+        self.include_polygons_checkbox.setEnabled(True)
 
         layout.addWidget(self.include_masks_checkbox)
         layout.addWidget(self.include_patches_checkbox)
@@ -93,17 +94,17 @@ class Semantic(Base):
         """
         Update the state of annotation type checkboxes for semantic segmentation.
         """
-        # Only mask annotations are relevant for semantic segmentation
+        # Enable all annotation types for semantic segmentation
         self.include_masks_checkbox.setChecked(True)
         self.include_masks_checkbox.setEnabled(True)
         
-        # Disable vector annotation types
-        self.include_patches_checkbox.setChecked(False)
-        self.include_patches_checkbox.setEnabled(False)
-        self.include_rectangles_checkbox.setChecked(False)
-        self.include_rectangles_checkbox.setEnabled(False)
-        self.include_polygons_checkbox.setChecked(False)
-        self.include_polygons_checkbox.setEnabled(False)
+        # Enable vector annotation types - they will be rasterized
+        self.include_patches_checkbox.setChecked(True)
+        self.include_patches_checkbox.setEnabled(True)
+        self.include_rectangles_checkbox.setChecked(True)
+        self.include_rectangles_checkbox.setEnabled(True)
+        self.include_polygons_checkbox.setChecked(True)
+        self.include_polygons_checkbox.setEnabled(True)
 
         # Enable negative sample options for semantic segmentation
         self.include_negatives_radio.setEnabled(True)
@@ -161,61 +162,113 @@ class Semantic(Base):
 
     def filter_annotations(self):
         """
-        Filter mask annotations based on the selected labels and image options.
-        Override base class method to work with mask annotations.
+        Filter both mask and vector annotations based on the selected types and labels.
+        Override base class method to work with both mask and vector annotations.
 
         Returns:
-            list: List of filtered MaskAnnotation objects.
+            list: List of filtered annotations (both mask and vector types).
         """
-        if not self.include_masks_checkbox.isChecked():
-            return []
+        annotations = []
+        
+        # Get mask annotations if selected
+        if self.include_masks_checkbox.isChecked():
+            mask_annotations = self.get_mask_annotations()
+            annotations.extend(mask_annotations)
+        
+        # Get vector annotations if selected (these will be rasterized later)
+        if (self.include_patches_checkbox.isChecked() or
+                self.include_rectangles_checkbox.isChecked() or
+                self.include_polygons_checkbox.isChecked()):
             
-        return self.get_mask_annotations()
+            vector_annotations = list(self.annotation_window.annotations_dict.values())
+            
+            # Filter by annotation type
+            filtered_vectors = []
+            for annotation in vector_annotations:
+                include = False
+                if hasattr(annotation, '__class__'):
+                    if (self.include_patches_checkbox.isChecked() and
+                            annotation.__class__.__name__ == 'PatchAnnotation'):
+                        include = True
+                    elif (self.include_rectangles_checkbox.isChecked() and
+                            annotation.__class__.__name__ == 'RectangleAnnotation'):
+                        include = True
+                    elif (self.include_polygons_checkbox.isChecked() and
+                            annotation.__class__.__name__ == 'PolygonAnnotation'):
+                        include = True
+                
+                if include:
+                    filtered_vectors.append(annotation)
+            
+            annotations.extend(filtered_vectors)
+            
+        return annotations
 
     def populate_class_filter_list(self):
         """
-        Populate the class filter list with labels and their mask presence/counts.
-        Override base class method to work with mask annotations instead of vector annotations.
+        Populate the class filter list with labels from both mask and vector annotations.
+        Override base class method to work with both mask and vector annotations for semantic segmentation.
         """
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
-        label_counts = {}  # Number of masks containing each label
-        label_pixel_counts = {}  # Total pixel counts for each label across all masks
+        label_counts = {}  # Number of annotations containing each label
         label_image_counts = {}  # Set of images containing each label
         
-        # Get all mask annotations
-        all_mask_annotations = []
-        for image_path in self.image_window.raster_manager.image_paths:
-            raster = self.image_window.raster_manager.get_raster(image_path)
-            if raster and raster.mask_annotation:
-                all_mask_annotations.append(raster.mask_annotation)
-
-        # Count occurrences of each label in mask annotations
-        for mask_annotation in all_mask_annotations:
-            class_stats = mask_annotation.get_class_statistics()
-            image_path = mask_annotation.image_path
-            
-            for label_code, stats in class_stats.items():
-                if label_code != 'Review' and stats['pixel_count'] > 0:
-                    # Count masks containing this label
+        # Count vector annotations (same as base class but with type filtering)
+        for annotation in self.annotation_window.annotations_dict.values():
+            # Count all supported annotation types for semantic segmentation
+            supported_types = ['PatchAnnotation', 'RectangleAnnotation', 'PolygonAnnotation', 'MaskAnnotation']
+            if annotation.__class__.__name__ in supported_types:
+                label_code = annotation.label.short_label_code
+                image_path = annotation.image_path
+                
+                if label_code != 'Review':
                     if label_code in label_counts:
                         label_counts[label_code] += 1
-                        label_pixel_counts[label_code] += stats['pixel_count']
                         label_image_counts[label_code].add(image_path)
                     else:
                         label_counts[label_code] = 1
-                        label_pixel_counts[label_code] = stats['pixel_count']
                         label_image_counts[label_code] = {image_path}
+        
+        # Also count mask annotations from raster manager if available
+        try:
+            if hasattr(self.image_window, 'raster_manager') and self.image_window.raster_manager:
+                for image_path in self.image_window.raster_manager.image_paths:
+                    raster = self.image_window.raster_manager.get_raster(image_path)
+                    if raster and hasattr(raster, 'mask_annotation') and raster.mask_annotation:
+                        mask_annotation = raster.mask_annotation
+                        class_stats = mask_annotation.get_class_statistics()
+                        
+                        for label_code, stats in class_stats.items():
+                            if label_code != 'Review' and stats.get('pixel_count', 0) > 0:
+                                # Only count if not already counted from annotations_dict
+                                existing_ids = [ann.id for ann in self.annotation_window.annotations_dict.values()]
+                                if mask_annotation.id not in existing_ids:
+                                    if label_code in label_counts:
+                                        label_counts[label_code] += 1
+                                        label_image_counts[label_code].add(image_path)
+                                    else:
+                                        label_counts[label_code] = 1
+                                        label_image_counts[label_code] = {image_path}
+        except Exception as e:
+            print(f"Error accessing raster manager: {e}")
 
-        # Sort the labels by their mask counts in descending order
+        # If no annotations found, show all available labels from label window
+        if not label_counts:
+            for label in self.main_window.label_window.labels:
+                if label.short_label_code != 'Review':
+                    label_counts[label.short_label_code] = 0
+                    label_image_counts[label.short_label_code] = set()
+
+        # Sort the labels by their annotation counts in descending order
         sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
 
         # Populate the label counts table with labels and their counts
         self.label_counts_table.setColumnCount(7)
         self.label_counts_table.setHorizontalHeaderLabels(["Include",
                                                            "Label", 
-                                                           "Masks",  # Number of masks containing label
+                                                           "Annotations",  # Number of annotations containing label
                                                            "Train",
                                                            "Val", 
                                                            "Test",
@@ -223,13 +276,13 @@ class Semantic(Base):
 
         # Populate the label counts table with labels and their counts
         row = 0
-        for label, mask_count in sorted_label_counts:
+        for label, annotation_count in sorted_label_counts:
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
             self.label_counts_table.insertRow(row)
             self.label_counts_table.setCellWidget(row, 0, include_checkbox)
             self.label_counts_table.setItem(row, 1, QTableWidgetItem(label))
-            self.label_counts_table.setItem(row, 2, QTableWidgetItem(str(mask_count)))
+            self.label_counts_table.setItem(row, 2, QTableWidgetItem(str(annotation_count)))
             self.label_counts_table.setItem(row, 3, QTableWidgetItem("0"))
             self.label_counts_table.setItem(row, 4, QTableWidgetItem("0"))
             self.label_counts_table.setItem(row, 5, QTableWidgetItem("0"))
@@ -462,41 +515,58 @@ class Semantic(Base):
 
     def create_dataset(self, output_dir_path):
         """
-        Create the semantic segmentation dataset.
+        Create the semantic segmentation dataset in YOLO format.
         
         Args:
             output_dir_path (str): Path to the output directory.
         """
+        # Create the yaml file
+        yaml_path = os.path.join(output_dir_path, 'data.yaml')
+
+        # Create the train, val, and test directories (using 'valid' to match YOLO convention)
+        train_dir = os.path.join(output_dir_path, 'train')
+        val_dir = os.path.join(output_dir_path, 'valid')
+        test_dir = os.path.join(output_dir_path, 'test')
+        names = self.selected_labels
+        num_classes = len(self.selected_labels)
+
+        # Create dictionary of class names with numeric keys (0 is background, so classes start at 1)
+        names_dict = {i + 1: name for i, name in enumerate(names)}
+        # Add background class
+        names_dict[0] = 'background'
+
+        # Define the data as a dictionary with absolute paths
+        data = {
+            'path': output_dir_path,
+            'train': train_dir,
+            'val': val_dir,
+            'test': test_dir,
+            'nc': num_classes + 1,  # +1 for background class
+            'names': names_dict  # Dictionary mapping from indices to class names
+        }
+
+        # Write the data to the YAML file
+        with open(yaml_path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False)
+
+        # Create the train, val, and test directories with images and labels subdirectories
+        os.makedirs(f"{train_dir}/images", exist_ok=True)
+        os.makedirs(f"{train_dir}/labels", exist_ok=True)
+        os.makedirs(f"{val_dir}/images", exist_ok=True)
+        os.makedirs(f"{val_dir}/labels", exist_ok=True)
+        os.makedirs(f"{test_dir}/images", exist_ok=True)
+        os.makedirs(f"{test_dir}/labels", exist_ok=True)
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Creating Semantic Segmentation Dataset")
         progress_bar.show()
 
         try:
-            # Create split directories
-            splits = []
-            if self.train_ratio > 0:
-                splits.append(('train', self.train_annotations, self.train_images))
-            if self.val_ratio > 0:
-                splits.append(('val', self.val_annotations, self.val_images))
-            if self.test_ratio > 0:
-                splits.append(('test', self.test_annotations, self.test_images))
-
-            total_operations = sum(len(annotations) for _, annotations, _ in splits)
-            progress_bar.start_progress(total_operations)
-            
-            operations_completed = 0
-
-            for split_name, annotations, images in splits:
-                split_dir = os.path.join(output_dir_path, split_name)
-                images_dir = os.path.join(split_dir, 'images')
-                masks_dir = os.path.join(split_dir, 'masks')
-                
-                os.makedirs(images_dir, exist_ok=True)
-                os.makedirs(masks_dir, exist_ok=True)
-
-                self.process_mask_annotations(annotations, images_dir, masks_dir, progress_bar, operations_completed)
-                operations_completed += len(annotations)
+            # Process each split
+            self.process_annotations(self.train_annotations, train_dir, "Training")
+            self.process_annotations(self.val_annotations, val_dir, "Validation")
+            self.process_annotations(self.test_annotations, test_dir, "Testing")
 
         finally:
             # Restore the cursor to the default cursor
@@ -505,41 +575,64 @@ class Semantic(Base):
             progress_bar.close()
             gc.collect()
 
-    def process_mask_annotations(self, annotations, images_dir, masks_dir, progress_bar, operations_completed):
+    def process_mask_annotations(self, annotations, images_dir, labels_dir, progress_bar, image_paths):
         """
-        Process mask annotations for a specific split.
+        Process both mask and vector annotations for a specific split in YOLO format.
         
         Args:
-            annotations (list): List of MaskAnnotation objects
+            annotations (list): List of annotation objects (both mask and vector types) for this split
             images_dir (str): Directory to save images
-            masks_dir (str): Directory to save masks
+            labels_dir (str): Directory to save label masks
             progress_bar: Progress bar object
-            operations_completed (int): Number of operations already completed
+            image_paths (list): All image paths for this split (including negatives)
         """
-        for i, mask_annotation in enumerate(annotations):
+        # Separate mask and vector annotations
+        mask_annotations = [ann for ann in annotations if ann.__class__.__name__ == 'MaskAnnotation']
+        vector_annotation_types = ['PatchAnnotation', 'RectangleAnnotation', 'PolygonAnnotation']
+        vector_annotations = [ann for ann in annotations if ann.__class__.__name__ in vector_annotation_types]
+        
+        # Create mappings by image path
+        image_to_mask = {ann.image_path: ann for ann in mask_annotations}
+        
+        # Group vector annotations by image path
+        image_to_vectors = {}
+        for ann in vector_annotations:
+            if ann.image_path not in image_to_vectors:
+                image_to_vectors[ann.image_path] = []
+            image_to_vectors[ann.image_path].append(ann)
+        
+        for i, image_path in enumerate(image_paths):
             try:
                 # Copy original image
-                image_filename = os.path.basename(mask_annotation.image_path)
+                image_filename = os.path.basename(image_path)
                 image_name, image_ext = os.path.splitext(image_filename)
                 
                 # Copy image to images directory
                 image_output_path = os.path.join(images_dir, image_filename)
                 if not os.path.exists(image_output_path):
-                    shutil.copy2(mask_annotation.image_path, image_output_path)
+                    shutil.copy2(image_path, image_output_path)
                 
                 # Create semantic segmentation mask
-                mask_output_path = os.path.join(masks_dir, f"{image_name}.png")
-                self.create_semantic_mask(mask_annotation, mask_output_path)
+                mask_output_path = os.path.join(labels_dir, f"{image_name}.png")
+                
+                # Combine mask and vector annotations for this image
+                self.create_combined_semantic_mask(
+                    image_path,
+                    image_to_mask.get(image_path),
+                    image_to_vectors.get(image_path, []),
+                    mask_output_path
+                )
                 
                 # Update progress
-                progress_bar.update_progress(operations_completed + i + 1)
+                progress_bar.update_progress()
                 
             except Exception as e:
-                print(f"Error processing mask annotation {mask_annotation.image_path}: {e}")
+                print(f"Error processing image {image_path}: {e}")
 
     def create_semantic_mask(self, mask_annotation, output_path):
         """
-        Create a semantic segmentation mask from a MaskAnnotation.
+        Create a semantic segmentation mask from a MaskAnnotation in YOLO format.
+        Single channel PNG with uint8 values where 0 is background.
         
         Args:
             mask_annotation (MaskAnnotation): The mask annotation to process
@@ -566,33 +659,220 @@ class Semantic(Base):
             class_mask = (mask_data == class_id) | (mask_data == class_id + mask_annotation.LOCK_BIT)
             output_mask[class_mask] = label_index
         
-        # Save as PNG
+        # Save as single channel PNG (uint8)
         mask_image = Image.fromarray(output_mask, mode='L')
         mask_image.save(output_path)
 
-    def process_annotations(self, annotations, split_dir, split):
+    def create_combined_semantic_mask(self, image_path, mask_annotation, vector_annotations, output_path):
         """
-        Process annotations for semantic segmentation export.
-        This method is required by the base class but redirects to process_mask_annotations.
+        Create a combined semantic segmentation mask from both mask and vector annotations.
         
         Args:
-            annotations (list): List of MaskAnnotation objects
-            split_dir (str): Directory for this split
-            split (str): Split name ('train', 'val', 'test')
+            image_path (str): Path to the source image
+            mask_annotation (MaskAnnotation or None): Mask annotation for this image
+            vector_annotations (list): List of vector annotations for this image
+            output_path (str): Path to save the combined mask
         """
-        images_dir = os.path.join(split_dir, 'images')
-        masks_dir = os.path.join(split_dir, 'masks')
-        
-        os.makedirs(images_dir, exist_ok=True)
-        os.makedirs(masks_dir, exist_ok=True)
-        
-        # Create a dummy progress bar for this method
-        progress_bar = ProgressBar(self, f"Processing {split} annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(annotations))
-        
         try:
-            self.process_mask_annotations(annotations, images_dir, masks_dir, progress_bar, 0)
+            # Get image dimensions
+            from coralnet_toolbox.utilities import rasterio_open
+            with rasterio_open(image_path) as src:
+                height, width = src.shape
+            
+            # Start with empty mask (all background)
+            combined_mask = np.zeros((height, width), dtype=np.uint8)
+            
+            # If we have a mask annotation, use it as the base
+            if mask_annotation is not None:
+                # Get the mask data and convert to semantic format
+                mask_data = mask_annotation.mask_data.copy()
+                
+                # Create mapping from class IDs to label indices
+                label_to_index = {}
+                for i, label in enumerate(self.selected_labels):
+                    # Find the class ID for this label in the mask annotation
+                    for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
+                        if label_obj.short_label_code == label:
+                            label_to_index[class_id] = i + 1  # +1 because 0 is background
+                            break
+                
+                # Map class IDs to label indices
+                for class_id, label_index in label_to_index.items():
+                    # Handle both locked and unlocked pixels
+                    class_mask = ((mask_data == class_id) |
+                                  (mask_data == class_id + mask_annotation.LOCK_BIT))
+                    combined_mask[class_mask] = label_index
+            
+            # If we have vector annotations, rasterize and overlay them
+            if vector_annotations:
+                vector_mask = self.rasterize_vector_annotations(vector_annotations, image_path)
+                # Overlay vector mask onto combined mask (vector annotations take priority)
+                combined_mask = np.where(vector_mask > 0, vector_mask, combined_mask)
+            
+            # Save as single channel PNG
+            mask_image = Image.fromarray(combined_mask, mode='L')
+            mask_image.save(output_path)
+            
+        except Exception as e:
+            print(f"Error creating combined semantic mask for {image_path}: {e}")
+            # Create empty mask as fallback
+            self.create_empty_mask(image_path, output_path)
+    
+    def create_empty_mask(self, image_path, output_path):
+        """
+        Create an empty semantic segmentation mask (all background) for images without annotations.
+        
+        Args:
+            image_path (str): Path to the original image to get dimensions
+            output_path (str): Path to save the empty mask
+        """
+        try:
+            # Get image dimensions
+            from coralnet_toolbox.utilities import rasterio_open
+            with rasterio_open(image_path) as src:
+                height, width = src.shape
+            
+            # Create empty mask (all zeros = background)
+            empty_mask = np.zeros((height, width), dtype=np.uint8)
+            
+            # Save as single channel PNG
+            mask_image = Image.fromarray(empty_mask, mode='L')
+            mask_image.save(output_path)
+            
+        except Exception as e:
+            print(f"Error creating empty mask for {image_path}: {e}")
+
+    def rasterize_vector_annotations(self, vector_annotations, image_path):
+        """
+        Rasterize vector annotations (patches, rectangles, polygons) into a semantic mask.
+        
+        Args:
+            vector_annotations (list): List of vector annotation objects
+            image_path (str): Path to the image for getting dimensions
+            
+        Returns:
+            np.ndarray: Semantic mask with rasterized annotations
+        """
+        try:
+            # Get image dimensions
+            from coralnet_toolbox.utilities import rasterio_open
+            with rasterio_open(image_path) as src:
+                height, width = src.shape
+            
+            # Create empty mask (all zeros = background)
+            output_mask = np.zeros((height, width), dtype=np.uint8)
+            
+            # Group annotations by label
+            annotations_by_label = {}
+            for annotation in vector_annotations:
+                label_code = annotation.label.short_label_code
+                if label_code not in annotations_by_label:
+                    annotations_by_label[label_code] = []
+                annotations_by_label[label_code].append(annotation)
+            
+            # Rasterize each label group
+            for label_code, label_annotations in annotations_by_label.items():
+                # Find the class index for this label (1-based, 0 is background)
+                if label_code in self.selected_labels:
+                    class_index = self.selected_labels.index(label_code) + 1
+                    
+                    # Convert annotations to geometries
+                    geometries = []
+                    for annotation in label_annotations:
+                        geom = self._annotation_to_geometry(annotation)
+                        if geom is not None:
+                            geometries.append(geom)
+                    
+                    if geometries:
+                        # Rasterize geometries for this class
+                        class_mask = rasterize(
+                            [(geom, class_index) for geom in geometries],
+                            out_shape=(height, width),
+                            fill=0,
+                            dtype=np.uint8
+                        )
+                        
+                        # Overlay this class mask onto output mask
+                        output_mask = np.where(class_mask > 0, class_mask, output_mask)
+            
+            return output_mask
+            
+        except Exception as e:
+            print(f"Error rasterizing vector annotations for {image_path}: {e}")
+            # Return empty mask on error
+            return np.zeros((height, width), dtype=np.uint8)
+
+    def _annotation_to_geometry(self, annotation):
+        """
+        Convert an annotation object to a shapely geometry.
+        
+        Args:
+            annotation: Annotation object (patch, rectangle, or polygon)
+            
+        Returns:
+            shapely geometry or None
+        """
+        try:
+            if annotation.__class__.__name__ == 'PatchAnnotation':
+                # Convert patch to polygon (circle approximation)
+                center_x, center_y = annotation.centroid.x(), annotation.centroid.y()
+                radius = annotation.get_area() / (2 * np.pi)  # Approximate radius
+                # Create circle as polygon with 32 points
+                angles = np.linspace(0, 2 * np.pi, 32)
+                points = [(center_x + radius * np.cos(a), center_y + radius * np.sin(a)) for a in angles]
+                return Polygon(points)
+                
+            elif annotation.__class__.__name__ == 'RectangleAnnotation':
+                # Convert rectangle to box geometry
+                bbox = annotation.get_bounding_box()
+                return box(bbox[0], bbox[1], bbox[2], bbox[3])
+                
+            elif annotation.__class__.__name__ == 'PolygonAnnotation':
+                # Convert polygon points to shapely Polygon
+                points = [(point.x(), point.y()) for point in annotation.points]
+                if len(points) >= 3:  # Need at least 3 points for a polygon
+                    return Polygon(points)
+                    
+        except Exception as e:
+            print(f"Error converting annotation to geometry: {e}")
+            
+        return None
+
+    def process_annotations(self, annotations, split_dir, split):
+        """
+        Process annotations for semantic segmentation export in YOLO format.
+        
+        Args:
+            annotations (list): List of MaskAnnotation objects for this split
+            split_dir (str): Directory for this split  
+            split (str): Split name (e.g., "Training", "Validation", "Testing")
+        """
+        # Determine the full list of images for this split (including negatives)
+        if split == "Training":
+            image_paths = self.train_images
+        elif split == "Validation":
+            image_paths = self.val_images
+        elif split == "Testing":
+            image_paths = self.test_images
+        else:
+            image_paths = []
+
+        if not image_paths:
+            return
+
+        # Set up progress bar
+        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+
+        try:
+            # Create images and labels directories
+            images_dir = os.path.join(split_dir, 'images')
+            labels_dir = os.path.join(split_dir, 'labels')
+            
+            # Process all images in this split
+            self.process_mask_annotations(annotations, images_dir, labels_dir, progress_bar, image_paths)
+            
         finally:
-            progress_bar.finish_progress()
+            progress_bar.stop_progress()
             progress_bar.close()
