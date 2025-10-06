@@ -1,8 +1,9 @@
 import numpy as np
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QColor, QPen
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QMessageBox, QGraphicsRectItem
+
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -138,7 +139,6 @@ class BrushTool(Tool):
         if self.shape == 'circle':
             self.cursor_annotation = QGraphicsEllipseItem(rect)
         else:  # square
-            from PyQt5.QtWidgets import QGraphicsRectItem
             self.cursor_annotation = QGraphicsRectItem(rect)
         
         # Set the color with transparency
@@ -148,9 +148,7 @@ class BrushTool(Tool):
         
         # Create a darker border color by darkening the label color
         border_color = QColor(label_color)
-        border_color = border_color.darker(150)  # Make the border 50% darker than the fill
-        border_color.setAlpha(max(transparency + 50, 255))  # Make border more opaque than fill
-        
+        border_color = border_color.darker(150)  # Make the border 50% darker than the fill        
         # Set the pen for the border
         pen = QPen(border_color)
         pen.setWidth(2)  # Set border width to 2 pixels
