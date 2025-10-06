@@ -1,6 +1,9 @@
 import warnings
 
+import time
 from typing import Optional
+
+from rtree import index
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -35,8 +38,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.utilities import rasterio_open
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-import time
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -73,6 +74,14 @@ class AnnotationWindow(QGraphicsView):
         self.pan_start = None
         self.drag_start_pos = None
         self.cursor_annotation = None
+        
+        # Create an R-tree index property for 2D spatial data.
+        p = index.Property()
+        p.dimension = 2
+        # The index will store annotation objects directly.
+        p.object_capacity = 10 
+        # Create the index instance. It will be populated when annotations are loaded.
+        self.spatial_index = index.Index(properties=p)
 
         self.annotations_dict = {}  # Dictionary to store annotations by UUID
         self.image_annotations_dict = {}  # Dictionary to store annotations by image path
@@ -243,9 +252,6 @@ class AnnotationWindow(QGraphicsView):
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and update the UI layers for the correct editing mode."""
-        
-        previous_tool = self.selected_tool  # Track the previous tool for mode comparison
-        
         # Always deactivate the current tool if one is active
         if self.selected_tool:
             self.tools[self.selected_tool].stop_current_drawing()
@@ -257,41 +263,12 @@ class AnnotationWindow(QGraphicsView):
             self.unselect_annotations()
             return
         
+        # Set the new tool
         self.selected_tool = tool
         
-        # Only enter mask mode if switching from a non-mask tool (or no tool) to a mask tool
-        entering_mask_mode = (self.selected_tool and
-                              self.selected_tool in self.mask_tools and
-                              (not previous_tool or previous_tool not in self.mask_tools))
-        if entering_mask_mode:
-            # --- ENTERING MASK EDITING MODE ---
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                # Cache and protect existing vector annotations by marking their pixels as locked
-                # This prevents users from painting over vector annotation areas while keeping them visible
-                self.rasterized_annotations_cache = self.get_image_annotations()
-                if self.current_mask_annotation and self.rasterized_annotations_cache:
-                    self.rasterize_annotations()
-
-                self.unselect_annotations()  # Clear any selected vector annotations
-                # Note: We do NOT hide vector annotations - they remain visible
-            finally:
-                QApplication.restoreOverrideCursor()
-
-        # Only exit mask mode if switching from a mask tool to a non-mask tool (or None)
-        exiting_mask_mode = ((not self.selected_tool or 
-                             self.selected_tool not in self.mask_tools) and
-                             previous_tool and previous_tool in self.mask_tools)
-        if exiting_mask_mode:
-            # --- EXITING MASK EDITING MODE ---
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                # Remove protection from vector annotation pixels
-                self.unrasterize_annotations()
-                # Clear the cache
-                self.rasterized_annotations_cache = []
-            finally:
-                QApplication.restoreOverrideCursor()
+        if self.selected_tool and self.selected_tool in self.mask_tools:
+            # When entering mask mode, we simply unselect any vector annotations.
+            self.unselect_annotations()
         
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
@@ -548,6 +525,8 @@ class AnnotationWindow(QGraphicsView):
 
         # Load all associated annotations
         self.load_annotations()
+        # Now that all annotations are loaded and drawn, we build the index for them.
+        self._rebuild_spatial_index()
         # Update the image window's image annotations
         self.main_window.image_window.update_image_annotations(image_path)
         # Clear the confidence window
@@ -587,6 +566,31 @@ class AnnotationWindow(QGraphicsView):
         mask_annotation = raster.get_mask_annotation(project_labels)
         print(f"current_mask_annotation took {time.time() - start_time:.4f} seconds")
         return mask_annotation
+    
+    def get_intersecting_annotations(self, target_rect: QRectF):
+        """
+        Queries the R-tree spatial index for annotation IDs that intersect the
+        target_rect, then returns the full annotation objects from a dictionary lookup.
+        """
+        # Return immediately if the index hasn't been created yet.
+        if not hasattr(self, 'spatial_index') or self.spatial_index is None:
+            return []
+
+        # Get the bounding box coordinates in (left, bottom, right, top) format.
+        query_bounds = target_rect.getCoords()
+
+        # The query now returns the annotation IDs (strings) we stored.
+        hits = self.spatial_index.intersection(query_bounds, objects=True)
+        intersecting_ids = [hit.object for hit in hits]
+
+        # --- THE FIX: Look up the full annotation objects using their IDs. ---
+        results = []
+        for anno_id in intersecting_ids:
+            annotation = self.annotations_dict.get(anno_id)
+            if annotation and not isinstance(annotation, MaskAnnotation):
+                results.append(annotation)
+        
+        return results
 
     def rasterize_annotations(self):
         """
@@ -1093,7 +1097,7 @@ class AnnotationWindow(QGraphicsView):
         self.annotationCreated.emit(annotation.id)
 
     def add_annotation_to_dict(self, annotation):
-        """Add an annotation to the internal annotation dictionaries."""
+        """Add an annotation to the internal dictionaries and the spatial index."""
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
         # Add to image annotations dict (if not already present)
@@ -1101,20 +1105,75 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
-            
+
+        # Add the new annotation to our spatial index.
+        self.add_to_spatial_index(annotation)
+
         # Set the visibility based on the hide button state
         self.set_annotation_visibility(annotation)
-        
+
         # Update the ImageWindow Table
         self.main_window.image_window.update_annotation_count(annotation.id)
+        
+    def add_to_spatial_index(self, annotation):
+        """
+        Adds a single vector annotation to the R-tree spatial index.
+
+        This method checks if the index exists and if the annotation is a valid
+        geometric type with a graphical representation before attempting to insert it.
+        """
+        if self.spatial_index is None or not hasattr(annotation, 'get_polygon'):
+            return
+
+        # Ensure the graphics item exists to prevent errors.
+        if annotation.graphics_item:
+            bounds = annotation.graphics_item.boundingRect().getCoords()
+            # Store annotation ID string instead of annotation object
+            self.spatial_index.insert(hash(annotation.id), bounds, obj=annotation.id)
+
+    def remove_from_spatial_index(self, annotation):
+        """
+        Removes a single vector annotation from the R-tree spatial index.
+
+        This method checks if the index exists and if the annotation is a valid
+        geometric type with a graphical representation before attempting to remove it.
+        """
+        if self.spatial_index is None or not hasattr(annotation, 'get_polygon'):
+            return
+
+        # Ensure the graphics item exists to prevent errors.
+        if annotation.graphics_item:
+            bounds = annotation.graphics_item.boundingRect().getCoords()
+            # Use annotation ID string for removal
+            self.spatial_index.delete(hash(annotation.id), bounds)
+            
+    def _rebuild_spatial_index(self):
+        """
+        Clears and rebuilds the R-tree spatial index from scratch for all
+        vector annotations associated with the current image.
+        """
+        # Create a new, empty 2D index
+        p = index.Property()
+        p.dimension = 2
+        p.object_capacity = 10
+        self.spatial_index = index.Index(properties=p)
+
+        # Get all annotations for the currently displayed image
+        annotations_for_image = self.get_image_annotations()
+
+        for anno in annotations_for_image:
+            self.add_to_spatial_index(anno)
 
     def delete_annotation(self, annotation_id):
-        """Delete an annotation by its ID."""
+        """Delete an annotation by its ID from dicts and the spatial index."""
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
             # Unselect the annotation (if selected)
             self.unselect_annotation(annotation)
+
+            # Remove the annotation from our spatial index.
+            self.remove_from_spatial_index(annotation)
 
             # Check if the annotation image is still in the image annotations dict (key)
             if annotation.image_path in self.image_annotations_dict:

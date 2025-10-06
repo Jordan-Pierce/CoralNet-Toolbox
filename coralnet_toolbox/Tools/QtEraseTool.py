@@ -210,8 +210,4 @@ class EraseTool(Tool):
         brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
         
         # Call the update_mask method on the MaskAnnotation object with class_id 0 (background)
-        mask_annotation.update_mask(
-            brush_location=brush_location,
-            brush_mask=self.brush_mask,
-            new_class_id=0
-        )
+        mask_annotation.update_mask(brush_location, self.brush_mask, 0, self.annotation_window)

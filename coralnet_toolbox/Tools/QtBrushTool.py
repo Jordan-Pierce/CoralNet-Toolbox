@@ -200,9 +200,5 @@ class BrushTool(Tool):
         radius = self.brush_size / 2.0
         brush_location = QPointF(scene_pos.x() - radius, scene_pos.y() - radius)
         
-        # Call the update_mask method on the MaskAnnotation object
-        mask_annotation.update_mask(
-            brush_location=brush_location,
-            brush_mask=self.brush_mask,
-            new_class_id=class_id
-        ) 
+        # Call the update_mask method, now passing the annotation_window for context
+        mask_annotation.update_mask(brush_location, self.brush_mask, class_id, self.annotation_window)

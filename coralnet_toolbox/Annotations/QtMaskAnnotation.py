@@ -229,71 +229,64 @@ class MaskAnnotation(Annotation):
             self._update_full_canvas()
             self.graphics_item.update()
 
-    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
-        """Modify the mask data based on a brush stroke, avoiding locked pixels."""
-        start_time = time.time()
-        print(f"Starting update_mask at {start_time}")
-        
+    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, annotation_window):
+        """
+        Modify the mask data based on a brush stroke, creating on-the-fly
+        protection for vector annotations in the brush area.
+        """
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
         mask_h, mask_w = self.mask_data.shape
-        
-        init_time = time.time()
-        print(f"After initial calculations at {init_time}, elapsed: {init_time - start_time}")
-        
+
+        # Define the update area and clip it to the mask's bounds
         x_end = min(x_start + brush_w, mask_w)
         y_end = min(y_start + brush_h, mask_h)
         clipped_x_start = max(x_start, 0)
         clipped_y_start = max(y_start, 0)
-        
-        clip_time = time.time()
-        print(f"After clipping calculations at {clip_time}, elapsed: {clip_time - init_time}")
-        
+
         if clipped_x_start >= x_end or clipped_y_start >= y_end:
             return
+            
+        # This is the rectangular region of the main mask we are about to modify
+        update_rect = QRectF(clipped_x_start, 
+                             clipped_y_start, 
+                             x_end - clipped_x_start, 
+                             y_end - clipped_y_start)
         
+        # 1. Quickly find any vector annotations that overlap with our update area
+        intersecting_annos = annotation_window.get_intersecting_annotations(update_rect)
+        
+        # 2. If there are any, create a localized boolean mask of the protected pixels
+        if intersecting_annos:
+            local_lock_mask = self._create_local_lock_mask(update_rect, intersecting_annos)
+        else:
+            local_lock_mask = None
+
+        # Get the slice of the main mask data we will be updating
         target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
         
-        slice_time = time.time()
-        print(f"After target slice at {slice_time}, elapsed: {slice_time - clip_time}")
-        
-        # Find which pixels in the target area are already locked.
-        locked_pixels = target_slice >= self.LOCK_BIT
-        
-        lock_time = time.time()
-        print(f"After finding locked pixels at {lock_time}, elapsed: {lock_time - slice_time}")
-        
+        # Clip the user's brush mask to match the on-screen portion
         brush_x_offset = clipped_x_start - x_start
         brush_y_offset = clipped_y_start - y_start
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
         
-        brush_clip_time = time.time()
-        print(f"After clipping brush mask at {brush_clip_time}, elapsed: {brush_clip_time - lock_time}")
-        
-        # Subtract the locked pixels from the brush mask. The brush can only paint
-        # where the original brush mask is True AND the target pixel is NOT locked.
-        final_brush_mask = clipped_brush_mask & ~locked_pixels
-        
-        final_mask_time = time.time()
-        print(f"After creating final brush mask at {final_mask_time}, elapsed: {final_mask_time - brush_clip_time}")
-        
-        # Apply the final, protected brush mask.
+        # 3. Apply protection: remove protected pixels from the brush mask
+        if local_lock_mask is not None:
+            # The brush can only paint where the original brush mask is True
+            # AND the local lock mask is False.
+            final_brush_mask = clipped_brush_mask & ~local_lock_mask
+        else:
+            final_brush_mask = clipped_brush_mask
+
+        # Apply the final, protected brush mask to the data
         target_slice[final_brush_mask] = new_class_id
         
-        apply_time = time.time()
-        print(f"After applying mask at {apply_time}, elapsed: {apply_time - final_mask_time}")
-        
-        changed_rect = (clipped_x_start, clipped_y_start, x_end, y_end)
-        self.update_graphics_item(update_rect=changed_rect)
-        
-        update_time = time.time()
-        print(f"After update_graphics_item at {update_time}, elapsed: {update_time - apply_time}")
+        # Trigger a visual update for the changed rectangle
+        changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
+        self.update_graphics_item(update_rect=changed_rect_coords)
         
         self.annotationUpdated.emit(self)
-        
-        end_time = time.time()
-        print(f"Finished update_mask at {end_time}, total elapsed: {end_time - start_time}")
         
     def get_current_transparency(self):
         """Get the current transparency value for rendering."""
@@ -346,8 +339,11 @@ class MaskAnnotation(Annotation):
 
     # --- Data Manipulation & Editing Methods ---
 
-    def fill_region(self, point: QPointF, new_class_id: int):
-        """Fills a contiguous region with a new class ID (paint bucket tool)."""
+    def fill_region(self, point: QPointF, new_class_id: int, annotation_window):
+        """
+        Fills a contiguous region with a new class ID, protecting against
+        overwriting vector annotations within the fill area.
+        """
         x, y = int(point.x()), int(point.y())
         height, width = self.mask_data.shape
         if not (0 <= y < height and 0 <= x < width):
@@ -357,38 +353,47 @@ class MaskAnnotation(Annotation):
         if old_class_id == new_class_id:
             return
         
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        # Find all contiguous pixels with the same starting class ID
         labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
         region_label = labeled_array[y, x]
+        fill_mask = labeled_array == region_label
         
-        # Only fill pixels that are part of the region and not locked
-        region_mask = labeled_array == region_label
-        unlocked_region_mask = region_mask & (self.mask_data < self.LOCK_BIT)
-        
-        # Calculate bounding rectangle of the affected area BEFORE modifying the data
-        if np.any(unlocked_region_mask):
-            # Find the bounding box of pixels that will be changed
-            coords = np.where(unlocked_region_mask)
-            y_min, y_max = coords[0].min(), coords[0].max() + 1
-            x_min, x_max = coords[1].min(), coords[1].max() + 1
-            
-            # Apply the fill operation
-            self.mask_data[unlocked_region_mask] = new_class_id
-            
-            # Use localized update instead of full canvas rebuild
-            # This provides the same optimization benefits as the brush tool
-            update_rect = (x_min, y_min, x_max, y_max)
-            self.update_graphics_item(update_rect=update_rect)
-        else:
-            # No pixels to update - region is completely locked
+        if not np.any(fill_mask):
             QApplication.restoreOverrideCursor()
             return
+
+        # Find bounding box of the area to be filled to limit our protection check
+        coords = np.where(fill_mask)
+        y_min, y_max = coords[0].min(), coords[0].max()
+        x_min, x_max = coords[1].min(), coords[1].max()
+        fill_bbox = QRectF(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
         
-        # Restore cursor
+        # 1. Find vector annotations that overlap with the fill area
+        intersecting_annos = annotation_window.get_intersecting_annotations(fill_bbox)
+
+        # 2. If any exist, create a local protection mask for the fill's bounding box
+        if intersecting_annos:
+            local_lock_mask = self._create_local_lock_mask(fill_bbox, intersecting_annos)
+            
+            # Get the slice of the fill_mask corresponding to the lock_mask
+            fill_mask_slice = fill_mask[y_min: y_max + 1, x_min: x_max + 1]
+            
+            # Remove protected pixels from the fill mask
+            protected_fill_mask_slice = fill_mask_slice & ~local_lock_mask
+            
+            # Place the updated, protected slice back into the full-size fill mask
+            fill_mask[y_min: y_max + 1, x_min: x_max + 1] = protected_fill_mask_slice
+        
+        # 3. Apply the final, protected fill mask to the data
+        self.mask_data[fill_mask] = new_class_id
+        
+        # Use localized update for efficiency
+        update_rect = (x_min, y_min, x_max + 1, y_max + 1)
+        self.update_graphics_item(update_rect=update_rect)
+
         QApplication.restoreOverrideCursor()
-        
         self.annotationUpdated.emit(self)
 
     def replace_class(self, old_class_id: int, new_class_id: int):
@@ -456,6 +461,55 @@ class MaskAnnotation(Annotation):
         # The final boolean mask is derived by un-packing the bits and slicing to the correct width
         packed = np.unpackbits(arr_view, axis=1)
         return packed[:, :width].astype(bool)
+    
+    def _create_local_lock_mask(self, rect: QRectF, annotations: list) -> np.ndarray:
+        """
+        Creates a boolean numpy stencil for a given rectangular area by rasterizing
+        the provided annotations. True means the pixel is protected.
+        """
+        width, height = int(rect.width()), int(rect.height())
+        if width <= 0 or height <= 0:
+            return np.zeros((height, width), dtype=bool)
+
+        # Create a temporary, small image to draw on
+        stencil = QImage(width, height, QImage.Format_Alpha8)
+        stencil.fill(Qt.transparent)
+
+        painter = QPainter(stencil)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor("white"))) # White means locked/protected
+        
+        # Translate the painter so annotation coordinates (which are in scene space)
+        # are drawn correctly onto our small, local stencil image.
+        painter.translate(-rect.x(), -rect.y())
+        
+        for anno in annotations:
+            if hasattr(anno, 'get_painter_path'):
+                painter.drawPath(anno.get_painter_path())
+            elif hasattr(anno, 'get_polygon'):
+                # Handle polygon annotations that might not have get_painter_path
+                polygon = anno.get_polygon()
+                if polygon and not polygon.isEmpty():
+                    painter.drawPolygon(polygon)
+        painter.end()
+
+        # Get the number of bytes per line (the stride), which may include padding.
+        stride = stencil.bytesPerLine()
+        
+        # Get a pointer to the image's raw data buffer.
+        ptr = stencil.bits()
+        ptr.setsize(stencil.byteCount())
+
+        # Create a numpy array view on the buffer, using the correct stride.
+        # This correctly interprets the QImage's memory layout, even with padding.
+        arr_view = np.ndarray(shape=(height, width), 
+                              buffer=ptr, 
+                              dtype=np.uint8, 
+                              strides=(stride, 1))
+
+        # Return a boolean mask where True represents a locked pixel.
+        # We make a copy to ensure the underlying buffer is released.
+        return np.copy(arr_view) > 0
 
     def rasterize_annotations(self, all_annotations: list):
         """
