@@ -18,7 +18,6 @@ from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import pixmap_to_numpy
-import time
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -388,7 +387,6 @@ class Raster(QObject):
         Returns:
             MaskAnnotation: The mask annotation object for this raster.
         """
-        start_time = time.time()
         if self.mask_annotation is None:
             # Create the mask on its first request
             mask_data = np.zeros((self.height, self.width), dtype=np.uint8)
@@ -401,8 +399,6 @@ class Raster(QObject):
         else:
             # Ensure the mask is synced with the current project labels
             self.mask_annotation.sync_label_map(project_labels)
-        end_time = time.time()
-        print(f"get_mask_annotation took {end_time - start_time:.4f} seconds")
         return self.mask_annotation
     
     def add_work_area(self, work_area):
