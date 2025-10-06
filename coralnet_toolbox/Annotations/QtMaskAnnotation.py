@@ -372,12 +372,13 @@ class MaskAnnotation(Annotation):
         x_min, x_max = coords[1].min(), coords[1].max()
         fill_bbox = QRectF(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
         
-        # 1. Find vector annotations that overlap with the fill area
+        # Find vector annotations that overlap with the fill area
         intersecting_annos = annotation_window.get_intersecting_annotations(fill_bbox)
 
-        # 2. If any exist, create a local protection mask for the fill's bounding box
+        # If any exist, create a local protection mask
         if intersecting_annos:
-            local_lock_mask = self._create_local_lock_mask(fill_bbox, intersecting_annos)
+            # Call the new, faster rasterio-based helper
+            local_lock_mask = self._create_lock_mask_with_rasterio(fill_bbox, intersecting_annos)
             
             # Get the slice of the fill_mask corresponding to the lock_mask
             fill_mask_slice = fill_mask[y_min: y_max + 1, x_min: x_max + 1]
@@ -386,9 +387,9 @@ class MaskAnnotation(Annotation):
             protected_fill_mask_slice = fill_mask_slice & ~local_lock_mask
             
             # Place the updated, protected slice back into the full-size fill mask
-            fill_mask[y_min: y_max + 1, x_min: x_max + 1] = protected_fill_mask_slice
+            fill_mask[y_min:y_max+1, x_min:x_max+1] = protected_fill_mask_slice
         
-        # 3. Apply the final, protected fill mask to the data
+        # Apply the final, protected fill mask to the data
         self.mask_data[fill_mask] = new_class_id
         
         # Use localized update for efficiency
@@ -512,6 +513,46 @@ class MaskAnnotation(Annotation):
         # Return a boolean mask where True represents a locked pixel.
         # We make a copy to ensure the underlying buffer is released.
         return np.copy(arr_view) > 0
+    
+    def _create_lock_mask_with_rasterio(self, rect: QRectF, annotations: list) -> np.ndarray:
+        """
+        Creates a boolean lock mask for a given rectangular area using the
+        highly optimized rasterio.features.rasterize function.
+        """
+        try:
+            from rasterio.features import rasterize
+            from rasterio.transform import from_origin
+            from shapely.geometry import Polygon
+        except ImportError:
+            # Fallback to the slower QPainter method if required libraries are not available.
+            return self._create_local_lock_mask(rect, annotations)
+
+        geometries = []
+        for anno in annotations:
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
+        
+        if not geometries:
+            return np.zeros((int(rect.height()), int(rect.width())), dtype=bool)
+
+        # Create a transform that maps the global coordinates of the geometries
+        # to the local coordinate system of our output numpy array.
+        transform = from_origin(rect.x(), rect.y(), 1, 1)
+
+        # Rasterize the shapes into a numpy array.
+        lock_mask = rasterize(
+            geometries,
+            out_shape=(int(rect.height()), int(rect.width())),
+            transform=transform,
+            fill=0,          # Pixels outside the shapes are 0 (not locked)
+            default_value=1, # Pixels inside the shapes are 1 (locked)
+            dtype=np.uint8
+        ).astype(bool)
+        
+        return lock_mask
 
     def rasterize_annotations(self, all_annotations: list):
         """
