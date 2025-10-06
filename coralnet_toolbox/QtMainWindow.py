@@ -1798,7 +1798,7 @@ class MainWindow(QMainWindow):
             self.transparency_slider.setValue(transparency)
             self.transparency_slider.blockSignals(False)
     
-        # FIXED: Update transparency for ALL vector annotations based on their label's checkbox state
+        # Update transparency for ALL vector annotations based on their label's checkbox state
         # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
         # Mask annotations are handled separately through the raster system
         for annotation in self.annotation_window.annotations_dict.values():
@@ -1810,11 +1810,14 @@ class MainWindow(QMainWindow):
                 # Label is not checked - use the label's individual transparency value
                 annotation.update_transparency(annotation.label.transparency)
     
-        # Handle mask annotation updates - transparency is just visual so always sync
-        # Transparency changes are now instant with render-time approach!
-        mask = self.annotation_window.current_mask_annotation
-        if mask:
-            self.label_window.set_mask_transparency(transparency)
+        try:
+            # Handle mask annotation updates - transparency is just visual so always sync
+            # Transparency changes are now instant with render-time approach!
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                self.label_window.set_mask_transparency(transparency)
+        except Exception as e:
+            pass
 
         # Restore cursor
         QApplication.restoreOverrideCursor()

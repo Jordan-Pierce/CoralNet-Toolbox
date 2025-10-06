@@ -79,9 +79,11 @@ class MaskAnnotation(Annotation):
         
         self.class_id_to_label_map = {}
         self.label_id_to_class_id_map = {}
+        self.visible_label_ids = set()
+        
         self.next_class_id = 1
         self.sync_label_map(initial_labels)
-
+        # Update visible labels to include all labels currently in the map
         self.visible_label_ids = set(self.label_id_to_class_id_map.keys())
 
         self.offset = QPointF(0, 0)
@@ -108,6 +110,9 @@ class MaskAnnotation(Annotation):
                 self.class_id_to_label_map[new_id] = label
                 self.label_id_to_class_id_map[label.id] = new_id
                 self.next_class_id += 1
+                
+                # Also add the new label's ID to the set of visible labels.
+                self.visible_label_ids.add(label.id)
                 
     def _build_color_map(self):
         """Builds a numpy array mapping class IDs to RGBA colors."""

@@ -419,7 +419,7 @@ class AnnotationWindow(QGraphicsView):
                     # Show mask by making all linked labels visible
                     linked_labels = self.main_window.label_window.get_linked_labels()
                     visible_label_ids = {label.id for label in linked_labels}
-                    mask.update_visible_labels(visible_label_ids)
+                    mask.update_visible_labels(visible_label_ids) 
                 else:
                     # Hide mask by clearing all visible labels
                     mask.update_visible_labels(set())
