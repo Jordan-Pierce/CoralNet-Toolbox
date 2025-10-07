@@ -38,7 +38,7 @@ class TileCreation(QDialog):
         self.annotation_window = main_window.annotation_window
         self.graphics_utility = main_window.annotation_window.graphics_utility
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("tile.png"))
         self.setWindowTitle("Tile Creation")
         self.resize(400, 600)
         

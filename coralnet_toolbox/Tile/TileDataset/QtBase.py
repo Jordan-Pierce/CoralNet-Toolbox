@@ -39,7 +39,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("tile.png"))
         self.setWindowTitle("Tile Dataset")
         self.resize(600, 550)
 

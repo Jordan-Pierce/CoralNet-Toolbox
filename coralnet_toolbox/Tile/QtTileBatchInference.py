@@ -29,7 +29,7 @@ class TileBatchInference(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("wizard.png"))
+        self.setWindowIcon(get_icon("tile.png"))
         self.setWindowTitle("Tile Batch Inference")
         self.resize(400, 100)
         

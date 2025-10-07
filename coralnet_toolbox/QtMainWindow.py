@@ -35,6 +35,7 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
+    TileSemanticDataset as SemanticTileDatasetDialog,
     TileCreation as TileCreationDialog,
     TileBatchInference as TileBatchInferenceDialog
 )
@@ -278,6 +279,7 @@ class MainWindow(QMainWindow):
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
+        self.semantic_tile_dataset_dialog = SemanticTileDatasetDialog(self)
         self.tile_creation_dialog = TileCreationDialog(self)
         self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
 
@@ -482,6 +484,10 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action = QAction("Segment", self)
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
+        # Tile Semantic Dataset
+        self.semantic_tile_dataset_action = QAction("Semantic", self)
+        self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         # Tile Inference
         self.tile_creation_action = QAction("Tile Creation", self)
         self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
@@ -2255,6 +2261,14 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_semantic_tile_dataset_dialog(self):
+        """Open the Semantic Tile Dataset dialog to perform semantic segmentation on tiled images."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_tile_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
