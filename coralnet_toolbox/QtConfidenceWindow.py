@@ -51,13 +51,21 @@ class ConfidenceBar(QFrame):
     def resizeEvent(self, event):
         """Handle resize to recalculate target fill width and start animation."""
         super().resizeEvent(event)
-        # The bar's fill is now calculated based on its entire width
+        # Calculate the target fill width based on the current widget width and confidence
         self.target_fill_width = int(self.width() * (self.confidence / 100))
-        if self.animation is None:
-            self.start_animation()
+        
+        # Stop any existing animation
+        if self.animation is not None:
+            self.animation.stop()
+            
+        # Start animation from current position to target
+        self.start_animation()
 
     def start_animation(self):
         """Start the fill animation."""
+        if self.target_fill_width <= 0:
+            return
+            
         self.animation = QPropertyAnimation(self, b"fill_width")
         self.animation.setDuration(500)  # 500ms duration
         self.animation.setStartValue(0)
@@ -399,21 +407,26 @@ class ConfidenceWindow(QWidget):
         if not confidences:
             return
 
-        # Find the highest confidence value to use as the benchmark
+        # Calculate the sum of all displayed confidences for relative scaling
+        total_displayed_confidence = sum(confidences)
+        
+        # Find the highest confidence value for border color
         max_confidence = max(confidences) if confidences else 0
 
         # Set border color based on the top prediction
         max_color = labels[confidences.index(max_confidence)].color
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
-        for idx, (label, original_confidence) in enumerate(zip(labels, confidences)):
-            # Calculate the normalized confidence for the VISUAL FILL
-            # The top score will be 100%, others will be proportional
-            normalized_confidence = (original_confidence / max_confidence) * 100 if max_confidence > 0 else 0
-
-            # Pass both the original confidence (for the text label) and the
-            # normalized confidence (for the bar fill) to the helper method.
-            self.add_bar_to_layout(label, original_confidence, normalized_confidence, idx + 1)
+        # Use relative confidence values for bar fill, but original values for display
+        for idx, (label, confidence) in enumerate(zip(labels, confidences)):
+            # Calculate relative confidence for bar fill (as percentage of total displayed)
+            if total_displayed_confidence > 0:
+                relative_confidence = (confidence / total_displayed_confidence) * 100
+            else:
+                relative_confidence = 0
+            
+            # Use original confidence for display text, relative for bar fill
+            self.add_bar_to_layout(label, confidence, relative_confidence, idx + 1)
             self.confidence_bar_labels.append(label)
 
     def get_chart_data(self):
@@ -424,7 +437,7 @@ class ConfidenceWindow(QWidget):
             [conf_value * 100 for conf_value in self.chart_dict.values()][:5]
         )
 
-    def add_bar_to_layout(self, label, original_confidence, normalized_confidence, top_k):
+    def add_bar_to_layout(self, label, original_confidence, bar_confidence, top_k):
         """Create and add a composite widget for the confidence bar to the layout."""
         # 1. Create a container widget for the entire row
         container_widget = QWidget()
@@ -440,11 +453,11 @@ class ConfidenceWindow(QWidget):
         class_label = QLabel(label.short_label_code)
         class_label.setFixedWidth(80)
 
-        # Use the NORMALIZED value for the bar's visual fill
-        bar_widget = ConfidenceBar(self, label, normalized_confidence)
+        # Use the actual confidence value for the bar's visual fill
+        bar_widget = ConfidenceBar(self, label, bar_confidence)
         bar_widget.barClicked.connect(self.handle_bar_click)
 
-        # Use the ORIGINAL value for the text display
+        # Use the actual confidence value for the text display
         percentage_label = QLabel(f"{original_confidence:.2f}%")
         percentage_label.setFixedWidth(55)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
