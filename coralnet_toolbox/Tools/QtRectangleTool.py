@@ -111,6 +111,12 @@ class RectangleTool(Tool):
         self.drawing_continuous = False
         self.clear_cursor_annotation()
 
+    def stop_current_drawing(self):
+        """Force stop of current rectangle drawing if in progress."""
+        if self.drawing_continuous:
+            self.drawing_continuous = False
+            self.clear_cursor_annotation()
+
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None
@@ -187,8 +193,9 @@ class RectangleTool(Tool):
             self.cursor_annotation = self.create_annotation(scene_pos)
             if self.cursor_annotation:
                 # Make the cursor annotation semi-transparent to distinguish it from actual annotations
-                transparency = self.annotation_window.main_window.label_window.active_label.transparency
-                self.cursor_annotation.transparency = transparency
+                active_label = self.annotation_window.main_window.label_window.active_label
+                transparency = active_label.transparency if active_label else 128
+                self.cursor_annotation.update_transparency(transparency)
                 self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):

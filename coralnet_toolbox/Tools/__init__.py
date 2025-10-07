@@ -1,9 +1,12 @@
-# coralnet_toolbox/Tools/__init__.py
-
 from .QtPanTool import PanTool
 from .QtPatchTool import PatchTool
-from .QtPolygonTool import PolygonTool
 from .QtRectangleTool import RectangleTool
+from .QtPolygonTool import PolygonTool
+
+from .QtBrushTool import BrushTool
+from .QtEraseTool import EraseTool
+from .QtFillTool import FillTool
+
 from .QtSAMTool import SAMTool
 from .QtSeeAnythingTool import SeeAnythingTool
 from .QtSelectTool import SelectTool 
@@ -19,8 +22,11 @@ from .QtSubtractSubTool import SubtractSubTool
 __all__ = [
     'PanTool',
     'PatchTool',
-    'PolygonTool', 
     'RectangleTool',
+    'PolygonTool', 
+    'BrushTool',
+    'EraseTool',
+    'FillTool',
     'SAMTool',
     'SeeAnythingTool',
     'SelectTool',

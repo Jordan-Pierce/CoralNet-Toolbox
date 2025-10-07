@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import random
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, pyqtProperty
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
                              QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox, 
@@ -36,34 +36,51 @@ class PatchGraphic(QGraphicsRectItem):
         # Store the base color for brush
         self.base_color = color
         
-        # Animation properties
-        self._animated_line_offset = 0
+        # Animation properties (updated for pulsing)
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
         self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
 
         # Default styling with animated pen
         self.default_brush = QBrush(QColor(color.red(), color.green(), color.blue(), 50))
 
         # Initial appearance
-        self.setPen(self._create_animated_pen())
+        self.setPen(self._create_pen())
         self.setBrush(self.default_brush)
         
         # Start animation immediately
         self.animation_timer.start()
 
-    def _create_animated_pen(self):
-        """Create an animated dotted pen with black color (unverified style)."""
-        pen = QPen(QColor(0, 0, 0, 255), 3)  # Black, fully opaque, increased width
-        pen.setStyle(Qt.CustomDashLine)
-        pen.setDashPattern([2, 3])  # Dotted pattern: 2 pixels on, 3 pixels off
-        pen.setDashOffset(self._animated_line_offset)
+    def _create_pen(self):
+        """Create a pulsing dotted pen with brighter color."""
+        # Use a lighter version of the base color for better visibility
+        pen_color = QColor(self.base_color).darker(150)  # Changed to lighter for brighter appearance
+        pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+        
+        pen = QPen(pen_color, 3)  # Increased width
+        pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen
     
-    def _update_animated_line(self):
-        """Update the animated line offset for animation."""
-        self._animated_line_offset = (self._animated_line_offset + 1) % 20  # Reset every 20 pixels
-        self.setPen(self._create_animated_pen())
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
+        
+        self.setPen(self._create_pen())
         
     def __del__(self):
         """Clean up the timer when the graphic is deleted."""
@@ -593,31 +610,45 @@ class PatchSamplingDialog(QDialog):
 
                 for x, y, size in annotations_coords:
                     # Determine label based on propagation
+                    used_label = sample_label  # Default to the selected sample label
                     if propagate:
                         center = QPointF(x + size // 2, y + size // 2)
-                        existing = self.annotation_window.get_image_annotations(image_path)
-                        found = next(
-                            (
-                                a for a in existing
-                                if a.get_polygon().containsPoint(
-                                    center, Qt.OddEvenFill
-                                )
-                            ),
-                            None
-                        )
-                        used_label = found.label if found else sample_label
-                    else:
-                        used_label = sample_label
-                    # Create the annotation with center point
-                    new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
-                                                     size,
-                                                     used_label.short_label_code,
-                                                     used_label.long_label_code,
-                                                     used_label.color,
-                                                     image_path,
-                                                     used_label.id,
-                                                     transparency=self.main_window.get_transparency_value())
-
+                        
+                        # First, check the MaskAnnotation for label propagation (since masks and vectors don't overlap, this is safe)
+                        mask_annotation = self.annotation_window.current_mask_annotation
+                        if mask_annotation and image_path == mask_annotation.image_path:
+                            class_id = mask_annotation.get_class_at_point(center)
+                            if class_id > 0:  # Valid class ID (not background)
+                                mask_label = mask_annotation.class_id_to_label_map.get(class_id)
+                                if mask_label:
+                                    used_label = mask_label
+                        # Note: No need to check vectors here if mask provided a label, as they don't overlap
+                        
+                        # If no mask label (or no mask), check vector annotations
+                        if used_label == sample_label:  # Only check vectors if mask didn't provide a label
+                            existing = self.annotation_window.get_image_annotations(image_path)
+                            found = next(
+                                (
+                                    a for a in existing
+                                    if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
+                                ),
+                                None
+                            )
+                            if found:
+                                used_label = found.label
+        
+                    # Create the annotation with the determined label
+                    new_annotation = PatchAnnotation(
+                        QPointF(x + size // 2, y + size // 2),
+                        size,
+                        used_label.short_label_code,
+                        used_label.long_label_code,
+                        used_label.color,
+                        image_path,
+                        used_label.id,
+                        transparency=self.main_window.get_transparency_value()
+                    )
+                    
                     # Add annotation to the annotation window
                     self.annotation_window.add_annotation_to_dict(new_annotation)
                     sampled_annotations.append(new_annotation)

@@ -187,7 +187,7 @@ The toolbox integrates state-of-the-art models for efficient annotation workflow
 - **📸 Image Import**: Support for various image formats
 
 ### ✏️ **Annotation & Labeling**
-- **👆 Manual Annotation**: Intuitive point, rectangle, and polygon tools
+- **👆 Manual Annotation**: Intuitive point, rectangle, polygon and semantic tools
 - **🤖 AI-Assisted**: SAM, YOLO, and visual prompting models
 - **📐 Precision Editing**: Cut, combine, subtract, and simplify shapes
 

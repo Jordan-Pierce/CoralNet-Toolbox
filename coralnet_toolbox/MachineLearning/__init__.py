@@ -18,7 +18,6 @@ from .BatchInference.QtClassify import Classify as BatchClassify
 from .BatchInference.QtDetect import Detect as BatchDetect
 from .BatchInference.QtSegment import Segment as BatchSegment
 
-from .VideoInference.QtClassify import Classify as VideoClassify
 from .VideoInference.QtDetect import Detect as VideoDetect
 from .VideoInference.QtSegment import Segment as VideoSegment
 
@@ -28,6 +27,7 @@ from .ImportDataset.QtSegment import Segment as ImportSegment
 from .ExportDataset.QtClassify import Classify as ExportClassify
 from .ExportDataset.QtDetect import Detect as ExportDetect
 from .ExportDataset.QtSegment import Segment as ExportSegment
+from .ExportDataset.QtSemantic import Semantic as ExportSemantic
 
 from .EvaluateModel.QtClassify import Classify as EvalClassify
 from .EvaluateModel.QtDetect import Detect as EvalDetect
@@ -50,7 +50,6 @@ __all__ = [
     'BatchClassify',
     'BatchDetect', 
     'BatchSegment',
-    'VideoClassify',
     'VideoDetect',
     'VideoSegment',
     'ImportDetect', 
@@ -58,6 +57,7 @@ __all__ = [
     'ExportClassify', 
     'ExportDetect', 
     'ExportSegment',
+    'ExportSemantic',
     'EvalClassify', 
     'EvalDetect', 
     'EvalSegment',

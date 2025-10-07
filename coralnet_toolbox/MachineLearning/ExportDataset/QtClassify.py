@@ -5,6 +5,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import gc
+import json
+import random 
 from itertools import groupby
 from operator import attrgetter
 
@@ -64,6 +66,87 @@ class Classify(Base):
         self.include_negatives_radio.setEnabled(False)
         self.exclude_negatives_radio.setEnabled(False)
 
+    def determine_splits(self):
+        """
+        Determine the splits for train, validation, and test annotations.
+        If all annotations come from a single image, split the annotations directly instead of by images.
+        """
+        unique_images = set(a.image_path for a in self.selected_annotations)
+        if len(unique_images) == 1:
+            # Split annotations directly
+            random.shuffle(self.selected_annotations)
+            train_split = int(len(self.selected_annotations) * self.train_ratio)
+            val_split = int(len(self.selected_annotations) * (self.train_ratio + self.val_ratio))
+            self.train_annotations = self.selected_annotations[:train_split]
+            self.val_annotations = self.selected_annotations[train_split:val_split]
+            self.test_annotations = self.selected_annotations[val_split:]
+        else:
+            # Original logic: split by images
+            self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
+            self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
+            self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+
+    def accept(self):
+        """
+        Handle the OK button click event to create the dataset.
+        """
+        if not self.is_ready():
+            return
+
+        # Check for single image and warn about potential data contamination
+        unique_images = set(a.image_path for a in self.selected_annotations)
+        if len(unique_images) == 1:
+            reply = QMessageBox.question(
+                self,
+                "Potential Data Contamination",
+                "All annotations come from a single image. Splitting may lead to data contamination. "
+                "Do you understand and want to proceed?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+
+        # Create the output folder
+        output_dir_path = os.path.join(self.output_dir, self.dataset_name)
+
+        # Check if the output directory exists 
+        if os.path.exists(output_dir_path):
+            reply = QMessageBox.question(self,
+                                        "Directory Exists",
+                                        "The output directory already exists. Do you want to merge the datasets?",
+                                        QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+
+            # Read the existing class_mapping.json file if it exists
+            class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                with open(class_mapping_path, 'r') as json_file:
+                    existing_class_mapping = json.load(json_file)
+            else:
+                existing_class_mapping = {}
+
+            # Merge the new class mappings with the existing ones
+            new_class_mapping = self.get_class_mapping()
+            merged_class_mapping = self.merge_class_mappings(existing_class_mapping, new_class_mapping)
+            self.save_class_mapping_json(merged_class_mapping, output_dir_path)
+        else:
+            # Save the class mapping JSON file
+            os.makedirs(output_dir_path, exist_ok=True)
+            class_mapping = self.get_class_mapping()
+            self.save_class_mapping_json(class_mapping, output_dir_path)
+
+        try:
+            # Create the dataset
+            self.create_dataset(output_dir_path)
+
+            QMessageBox.information(self,
+                                    "Dataset Created",
+                                    "Dataset has been successfully created.")
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
+            
     def create_dataset(self, output_dir_path):
         """
         Create an image classification dataset.

@@ -75,7 +75,6 @@ from coralnet_toolbox.MachineLearning import (
     BatchClassify as ClassifyBatchInferenceDialog,
     BatchDetect as DetectBatchInferenceDialog,
     BatchSegment as SegmentBatchInferenceDialog,
-    VideoClassify as ClassifyVideoInferenceDialog,
     VideoDetect as DetectVideoInferenceDialog,
     VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
@@ -83,6 +82,7 @@ from coralnet_toolbox.MachineLearning import (
     ExportClassify as ClassifyExportDatasetDialog,
     ExportDetect as DetectExportDatasetDialog,
     ExportSegment as SegmentExportDatasetDialog,
+    ExportSemantic as SemanticExportDatasetDialog,
     EvalClassify as ClassifyEvaluateModelDialog,
     EvalDetect as DetectEvaluateModelDialog,
     EvalSegment as SegmentEvaluateModelDialog,
@@ -146,6 +146,9 @@ class MainWindow(QMainWindow):
         self.patch_icon = get_icon("patch.png")
         self.rectangle_icon = get_icon("rectangle.png")
         self.polygon_icon = get_icon("polygon.png")
+        self.brush_icon = get_icon("brush.png")
+        self.erase_icon = get_icon("erase.png")
+        self.fill_icon = get_icon("fill.png")
         self.sam_icon = get_icon("wizard.png")
         self.see_anything_icon = get_icon("eye.png")
         self.tile_icon = get_icon("tile.png")
@@ -157,7 +160,6 @@ class MainWindow(QMainWindow):
         self.hide_icon = get_icon("hide.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
-        self.all_icon = get_icon("all.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -236,6 +238,7 @@ class MainWindow(QMainWindow):
         self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
         self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
+        self.semantic_export_dataset_dialog = SemanticExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
         self.classify_tune_model_dialog = ClassifyTuneDialog(self)
         self.detect_tune_model_dialog = DetectTuneDialog(self)
@@ -253,7 +256,6 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.classify_video_inference_dialog = ClassifyVideoInferenceDialog(self)
         self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
         self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
@@ -306,13 +308,6 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-
-        # Layout DELETE ME
-        # self.central_widget = QWidget()
-        # self.setCentralWidget(self.central_widget)
-        # self.main_layout = QHBoxLayout(self.central_widget)
-        # self.label_layout = QVBoxLayout()
-        # self.image_layout = QVBoxLayout()
 
         # ----------------------------------------
         # Create the menu bar
@@ -436,6 +431,10 @@ class MainWindow(QMainWindow):
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
+        # Export Semantic Segmentation Dataset
+        self.export_semantic_dataset_action = QAction("Semantic", self)
+        self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
         # Add a separator
         self.file_menu.addSeparator()
@@ -595,10 +594,6 @@ class MainWindow(QMainWindow):
         
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
-        # Video Inference Classification
-        self.ml_classify_video_inference_action = QAction("Classify", self)
-        self.ml_classify_video_inference_action.triggered.connect(self.open_classify_video_inference_dialog)
-        # self.ml_video_inference_menu.addAction(self.ml_classify_video_inference_action)  TODO
         # Video Inference Detection
         self.ml_detect_video_inference_action = QAction("Detect", self)
         self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)
@@ -728,6 +723,25 @@ class MainWindow(QMainWindow):
                         "• Press Backspace to cancel the current polygon.\n"
                         "• A semi-transparent preview shows the polygon while drawing."),
             
+            "brush": ("Brush Tool\n\n"
+                      "Create freehand brush annotations by clicking and dragging.\n"
+                      "• Left-click and drag to paint brush strokes on the canvas.\n"
+                      "• Hold Ctrl and use the mouse wheel to adjust brush size.\n"
+                      "• Press Ctrl + Shift to switch between a circle and square brush shape.\n"
+                      "• A semi-transparent preview shows the brush stroke while drawing."),
+
+            "erase": ("Erase Tool\n\n"
+                      "Erase pixels from mask annotations.\n"
+                      "• Left-click and drag to erase pixels.\n"
+                      "• Hold Ctrl and use the mouse wheel to adjust eraser size.\n"
+                      "• Press Ctrl + Shift to switch between a circle and square eraser shape.\n"
+                      "• Press Ctrl + (Backspace or Delete) to clear the mask annotation on the current image.\n"
+                      "• A semi-transparent preview shows the eraser while drawing."),
+
+            "fill": ("Fill Tool\n\n"
+                     "Fill contiguous regions in mask annotations.\n"
+                     "• Left-click to fill the region under the cursor with the selected label."),
+
             "sam": ("Segment Anything (SAM) Tool\n\n"
                     "Generates AI-powered segmentations.\n"
                     "• Left-click to create a working area, then left-click again to confirm.\n"
@@ -807,6 +821,26 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setToolTip(self.tool_descriptions["polygon"])
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
+
+        self.toolbar.addSeparator()
+
+        self.brush_tool_action = QAction(self.brush_icon, "Brush", self)
+        self.brush_tool_action.setCheckable(True)
+        self.brush_tool_action.setToolTip(self.tool_descriptions["brush"])
+        self.brush_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.brush_tool_action)
+
+        self.erase_tool_action = QAction(self.erase_icon, "Erase", self)
+        self.erase_tool_action.setCheckable(True)
+        self.erase_tool_action.setToolTip(self.tool_descriptions["erase"])
+        self.erase_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.erase_tool_action)
+
+        self.fill_tool_action = QAction(self.fill_icon, "Fill", self)
+        self.fill_tool_action.setCheckable(True)
+        self.fill_tool_action.setToolTip(self.tool_descriptions["fill"])
+        self.fill_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.fill_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -910,26 +944,11 @@ class MainWindow(QMainWindow):
         opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
         opaque_icon.setToolTip("Opaque")
 
-        # Add an action to select all next to the transparency slider
-        self.all_labels_action = QAction(self.all_icon, "", self)
-        self.all_labels_action.setCheckable(True)
-        self.all_labels_action.setChecked(True)
-        self.all_labels_action.triggered.connect(self.update_label_transparency)
-        
-        # Create button to hold the action
-        self.all_labels_button = QToolButton()
-
-        # Set tooltip on both the action and button to ensure it shows
-        self.all_labels_action.setToolTip("Select All Labels")
-        self.all_labels_button.setToolTip("Select All Labels")
-        self.all_labels_button.setDefaultAction(self.all_labels_action)
-
         # Add widgets to the transparency layout
         transparency_layout.addWidget(self.hide_button)
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
-        transparency_layout.addWidget(self.all_labels_button)
 
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
@@ -1162,11 +1181,62 @@ class MainWindow(QMainWindow):
             else:
                 self.import_images.dragMoveEvent(event)
                 
+    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
+        """
+        Modular method to enable/disable widgets and actions in the main window.
+        - enable_list: list of widgets/actions to enable
+        - disable_list: list of widgets/actions to disable
+        If both are None, enables everything.
+        """
+        # All main widgets/actions to consider
+        all_widgets = [
+            self.toolbar,
+            self.menu_bar,
+            self.image_window,
+            self.label_window,
+            self.confidence_window,
+            self.annotation_window,
+            # Status bar widgets
+            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
+        ]
+        # Remove None entries (in case any status bar slot is empty)
+        all_widgets = [w for w in all_widgets if w is not None]
+
+        # If neither list is provided, enable everything
+        if enable_list is None and disable_list is None:
+            for w in all_widgets:
+                w.setEnabled(True)
+            return
+
+        # Disable everything by default
+        for w in all_widgets:
+            w.setEnabled(False)
+            
+        # Enable specified widgets/actions
+        if enable_list:
+            for w in enable_list:
+                if w is not None:
+                    w.setEnabled(True)
+                    
+        # Disable specified widgets/actions (overrides enable if both present)
+        if disable_list:
+            for w in disable_list:
+                if w is not None:
+                    w.setEnabled(False)
+                
     def switch_back_to_tool(self):
         """Switches back to the tool used to create the currently selected annotation."""        
         # Get the currently selected tool from AnnotationWindow
         selected_tool = self.annotation_window.get_selected_tool()
         
+        # Semantic-specif annotation tools toggle
+        if selected_tool == 'brush':
+            self.choose_specific_tool('erase')
+            return
+        elif selected_tool == 'erase':
+            self.choose_specific_tool('brush')
+            return
+                
         if selected_tool != "select":
             self.choose_specific_tool("select")
             return
@@ -1221,6 +1291,9 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1234,6 +1307,9 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1247,6 +1323,9 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1260,11 +1339,62 @@ class MainWindow(QMainWindow):
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
                 self.toolChanged.emit("polygon")
+            else:
+                self.toolChanged.emit(None)
+                
+        elif action == self.brush_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+
+                self.toolChanged.emit("brush")
+            else:
+                self.toolChanged.emit(None)
+
+        elif action == self.erase_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+
+                self.toolChanged.emit("erase")
+            else:
+                self.toolChanged.emit(None)
+
+        elif action == self.fill_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+
+                self.toolChanged.emit("fill")
             else:
                 self.toolChanged.emit(None)
 
@@ -1280,6 +1410,9 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
@@ -1299,6 +1432,9 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
 
@@ -1312,6 +1448,9 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
 
@@ -1329,6 +1468,9 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.brush_tool_action.setChecked(False)
+        self.erase_tool_action.setChecked(False)
+        self.fill_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
         self.work_area_tool_action.setChecked(False)
@@ -1346,6 +1488,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1355,6 +1500,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1364,6 +1512,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1373,6 +1524,45 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            
+        elif tool == "brush":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(True)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+
+        elif tool == "erase":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(True)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+
+        elif tool == "fill":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1382,6 +1572,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1391,6 +1584,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
@@ -1400,6 +1596,9 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
@@ -1409,6 +1608,7 @@ class MainWindow(QMainWindow):
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
@@ -1518,16 +1718,54 @@ class MainWindow(QMainWindow):
         self.view_dimensions_label.setText(f"View: {height} x {width}")
         
     def toggle_annotations_visibility(self, hide):
-        """Toggle the visibility of annotations based on the hide button state."""
-        # Toggle the visibility of annotations in AnnotationWindow and LabelWindow
-        self.annotation_window.set_label_visibility(not hide)
+        """Toggle the visibility of annotations based on the hide button state and linked labels."""
+        # Determine the desired visibility state for linked items
+        is_visible_for_linked = not hide
 
+        # Get the list of all labels that are linked via their checkbox
+        linked_labels = self.label_window.get_linked_labels()
+        linked_label_ids = {label.id for label in linked_labels}
+
+        if not linked_label_ids:
+            return  # Do nothing if no labels are linked
+
+        self.annotation_window.blockSignals(True)
+        try:
+            # 1. Toggle visibility for all VECTOR annotations associated with the linked labels
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id in linked_label_ids:
+                    self.annotation_window.set_annotation_visibility(annotation, force_visibility=is_visible_for_linked)
+
+            # 2. Update per-label visibility for the MASK annotation
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                # Get the mask's current set of visible labels
+                current_mask_visible_ids = mask.visible_label_ids.copy()
+
+                if hide:
+                    # If hiding, remove the linked labels from the visible set
+                    new_mask_visible_ids = current_mask_visible_ids - linked_label_ids
+                else:
+                    # If showing, add the linked labels to the visible set
+                    new_mask_visible_ids = current_mask_visible_ids | linked_label_ids
+                
+                # Pass the new complete set of visible IDs to the mask
+                mask.update_visible_labels(new_mask_visible_ids)
+
+        finally:
+            self.annotation_window.blockSignals(False)
+
+        # Update the button's tooltip
         if hide:
             self.hide_action.setToolTip("Show Annotations")
             self.hide_button.setToolTip("Show Annotations")
         else:
             self.hide_action.setToolTip("Hide Annotations")
             self.hide_button.setToolTip("Hide Annotations")
+            
+        # Refresh the scene to show all changes
+        self.annotation_window.scene.update()
+        self.annotation_window.viewport().update()
 
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
@@ -1538,24 +1776,52 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
-        """Update the label transparency value in LabelWindow, AnnotationWindow and the Slider"""
-        if self.explorer_window:
-            return  # Do not update transparency if explorer window is open
+        """Update the transparency for all labels and annotations where the checkbox is checked."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        if self.all_labels_button.isChecked():
-            # Set transparency for all labels in LabelWindow, AnnotationWindow
-            self.label_window.set_all_labels_transparency(value)
-        else:
-            # Set transparency for the active label in LabelWindow, AnnotationWindow
-            self.label_window.set_active_label_transparency(value)
-            
-        # Update the slider value
-        self.update_transparency_slider(value)
+        # Clamp the transparency value to valid range
+        transparency = max(0, min(255, value))
         
-        # Update the transparency in the currently selected tool (if any)
-        if self.annotation_window.selected_tool == "see_anything":
-            self.annotation_window.tools["see_anything"].update_transparency(value)
+        # Get all linked labels (those with checkbox checked)
+        linked_labels = self.label_window.get_linked_labels()
+        
+        # Update transparency for linked labels without triggering individual updates
+        for label in linked_labels:
+            # Update the label's transparency value directly without triggering UI updates
+            label.transparency = transparency
+    
+        # Update transparency slider position
+        if self.transparency_slider.value() != transparency:
+            # Temporarily block signals to prevent infinite recursion
+            self.transparency_slider.blockSignals(True)
+            self.transparency_slider.setValue(transparency)
+            self.transparency_slider.blockSignals(False)
+    
+        # Update transparency for ALL vector annotations based on their label's checkbox state
+        # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
+        # Mask annotations are handled separately through the raster system
+        for annotation in self.annotation_window.annotations_dict.values():
+            # Update each vector annotation based on its label's checkbox state
+            if annotation.label in linked_labels:
+                # Label is checked - use the slider transparency value
+                annotation.update_transparency(transparency)
+            else:
+                # Label is not checked - use the label's individual transparency value
+                annotation.update_transparency(annotation.label.transparency)
+    
+        try:
+            # Handle mask annotation updates - transparency is just visual so always sync
+            # Transparency changes are now instant with render-time approach!
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                self.label_window.set_mask_transparency(transparency)
+        except Exception as e:
+            pass
 
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+        
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
         return self.uncertainty_thresh
@@ -1759,49 +2025,6 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
-        """
-        Modular method to enable/disable widgets and actions in the main window.
-        - enable_list: list of widgets/actions to enable
-        - disable_list: list of widgets/actions to disable
-        If both are None, enables everything.
-        """
-        # All main widgets/actions to consider
-        all_widgets = [
-            self.toolbar,
-            self.menu_bar,
-            self.image_window,
-            self.label_window,
-            self.confidence_window,
-            self.annotation_window,
-            # Status bar widgets
-            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
-        ]
-        # Remove None entries (in case any status bar slot is empty)
-        all_widgets = [w for w in all_widgets if w is not None]
-
-        # If neither list is provided, enable everything
-        if enable_list is None and disable_list is None:
-            for w in all_widgets:
-                w.setEnabled(True)
-            return
-
-        # Disable everything by default
-        for w in all_widgets:
-            w.setEnabled(False)
-            
-        # Enable specified widgets/actions
-        if enable_list:
-            for w in enable_list:
-                if w is not None:
-                    w.setEnabled(True)
-                    
-        # Disable specified widgets/actions (overrides enable if both present)
-        if disable_list:
-            for w in disable_list:
-                if w is not None:
-                    w.setEnabled(False)
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
@@ -1821,9 +2044,7 @@ class MainWindow(QMainWindow):
         
         try:
             self.untoggle_all_tools()
-            # Set the transparency value ahead of time
-            self.update_transparency_slider(0)
-            
+
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
             
@@ -1835,7 +2056,8 @@ class MainWindow(QMainWindow):
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
                 enable_list=[self.annotation_window, 
-                             self.label_window],
+                             self.label_window,
+                             self.transparency_widget],
                 disable_list=[self.toolbar, 
                               self.menu_bar, 
                               self.image_window, 
@@ -1979,6 +2201,28 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_export_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_semantic_export_dataset_dialog(self):
+        """Open the Semantic Export Dataset dialog to export semantic segmentation datasets."""
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.semantic_export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

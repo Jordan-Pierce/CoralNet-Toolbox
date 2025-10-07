@@ -39,6 +39,9 @@ class Tool:
         
         # Ensure crosshair is properly cleared when deactivating tool
         self.clear_crosshair()
+        
+        # Stop any current drawing operation
+        self.stop_current_drawing()
 
     def mousePressEvent(self, event: QMouseEvent):
         pass
@@ -69,6 +72,13 @@ class Tool:
         pass
 
     def wheelEvent(self, event: QMouseEvent):
+        pass
+        
+    def stop_current_drawing(self):
+        """
+        Force stop of the current drawing operation if one is in progress.
+        Subclasses should override this to implement tool-specific stopping logic.
+        """
         pass
         
     def create_cursor_annotation(self, scene_pos: QPointF = None):

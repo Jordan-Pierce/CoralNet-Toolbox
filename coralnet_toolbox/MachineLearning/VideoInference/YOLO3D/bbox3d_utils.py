@@ -33,16 +33,18 @@ class BBox3DEstimator:
     """
     3D bounding box estimation from 2D detections and depth
     """
-    def __init__(self, camera_matrix=None, projection_matrix=None):
+    def __init__(self, camera_matrix=None, projection_matrix=None, default_dimensions=None):
         """
         Initialize the 3D bounding box estimator
         
         Args:
             camera_matrix (numpy.ndarray): Camera intrinsic matrix (3x3)
             projection_matrix (numpy.ndarray): Camera projection matrix (3x4)
+            default_dimensions (list): Default dimensions [length, width, height] for objects
         """
         self.K = camera_matrix if camera_matrix is not None else DEFAULT_K
         self.P = projection_matrix if projection_matrix is not None else DEFAULT_P
+        self.default_dimensions = default_dimensions if default_dimensions is not None else [1.0, 1.0, 1.0]
         
         # Initialize Kalman filters for tracking 3D boxes
         self.kf_trackers = {}
@@ -70,8 +72,8 @@ class BBox3DEstimator:
         center_y = (y1 + y2) / 2
         
         # Use default dimensions (height, width, length)
-        default_dim = 1.0
-        dimensions = [default_dim, default_dim, default_dim]
+        dimensions = self.default_dimensions
+        volume = dimensions[0] * dimensions[1] * dimensions[2]
         
         # Convert depth to distance - use a larger range for better visualization
         distance = 1.0 + depth_value * 9.0
@@ -84,6 +86,7 @@ class BBox3DEstimator:
         
         # Create 3D box
         box_3d = {
+            'volume': volume,
             'dimensions': dimensions,
             'location': location,
             'orientation': orientation,
@@ -194,8 +197,8 @@ class BBox3DEstimator:
             box_3d['location'][1],
             box_3d['location'][2],
             box_3d['dimensions'][1],  # width
-            box_3d['dimensions'][0],  # height
-            box_3d['dimensions'][2],  # length
+            box_3d['dimensions'][2],  # height
+            box_3d['dimensions'][0],  # length
             box_3d['orientation'],
             0, 0, 0, 0  # Initial velocities
         ])
@@ -261,8 +264,8 @@ class BBox3DEstimator:
             box_3d['location'][1],
             box_3d['location'][2],
             box_3d['dimensions'][1],  # width
-            box_3d['dimensions'][0],  # height
-            box_3d['dimensions'][2],  # length
+            box_3d['dimensions'][2],  # height
+            box_3d['dimensions'][0],  # length
             box_3d['orientation']
         ])
         
@@ -379,7 +382,7 @@ class BBox3DEstimator:
         
         return corners_2d.T
     
-    def draw_box_3d(self, image, box_3d, color=(0, 255, 0), thickness=2):
+    def draw_box_3d(self, image, box_3d, color=(0, 255, 0), thickness=1):
         """
         Draw enhanced 3D bounding box on image with better depth perception
         
@@ -387,7 +390,7 @@ class BBox3DEstimator:
             image (numpy.ndarray): Image to draw on
             box_3d (dict): 3D bounding box parameters
             color (tuple): Color in BGR format
-            thickness (int): Line thickness
+            thickness (int): Line thickness (default: 1 for thinner boxes)
             
         Returns:
             numpy.ndarray: Image with 3D box drawn
@@ -463,22 +466,28 @@ class BBox3DEstimator:
         alpha = 0.3  # Transparency factor
         cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
         
-        # Get class name and object ID
-        class_name = box_3d['class_name']
+        # Get object ID
         obj_id = box_3d['object_id'] if 'object_id' in box_3d else None
+        
+        # Calculate volume
+        volume = box_3d['volume'] if 'volume' in box_3d else None
         
         # Draw text information
         text_y = y1 - 10
         font_scale = 0.35  # Reduced font size
         font_thickness = 1
+        
+        # Draw class name if available
         if obj_id is not None:
             cv2.putText(image, f"ID:{obj_id}", (x1, text_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
             text_y -= 12
 
-        cv2.putText(image, class_name, (x1, text_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
-        text_y -= 12
+        # Draw volume if dimensions are valid
+        if volume is not None:
+            cv2.putText(image, f"V:{(volume * 1000000):.1f} cm3", (x1, text_y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+            text_y -= 12
 
         # Get depth information if available
         if 'depth_value' in box_3d:
@@ -498,10 +507,9 @@ class BBox3DEstimator:
         # Draw a vertical line from the bottom of the box to the ground
         # This helps with depth perception
         ground_y = y2 + int(height * 0.2)  # A bit below the bottom of the box
-        cv2.line(image, (int((x1 + x2) / 2), y2), (int((x1 + x2) / 2), ground_y), color, thickness)
-        
+        cv2.line(image, (int((x1 + x2) / 2), y2), (int((x1 + x2) / 2), ground_y), color, 1)
         # Draw a small circle at the bottom to represent the ground contact point
-        cv2.circle(image, (int((x1 + x2) / 2), ground_y), thickness * 2, color, -1)
+        cv2.circle(image, (int((x1 + x2) / 2), ground_y), 2, color, -1)
         
         return image
     

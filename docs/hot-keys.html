@@ -9,7 +9,15 @@
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f3f4f6;
-            display: flex;
+            d                    <kbd>?<br>/</kbd>
+                    <kbd class="hotkey long-key">Shift
+                        <span class="tooltiptext">
+                            <b>Annotation Editing</b>
+                            <ul>
+                                <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
+                                <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
+                                <li><b>Ctrl + Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
+                            </ul>flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
@@ -299,7 +307,7 @@
                     <kbd class="hotkey long-key">Backspace
                         <span class="tooltiptext">
                             <b>Annotation Editing</b>
-                             <ul><li><b>Ctrl + Backspace</b>: Remove selected annotation(s).</li></ul>
+                             <ul><li><b>Ctrl + Backspace</b>: Remove selected annotation(s).</li><li><b>Ctrl + Backspace/Delete</b>: Clear mask annotation (Erase Tool).</li></ul>
                             <b>Drawing</b>
                             <ul>
                                 <li><b>Backspace</b>: Cancel drawing (rectangle, polygon, work area).</li>
@@ -435,6 +443,12 @@
                             </ul>
                              <b>Tool Control</b>
                              <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
+                             <b>Semantic Annotation</b>
+                             <ul>
+                                <li><b>+ Mouse Wheel</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
+                                <li><b>+ Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
+                                <li><b>+ Backspace/Delete</b>: Clear mask annotation (Erase Tool).</li>
+                             </ul>
                              <b>General</b>
                              <ul><li><b>+ S</b>: Save the project.</li></ul>
                         </span>
@@ -502,6 +516,12 @@
                             </ul>
                              <b>Tool Control</b>
                              <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
+                             <b>Semantic Annotation</b>
+                             <ul>
+                                <li><b>+ Mouse Wheel</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
+                                <li><b>+ Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
+                                <li><b>+ Backspace/Delete</b>: Clear mask annotation (Erase Tool).</li>
+                             </ul>
                              <b>General</b>
                              <ul><li><b>+ S</b>: Save the project.</li></ul>
                         </span>
@@ -540,6 +560,7 @@
                                 <ul>
                                     <li><b>Ctrl + Scroll</b>: Resize annotation or patch preview.</li>
                                     <li><b>Ctrl + Shift + Scroll</b>: Change polygon vertex count.</li>
+                                    <li><b>Ctrl + Scroll</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
                                 </ul>
                             </span>
                         </div>

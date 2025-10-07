@@ -98,7 +98,6 @@ class DeployPredictorDialog(QDialog):
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel(
             "Choose a Predictor to deploy and use interactively with the See Anything tool. "
-            "Optionally include a custom visual prompt encoding (VPE) file."
         )
 
         info_label.setOpenExternalLinks(True)

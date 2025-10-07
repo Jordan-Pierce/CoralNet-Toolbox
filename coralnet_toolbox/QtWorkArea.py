@@ -3,8 +3,8 @@ import warnings
 import json
 import random
 
-from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, QTimer
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
+from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, QTimer, pyqtProperty
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -44,41 +44,68 @@ class WorkArea(QObject):
         self.shadow_area = None  # Reference to the shadow graphics item
         
         # Create a random color for the work area
-        random_color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        self.work_area_pen = QPen(random_color, 2, Qt.DashLine)  # Default style
+        self.work_area_pen = QPen(QColor(0, 120, 215), 2, Qt.DotLine)  # Changed to static dotted line
         
-        # Animation state for animated line
-        self._animated_line = 0
+        # Animation properties (updated for pulsing)
+        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
+        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
         self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(200)  # 200ms for smooth animation
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)  # Update every 50ms for faster pulsing
 
+    @pyqtProperty(int)  # Added for pulsing alpha
+    def pulse_alpha(self):
+        """Get the current pulse alpha for animation."""
+        return self._pulse_alpha
+    
+    @pulse_alpha.setter
+    def pulse_alpha(self, value):
+        """Set the pulse alpha and update pen styles."""
+        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
+        self._update_pen_style()
+    
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+        if self._pulse_direction == 1:
+            # Quick increase (systole-like)
+            self._pulse_alpha += 30
+        else:
+            # Slow decrease (diastole-like)
+            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+
+        # Check direction before clamping to ensure smooth transition
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255  # Clamp to max
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50   # Clamp to min
+            self._pulse_direction = 1
+        
+        self._update_pen_style()
+    
     def _create_pen(self):
-        """Create a pen with animated dash offset if animating."""
+        """Create a pen with pulsing alpha and brighter color if animating."""
         pen = QPen(self.work_area_pen)
-        pen.setStyle(Qt.CustomDashLine)
-        pen.setDashPattern([2, 3])
-        pen.setDashOffset(self._animated_line)
+        if self.animation_timer.isActive():
+            pen_color = QColor(self.work_area_pen.color())
+            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+            pen.setColor(pen_color)
+        pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen
 
-    def _update_animated_line(self):
-        """Update the animated line offset for animation."""
-        self._animated_line = (self._animated_line + 1) % 20
-        self._update_pen_style()
-
     def animate(self):
-        """Start the animated line effect for the work area rectangle."""
+        """Start the pulsing animation for the work area rectangle."""
         if not self.animation_timer.isActive():
             self.animation_timer.start()
-
+    
     def deanimate(self):
-        """Stop the animated line effect for the work area rectangle."""
+        """Stop the pulsing animation for the work area rectangle."""
         self.animation_timer.stop()
-        self._animated_line = 0
+        self._pulse_alpha = 128  # Reset to default
         self._update_pen_style()
 
     def _update_pen_style(self):
-        """Update the pen style of the graphics item with the current dash offset."""
+        """Update the pen style of the graphics item with the current pulse alpha."""
         if self.graphics_item:
             self.graphics_item.setPen(self._create_pen())
             self.graphics_item.update()
@@ -369,3 +396,8 @@ class WorkArea(QObject):
             round(self.rect.height(), 3),
             self.image_path
         ))
+
+    def __del__(self):
+        """Clean up the timer when the work area is deleted."""
+        if hasattr(self, 'animation_timer') and self.animation_timer:
+            self.animation_timer.stop()

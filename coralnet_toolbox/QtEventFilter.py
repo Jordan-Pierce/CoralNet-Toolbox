@@ -129,7 +129,7 @@ class GlobalEventFilter(QObject):
                 self.image_window.cycle_next_image()
                 return True
 
-            # Handle Ctrl + Shift + S for saving project
+            # Handle Ctrl + S for saving project
             if event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier):
                 self.main_window.save_project_as()
                 return True

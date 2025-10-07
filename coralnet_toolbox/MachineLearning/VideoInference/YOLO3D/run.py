@@ -237,7 +237,22 @@ Examples:
         action='store_true',
         help='Show all visualization windows (result, depth, detection). By default, only the result frame is shown.'
     )
+
+    # Add --no-depth-viz argument
+    parser.add_argument(
+        '--no-depth-viz',
+        action='store_true',
+        help='Disable depth map visualization into the output frame (depth is still used for processing).'
+    )
     
+    # Object dimensions argument
+    parser.add_argument(
+        '--object-dimensions',
+        type=float,
+        nargs=3,
+        default=[1.0, 1.0, 1.0],
+        help='Default dimensions for detected objects [length, width, height] in meters'
+    )
     
     return parser.parse_args()
 
@@ -286,12 +301,16 @@ def main():
     # Feature toggles
     enable_tracking = not args.no_tracking
     enable_bev = not args.no_bev
+    enable_depth = not args.no_depth_viz
     enable_display = not args.no_display
-    show_all_frames = args.yes_display
+    show_all_frames = args.yes_display and not args.no_depth_viz
     
     # Frame range parameters
     start_frame = args.start_at
     end_frame = args.end_at
+    
+    # Object dimensions
+    object_dimensions = args.object_dimensions
     
     # Camera parameters - simplified approach
     camera_params_file = None  # Path to camera parameters file (None to use default parameters)
@@ -310,6 +329,7 @@ def main():
     print(f"Tracking: {'enabled' if enable_tracking else 'disabled'}")
     print(f"Bird's Eye View: {'enabled' if enable_bev else 'disabled'}")
     print(f"Display: {'enabled' if enable_display else 'disabled'}")
+    print(f"Object dimensions: {object_dimensions} (L, W, H in meters)")
     
     # Initialize models with the detected device
     print("\nInitializing models...")
@@ -398,7 +418,7 @@ def main():
         
     # Initialize 3D bounding box estimator with default parameters
     # Simplified approach - focus on 2D detection with depth information
-    bbox3d_estimator = BBox3DEstimator()
+    bbox3d_estimator = BBox3DEstimator(default_dimensions=object_dimensions)
     
     # Initialize Bird's Eye View if enabled
     if enable_bev:
@@ -459,6 +479,11 @@ def main():
     
     print("Starting processing...")
     
+    # Variables for cumulative volume calculation
+    cumulative_volume_m3 = 0.0
+    previous_tracked_ids = set()
+    track_data = {}  # Stores the last known data (e.g., volume) for each track ID
+    
     # Main loop
     current_frame = 0
     while True:
@@ -516,6 +541,23 @@ def main():
                 depth_colored = np.zeros((height, width, 3), dtype=np.uint8)
                 cv2.putText(depth_colored, "Depth Error", (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                
+            if enable_tracking:
+                # Get the set of currently active track IDs from this frame's detections
+                current_tracked_ids = {det[3] for det in detections if det[3] is not None}
+
+                # Determine which IDs have disappeared since the last frame
+                disappeared_ids = previous_tracked_ids - current_tracked_ids
+
+                # For each disappeared track, add its last known volume to the cumulative total
+                if disappeared_ids:
+                    for track_id in disappeared_ids:
+                        if track_id in track_data:
+                            cumulative_volume_m3 += track_data[track_id]['volume']
+                            del track_data[track_id]  # Clean up the old track data
+
+                # Update the set of previous IDs for the next frame's comparison
+                previous_tracked_ids = current_tracked_ids
             
             # Step 3: 3D Bounding Box Estimation
             boxes_3d = []
@@ -529,17 +571,8 @@ def main():
                     class_name = detector.get_class_names()[class_id]
                     
                     # Get depth in the region of the bounding box
-                    # Try different methods for depth estimation
-                    if class_name.lower() in ['person', 'cat', 'dog']:
-                        # For people and animals, use the center point depth
-                        center_x = int((bbox[0] + bbox[2]) / 2)
-                        center_y = int((bbox[1] + bbox[3]) / 2)
-                        depth_value = depth_estimator.get_depth_at_point(depth_map, center_x, center_y)
-                        depth_method = 'center'
-                    else:
-                        # For other objects, use the median depth in the region
-                        depth_value = depth_estimator.get_depth_in_region(depth_map, bbox, method='median')
-                        depth_method = 'median'
+                    depth_value = depth_estimator.get_depth_in_region(depth_map, bbox, method='median')
+                    depth_method = 'median'
                     
                     # Create a simplified 3D box representation
                     box_3d = {
@@ -551,10 +584,16 @@ def main():
                         'score': score
                     }
                     
+                    # Calculate 3D bounding box 
+                    estimated_3d_box = bbox3d_estimator.estimate_3d_box(bbox, depth_value)
+                    
+                    # Add estimated 3D box data
+                    box_3d.update(estimated_3d_box)
                     boxes_3d.append(box_3d)
                     
                     # Keep track of active IDs for tracker cleanup
                     if obj_id is not None:
+                        track_data[obj_id] = {'volume': box_3d['volume']}
                         active_ids.append(obj_id)
                         
                 except Exception as e:
@@ -563,7 +602,7 @@ def main():
             
             # Clean up trackers for objects that are no longer detected
             bbox3d_estimator.cleanup_trackers(active_ids)
-            
+                
             # Step 4: Visualization
             # Draw boxes on the result frame
             for box_3d in boxes_3d:
@@ -620,47 +659,93 @@ def main():
                 fps_value = frame_count / elapsed_time
                 fps_display = f"FPS: {fps_value:.1f}"
 
-            # Add FPS and device info to the result frame (top-right corner)
-            text = f"{fps_display} | Device: {device} | Frame: {current_frame}"
+            # Add FPS, device info, frame count, and tracks info to the result frame (top-right corner)
+            text_main = f"{fps_display} | Device: {device} | Frame: {current_frame}"
+            text_tracks = ""
+            if enable_tracking:
+                current_tracks = len(detector.tracking_trajectories)
+                # Use a set to keep track of all unique tracks seen so far
+                detector.all_tracks_seen.update(detector.tracking_trajectories.keys())
+                total_tracks = len(detector.all_tracks_seen)
+                text_tracks = f"Tracks Current: {current_tracks} | Total: {total_tracks}"
+                
+            # Calculate volume statistics
+            text_volume = ""
+            if boxes_3d:
+                # Only count volumes for currently tracked objects (those with object_id)
+                text_volume = f"Cumulative Vol: {(cumulative_volume_m3):.1f} m3"
 
             # Calculate text size for right alignment
-            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            x_offset = width - text_width - 10  # 10px from right edge
-            y_offset = 30  # Fixed offset from top edge
+            (text_width_main, text_height_main), _ = cv2.getTextSize(text_main, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            (text_width_tracks, text_height_tracks), _ = cv2.getTextSize(text_tracks, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            (text_width_volume, text_height_volume), _ = cv2.getTextSize(text_volume, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            box_width = max(text_width_main, text_width_tracks, text_width_volume) + 24  # padding
+            box_height = text_height_main + text_height_tracks + text_height_volume + 40  # padding and gaps
 
-            # Place text on the result frame (top-right corner)
-            cv2.putText(result_frame, text, (x_offset, y_offset),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # Calculate position dynamically based on frame size - top-right corner
+            margin_x = int(width * 0.00)  # 0% from right edge
+            margin_y = int(height * 0.00)  # 0% from top edge
+            box_x1 = width - box_width - margin_x
+            box_y1 = margin_y
+            x_offset = box_x1 + 12  # 12px left padding inside box
+
+            # Calculate vertical centering for text
+            total_text_height = text_height_main + text_height_tracks + text_height_volume + 16  # gaps
+            center_y = box_y1 + box_height / 2
+            y_offset_main = int(center_y - total_text_height / 2 + text_height_main)
+            y_offset_tracks = int(y_offset_main + text_height_main + 8)  # 8px gap between lines
+            y_offset_volume = int(y_offset_tracks + text_height_tracks + 8)  # 8px gap between lines
+
+            # Draw semi-transparent white box behind the text
+            overlay = result_frame.copy()
+            box_x2 = box_x1 + box_width
+            box_y2 = box_y1 + box_height
+            cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (255, 255, 255), -1)
+            alpha = 0.7
+            cv2.addWeighted(overlay, alpha, result_frame, 1 - alpha, 0, result_frame)
+
+            # Place main text on the result frame (top-left corner)
+            cv2.putText(result_frame, text_main, (x_offset, y_offset_main),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            # Place tracks info below main text
+            if enable_tracking:
+                cv2.putText(result_frame, text_tracks, (x_offset, y_offset_tracks),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            # Place volume info below tracks text
+            if text_volume:
+                cv2.putText(result_frame, text_volume, (x_offset, y_offset_volume),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
-            # Add depth map to the corner of the result frame
-            try:
-                # Calculate depth map dimensions based on frame size
-                depth_size_factor = 0.25  # Percentage of frame height
-                depth_height = int(height * depth_size_factor)
-                
-                # Maintain original aspect ratio
-                depth_aspect_ratio = width / height
-                depth_width = int(depth_height * depth_aspect_ratio)
-                
-                # Make sure depth visualization doesn't exceed 1/3 of the frame width
-                if depth_width > width // 3:
-                    depth_width = width // 3
-                    depth_height = int(depth_width / depth_aspect_ratio)
-                
-                # Resize depth map
-                depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
-                
-                # Overlay on the top-left corner
-                result_frame[0:depth_height, 0:depth_width] = depth_resized
-                
-                # Add a border around the depth visualization
-                cv2.rectangle(result_frame, 
-                              (0, 0), 
-                              (depth_width, depth_height), 
-                              (255, 255, 255), 1)
-                
-            except Exception as e:
-                print(f"Error adding depth map to result: {e}")
+            # Add depth map to the corner of the result frame if enabled
+            if enable_depth:
+                try:
+                    # Calculate depth map dimensions based on frame size
+                    depth_size_factor = 0.25  # Percentage of frame height
+                    depth_height = int(height * depth_size_factor)
+                    
+                    # Maintain original aspect ratio
+                    depth_aspect_ratio = width / height
+                    depth_width = int(depth_height * depth_aspect_ratio)
+                    
+                    # Make sure depth visualization doesn't exceed 1/3 of the frame width
+                    if depth_width > width // 3:
+                        depth_width = width // 3
+                        depth_height = int(depth_width / depth_aspect_ratio)
+                    
+                    # Resize depth map
+                    depth_resized = cv2.resize(depth_colored, (depth_width, depth_height))
+                    
+                    # Overlay on the top-left corner
+                    result_frame[0:depth_height, 0:depth_width] = depth_resized
+                    
+                    # Add a border around the depth visualization
+                    cv2.rectangle(result_frame, 
+                                  (0, 0), 
+                                  (depth_width, depth_height), 
+                                  (255, 255, 255), 1)
+                    
+                except Exception as e:
+                    print(f"Error adding depth map to result: {e}")
             
             # Write frame to output video (only if writer is valid)
             if out is not None and out.isOpened():
@@ -670,7 +755,9 @@ def main():
             if enable_display:
                 cv2.imshow("3D Object Detection", result_frame)
                 if show_all_frames:
-                    cv2.imshow("Depth Map", depth_colored)
+                    # Only show depth map if not disabled
+                    if enable_depth:
+                        cv2.imshow("Depth Map", depth_colored)
                     cv2.imshow("Object Detection", detection_frame)
                     
             # Check for key press again at the end of the loop

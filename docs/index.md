@@ -42,7 +42,7 @@
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start ⚡ 
 
 Get up and running in seconds:
 
@@ -92,3 +92,118 @@ For a complete installation guide (including CUDA setup), see the [Installation 
 </details>
 
 ---
+
+## 🤖 AI Model Arsenal
+
+The toolbox integrates state-of-the-art models for efficient annotation workflows:
+
+<div align="center">
+
+### 🏋️ **Trainable Models**
+
+| **YOLO Family** | **Versions Available** |
+|:---:|:---:|
+| 🦾 **Legacy** | YOLOv3 • YOLOv4 • YOLOv5 |
+| 🚀 **Modern** | YOLOv6 • YOLOv7 • YOLOv8 |
+| ⚡ **Latest** | YOLOv9 • YOLOv10 • YOLO11 • YOLO12 |
+
+*Powered by the [Ultralytics](https://ultralytics.com/) ecosystem*
+
+</div>
+
+<div align="center">
+
+### 🎯 **Segment Anything Models**
+
+| **Model** | **Specialty** | **Use Case** |
+|:---:|:---:|:---:|
+| 🪸 **SAM** | General segmentation | High-quality masks |
+| 🌊 **CoralSCOP** | Coral-specific | Marine biology focus |
+| ⚡ **FastSAM** | Speed optimized | Real-time annotation |
+| 📱 **MobileSAM** | Mobile-friendly | Edge deployment |
+| ✂️ **EdgeSAM** | Efficient | Resource-constrained |
+| 🔍 **RepViT-SAM** | Vision transformers | Advanced features |
+
+*Powered by our [xSAM](https://Github.com/Jordan-Pierce/xSAM) integration*
+
+</div>
+
+<div align="center">
+
+### 👁️ **Visual Prompting & Foundation Models**
+
+| **Framework** | **Models** | **Capability** |
+|:---:|:---:|:---:|
+| **YOLOE** | See Anything | Visual prompt detection |
+| **Transformers** | Grounding DINO • OWLViT • OmDetTurbo | Zero-shot detection |
+
+</div>
+
+---
+
+## 🛠️ Feature Showcase
+
+<div align="center">
+
+### 📝 **Core Annotation Tools**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" alt="Patch Annotation" width="250" style="border-radius: 8px;"/><br>**🎯 Patch Annotation** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" alt="Rectangle Annotation" width="250" style="border-radius: 8px;"/><br>**📐 Rectangle Annotation** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" alt="Polygon Annotation" width="250" style="border-radius: 8px;"/><br>**🔷 Multi-Polygon Annotation** |
+|:---:|:---:|:---:|
+
+### 🤖 **AI-Powered Analysis**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" alt="Classification" width="250" style="border-radius: 8px;"/><br>**🧠 Image Classification** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" alt="Object Detection" width="250" style="border-radius: 8px;"/><br>**🎯 Object Detection** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" alt="Instance Segmentation" width="250" style="border-radius: 8px;"/><br>**🎭 Instance Segmentation** |
+|:---:|:---:|:---:|
+
+### 🔬 **Advanced Capabilities**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" alt="SAM" width="250" style="border-radius: 8px;"/><br>**🪸 Segment Anything (SAM)** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" alt="Polygon Classification" width="250" style="border-radius: 8px;"/><br>**🔍 Polygon Classification** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif" alt="Work Areas" width="250" style="border-radius: 8px;"/><br>**📍 Region-based Detection** |
+|:---:|:---:|:---:|
+
+### ✂️ **Editing & Processing Tools**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" alt="Cut Tool" width="250" style="border-radius: 8px;"/><br>**✂️ Cut** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" alt="Combine Tool" width="250" style="border-radius: 8px;"/><br>**🔗 Combine** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Simplify.gif" alt="Simplify Tool" width="250" style="border-radius: 8px;"/><br>**🎨 Simplify** |
+|:---:|:---:|:---:|
+
+### 🌟 **Specialized Features**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" alt="YOLOE" width="400" style="border-radius: 8px;"/><br>**👁️ See Anything (YOLOE)** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" alt="LAI Classification" width="400" style="border-radius: 8px;"/><br>**🗺️ LAI Classification** |
+|:---:|:---:|
+
+### 📊 **Analysis & Exploration**
+
+| <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Analytics.gif" alt="Video Analysis" width="400" style="border-radius: 8px;"/><br>**🎬 Video Inference & Analytics** | <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Explorer.gif" alt="Data Explorer" width="400" style="border-radius: 8px;"/><br>**🔍 Data Explorer & Clustering** |
+|:---:|:---:|
+
+</div>
+
+---
+
+## 🔧 Complete Workflow Pipeline
+
+### 📥 **Data Input**
+- **🔥 CoralNet Download**: Retrieve source data and annotations
+- **🎬 Video Processing**: Extract frames from video files
+- **📸 Image Import**: Support for various image formats
+
+### ✏️ **Annotation & Labeling**
+- **👆 Manual Annotation**: Intuitive point, rectangle, polygon and semantic tools
+- **🤖 AI-Assisted**: SAM, YOLO, and visual prompting models
+- **📐 Precision Editing**: Cut, combine, subtract, and simplify shapes
+
+### 🧠 **Machine Learning**
+- **🔬 Hyperparameter Tuning**: Optimize training conditions
+- **🚀 Model Training**: Build custom classifiers and detectors
+- **⚡ Model Optimization**: Production-ready deployment
+
+### 📊 **Analysis & Export**
+- **📈 Performance Evaluation**: Comprehensive model metrics
+- **🎯 Batch Inference**: Process multiple images automatically
+- **🎥 Video Analysis**: Real-time processing with analytics
+- **📋 Multi-format Export**: CoralNet, Viscore, TagLab, GeoJSON
+
+---
+
+## 📋 Roadmap
+
+*See the current tickets and planned features on the [GitHub Issues Page](https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues)*

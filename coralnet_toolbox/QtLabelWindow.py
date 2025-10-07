@@ -4,7 +4,7 @@ import re
 import uuid
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer, pyqtProperty
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag, QBrush, QColor, QDrag,
                          QFontMetrics, QLinearGradient, QPainter, QPen)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
@@ -23,15 +23,89 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class LabelDisplay(QWidget):
+    """A widget responsible for the visual rendering and interaction of a label."""
+    selected = pyqtSignal()  # Signal to emit when this display part is selected
+
+    def __init__(self, label_instance, parent=None):
+        super().__init__(parent)
+        self.label = label_instance  # Reference back to the main Label container
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)  # Ensure hover events are captured accurately
+
+    def enterEvent(self, event):
+        """Handle mouse entering the widget."""
+        self.label.is_hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Handle mouse leaving the widget."""
+        self.label.is_hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press events for selection."""
+        # We only care about left-clicks for selection here
+        if event.button() == Qt.LeftButton:
+            self.selected.emit()
+        # Right-clicks are now handled by the main Label widget for drag-and-drop
+        super().mousePressEvent(event)
+        
+    def paintEvent(self, event):
+        """Paint the label widget with a modern look and feel."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+
+        # --- 1. Background Gradient ---
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        base_color = QColor(self.label.color)
+        if self.label.is_hovered:
+            gradient.setColorAt(0, base_color.lighter(130))
+            gradient.setColorAt(1, base_color.lighter(110))
+        else:
+            gradient.setColorAt(0, base_color.lighter(115))
+            gradient.setColorAt(1, base_color)
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(rect)
+
+        # --- 2. Animated Selection Indicator ---
+        if self.label.is_selected:
+            pen_color = QColor(self.label.color).darker(150)
+            pen_color.setAlpha(self.label.pulse_alpha)
+            pen = QPen(pen_color)
+            pen.setWidthF(2.5)
+            pen.setStyle(Qt.DotLine)
+            painter.setPen(pen)
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
+
+        # --- 3. Dynamic Text Color ---
+        r, g, b, _ = base_color.getRgb()
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        text_color = Qt.black if luminance > 0.5 else Qt.white
+        painter.setPen(QPen(text_color))
+
+        # --- 4. Draw Text ---
+        font_metrics = QFontMetrics(painter.font())
+        truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(rect.width() - 10))
+        painter.drawText(rect, Qt.AlignCenter, truncated_text)
+        
+
 class Label(QWidget):
     colorChanged = pyqtSignal(QColor)
-    selected = pyqtSignal(object)  # Signal to emit the selected label
-    label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
+    selected = pyqtSignal(object)
+    label_deleted = pyqtSignal(object)
 
     def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, pen_width=2):
         """Initialize the Label widget."""
         super().__init__()
 
+        # --- Basic properties ---
         self.id = str(uuid.uuid4()) if label_id is None else label_id
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
@@ -40,19 +114,37 @@ class Label(QWidget):
         self.transparency = 128
         self.is_selected = False
         self.is_hovered = False
-
-        # Restore animation properties
-        self._animated_line_offset = 0
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_animated_line)
-        self.animation_timer.setInterval(50)  # Update every 50ms
-
-        self.fixed_height = 30
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(self.fixed_height)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(self.long_label_code)
         self.drag_start_position = None
+
+        # --- Layout and Child Widgets ---
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(5)
+
+        # 1. The visual display part of the label
+        self.display_widget = LabelDisplay(self)
+        self.display_widget.selected.connect(self._handle_selection)
+
+        # 2. The checkbox
+        self.link_checkbox = QCheckBox()
+        self.link_checkbox.setChecked(True)
+        self.link_checkbox.setToolTip("Link this label's transparency to the slider")
+        
+        # Add widgets to the layout
+        layout.addWidget(self.display_widget)
+        layout.addWidget(self.link_checkbox)
+
+        # --- Animation properties ---
+        self._pulse_alpha = 128
+        self._pulse_direction = 1
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self._update_pulse_alpha)
+        self.animation_timer.setInterval(50)
+
+        # --- Widget settings ---
+        self.setFixedHeight(30)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setToolTip(self.long_label_code)
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(8)
@@ -60,72 +152,70 @@ class Label(QWidget):
         shadow.setOffset(2, 2)
         self.setGraphicsEffect(shadow)
 
-    def enterEvent(self, event):
-        """Handle mouse entering the widget."""
-        self.is_hovered = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        """Handle mouse leaving the widget."""
-        self.is_hovered = False
-        self.update()
-        super().leaveEvent(event)
+    def _handle_selection(self):
+        """Internal slot to handle clicks from the display widget."""
+        self.is_selected = not self.is_selected
+        if self.is_selected:
+            self.start_animation()
+        else:
+            self.stop_animation()
+        self.display_widget.update()  # Triggers a repaint of the child widget
+        self.selected.emit(self)
 
     def mousePressEvent(self, event):
-        """Handle mouse press events for selection and initiating drag."""
-        if event.button() == Qt.LeftButton:
-            self.is_selected = not self.is_selected
-            if self.is_selected:
-                self.start_animation()
-            else:
-                self.stop_animation()
-            self.update()
-            self.selected.emit(self)
-
+        """Handle mouse press events for initiating drag."""
         if event.button() == Qt.RightButton:
-            self.is_selected = True
-            self.start_animation()
-            self.update()
-            self.selected.emit(self)
+            if not self.is_selected:
+                self._handle_selection()  # Select the label if not already selected
             self.drag_start_position = event.pos()
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for dragging."""
         if event.buttons() == Qt.RightButton and self.drag_start_position:
+            if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                return
             drag = QDrag(self)
             mime_data = QMimeData()
             mime_data.setText(self.id)
             drag.setMimeData(mime_data)
             drag.exec_(Qt.MoveAction)
+            self.drag_start_position = None  # Reset after drag
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release events to stop dragging."""
         if event.button() == Qt.RightButton:
             self.drag_start_position = None
+        super().mouseReleaseEvent(event)
+
+    @property
+    def is_linked(self):
+        """Returns True if the checkbox is checked, False otherwise."""
+        return self.link_checkbox.isChecked()
 
     def select(self):
-        """Select the label."""
+        """Programmatically select the label."""
         if not self.is_selected:
             self.is_selected = True
             self.start_animation()
-            self.update()
+            self.display_widget.update()
             self.selected.emit(self)
 
     def deselect(self):
-        """Deselect the label."""
+        """Programmatically deselect the label."""
         if self.is_selected:
             self.is_selected = False
             self.stop_animation()
-            self.update()
+            self.display_widget.update()
 
     def update_color(self):
         """Trigger a repaint to reflect color changes."""
-        self.update()
+        self.display_widget.update()
 
     def update_selection(self):
         """Trigger a repaint to reflect selection changes."""
-        self.update()
+        self.display_widget.update()
 
     def update_label_color(self, new_color: QColor):
         """Update the label's color and emit the colorChanged signal."""
@@ -136,78 +226,55 @@ class Label(QWidget):
 
     def update_transparency(self, transparency):
         """Update the label's transparency value."""
-        self.transparency = transparency
+        self.transparency = max(0, min(255, transparency))
 
     def update_pen_width(self, pen_width):
         """Update the label's pen width value."""
         self.pen_width = pen_width
-        self.update()
+        self.update_color()
+
+    @pyqtProperty(int)
+    def pulse_alpha(self):
+        """Get the current pulse alpha for animation."""
+        return self._pulse_alpha
+    
+    @pulse_alpha.setter
+    def pulse_alpha(self, value):
+        """Set the pulse alpha and update the widget."""
+        self._pulse_alpha = int(max(0, min(255, value)))
+        self.display_widget.update()
+
+    def _update_pulse_alpha(self):
+        """Update the pulse alpha for a heartbeat-like effect."""
+        if self._pulse_direction == 1:
+            self._pulse_alpha += 30
+        else:
+            self._pulse_alpha -= 10
+
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50
+            self._pulse_direction = 1
         
-    def _update_animated_line(self):
-        """Update the animated line offset for selection animation."""
-        if self.is_selected:
-            self._animated_line_offset = (self._animated_line_offset + 1) % 20
-            self.update()
+        self.display_widget.update()
 
     def start_animation(self):
-        """Start the selection animation."""
+        """Start the pulsing animation."""
         if not self.animation_timer.isActive():
             self.animation_timer.start()
-
+    
     def stop_animation(self):
-        """Stop the selection animation."""
+        """Stop the pulsing animation."""
         self.animation_timer.stop()
-        self._animated_line_offset = 0
-        self.update()
+        self._pulse_alpha = 128
+        self.display_widget.update()
 
     def delete_label(self):
         """Emit the label_deleted signal and schedule the widget for deletion."""
         self.label_deleted.emit(self)
         self.deleteLater()
-
-    def paintEvent(self, event):
-        """Paint the label widget with a modern look and feel."""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-
-        # --- 1. Background Gradient ---
-        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        base_color = QColor(self.color)
-        if self.is_hovered:
-            gradient.setColorAt(0, base_color.lighter(130))
-            gradient.setColorAt(1, base_color.lighter(110))
-        else:
-            gradient.setColorAt(0, base_color.lighter(115))
-            gradient.setColorAt(1, base_color)
-        painter.setBrush(QBrush(gradient))
-        painter.setPen(Qt.NoPen)
-        painter.drawRect(rect)
-
-        # --- 2. MODIFIED Animated Selection Indicator ---
-        if self.is_selected:
-            # Use a darker version of the label's color for good contrast
-            pen = QPen(self.color.darker(150))
-            pen.setWidthF(2.5)  # Use setWidthF for float widths
-            pen.setStyle(Qt.CustomDashLine)
-            pen.setDashPattern([4, 4])  # 4 pixels on, 4 pixels off
-            pen.setDashOffset(self._animated_line_offset)
-            painter.setPen(pen)
-            painter.drawRect(rect.adjusted(1, 1, -1, -1))
-
-        # --- 3. Dynamic Text ---
-        r, g, b, _ = base_color.getRgb()
-        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-        text_color = Qt.black if luminance > 0.5 else Qt.white
-        painter.setPen(QPen(text_color))
-
-        # --- 4. Draw Text ---
-        font_metrics = QFontMetrics(painter.font())
-        truncated_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, int(rect.width() - 24))
-        painter.drawText(rect, Qt.AlignCenter, truncated_text)
-
-        super().paintEvent(event)
 
     def to_dict(self):
         """Convert the label's properties to a dictionary."""
@@ -227,28 +294,27 @@ class Label(QWidget):
                    data['id'])
 
     def __eq__(self, other):
-        """Two labels are considered equal if their short and long codes are the same."""
+        """Two labels are considered equal if their IDs are the same."""
         if not isinstance(other, Label):
             return NotImplemented
-        return (
-            self.short_label_code == other.short_label_code and self.long_label_code == other.long_label_code
-        )
+        return self.id == other.id
 
     def __hash__(self):
-        """The hash is based on the short and long codes."""
-        return hash((self.short_label_code, self.long_label_code))
+        """The hash is based on the label's unique ID."""
+        return hash(self.id)
 
     def __repr__(self):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
-                f"short_label_code='{self.short_label_code}', "
-                f"long_label_code='{self.long_label_code}', "
-                f"color={self.color.name()})")
+                f"short_label_code='{self.short_label_code}')")
         
     def __del__(self):
         """Clean up the timer when the label is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
+        try:
+            if hasattr(self, 'animation_timer') and self.animation_timer:
+                self.animation_timer.stop()
+        except RuntimeError:
+            pass
 
 
 class LabelWindow(QWidget):
@@ -341,6 +407,14 @@ class LabelWindow(QWidget):
         self.label_lock_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.label_lock_button.setFixedHeight(self.label_height)
         self.actions_bar.addWidget(self.label_lock_button)
+
+        self.toggle_all_button = QPushButton()
+        self.toggle_all_button.setIcon(get_icon("all.png"))
+        self.toggle_all_button.setToolTip("Toggle All Labels")
+        self.toggle_all_button.clicked.connect(self.toggle_all_labels)
+        self.toggle_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.toggle_all_button.setFixedHeight(self.label_height)
+        self.actions_bar.addWidget(self.toggle_all_button)
 
         # Filter/Search Bar
         self.filter_bar_layout = QHBoxLayout()
@@ -623,9 +697,14 @@ class LabelWindow(QWidget):
         # Update filter bars and label count
         self.update_label_count()
         self.main_window.image_window.update_search_bars()
+        self.sync_all_masks_with_labels()
         QApplication.processEvents()
 
         return label
+    
+    def get_linked_labels(self):
+        """Get a list of all labels whose transparency checkbox is checked."""
+        return [label for label in self.labels if label.is_linked]
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
@@ -638,10 +717,13 @@ class LabelWindow(QWidget):
         self.active_label.select()
         self.labelSelected.emit(selected_label)
 
-        # Update the transparency slider with the new label's transparency
+        # Transparency changes are now instant - emit freely!
         self.transparencyChanged.emit(self.active_label.transparency)
-        # Update annotations (locked, transparency)
-        self.update_annotations_with_label(selected_label)
+        
+        # OPTIMIZED: Skip expensive annotation updates in mask editing mode
+        # Vector annotations don't need updates when switching labels in mask mode
+        if not self.annotation_window._is_in_mask_editing_mode():
+            self.update_annotations_with_label(selected_label)
 
         # Only enable edit/delete buttons if not locked
         if not self.label_locked:
@@ -650,48 +732,30 @@ class LabelWindow(QWidget):
 
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
-    def set_active_label_transparency(self, transparency):
-        """Set the transparency for the active label and its associated annotations."""
-        if not self.active_label:
-            return
-    
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-    
-        if self.active_label.transparency != transparency:
-            # Block signals for batch update
-            self.annotation_window.blockSignals(True)
-            try:
-                # Update the active label's transparency
-                self.active_label.update_transparency(transparency)
-                # Update the transparency of all annotations with the active label
-                for annotation in self.annotation_window.annotations_dict.values():
-                    if annotation.label.id == self.active_label.id:
-                        annotation.update_transparency(transparency)
-            finally:
-                self.annotation_window.blockSignals(False)
-    
-            self.annotation_window.scene.update()
-            self.annotation_window.viewport().update()
-    
-        # Make cursor normal again
-        QApplication.restoreOverrideCursor()
-    
-    def set_all_labels_transparency(self, transparency):
-        """Set the transparency for all labels and annotations."""
-        # Block signals for batch update
-        self.annotation_window.blockSignals(True)
-        try:
-            for label in self.labels:
-                label.update_transparency(transparency)
-    
-            for annotation in self.annotation_window.annotations_dict.values():
-                annotation.update_transparency(transparency)
-        finally:
-            self.annotation_window.blockSignals(False)
-    
-        self.annotation_window.scene.update()
-        self.annotation_window.viewport().update()
+    def sync_all_masks_with_labels(self):
+        """Sync all existing mask annotations with the current project labels."""
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            if raster.mask_annotation:
+                raster.mask_annotation.sync_label_map(self.labels)
+
+    def set_mask_transparency(self, transparency):
+        """Update the mask annotation's transparency for the current image."""
+        transparency = max(0, min(255, transparency))  # Clamp to valid range
+        mask = self.annotation_window.current_mask_annotation
+        if mask:
+            # ULTRA-FAST: New render-time transparency approach - no caching needed!
+            # Update transparency for all linked labels
+            linked_labels = self.get_linked_labels()
+            if linked_labels:
+                for label in linked_labels:
+                    if label.id in mask.visible_label_ids:
+                        # Update the label's transparency - now instant!
+                        label.update_transparency(transparency)
+                # Single call to update the mask - transparency applied at render time
+                mask.update_transparency(transparency)
+            else:
+                # Fallback to original behavior for edge cases
+                mask.update_transparency(transparency)
 
     def deselect_active_label(self):
         """Deselect the currently active label."""
@@ -705,6 +769,10 @@ class LabelWindow(QWidget):
 
     def update_annotations_with_label(self, label):
         """Update selected annotations based on the properties of the given label."""
+        # OPTIMIZED: Skip this expensive operation in mask editing mode
+        if self.annotation_window._is_in_mask_editing_mode():
+            return
+            
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -789,6 +857,10 @@ class LabelWindow(QWidget):
                 if label.short_label_code == "Review" and label.long_label_code == "Review":
                     return label
         return None  # Return None if not found and not returning review label
+    
+    def get_label_map(self):
+        """Return a dictionary mapping class IDs (integers starting from 1) to Label objects."""
+        return {i + 1: label for i, label in enumerate(self.labels)}
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
         """Check if a label with the given codes or ID already exists (case-insensitive for codes)."""
@@ -865,9 +937,14 @@ class LabelWindow(QWidget):
                 # Re-apply the label to trigger a style update if needed (e.g., color change)
                 annotation.update_label(label_to_update)
 
+        # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
+        if self.annotation_window.mask_annotation and self.annotation_window._is_in_mask_editing_mode():
+            self.annotation_window.mask_annotation.update_graphics_item()
+
         # Force a repaint of the label widget itself and reorganize the grid
         label_to_update.update()
         self.reorganize_labels()
+        self.sync_all_masks_with_labels()
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
     def merge_labels(self, source_label, target_label):
@@ -879,46 +956,57 @@ class LabelWindow(QWidget):
         """
         print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
         
+        # Iterate through ALL rasters to update every existing mask.
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            if raster.mask_annotation is not None:
+                mask_anno = raster.mask_annotation
+                
+                source_cid = mask_anno.label_id_to_class_id_map.get(source_label.id)
+                target_cid = mask_anno.label_id_to_class_id_map.get(target_label.id)
+
+                if source_cid and target_cid:
+                    # Find all pixels belonging to the source class
+                    pixels_to_reassign = (mask_anno.mask_data % mask_anno.LOCK_BIT) == source_cid
+                    # Re-assign them to the target class, preserving their locked status
+                    mask_anno.mask_data[pixels_to_reassign] = target_cid + mask_anno.LOCK_BIT
+
+                    # Clean up the old source label from the mask's maps
+                    mask_anno.class_id_to_label_map.pop(source_cid, None)
+                    mask_anno.label_id_to_class_id_map.pop(source_label.id, None)
+
         # --- GLOBAL CLEANUP OPERATION ---
-        # This is the crucial new logic to handle the "plot twist".
-        # We must iterate through every annotation in the project.
         all_annotations = self.annotation_window.annotations_dict.values()
         
         for annotation in all_annotations:
-            # Task 1: Re-label annotations that have `source_label` as their primary label.
-            # This will trigger the logic inside `annotation.update_label`.
             if annotation.label == source_label:
                 annotation.update_label(target_label)
 
-            # Task 2: Scrub the now-defunct `source_label` from the machine_confidence
-            # of ALL annotations, regardless of their primary label. This prevents
-            # dangling references to a label that no longer exists.
             if annotation.machine_confidence:
-                # Safely pop the source_label key. It does nothing if the key isn't present.
                 annotation.machine_confidence.pop(source_label, None)
 
         # --- FINALIZING THE MERGE ---
-
-        # Update the active label if it was the one being merged
         if self.active_label == source_label:
             self.set_active_label(target_label)
             
-        # Remove the source label from the list and delete it
         if source_label in self.labels:
             self.labels.remove(source_label)
             source_label.deleteLater()
 
-        # Update UI
         self.update_label_count()
         self.reorganize_labels()
 
-        # Refresh the main annotation view to show all changes
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
             self.annotation_window.set_image(current_image_path)
-            # Update annotation count after merge
             self.update_annotation_count()
             
+        self.sync_all_masks_with_labels()
+
+        # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
+        current_mask = self.annotation_window.current_mask_annotation
+        if current_mask and self.annotation_window._is_in_mask_editing_mode():
+            current_mask.update_graphics_item()
+
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
         if (label.short_label_code == "Review" and
@@ -948,6 +1036,25 @@ class LabelWindow(QWidget):
             if result == QMessageBox.No:
                 return
 
+        # Iterate through ALL rasters in the project to update every existing mask.
+        for raster in self.main_window.image_window.raster_manager.rasters.values():
+            # Only act on masks that have already been created (lazy-loading).
+            if raster.mask_annotation is not None:
+                mask_anno = raster.mask_annotation
+                
+                # Get the class ID using the fast, direct lookup.
+                class_id_to_clear = mask_anno.label_id_to_class_id_map.get(label.id)
+                if class_id_to_clear:
+                    mask_anno.clear_pixels_for_class(class_id_to_clear)
+                    # Remove the label from the mask's internal maps to keep them clean
+                    mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
+                    mask_anno.label_id_to_class_id_map.pop(label.id, None)
+
+        # If the currently visible mask was affected, refresh its view (only in mask editing mode).
+        current_mask = self.annotation_window.current_mask_annotation
+        if current_mask and self.annotation_window._is_in_mask_editing_mode():
+            current_mask.update_graphics_item()
+
         # Store affected image paths before deletion to update them later
         affected_images = set()
         for annotation in self.annotation_window.annotations_dict.values():
@@ -975,6 +1082,9 @@ class LabelWindow(QWidget):
         # Explicitly update affected images in the image window
         for image_path in affected_images:
             self.main_window.image_window.update_image_annotations(image_path)
+            
+        # Update the label map in the annotation window
+        self.sync_all_masks_with_labels()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
@@ -1033,6 +1143,20 @@ class LabelWindow(QWidget):
         """Unlock the label lock by unchecking the lock button."""
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
+
+    def toggle_all_labels(self):
+        """Toggle all label checkboxes: check all if not all checked, uncheck all if all checked."""
+        if not self.labels:
+            return
+        
+        # Check if all labels are currently checked
+        all_checked = all(label.is_linked for label in self.labels)
+        
+        # Toggle: if all checked, uncheck all; otherwise check all
+        new_state = not all_checked
+        
+        for label in self.labels:
+            label.link_checkbox.setChecked(new_state)
 
     def filter_labels(self, filter_text):
         """Filter labels by text."""
