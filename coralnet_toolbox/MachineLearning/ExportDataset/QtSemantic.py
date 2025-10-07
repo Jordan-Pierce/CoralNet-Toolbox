@@ -1,11 +1,14 @@
 import warnings
+
 import os
 import gc
 import random 
 import shutil
 import yaml
+
 import numpy as np
 from PIL import Image
+
 from rasterio.features import rasterize
 from shapely.geometry import Polygon, box
 
@@ -38,7 +41,7 @@ class Semantic(Base):
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")
-        self.setWindowIcon(get_icon("coral"))
+        self.setWindowIcon(get_icon("mask.png"))
 
     def setup_info_layout(self):
         """Setup the info layout"""
@@ -129,11 +132,7 @@ class Semantic(Base):
         for image_path in images:
             raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and raster.mask_annotation:
-                mask_annotation = raster.mask_annotation
-                
-                # Check if this mask contains any of the selected labels
-                if self.mask_contains_selected_labels(mask_annotation):
-                    mask_annotations.append(mask_annotation)
+                mask_annotations.append(raster.mask_annotation)
                     
         return mask_annotations
 
@@ -170,39 +169,39 @@ class Semantic(Base):
         """
         annotations = []
         
-        # Get mask annotations if selected
+        # Get and filter MASK annotations if selected
         if self.include_masks_checkbox.isChecked():
-            mask_annotations = self.get_mask_annotations()
-            annotations.extend(mask_annotations)
+            mask_annotations = self.get_mask_annotations()  # Gets ALL masks
+            # FIX: This is the correct place to filter masks by selected labels
+            for mask in mask_annotations:
+                if self.mask_contains_selected_labels(mask):
+                    annotations.append(mask)
+
+        # Get and filter VECTOR annotations based on selected types
+        # This re-implements the logic from the base class to work here
+        vector_annotations = []
+        all_vectors = list(self.annotation_window.annotations_dict.values())
         
-        # Get vector annotations if selected (these will be rasterized later)
-        if (self.include_patches_checkbox.isChecked() or
-                self.include_rectangles_checkbox.isChecked() or
-                self.include_polygons_checkbox.isChecked()):
+        # Filter by annotation type
+        if self.include_patches_checkbox.isChecked():
+            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PatchAnnotation'])
+        if self.include_rectangles_checkbox.isChecked():
+            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'RectangleAnnotation'])
+        if self.include_polygons_checkbox.isChecked():
+            vector_annotations.extend([a for a in all_vectors if a.__class__.__name__ == 'PolygonAnnotation'])
+        
+        # Filter vector annotations by selected labels
+        filtered_vectors = [a for a in vector_annotations if a.label.short_label_code in self.selected_labels]
+
+        # Filter by image source (all vs. filtered)
+        if self.filtered_images_radio.isChecked():
+            filtered_image_paths = set(self.image_window.table_model.filtered_paths)
+            filtered_vectors = [a for a in filtered_vectors if a.image_path in filtered_image_paths]
+
+        annotations.extend(filtered_vectors)
             
-            vector_annotations = list(self.annotation_window.annotations_dict.values())
-            
-            # Filter by annotation type
-            filtered_vectors = []
-            for annotation in vector_annotations:
-                include = False
-                if hasattr(annotation, '__class__'):
-                    if (self.include_patches_checkbox.isChecked() and
-                            annotation.__class__.__name__ == 'PatchAnnotation'):
-                        include = True
-                    elif (self.include_rectangles_checkbox.isChecked() and
-                            annotation.__class__.__name__ == 'RectangleAnnotation'):
-                        include = True
-                    elif (self.include_polygons_checkbox.isChecked() and
-                            annotation.__class__.__name__ == 'PolygonAnnotation'):
-                        include = True
-                
-                if include:
-                    filtered_vectors.append(annotation)
-            
-            annotations.extend(filtered_vectors)
-            
-        return annotations
+        # Return a list of unique annotations
+        return list({anno.id: anno for anno in annotations}.values())
 
     def populate_class_filter_list(self):
         """
@@ -212,17 +211,34 @@ class Semantic(Base):
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
-        label_counts = {}  # Number of annotations containing each label
-        label_image_counts = {}  # Set of images containing each label
+        label_counts = {}  # Number of annotations/masks containing each label
+        label_image_counts = {}  # Set of unique images containing each label
+
+        # Get all possible annotations (vector and mask)
+        all_annotations = list(self.annotation_window.annotations_dict.values())
+        all_annotations.extend(self.get_mask_annotations())
         
-        # Count vector annotations (same as base class but with type filtering)
-        for annotation in self.annotation_window.annotations_dict.values():
-            # Count all supported annotation types for semantic segmentation
-            supported_types = ['PatchAnnotation', 'RectangleAnnotation', 'PolygonAnnotation', 'MaskAnnotation']
-            if annotation.__class__.__name__ in supported_types:
+        # Create a set of unique annotations to avoid double counting if a mask is in both lists
+        unique_annotations = {anno.id: anno for anno in all_annotations}.values()
+
+        for annotation in unique_annotations:
+            image_path = annotation.image_path
+            
+            # Handle MaskAnnotation: iterate through its internal labels
+            if annotation.__class__.__name__ == 'MaskAnnotation':
+                class_stats = annotation.get_class_statistics()
+                for label_code, stats in class_stats.items():
+                    if stats.get('pixel_count', 0) > 0:
+                        if label_code in label_counts:
+                            label_counts[label_code] += 1
+                            label_image_counts[label_code].add(image_path)
+                        else:
+                            label_counts[label_code] = 1
+                            label_image_counts[label_code] = {image_path}
+            
+            # Handle Vector Annotations
+            else:
                 label_code = annotation.label.short_label_code
-                image_path = annotation.image_path
-                
                 if label_code != 'Review':
                     if label_code in label_counts:
                         label_counts[label_code] += 1
@@ -230,124 +246,44 @@ class Semantic(Base):
                     else:
                         label_counts[label_code] = 1
                         label_image_counts[label_code] = {image_path}
-        
-        # Also count mask annotations from raster manager if available
-        try:
-            if hasattr(self.image_window, 'raster_manager') and self.image_window.raster_manager:
-                for image_path in self.image_window.raster_manager.image_paths:
-                    raster = self.image_window.raster_manager.get_raster(image_path)
-                    if raster and hasattr(raster, 'mask_annotation') and raster.mask_annotation:
-                        mask_annotation = raster.mask_annotation
-                        class_stats = mask_annotation.get_class_statistics()
-                        
-                        for label_code, stats in class_stats.items():
-                            if label_code != 'Review' and stats.get('pixel_count', 0) > 0:
-                                # Only count if not already counted from annotations_dict
-                                existing_ids = [ann.id for ann in self.annotation_window.annotations_dict.values()]
-                                if mask_annotation.id not in existing_ids:
-                                    if label_code in label_counts:
-                                        label_counts[label_code] += 1
-                                        label_image_counts[label_code].add(image_path)
-                                    else:
-                                        label_counts[label_code] = 1
-                                        label_image_counts[label_code] = {image_path}
-        except Exception as e:
-            print(f"Error accessing raster manager: {e}")
 
-        # If no annotations found, show all available labels from label window
+        # If no annotations are found, populate with all available project labels
         if not label_counts:
             for label in self.main_window.label_window.labels:
                 if label.short_label_code != 'Review':
                     label_counts[label.short_label_code] = 0
                     label_image_counts[label.short_label_code] = set()
 
-        # Sort the labels by their annotation counts in descending order
+        # Sort and populate the table
         sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
-
-        # Populate the label counts table with labels and their counts
+        
         self.label_counts_table.setColumnCount(7)
-        self.label_counts_table.setHorizontalHeaderLabels(["Include",
+        self.label_counts_table.setHorizontalHeaderLabels(["Include", 
                                                            "Label", 
-                                                           "Annotations",  # Number of annotations containing label
-                                                           "Train",
+                                                           "Annotations", 
+                                                           "Train", 
                                                            "Val", 
-                                                           "Test",
+                                                           "Test", 
                                                            "Images"])
 
-        # Populate the label counts table with labels and their counts
         row = 0
-        for label, annotation_count in sorted_label_counts:
+        for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
             self.label_counts_table.insertRow(row)
             self.label_counts_table.setCellWidget(row, 0, include_checkbox)
             self.label_counts_table.setItem(row, 1, QTableWidgetItem(label))
-            self.label_counts_table.setItem(row, 2, QTableWidgetItem(str(annotation_count)))
+            self.label_counts_table.setItem(row, 2, QTableWidgetItem(str(count)))
             self.label_counts_table.setItem(row, 3, QTableWidgetItem("0"))
             self.label_counts_table.setItem(row, 4, QTableWidgetItem("0"))
             self.label_counts_table.setItem(row, 5, QTableWidgetItem("0"))
-            self.label_counts_table.setItem(row, 6, QTableWidgetItem(str(len(label_image_counts[label]))))
-
+            self.label_counts_table.setItem(row, 6, QTableWidgetItem(str(len(label_image_counts.get(label, set())))))
             row += 1
-
-    def split_data(self):
-        """
-        Split the data by images based on the specified ratios.
-        Override base class method to work with mask annotations.
-        """
-        self.train_ratio = self.train_ratio_spinbox.value()
-        self.val_ratio = self.val_ratio_spinbox.value()
-        self.test_ratio = self.test_ratio_spinbox.value()
-
-        # Get images, either filtered or all depending on radio button selection
-        if self.filtered_images_radio.isChecked():
-            images = self.image_window.table_model.filtered_paths
-        else:
-            images = self.image_window.raster_manager.image_paths
-
-        # If "Exclude Negatives" is checked, only use images that have mask annotations with selected labels
-        if self.exclude_negatives_radio.isChecked():
-            images_with_selected_labels = set()
-            for image_path in images:
-                raster = self.image_window.raster_manager.get_raster(image_path)
-                if raster and raster.mask_annotation:
-                    if self.mask_contains_selected_labels(raster.mask_annotation):
-                        images_with_selected_labels.add(image_path)
-            images = [img for img in images if img in images_with_selected_labels]
-
-        random.shuffle(images)
-
-        train_split = int(len(images) * self.train_ratio)
-        val_split = int(len(images) * (self.train_ratio + self.val_ratio))
-
-        # Initialize splits
-        self.train_images = []
-        self.val_images = []
-        self.test_images = []
-
-        # Assign images to splits based on ratios
-        if self.train_ratio > 0:
-            self.train_images = images[:train_split]
-        if self.val_ratio > 0:
-            self.val_images = images[train_split:val_split]
-        if self.test_ratio > 0:
-            self.test_images = images[val_split:]
-
-    def determine_splits(self):
-        """
-        Determine the splits for train, validation, and test mask annotations.
-        Override base class method to work with mask annotations.
-        """
-        self.selected_annotations = self.get_mask_annotations()
-        
-        self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
-        self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
-        self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
 
     def update_summary_statistics(self):
         """
         Update the summary statistics for the semantic segmentation dataset.
-        Override base class method to work with mask annotations.
+        This version uses the polymorphic get_class_statistics() method.
         """
         if self.updating_summary_statistics:
             return
@@ -382,23 +318,19 @@ class Semantic(Base):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
             
-            # Count masks containing this label
-            def has_label_in_mask(annotation, label_name):
-                stats = annotation.get_class_statistics()
-                return label_name in stats and stats[label_name]['pixel_count'] > 0
-                
-            mask_count = sum(1 for a in self.selected_annotations if has_label_in_mask(a, label))
+            # Use the new polymorphic method directly
+            total_count = sum(1 for anno in self.selected_annotations if label in anno.get_class_statistics())
             
             if include_checkbox.isChecked():
-                train_count = sum(1 for a in self.train_annotations if has_label_in_mask(a, label))
-                val_count = sum(1 for a in self.val_annotations if has_label_in_mask(a, label))
-                test_count = sum(1 for a in self.test_annotations if has_label_in_mask(a, label))
+                train_count = sum(1 for anno in self.train_annotations if label in anno.get_class_statistics())
+                val_count = sum(1 for anno in self.val_annotations if label in anno.get_class_statistics())
+                test_count = sum(1 for anno in self.test_annotations if label in anno.get_class_statistics())
             else:
                 train_count = 0
                 val_count = 0
                 test_count = 0
 
-            self.label_counts_table.item(row, 2).setText(str(mask_count))
+            self.label_counts_table.item(row, 2).setText(str(total_count))
             self.label_counts_table.item(row, 3).setText(str(train_count))
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))

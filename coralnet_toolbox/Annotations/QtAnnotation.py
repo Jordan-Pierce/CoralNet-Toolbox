@@ -290,7 +290,7 @@ class Annotation(QObject):
         if not self.is_selected and not self.animation_timer.isActive():
             return
             
-        color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  # Changed to lighter for consistency
+        color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen
@@ -358,6 +358,25 @@ class Annotation(QObject):
     def get_center_xy(self):
         """Get the center coordinates of the annotation."""
         return self.center_xy
+    
+    def get_class_statistics(self) -> dict:
+        """
+        Returns a dictionary with pixel counts and percentages for each class
+        contained within this single annotation.
+        
+        For vector types (Patch, Rectangle, Polygon), this will simply be
+        a dictionary with one entry for its own label. For mask types, this
+        will return statistics for all classes found within the mask.
+        """
+        # Default implementation for simple, single-label vector annotations.
+        # Subclasses like MaskAnnotation will provide a more complex override.
+        pixel_count = self.get_area()
+        return {
+            self.label.short_label_code: {
+                "pixel_count": int(pixel_count),
+                "percentage": 100.0
+            }
+        }
 
     def get_cropped_image(self, max_size=None):
         """Retrieve the cropped image, optionally scaled to maximum size."""
