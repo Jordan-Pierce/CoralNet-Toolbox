@@ -1148,6 +1148,9 @@ class AnnotationWindow(QGraphicsView):
         Clears and rebuilds the R-tree spatial index from scratch for all
         vector annotations associated with the current image.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Create a new, empty 2D index
         p = index.Property()
         p.dimension = 2
@@ -1159,9 +1162,15 @@ class AnnotationWindow(QGraphicsView):
 
         for anno in annotations_for_image:
             self.add_to_spatial_index(anno)
+            
+        # Restore the cursor
+        QApplication.restoreOverrideCursor()
 
     def delete_annotation(self, annotation_id):
         """Delete an annotation by its ID from dicts and the spatial index."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
@@ -1186,6 +1195,9 @@ class AnnotationWindow(QGraphicsView):
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
+            
+        # Restore the cursor
+        QApplication.restoreOverrideCursor()
 
     def delete_annotations(self, annotations):
         """Delete a list of annotations."""

@@ -1,8 +1,8 @@
 import os
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
                              QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton)
 
@@ -30,26 +30,61 @@ class ConfidenceBar(QFrame):
         self.color = label.color
         self.setFixedHeight(20)  # Set a fixed height for the bars
 
+        self._fill_width = 0
+        self.target_fill_width = 0  # Will be set in resizeEvent
+
+        # Animation will be created and started in the first resizeEvent
+        self.animation = None
+
+    def get_fill_width(self):
+        """Getter for the fill_width property used by the animation."""
+        return self._fill_width
+
+    def set_fill_width(self, value):
+        """Setter for the fill_width property used by the animation."""
+        self._fill_width = value
+        self.update()  # Trigger a repaint whenever the value changes
+
+    # This property allows QPropertyAnimation to animate the fill width
+    fill_width = pyqtProperty(int, fget=get_fill_width, fset=set_fill_width)
+
+    def resizeEvent(self, event):
+        """Handle resize to recalculate target fill width and start animation."""
+        super().resizeEvent(event)
+        # Calculate the target fill width based on the current widget width and confidence
+        self.target_fill_width = int(self.width() * (self.confidence / 100))
+        
+        # Stop any existing animation
+        if self.animation is not None:
+            self.animation.stop()
+            
+        # Start animation from current position to target
+        self.start_animation()
+
+    def start_animation(self):
+        """Start the fill animation."""
+        if self.target_fill_width <= 0:
+            return
+            
+        self.animation = QPropertyAnimation(self, b"fill_width")
+        self.animation.setDuration(500)  # 500ms duration
+        self.animation.setStartValue(0)
+        self.animation.setEndValue(self.target_fill_width)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)  # Smooth easing
+        self.animation.start()
+
     def paintEvent(self, event):
         """Handle the paint event to draw the confidence bar."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Calculate the middle point
-        mid_width = self.width() // 2
-
-        # Draw the border for both halves
+        # Draw the border for the entire bar area
         painter.setPen(self.color)
-        painter.drawRect(0, 0, mid_width - 1, self.height() - 1)  # Left half
-        painter.drawRect(mid_width, 0, self.width() - mid_width - 1, self.height() - 1)  # Right half
+        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
 
-        # Draw the filled part of the bar from middle to confidence width
-        filled_width = int((self.width() - mid_width) * (self.confidence / 100))
-        painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))  # 75% transparency
-        painter.drawRect(mid_width, 0, filled_width, self.height() - 1)
-
-        # Set text color to black
-        painter.setPen(Qt.black)
+        # Draw the filled part of the bar from left to the current fill_width
+        painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))
+        painter.drawRect(0, 0, self._fill_width, self.height() - 1)
 
     def mousePressEvent(self, event):
         """Handle mouse press events on the bar."""
@@ -71,7 +106,7 @@ class ConfidenceBar(QFrame):
         if self.confidence_window.main_window.annotation_window.selected_tool == "select":
             self.setCursor(QCursor(Qt.PointingHandCursor))
         else:
-            self.setCursor(QCursor(Qt.ForbiddenCursor))  # Use a forbidden cursor icon
+            self.setCursor(QCursor(Qt.ForbiddenCursor))
 
     def leaveEvent(self, event):
         """Handle mouse leave events to reset the cursor."""
@@ -365,14 +400,33 @@ class ConfidenceWindow(QWidget):
         self.clear_layout(self.bar_chart_layout)
         self.confidence_bar_labels = []
 
+        if not self.chart_dict:
+            return
+
         labels, confidences = self.get_chart_data()
-        max_color = labels[confidences.index(max(confidences))].color
+        if not confidences:
+            return
+
+        # Calculate the sum of all displayed confidences for relative scaling
+        total_displayed_confidence = sum(confidences)
+        
+        # Find the highest confidence value for border color
+        max_confidence = max(confidences) if confidences else 0
+
+        # Set border color based on the top prediction
+        max_color = labels[confidences.index(max_confidence)].color
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
+        # Use relative confidence values for bar fill, but original values for display
         for idx, (label, confidence) in enumerate(zip(labels, confidences)):
-            bar_widget = ConfidenceBar(self, label, confidence, self.bar_chart_widget)
-            bar_widget.barClicked.connect(self.handle_bar_click)  # Connect the signal to the slot
-            self.add_bar_to_layout(bar_widget, label, confidence, idx + 1)
+            # Calculate relative confidence for bar fill (as percentage of total displayed)
+            if total_displayed_confidence > 0:
+                relative_confidence = (confidence / total_displayed_confidence) * 100
+            else:
+                relative_confidence = 0
+            
+            # Use original confidence for display text, relative for bar fill
+            self.add_bar_to_layout(label, confidence, relative_confidence, idx + 1)
             self.confidence_bar_labels.append(label)
 
     def get_chart_data(self):
@@ -383,28 +437,39 @@ class ConfidenceWindow(QWidget):
             [conf_value * 100 for conf_value in self.chart_dict.values()][:5]
         )
 
-    def add_bar_to_layout(self, bar_widget, label, confidence, top_k):
-        """Add a single confidence bar widget to the bar chart layout."""
-        bar_layout = QHBoxLayout(bar_widget)
-        bar_layout.setContentsMargins(5, 2, 5, 2)
-        
-        # Create a top-k icon for the label
-        icon_label = QLabel(bar_widget)
+    def add_bar_to_layout(self, label, original_confidence, bar_confidence, top_k):
+        """Create and add a composite widget for the confidence bar to the layout."""
+        # 1. Create a container widget for the entire row
+        container_widget = QWidget()
+        row_layout = QHBoxLayout(container_widget)
+        row_layout.setContentsMargins(5, 2, 5, 2)
+        row_layout.setSpacing(5)
+
+        # 2. Create the individual components
+        icon_label = QLabel()
         icon_label.setPixmap(self.top_k_icons[str(top_k)])
         icon_label.setFixedSize(14, 14)
-        bar_layout.addWidget(icon_label)
 
-        # Create and style the class label
-        class_label = QLabel(label.short_label_code, bar_widget)
-        class_label.setAlignment(Qt.AlignCenter)
-        bar_layout.addWidget(class_label)
+        class_label = QLabel(label.short_label_code)
+        class_label.setFixedWidth(80)
 
-        # Create and style the percentage label
-        percentage_label = QLabel(f"{confidence:.2f}%", bar_widget)
+        # Use the actual confidence value for the bar's visual fill
+        bar_widget = ConfidenceBar(self, label, bar_confidence)
+        bar_widget.barClicked.connect(self.handle_bar_click)
+
+        # Use the actual confidence value for the text display
+        percentage_label = QLabel(f"{original_confidence:.2f}%")
+        percentage_label.setFixedWidth(55)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        bar_layout.addWidget(percentage_label)
 
-        self.bar_chart_layout.addWidget(bar_widget)
+        # 3. Add the components to the row's layout
+        row_layout.addWidget(icon_label)
+        row_layout.addWidget(class_label)
+        row_layout.addWidget(bar_widget, 1)  # Add bar_widget with stretch factor
+        row_layout.addWidget(percentage_label)
+
+        # 4. Add the container for the whole row to the main vertical layout
+        self.bar_chart_layout.addWidget(container_widget)
 
     def handle_bar_click(self, label):
         """Handle clicks on a confidence bar to update the annotation."""

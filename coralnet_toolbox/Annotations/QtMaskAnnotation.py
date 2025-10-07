@@ -10,6 +10,7 @@ from skimage.measure import find_contours
 
 from shapely.geometry import Polygon
 from rasterio.features import rasterize
+from rasterio.transform import from_origin
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -387,8 +388,8 @@ class MaskAnnotation(Annotation):
             protected_fill_mask_slice = fill_mask_slice & ~local_lock_mask
             
             # Place the updated, protected slice back into the full-size fill mask
-            fill_mask[y_min:y_max+1, x_min:x_max+1] = protected_fill_mask_slice
-        
+            fill_mask[y_min: y_max + 1, x_min: x_max + 1] = protected_fill_mask_slice
+
         # Apply the final, protected fill mask to the data
         self.mask_data[fill_mask] = new_class_id
         
@@ -408,62 +409,57 @@ class MaskAnnotation(Annotation):
     def _rasterize_annotation_group(self, annotations: list, class_id: int):
         """Burns a list of vector annotations OF THE SAME CLASS into the mask."""
         height, width = self.mask_data.shape
-        stencil = QImage(width, height, QImage.Format_Alpha8)
-        stencil.fill(Qt.transparent)
 
-        painter = QPainter(stencil)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor("white")))
-        
+        geometries = []
         for anno in annotations:
-            path = anno.get_painter_path()
-            painter.drawPath(path)
-        painter.end()
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
 
-        # Fix for QImage memory padding issue
-        stride = stencil.bytesPerLine()
-        ptr = stencil.bits()
-        ptr.setsize(stencil.byteCount())
+        if not geometries:
+            return
 
-        arr_view = np.ndarray(shape=(height, width), 
-                              buffer=ptr, 
-                              dtype=np.uint8, 
-                              strides=(stride, 1))
-
-        stencil_np = np.copy(arr_view) > 0
+        # Rasterize all geometries into a single boolean mask
+        stencil_np = rasterize(
+            geometries,
+            out_shape=(height, width),
+            transform=from_origin(0, 0, 1, 1),
+            fill=0,          # Pixels outside shapes are 0 (not burned)
+            default_value=1, # Pixels inside shapes are 1 (burned)
+            dtype=np.uint8
+        ).astype(bool)
 
         # Add the LOCK_BIT to the class_id to mark these pixels as protected.
         self.mask_data[stencil_np] = class_id + self.LOCK_BIT
         
     def _create_stencil_for_group(self, annotations: list) -> np.ndarray:
-        """Creates a boolean numpy stencil for a list of annotations using QPainter."""
+        """Creates a boolean numpy stencil for a list of annotations using rasterio."""
         height, width = self.mask_data.shape
-        # Use a memory-efficient 1-bit format for the stencil
-        stencil_image = QImage(width, height, QImage.Format_Mono)
-        stencil_image.fill(0)  # 0 is transparent/off
 
-        painter = QPainter(stencil_image)
-        # 1 is the color that will be "on"
-        painter.setPen(QColor(1, 1, 1))
-        painter.setBrush(QColor(1, 1, 1))
-        
+        geometries = []
         for anno in annotations:
-            # get_painter_path() is an assumed method on vector annotation objects
-            path = anno.get_painter_path()
-            painter.drawPath(path)
-        painter.end()
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
 
-        # Efficiently convert the QImage buffer to a numpy array
-        ptr = stencil_image.bits()
-        ptr.setsize(stencil_image.byteCount())
+        if not geometries:
+            return np.zeros((height, width), dtype=bool)
+
+        # Rasterize all geometries into a single boolean mask
+        stencil = rasterize(
+            geometries,
+            out_shape=(height, width),
+            transform=from_origin(0, 0, 1, 1),
+            fill=0,          # Pixels outside shapes are 0 (not in stencil)
+            default_value=1, # Pixels inside shapes are 1 (in stencil)
+            dtype=np.uint8
+        ).astype(bool)
         
-        # Note: QImage.Format_Mono pads each line to be a multiple of 32 bits.
-        # We must account for this by using the correct stride (bytesPerLine).
-        arr_view = np.frombuffer(ptr, dtype=np.uint8).reshape((height, stencil_image.bytesPerLine()))
-        
-        # The final boolean mask is derived by un-packing the bits and slicing to the correct width
-        packed = np.unpackbits(arr_view, axis=1)
-        return packed[:, :width].astype(bool)
+        return stencil
     
     def _create_local_lock_mask(self, rect: QRectF, annotations: list) -> np.ndarray:
         """
@@ -474,59 +470,38 @@ class MaskAnnotation(Annotation):
         if width <= 0 or height <= 0:
             return np.zeros((height, width), dtype=bool)
 
-        # Create a temporary, small image to draw on
-        stencil = QImage(width, height, QImage.Format_Alpha8)
-        stencil.fill(Qt.transparent)
-
-        painter = QPainter(stencil)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor("white"))) # White means locked/protected
-        
-        # Translate the painter so annotation coordinates (which are in scene space)
-        # are drawn correctly onto our small, local stencil image.
-        painter.translate(-rect.x(), -rect.y())
-        
+        geometries = []
         for anno in annotations:
-            if hasattr(anno, 'get_painter_path'):
-                painter.drawPath(anno.get_painter_path())
-            elif hasattr(anno, 'get_polygon'):
-                # Handle polygon annotations that might not have get_painter_path
-                polygon = anno.get_polygon()
-                if polygon and not polygon.isEmpty():
-                    painter.drawPolygon(polygon)
-        painter.end()
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
 
-        # Get the number of bytes per line (the stride), which may include padding.
-        stride = stencil.bytesPerLine()
+        if not geometries:
+            return np.zeros((height, width), dtype=bool)
+
+        # Create a transform that maps the global coordinates of the geometries
+        # to the local coordinate system of our output numpy array.
+        transform = from_origin(rect.x(), rect.y(), 1, 1)
+
+        # Rasterize the shapes into a numpy array.
+        lock_mask = rasterize(
+            geometries,
+            out_shape=(height, width),
+            transform=transform,
+            fill=0,          # Pixels outside the shapes are 0 (not locked)
+            default_value=1, # Pixels inside the shapes are 1 (locked)
+            dtype=np.uint8
+        ).astype(bool)
         
-        # Get a pointer to the image's raw data buffer.
-        ptr = stencil.bits()
-        ptr.setsize(stencil.byteCount())
-
-        # Create a numpy array view on the buffer, using the correct stride.
-        # This correctly interprets the QImage's memory layout, even with padding.
-        arr_view = np.ndarray(shape=(height, width), 
-                              buffer=ptr, 
-                              dtype=np.uint8, 
-                              strides=(stride, 1))
-
-        # Return a boolean mask where True represents a locked pixel.
-        # We make a copy to ensure the underlying buffer is released.
-        return np.copy(arr_view) > 0
+        return lock_mask
     
     def _create_lock_mask_with_rasterio(self, rect: QRectF, annotations: list) -> np.ndarray:
         """
         Creates a boolean lock mask for a given rectangular area using the
         highly optimized rasterio.features.rasterize function.
         """
-        try:
-            from rasterio.features import rasterize
-            from rasterio.transform import from_origin
-            from shapely.geometry import Polygon
-        except ImportError:
-            # Fallback to the slower QPainter method if required libraries are not available.
-            return self._create_local_lock_mask(rect, annotations)
-
         geometries = []
         for anno in annotations:
             if hasattr(anno, 'get_polygon'):
@@ -537,11 +512,11 @@ class MaskAnnotation(Annotation):
         
         if not geometries:
             return np.zeros((int(rect.height()), int(rect.width())), dtype=bool)
-
+    
         # Create a transform that maps the global coordinates of the geometries
         # to the local coordinate system of our output numpy array.
         transform = from_origin(rect.x(), rect.y(), 1, 1)
-
+    
         # Rasterize the shapes into a numpy array.
         lock_mask = rasterize(
             geometries,
@@ -557,7 +532,7 @@ class MaskAnnotation(Annotation):
     def rasterize_annotations(self, all_annotations: list):
         """
         Mark pixels covered by vector annotations as locked to prevent painting over them.
-        Uses an efficient polygon fill algorithm instead of expensive QPainter operations.
+        Uses rasterio.features.rasterize for robust and efficient polygon rasterization.
         Vector annotations remain visible while their pixel areas become protected.
         
         Args:
@@ -567,30 +542,39 @@ class MaskAnnotation(Annotation):
             return
 
         height, width = self.mask_data.shape
-        
-        # Process each annotation to mark its pixels as locked
+
+        geometries = []
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
                 continue
-                
             try:
-                # Get the polygon points for this annotation
                 polygon = annotation.get_polygon()
                 if polygon is None or polygon.isEmpty():
                     continue
-                
-                # Convert QPolygonF to a list of (x, y) tuples
                 points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
-                if len(points) < 3:  # Need at least 3 points for a polygon
+                if len(points) < 3:
                     continue
-                
-                # Use a simple polygon fill algorithm to mark pixels as locked
-                self._mark_polygon_pixels_as_locked(points, width, height)
-                
+                geometries.append(Polygon(points))
             except Exception as e:
-                # Skip annotations that cause errors rather than failing completely
-                print(f"Warning: Could not rasterize annotation {annotation.id}: {e}")
+                print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
+
+        if not geometries:
+            return
+
+        # Rasterize all geometries into a single boolean mask
+        lock_mask = rasterize(
+            geometries,
+            out_shape=(height, width),
+            transform=from_origin(0, 0, 1, 1),
+            fill=0,           # Pixels outside shapes are 0 (not locked)
+            default_value=1,  # Pixels inside shapes are 1 (locked)
+            dtype=np.uint8
+        ).astype(bool)
+
+        # Apply locking: Add LOCK_BIT to pixels that are not already locked
+        to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
+        self.mask_data[to_lock] += self.LOCK_BIT
 
     def unrasterize_annotations(self):
         """
@@ -602,60 +586,6 @@ class MaskAnnotation(Annotation):
         
         # Remove the lock bit from these pixels, keeping their original class
         self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
-    
-    def _mark_polygon_pixels_as_locked(self, points, width, height):
-        """
-        Efficiently mark pixels inside a polygon as locked using a scanline fill algorithm.
-        This is much faster than QPainter for simple polygon filling.
-        
-        Args:
-            points: List of (x, y) tuples defining the polygon vertices
-            width: Image width
-            height: Image height
-        """
-        if len(points) < 3:
-            return
-            
-        # Convert to integer coordinates and clip to image bounds
-        int_points = []
-        for x, y in points:
-            x = max(0, min(width - 1, int(x)))
-            y = max(0, min(height - 1, int(y)))
-            int_points.append((x, y))
-        
-        # Find bounding box to limit scan area
-        min_y = min(p[1] for p in int_points)
-        max_y = max(p[1] for p in int_points)
-        
-        # For each scanline (row) in the bounding box
-        for y in range(min_y, max_y + 1):
-            # Find intersections of the scanline with polygon edges
-            intersections = []
-            n_points = len(int_points)
-            
-            for i in range(n_points):
-                j = (i + 1) % n_points
-                x1, y1 = int_points[i]
-                x2, y2 = int_points[j]
-                
-                # Check if edge crosses the scanline
-                if (y1 <= y < y2) or (y2 <= y < y1):
-                    # Calculate intersection x-coordinate
-                    if y2 != y1:  # Avoid division by zero
-                        x_intersect = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-                        intersections.append(int(x_intersect))
-            
-            # Sort intersections and fill between pairs
-            intersections.sort()
-            for i in range(0, len(intersections) - 1, 2):
-                x_start = max(0, min(width - 1, intersections[i]))
-                x_end = max(0, min(width - 1, intersections[i + 1]))
-                
-                # Mark pixels in this horizontal segment as locked
-                for x in range(x_start, x_end + 1):
-                    current_val = self.mask_data[y, x]
-                    if current_val < self.LOCK_BIT:  # Only lock if not already locked
-                        self.mask_data[y, x] = current_val + self.LOCK_BIT
 
     def clear_pixels_for_class(self, class_id: int):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""

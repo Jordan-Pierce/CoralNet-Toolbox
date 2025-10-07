@@ -467,6 +467,17 @@ class Semantic(Base):
         # Add background class
         names_dict[0] = 'background'
 
+        # Create colors dictionary mapping class indices to RGB values (no alpha)
+        labels_dict = {label.short_label_code: label for label in self.main_window.label_window.labels}
+        colors = {}
+        for index, name in names_dict.items():
+            if name == 'background':
+                colors[index] = [0, 0, 0]  # Default black for background
+            else:
+                label = labels_dict.get(name)
+                if label:
+                    colors[index] = [label.color.red(), label.color.green(), label.color.blue()]
+
         # Define the data as a dictionary with absolute paths
         data = {
             'path': output_dir_path,
@@ -474,7 +485,8 @@ class Semantic(Base):
             'val': val_dir,
             'test': test_dir,
             'nc': num_classes + 1,  # +1 for background class
-            'names': names_dict  # Dictionary mapping from indices to class names
+            'names': names_dict,  # Dictionary mapping from indices to class names
+            # 'colors': colors  # Dictionary mapping from indices to RGB color lists
         }
 
         # Write the data to the YAML file
@@ -745,26 +757,10 @@ class Semantic(Base):
             shapely geometry or None
         """
         try:
-            if annotation.__class__.__name__ == 'PatchAnnotation':
-                # Convert patch to polygon (circle approximation)
-                center_x, center_y = annotation.centroid.x(), annotation.centroid.y()
-                radius = annotation.get_area() / (2 * np.pi)  # Approximate radius
-                # Create circle as polygon with 32 points
-                angles = np.linspace(0, 2 * np.pi, 32)
-                points = [(center_x + radius * np.cos(a), center_y + radius * np.sin(a)) for a in angles]
+            polygon = annotation.get_polygon()
+            points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
+            if len(points) >= 3:
                 return Polygon(points)
-                
-            elif annotation.__class__.__name__ == 'RectangleAnnotation':
-                # Convert rectangle to box geometry
-                bbox = annotation.get_bounding_box()
-                return box(bbox[0], bbox[1], bbox[2], bbox[3])
-                
-            elif annotation.__class__.__name__ == 'PolygonAnnotation':
-                # Convert polygon points to shapely Polygon
-                points = [(point.x(), point.y()) for point in annotation.points]
-                if len(points) >= 3:  # Need at least 3 points for a polygon
-                    return Polygon(points)
-                    
         except Exception as e:
             print(f"Error converting annotation to geometry: {e}")
             
