@@ -911,9 +911,9 @@ class DatasetManager:
 
     def visualize_training_samples(self, logs_dir, class_colors):
         """Visualize training samples and save to logs directory."""
-        print("\n" + "-" * 50)
+        print("\n" + "=" * 50)
         print("👀 GENERATING TRAINING SAMPLE VISUALIZATIONS")
-        print("-" * 50)
+        print("=" * 50)
 
         # Create a sample version dataset
         sample_dataset = Dataset(self.train_df,
@@ -930,9 +930,11 @@ class DatasetManager:
                 visualize(save_path=save_path,
                           save_figure=True,
                           image=image,
-                          mask=colorize_mask(mask, self.class_ids, class_colors))
+                          training_sample=colorize_mask(mask, self.class_ids, class_colors))
             except:
                 pass
+            
+            
 class Trainer:
     """Handles the training loop with early stopping and learning rate scheduling."""
 
@@ -1406,7 +1408,7 @@ def main():
         evaluator.visualize_results()
 
         print(f"💾 Best model saved to {experiment_manager.run_dir}")
-        shutil.copyfile(best_weights, os.path.join(experiment_manager.run_dir, "Best_Model_and_Weights.pt"))
+        shutil.copyfile(best_weights, os.path.join(experiment_manager.run_dir, "best.pt"))
 
         print("✅ Training pipeline completed successfully!\n")
 
