@@ -486,7 +486,7 @@ class Base(QDialog):
         except Exception as e:
             QMessageBox.critical(self,
                                  "Error",
-                                 f"Failed to completing tiling: {str(e)}")
+                                 f"Failed to complete tiling: {str(e)}")
         finally:
             self.progress_bar.stop_progress()
             self.progress_bar.close()
