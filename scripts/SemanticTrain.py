@@ -22,6 +22,7 @@ import torch
 import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as BaseDataset
+import torch.amp
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
@@ -414,7 +415,7 @@ class Epoch:
 
 
 class TrainEpoch(Epoch):
-    def __init__(self, model, loss, metrics, optimizer, device="cpu", verbose=True):
+    def __init__(self, model, loss, metrics, optimizer, device="cpu", verbose=True, scaler=None):
         super().__init__(
             model=model,
             loss=loss,
@@ -424,6 +425,7 @@ class TrainEpoch(Epoch):
             verbose=verbose,
         )
         self.optimizer = optimizer
+        self.scaler = scaler
 
     def on_epoch_start(self):
         """Set model to training mode."""
@@ -432,10 +434,25 @@ class TrainEpoch(Epoch):
     def batch_update(self, x, y):
         """Perform training batch update with loss computation and backpropagation."""
         self.optimizer.zero_grad()
-        prediction = self.model.forward(x)
-        loss = self.loss(prediction, y)
-        loss.backward()
-        self.optimizer.step()
+        
+        # Use autocast for mixed precision if scaler is provided
+        if self.scaler is not None:
+            device_type = 'cuda' if 'cuda' in self.device else 'cpu'
+            with torch.amp.autocast(device_type=device_type):
+                prediction = self.model.forward(x)
+                loss = self.loss(prediction, y)
+            
+            # Scale loss and backpropagate
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            # Standard training without AMP
+            prediction = self.model.forward(x)
+            loss = self.loss(prediction, y)
+            loss.backward()
+            self.optimizer.step()
+        
         return loss, prediction
 
 
@@ -798,9 +815,9 @@ class ExperimentManager:
 
     def save_dataframes(self, train_df, valid_df, test_df):
         """Save dataframes to CSV files in logs directory."""
-        train_df.to_csv(os.path.join(self.logs_dir, "Training_Set.csv"), index=False)
-        valid_df.to_csv(os.path.join(self.logs_dir, "Validation_Set.csv"), index=False)
-        test_df.to_csv(os.path.join(self.logs_dir, "Testing_Set.csv"), index=False)
+        train_df.to_csv(os.path.join(self.logs_dir, "Training.csv"), index=False)
+        valid_df.to_csv(os.path.join(self.logs_dir, "Validation.csv"), index=False)
+        test_df.to_csv(os.path.join(self.logs_dir, "Testing.csv"), index=False)
 
     def log_metrics(self, epoch, phase, logs):
         """Log metrics to CSV file."""
@@ -921,7 +938,7 @@ class Trainer:
 
     def __init__(self, model, loss_function, metrics, optimizer, device, num_epochs,
                  train_loader, valid_loader, valid_dataset, valid_dataset_vis,
-                 experiment_manager, class_ids, class_colors):
+                 experiment_manager, class_ids, class_colors, amp_enabled=False):
         """Initialize Trainer with training components."""
         self.model = model
         self.loss_function = loss_function
@@ -936,6 +953,10 @@ class Trainer:
         self.experiment_manager = experiment_manager
         self.class_ids = class_ids
         self.class_colors = class_colors
+        self.amp_enabled = amp_enabled
+
+        # Initialize AMP scaler if enabled
+        self.scaler = torch.amp.GradScaler() if amp_enabled else None
 
         # Training state
         self.best_score = float('inf')
@@ -945,7 +966,7 @@ class Trainer:
 
         # Create training epochs
         self.train_epoch = TrainEpoch(
-            model, loss_function, metrics, optimizer, device, verbose=True
+            model, loss_function, metrics, optimizer, device, verbose=True, scaler=self.scaler
         )
         self.valid_epoch = ValidEpoch(
             model, loss_function, metrics, device, verbose=True
@@ -963,6 +984,7 @@ class Trainer:
         print(f"   • Model: {type(self.model).__name__}")
         print(f"   • Loss: {self.loss_function.__name__}")
         print(f"   • Metrics: {[m.__name__ for m in self.metrics]}")
+        print(f"   • AMP: {'Enabled' if self.amp_enabled else 'Disabled'}")
         print()
 
         try:
@@ -1244,13 +1266,22 @@ def main():
     parser.add_argument('--imgsz', type=int, default=640,
                         help='Length of the longest edge after resizing input images (must be divisible by 32)')
 
-    args = parser.parse_args()
+    parser.add_argument('--amp', action='store_true',
+                        help='Enable automatic mixed precision training for faster training and reduced memory usage')
 
-    # Validate and adjust imgsz to be divisible by 32
+    args = parser.parse_args()
+    
+    # Check imgsz is divisible by 32
     if args.imgsz % 32 != 0:
-        original_imgsz = args.imgsz
-        args.imgsz = round(args.imgsz / 32) * 32
-        print(f"WARNING: imgsz {original_imgsz} is not divisible by 32. Adjusted to {args.imgsz}")
+        # Adjust to nearest multiple of 32
+        new_size = (args.imgsz // 32) * 32
+        print(f"⚠️ imgsz must be divisible by 32. Adjusting from {args.imgsz} to {new_size}.")
+        args.imgsz = new_size
+
+    # Validate AMP compatibility
+    if args.amp and not torch.cuda.is_available():
+        print("⚠️ AMP requires CUDA. Disabling AMP and using CPU training.")
+        args.amp = False
 
     # Set output directory to "results" folder in the same directory as data.yaml
     output_dir = os.path.join(os.path.dirname(args.data_yaml), "results")
@@ -1283,7 +1314,6 @@ def main():
         print(f"   • Validation samples: {len(valid_df)}")
         print(f"   • Test samples: {len(test_df)}")
         print(f"   • Classes: {data_config.class_names}")
-        print()
 
         # Build model
         model_builder = ModelBuilder(
@@ -1348,7 +1378,8 @@ def main():
             valid_dataset_vis=dataset_manager.valid_dataset_vis,
             experiment_manager=experiment_manager,
             class_ids=data_config.class_ids,
-            class_colors=data_config.class_colors
+            class_colors=data_config.class_colors,
+            amp_enabled=args.amp
         )
 
         best_epoch = trainer.train()
