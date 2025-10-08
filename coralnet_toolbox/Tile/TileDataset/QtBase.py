@@ -39,7 +39,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("tile.png"))
         self.setWindowTitle("Tile Dataset")
         self.resize(600, 550)
 
@@ -155,10 +155,14 @@ class Base(QDialog):
         self.input_ext_combo = QComboBox()
         self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
         self.input_ext_combo.setEditable(True)
+        self.input_ext_combo.setCurrentText("")  # Start empty
         
         self.output_ext_combo = QComboBox()
         self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
         self.output_ext_combo.setEditable(True)
+        
+        # Connect input ext change to update output ext
+        self.input_ext_combo.currentTextChanged.connect(self.update_output_ext)
         
         # Add compression spinbox
         self.compression_spinbox = QSpinBox()
@@ -244,6 +248,10 @@ class Base(QDialog):
 
         self.dataset_config_group.setLayout(layout)
 
+    def update_output_ext(self, text):
+        """Update the output extension to match the input extension."""
+        self.output_ext_combo.setCurrentText(text)
+
     def setup_buttons_layout(self, layout):
         """Set up buttons layout."""
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -288,10 +296,10 @@ class Base(QDialog):
         :param ext: Image file extension
         :return: True if valid, False otherwise
         """
-        if not isinstance(ext, str) or not ext.startswith('.'):
+        if not isinstance(ext, str) or ext == "" or not ext.startswith('.'):
             QMessageBox.warning(self,
                                 "Invalid Image Extension",
-                                "The image extension must be a string starting with a dot.")
+                                "The image extension must be a non-empty string starting with a dot; please update.")
             return False
         return True
 
@@ -478,7 +486,7 @@ class Base(QDialog):
         except Exception as e:
             QMessageBox.critical(self,
                                  "Error",
-                                 f"Failed to tile dataset: {str(e)}")
+                                 f"Failed to complete tiling: {str(e)}")
         finally:
             self.progress_bar.stop_progress()
             self.progress_bar.close()
