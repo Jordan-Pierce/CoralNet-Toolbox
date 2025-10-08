@@ -911,9 +911,9 @@ class DatasetManager:
 
     def visualize_training_samples(self, logs_dir, class_colors):
         """Visualize training samples and save to logs directory."""
-        print("\n" + "=" * 50)
+        print("\n" + "=" * 60)
         print("👀 GENERATING TRAINING SAMPLE VISUALIZATIONS")
-        print("=" * 50)
+        print("=" * 60)
 
         # Create a sample version dataset
         sample_dataset = Dataset(self.train_df,
