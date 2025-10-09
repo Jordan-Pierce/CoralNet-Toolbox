@@ -900,6 +900,7 @@ class DatasetManager:
         # Test dataset without preprocessing for visualization
         self.test_dataset_vis = Dataset(
             self.test_df,
+            augmentation=get_validation_augmentation(self.imgsz),
             classes=self.class_ids,
         )
 
@@ -1022,7 +1023,7 @@ class Trainer:
             print("⏹️ Training interrupted by user")
         except Exception as e:
             if 'CUDA out of memory' in str(e):
-                print(f"⚠️ Not enough GPU memory for the provided parameters")
+                print("⚠️ Not enough GPU memory for the provided parameters")
             self._log_error(e)
             raise Exception(f"❌ There was an issue with training!\n{e}")
 
@@ -1103,7 +1104,7 @@ class Evaluator:
     """Handles model evaluation and result visualization."""
 
     def __init__(self, model, loss_function, metrics, device, test_dataset, test_dataset_vis,
-                 experiment_manager, class_ids, class_colors):
+                 experiment_manager, class_ids, class_colors, num_vis_samples=10):
         """Initialize Evaluator with evaluation components."""
         self.model = model
         self.loss_function = loss_function
@@ -1114,17 +1115,18 @@ class Evaluator:
         self.experiment_manager = experiment_manager
         self.class_ids = class_ids
         self.class_colors = class_colors
+        self.num_vis_samples = num_vis_samples
 
         # Get original image dimensions
         self.original_width, self.original_height = Image.open(
-            self.test_dataset_vis.dataframe.iloc[0]['Image']
+            self.test_dataset_vis.images_fps[0]
         ).size
 
     def evaluate(self):
         """Evaluate model on test set."""
-        print("\n" + "-" * 50)
+        print("\n" + "=" * 60)
         print("🧪 EVALUATING MODEL ON TEST SET")
-        print("-" * 50)
+        print("=" * 60)
 
         # Create test dataloader
         test_loader = DataLoader(self.test_dataset, batch_size=1, shuffle=False, num_workers=0)
@@ -1152,47 +1154,45 @@ class Evaluator:
 
         except Exception as e:
             # Catch the error
-            print(f"ERROR: Could not calculate metrics")
+            print("ERROR: Could not calculate metrics")
             # Likely Memory
             if 'CUDA out of memory' in str(e):
-                print(f"WARNING: Not enough GPU memory for the provided parameters")
+                print("WARNING: Not enough GPU memory for the provided parameters")
             self._log_error(e)
 
-    def visualize_results(self, num_samples=25):
+    def visualize_results(self):
         """Visualize test results."""
-        print("\n" + "-" * 50)
-        print(f"🎨 VISUALIZING {num_samples} TEST RESULTS")
-        print("-" * 50)
+        print("\n" + "=" * 60)
+        print(f"🎨 VISUALIZING {self.num_vis_samples} TEST RESULTS")
+        print("=" * 60)
 
         try:
             # Empty cache from testing
             torch.cuda.empty_cache()
 
             # Loop through samples
-            for i in range(num_samples):
+            for i in range(self.num_vis_samples):
                 # Get a random sample
                 n = np.random.choice(len(self.test_dataset))
-                # Get the image original image without preprocessing
-                image_vis = self.test_dataset_vis[n][0].numpy()
-                # Get the expected input for model
-                image, gt_mask = self.test_dataset[n]
-                gt_mask = gt_mask.squeeze().numpy()
-                gt_mask = cv2.resize(gt_mask, 
-                                     (self.original_width, self.original_height), 
-                                     interpolation=cv2.INTER_NEAREST)
+                # Get the original image and mask without preprocessing
+                image_vis, gt_mask_vis = self.test_dataset_vis[n]
+                image_vis = image_vis.numpy()
+                gt_mask_vis = gt_mask_vis.numpy()
+
+                # Get dimensions of the current image
+                current_width, current_height = Image.open(self.test_dataset_vis.images_fps[n]).size
+
                 # Colorize the ground truth mask
-                gt_mask = colorize_mask(gt_mask, self.class_ids, self.class_colors)
-                
-                # Prepare sample
+                gt_mask = colorize_mask(gt_mask_vis, self.class_ids, self.class_colors)
+
+                # Get the preprocessed input for model prediction
+                image, _ = self.test_dataset[n]
                 x_tensor = image.to(self.device).unsqueeze(0)
                 # Make prediction
                 pr_mask = self.model.predict(x_tensor)
                 pr_mask = (pr_mask.squeeze().cpu().numpy().round())
                 pr_mask = np.argmax(pr_mask, axis=0)
-                pr_mask = cv2.resize(pr_mask, 
-                                     (self.original_width, self.original_height), 
-                                     interpolation=cv2.INTER_NEAREST)
-                # Colorize the predicted mask
+                # Colorize the predicted mask (no resize needed since image_vis is already at imgsz)
                 pr_mask = colorize_mask(pr_mask, self.class_ids, self.class_colors)
 
                 try:
@@ -1205,12 +1205,13 @@ class Evaluator:
                               predicted_mask=pr_mask)
                 except:
                     pass
+                
         except Exception as e:
             # Catch the error
-            print(f"ERROR: Could not make predictions")
+            print("ERROR: Could not make predictions")
             # Likely Memory
             if 'CUDA out of memory' in str(e):
-                print(f"WARNING: Not enough GPU memory for the provided parameters")
+                print("WARNING: Not enough GPU memory for the provided parameters")
             self._log_error(e)
 
     def _log_error(self, error):
@@ -1270,6 +1271,9 @@ def main():
 
     parser.add_argument('--amp', action='store_true',
                         help='Enable automatic mixed precision training for faster training and reduced memory usage')
+
+    parser.add_argument('--num_vis_samples', type=int, default=10,
+                        help='Number of test samples to visualize during evaluation')
 
     args = parser.parse_args()
     
@@ -1388,7 +1392,7 @@ def main():
 
         # Load best model for evaluation
         best_weights = os.path.join(experiment_manager.weights_dir, "best.pt")
-        model = torch.load(best_weights)
+        model = torch.load(best_weights, weights_only=False)
         print(f"📥 Loaded best weights from {best_weights}")
 
         # Evaluate model
@@ -1401,15 +1405,14 @@ def main():
             test_dataset_vis=dataset_manager.test_dataset_vis,
             experiment_manager=experiment_manager,
             class_ids=data_config.class_ids,
-            class_colors=data_config.class_colors
+            class_colors=data_config.class_colors,
+            num_vis_samples=args.num_vis_samples
         )
 
         evaluator.evaluate()
         evaluator.visualize_results()
 
-        print(f"💾 Best model saved to {experiment_manager.run_dir}")
-        shutil.copyfile(best_weights, os.path.join(experiment_manager.run_dir, "best.pt"))
-
+        print(f"\n💾 Best model saved to {best_weights}")
         print("✅ Training pipeline completed successfully!\n")
 
     except Exception as e:
