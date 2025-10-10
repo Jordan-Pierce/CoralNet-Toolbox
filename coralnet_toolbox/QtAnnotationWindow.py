@@ -579,17 +579,29 @@ class AnnotationWindow(QGraphicsView):
         annotations = self.get_image_annotations()
         if not annotations:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
             
         # The MaskAnnotation handles the efficient protection marking internally
         self.current_mask_annotation.rasterize_annotations(annotations)
-        
+
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+
     def unrasterize_annotations(self):
         """
         Remove protection from vector annotation pixels, allowing mask editing over those areas again.
         This clears the locked status from pixels that were protected during mask editing mode.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         if self.current_mask_annotation:
             self.current_mask_annotation.unrasterize_annotations()
+            
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""
