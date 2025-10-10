@@ -1,10 +1,14 @@
+import warnings
+
 import numpy as np
 
+from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QColor, QPen, QPainter, QPixmap, QImage
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsPixmapItem, QApplication, QMessageBox
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QApplication, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

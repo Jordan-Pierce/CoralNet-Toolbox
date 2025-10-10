@@ -1,7 +1,11 @@
+import warnings
+
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -85,8 +89,14 @@ class FillTool(Tool):
         if new_class_id is None:
             return  # Label not found in map
         
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Call the fill_region method on the MaskAnnotation object
         mask_annotation.fill_region(scene_pos, new_class_id)
         
         # Update the display to reflect changes
         self.annotation_window.update_scene()
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
