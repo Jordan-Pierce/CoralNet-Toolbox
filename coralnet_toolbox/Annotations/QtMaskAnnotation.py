@@ -257,7 +257,7 @@ class MaskAnnotation(Annotation):
                              y_end - clipped_y_start)
         
         # 1. Quickly find any vector annotations that overlap with our update area
-        intersecting_annos = annotation_window.get_intersecting_annotations(update_rect)
+        intersecting_annos = annotation_window.get_image_annotations()
         
         # 2. If there are any, create a localized boolean mask of the protected pixels
         if intersecting_annos:
@@ -374,7 +374,7 @@ class MaskAnnotation(Annotation):
         fill_bbox = QRectF(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
         
         # Find vector annotations that overlap with the fill area
-        intersecting_annos = annotation_window.get_intersecting_annotations(fill_bbox)
+        intersecting_annos = annotation_window.get_image_annotations()
 
         # If any exist, create a local protection mask
         if intersecting_annos:

@@ -7,7 +7,6 @@ open-clip-torch>=2.20.0
 supervision>=0.24.0
 scikit-learn
 scikit-image
-rtree
 umap-learn
 faiss-cpu
 pycocotools

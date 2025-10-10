@@ -211,3 +211,6 @@ class EraseTool(Tool):
         
         # Call the update_mask method on the MaskAnnotation object with class_id 0 (background)
         mask_annotation.update_mask(brush_location, self.brush_mask, 0, self.annotation_window)
+        
+        # Update the display to reflect changes
+        self.annotation_window.update_scene()
