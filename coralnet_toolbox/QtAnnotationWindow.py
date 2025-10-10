@@ -255,7 +255,7 @@ class AnnotationWindow(QGraphicsView):
         
         self.selected_tool = tool
 
-        # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING ---
+        # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING (DO NOT CHANGE) ---
         # Determine if we are entering or leaving mask editing mode
         is_entering_mask_mode = self.selected_tool in self.mask_tools
         is_leaving_mask_mode = previous_tool in self.mask_tools
@@ -271,7 +271,6 @@ class AnnotationWindow(QGraphicsView):
         # If we are transitioning between either mode, unselect annotations
         if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
-            self.current_mask_annotation.clear_pixels_for_annotations(self.get_image_annotations())
         # --------------------------------------------------------
         
         if self.selected_tool:
@@ -580,17 +579,29 @@ class AnnotationWindow(QGraphicsView):
         annotations = self.get_image_annotations()
         if not annotations:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
             
         # The MaskAnnotation handles the efficient protection marking internally
         self.current_mask_annotation.rasterize_annotations(annotations)
-        
+
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+
     def unrasterize_annotations(self):
         """
         Remove protection from vector annotation pixels, allowing mask editing over those areas again.
         This clears the locked status from pixels that were protected during mask editing mode.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         if self.current_mask_annotation:
             self.current_mask_annotation.unrasterize_annotations()
+            
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def viewportToScene(self):
         """Convert viewport coordinates to scene coordinates."""

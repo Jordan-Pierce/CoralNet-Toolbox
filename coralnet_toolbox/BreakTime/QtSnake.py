@@ -7,7 +7,7 @@ warnings.filterwarnings("ignore")
 import queue
 import random
 
-from PyQt5.QtCore import Qt, QBasicTimer
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPainter, QBrush, QColor, QFont
 from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QButtonGroup)
@@ -308,7 +308,7 @@ class SnakeGame(QMainWindow):
         # Set the window opacity
         self.opacity = 1
         # Initialize the timer for game updates
-        self.update_timer = QBasicTimer()
+        self.update_timer = QTimer(self)
         # Set up the status bar
         self.status_bar = self.statusBar()
         # Create brushes for drawing the board cells
@@ -395,7 +395,7 @@ class SnakeGame(QMainWindow):
         if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
             self.init_game()                   # Create snake and set board dimensions.
             self.init_ui()                     # Use self.row and self.column for UI sizing.
-            self.update_timer.start(self.speed, self)  # Start the timer.
+            self.update_timer.start(self.speed)  # Start the timer.
         else:
             self.close()
 
@@ -445,6 +445,7 @@ class SnakeGame(QMainWindow):
         self.row = self.snake.row
         self.column = self.snake.column
         self.title_timer = 10  # Show title for 0.5 seconds
+        self.update_timer.timeout.connect(self.update_game)
 
     def paintEvent(self, event):
         """
@@ -528,7 +529,7 @@ class SnakeGame(QMainWindow):
             else:
                 return QBrush(Qt.black, Qt.SolidPattern)   # Black
 
-    def timerEvent(self, event):
+    def update_game(self):
         """
         Handle game updates on each timer tick.
         """
@@ -542,35 +543,31 @@ class SnakeGame(QMainWindow):
         new_speed = max(BASE_SPEED - (self.snake.length - 1) * self.speed_increase_factor, 50)
         if new_speed != self.speed:
             self.speed = new_speed
-            # Restart the timer with new speed
-            self.update_timer.stop()
-            self.update_timer.start(self.speed, self)
+            self.update_timer.setInterval(self.speed)
 
-        # Check if the event corresponds to our update timer
-        if event.timerId() == self.update_timer.timerId():
-            # Increase the time counter
-            self.time_count += 1
-            # If the snake is alive, update its position using auto_play logic
-            if self.snake.live:
-                self.snake.go(self.auto_play())
-                # Check for win condition: snake fills the board.
-                if self.snake.length == (self.column * self.row):
-                    self.win_game()
-                    return
-                # Refresh yellow food only if eaten (do not auto-refresh after 10 seconds)
-                if self.snake.food == [-1, -1]:
-                    self.snake.new_food(self.time_count)
-                # Spawn special food every 15 seconds if not present
-                if self.time_count % 15 == 0 and self.snake.special_food == [-1, -1]:
-                    self.snake.new_special_food(self.time_count)
-                # Remove special food based on difficulty duration
-                if self.snake.special_food != [-1, -1]: 
-                    if (self.time_count - self.snake.special_food_created_time) >= self.special_food_duration:
-                        self.snake.board[self.snake.special_food[0]][self.snake.special_food[1]] = BLANK
-                        self.snake.special_food = [-1, -1]
-            else:
-                # End the game if the snake is dead
-                self.game_over()
+        # Increase the time counter
+        self.time_count += 1
+        # If the snake is alive, update its position using auto_play logic
+        if self.snake.live:
+            self.snake.go(self.auto_play())
+            # Check for win condition: snake fills the board.
+            if self.snake.length == (self.column * self.row):
+                self.win_game()
+                return
+            # Refresh yellow food only if eaten (do not auto-refresh after 10 seconds)
+            if self.snake.food == [-1, -1]:
+                self.snake.new_food(self.time_count)
+            # Spawn special food every 15 seconds if not present
+            if self.time_count % 15 == 0 and self.snake.special_food == [-1, -1]:
+                self.snake.new_special_food(self.time_count)
+            # Remove special food based on difficulty duration
+            if self.snake.special_food != [-1, -1]: 
+                if (self.time_count - self.snake.special_food_created_time) >= self.special_food_duration:
+                    self.snake.board[self.snake.special_food[0]][self.snake.special_food[1]] = BLANK
+                    self.snake.special_food = [-1, -1]
+        else:
+            # End the game if the snake is dead
+            self.game_over()
         # Redraw the game board after handling the timer event
         self.update()
 

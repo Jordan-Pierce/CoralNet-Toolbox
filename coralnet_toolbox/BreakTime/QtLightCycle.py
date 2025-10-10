@@ -799,7 +799,6 @@ class LightCycleGame(QMainWindow):
 
     def start_game(self):
         """Start the game by initializing."""
-        # Hardcode difficulty to Hard for AI opponent
         self.difficulty = "Hard"
         
         # Always reset game speed to baseline for this difficulty

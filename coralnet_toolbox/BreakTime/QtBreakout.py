@@ -2,11 +2,8 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import sys
 import random
 import math
-import json
-import os
 
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer, QPoint
@@ -349,8 +346,8 @@ class Board(QWidget):
         self.combo_count = 0
         
         # Ball speed progression
-        self.speed_increase_factor = 1.05  # 5% speed increase per collision
-        self.max_speed_multiplier = 5   # Maximum speed multiplier
+        self.speed_increase_factor = 1.0  # 5% speed increase per collision
+        self.max_speed_multiplier = 5     # Maximum speed multiplier
         
         # Paddle setup
         self.original_paddle_width = self.PADDLE_WIDTH
@@ -439,18 +436,22 @@ class Board(QWidget):
 
     def resetBall(self):
         """Resets the ball to its starting position and state."""
+        # Clear existing balls first
         self.balls = []
         ball = QRect(self.paddle.center().x() - self.BALL_DIAMETER // 2,
                      self.paddle.top() - self.BALL_DIAMETER,
                      self.BALL_DIAMETER, self.BALL_DIAMETER)
         
-        # Set initial direction with difficulty-based speed
+        # Reset to base speed, ignoring any accumulated speed increases
         base_speed = 1
         self.balls.append({
             'rect': ball,
             'xDir': int(base_speed * self.ball_speed_multiplier),
             'yDir': int(-base_speed * self.ball_speed_multiplier)
         })
+        
+        # Reset the speed increase factor for the new life
+        self.speed_increase_factor = 1.0
 
     def create_particles(self, x, y, color, count=8):
         """Create particle effects at the given position."""
@@ -890,6 +891,11 @@ class Board(QWidget):
     def startGame(self):
         """Starts the game loop."""
         if not self.isStarted:
+            # Ensure timer is stopped and disconnected before starting
+            if self.timer.isActive():
+                self.timer.stop()
+                self.timer.timeout.disconnect()
+                
             self.resetBall()
             self.isStarted = True
             self.timer.timeout.connect(self.update_game)
@@ -1363,12 +1369,7 @@ class BreakoutGame(QMainWindow):
 
     def end_game(self):
         """End the game by stopping the timer and closing the window."""
-        if self.board:
-            self.board.timer.stop()
-            if hasattr(self.board, 'effect_timer'):
-                self.board.effect_timer.stop()
-        self.board = None
-        self.close()
+        self.cleanup_and_close()
 
     def closeEvent(self, event):
         """Handle the window close event."""
@@ -1390,6 +1391,14 @@ class BreakoutGame(QMainWindow):
 
     def game_over(self, won=False, score=0):
         """Display game over message and handle restart/close."""
+        # Stop the game timer immediately to prevent multiple dialogs
+        if hasattr(self, 'board') and self.board and self.board.timer.isActive():
+            self.board.timer.stop()
+            try:
+                self.board.timer.timeout.disconnect()
+            except:
+                pass
+        
         # Check if it's a high score
         is_high_score = self.high_score_manager.add_score(self.difficulty, score)
         
@@ -1410,15 +1419,47 @@ class BreakoutGame(QMainWindow):
             message += "\n🎉 NEW HIGH SCORE! 🎉\n"
             
         message += "\nDo you want to play again?"
-            
+        
+        # Store the dialog response in a variable
         reply = QMessageBox.question(
             self,
             title,
             message,
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No  # Default to "No" to prevent accidental restarts
         )
         
         if reply == QMessageBox.Yes:
             self.start_game()
         else:
-            self.end_game()
+            # Clean up completely and close
+            self.cleanup_and_close()
+
+    def cleanup_and_close(self):
+        """Completely clean up and close the game window."""
+        # Stop all timers and disconnect signals
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+            try:
+                self.timer.timeout.disconnect()
+            except:
+                pass
+                
+        if hasattr(self, 'effect_timer') and self.effect_timer.isActive():
+            self.effect_timer.stop()
+            try:
+                self.effect_timer.timeout.disconnect()
+            except:
+                pass
+        
+        # Clear references
+        self.board = None
+        
+        # Close the window
+        self.close()
+        
+        # Clear any reference from main window
+        if hasattr(self, 'main_window') and self.main_window:
+            # If the main window has a reference to this game, clear it
+            if hasattr(self.main_window, 'current_game'):
+                self.main_window.current_game = None
