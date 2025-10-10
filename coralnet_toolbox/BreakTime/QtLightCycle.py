@@ -1,3 +1,5 @@
+# Credit: https://www.a1k0n.net/code/tron.html
+
 import warnings
 
 import random
