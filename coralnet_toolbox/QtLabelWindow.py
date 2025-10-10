@@ -667,6 +667,7 @@ class LabelWindow(QWidget):
                 self.active_label.setToolTip(self.active_label.long_label_code)
                 self.update_labels_per_row()
                 self.reorganize_labels()
+                self.main_window.image_window.update_search_bars()
 
     def add_review_label(self):
         """Add a review label to the window and place it at the front of the label list."""
@@ -1001,6 +1002,7 @@ class LabelWindow(QWidget):
             self.update_annotation_count()
             
         self.sync_all_masks_with_labels()
+        self.main_window.image_window.update_search_bars()
 
         # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
