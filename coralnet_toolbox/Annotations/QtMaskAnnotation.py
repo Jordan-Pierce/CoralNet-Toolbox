@@ -424,12 +424,7 @@ class MaskAnnotation(Annotation):
 
         # Apply locking
         to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
-        # total_to_lock = np.sum(to_lock)
         self.mask_data[to_lock] += self.LOCK_BIT
-
-        # if total_to_lock > 0:
-        #     self._update_full_canvas()
-        #     self.update_graphics_item()
 
     def unrasterize_annotations(self):
         """
