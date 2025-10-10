@@ -116,7 +116,8 @@ from coralnet_toolbox.CoralNet import (
 
 from coralnet_toolbox.BreakTime import (
     SnakeGame,
-    BreakoutGame
+    BreakoutGame,
+    LightCycleGame
 )
 
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
@@ -286,6 +287,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
         self.breakout_game_dialog = BreakoutGame(self)
+        self.lightcycle_game_dialog = LightCycleGame(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -689,6 +691,10 @@ class MainWindow(QMainWindow):
         break_out_game_action = QAction("Breakout Game", self)
         break_out_game_action.triggered.connect(self.open_breakout_game_dialog)
         break_time_menu.addAction(break_out_game_action)
+        # Light Cycle Game
+        light_cycle_game_action = QAction("Light Cycle Game", self)
+        light_cycle_game_action.triggered.connect(self.open_light_cycle_game_dialog)
+        break_time_menu.addAction(light_cycle_game_action)
 
         # ----------------------------------------
         # Create and add the toolbar
@@ -2840,6 +2846,16 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.breakout_game_dialog.start_game()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_light_cycle_game_dialog(self):
+        """
+        Open the QtLightCycleGame in a new window.
+        """
+        try:
+            self.untoggle_all_tools()
+            self.lightcycle_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

@@ -9,7 +9,7 @@ import json
 import os
 
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QBrush
-from PyQt5.QtCore import Qt, QBasicTimer, pyqtSignal, QRect, QTimer, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer, QPoint
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QDesktopWidget, QWidget, 
                              QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QButtonGroup)
@@ -20,6 +20,7 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 # Define base game constants
 BASE_WIDTH = 700
@@ -34,6 +35,7 @@ BASE_GAME_SPEED = 5  # Lower is faster
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class BallTrail:
     """Represents a trailing effect behind the ball."""
@@ -55,7 +57,7 @@ class BallTrail:
         if self.life > 0:
             # Fade out over time
             alpha = int(200 * (self.life / self.max_life))
-            color = QColor(100, 100, 100)  # Gray trail
+            color = QColor(211, 211, 211)  # Light gray trail
             color.setAlpha(alpha)
             painter.setBrush(QBrush(color))
             painter.setPen(Qt.NoPen)
@@ -106,7 +108,7 @@ class PowerUp:
             'big_paddle': QColor(0, 255, 0),        # Green
             'small_paddle': QColor(255, 165, 0),    # Orange
             'laser': QColor(255, 0, 0),             # Red
-            'slow_ball': QColor(0, 0, 255),         # Blue
+            'slow_ball': QColor(0, 255, 255),       # Cyan (brighter than blue)
             'fast_ball': QColor(255, 255, 255),     # White
             'reverse_paddle': QColor(128, 0, 128),  # Purple
             'extra_life': QColor(255, 20, 147)      # Deep Pink
@@ -377,7 +379,7 @@ class Board(QWidget):
         self.initBricks()
 
         # Timer for game loop
-        self.timer = QBasicTimer()
+        self.timer = QTimer(self)
         
         # Power-up effect timer
         self.effect_timer = QTimer()
@@ -396,7 +398,7 @@ class Board(QWidget):
         BRICK_HEIGHT = max(15, min(25, self.HEIGHT // 35))  # Scale brick height
         BRICK_COLS = max(8, min(14, (self.WIDTH - 40) // (BRICK_WIDTH + 5)))  # Dynamic columns
         PADDING = max(3, self.WIDTH // 160)  # Scale padding
-        TOP_OFFSET = max(60, self.HEIGHT // 10)  # Scale top offset
+        TOP_OFFSET = max(85, self.HEIGHT // 10)  # Scale top offset (below UI bar)
 
         # Base colors
         base_colors = [QColor(0, 255, 0), QColor(0, 0, 255), QColor(255, 255, 0),
@@ -611,33 +613,113 @@ class Board(QWidget):
         """Handles all the drawing."""
         painter = QPainter(self)
         
-        # Draw white background
-        painter.fillRect(self.rect(), QColor(255, 255, 255))
+        # Draw black background
+        painter.fillRect(self.rect(), QColor(0, 0, 0))
         self.drawObjects(painter)
+
+        # Draw breakout title animation
+        if hasattr(self.parent_window, 'title_timer') and self.parent_window.title_timer > 0:
+            title_font = QFont('Arial', 36, QFont.Bold)
+            painter.setFont(title_font)
+
+            # Create animated colors using bright game colors
+            colors = [QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 255, 255), QColor(255, 255, 0)]
+            color_index = (self.parent_window.title_timer // 10) % len(colors)
+            painter.setPen(colors[color_index])
+
+            title_text = "BREAKOUT"
+            text_rect = painter.fontMetrics().boundingRect(title_text)
+            x = (self.width() - text_rect.width()) // 2
+            y = self.height() // 2
+
+            # Add glow effect to title
+            glow_colors = [QColor(255, 0, 0, 150), QColor(0, 255, 0, 150)]
+            glow_index = (self.parent_window.title_timer // 5) % len(glow_colors)
+            painter.setPen(glow_colors[glow_index])
+            painter.drawText(x - 2, y - 2, title_text)
+            painter.drawText(x + 2, y - 2, title_text)
+            painter.drawText(x - 2, y + 2, title_text)
+            painter.drawText(x + 2, y + 2, title_text)
+
+            painter.setPen(colors[color_index])
+            painter.drawText(x, y, title_text)
 
     def drawObjects(self, painter):
         """Draws all game objects."""
-        # Draw UI info
-        painter.setPen(QColor(50, 50, 50))
-        painter.setFont(QFont('Arial', 12))
-        
-        # Top row of info
-        painter.drawText(10, 20, f"Level: {self.current_level}")
-        painter.drawText(10, 40, f"Score: {self.score}")
-        painter.drawText(10, 60, f"Lives: {self.lives}")
-        
-        # Difficulty and high score
-        painter.drawText(150, 20, f"Difficulty: {self.difficulty}")
+        # Draw UI background bar
+        ui_height = 85
+        painter.setBrush(QBrush(QColor(0, 0, 0)))  # Fully black
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(0, 0, self.WIDTH, ui_height)
+
+        # Set up fonts and colors
+        title_font = QFont('Arial', 14, QFont.Bold)
+        info_font = QFont('Arial', 11)
+        small_font = QFont('Arial', 9)
+
+        # Left section - Game stats
+        painter.setPen(QColor(255, 255, 255))  # White text
+        painter.setFont(info_font)
+        painter.drawText(15, 25, f"Level: {self.current_level}")
+        painter.drawText(15, 45, f"Score: {self.score:,}")
+        painter.drawText(15, 65, f"Lives: {self.lives}")
+
+        # Center section - Difficulty info
+        center_x = self.WIDTH // 2
+        painter.setPen(QColor(255, 255, 255))  # White text
+        painter.setFont(title_font)
+        painter.drawText(center_x - 50, 20, f"{self.difficulty} Mode")
+
+        painter.setFont(info_font)
+        painter.setPen(QColor(255, 255, 255))  # White text
         high_score = self.high_score_manager.get_high_score(self.difficulty)
-        painter.drawText(150, 40, f"High Score: {high_score}")
-        
-        # Active power-ups indicator
+        painter.drawText(center_x - 50, 40, f"High Score: {high_score:,}")
+
+        # Right section - Active power-ups
+        right_x = self.WIDTH - 200
         if self.active_power_ups:
-            painter.drawText(350, 20, "Active Power-ups:")
-            y_offset = 40
-            for power_up in self.active_power_ups.keys():
-                painter.drawText(350, y_offset, f"• {power_up.replace('_', ' ').title()}")
+            painter.setPen(QColor(255, 255, 255))  # White text
+            painter.setFont(title_font)
+            painter.drawText(right_x, 20, "Power-ups:")
+
+            painter.setFont(small_font)
+            y_offset = 35
+            power_up_colors = {
+                'multiball': QColor(255, 0, 255),       # Magenta
+                'big_paddle': QColor(0, 255, 0),        # Green
+                'small_paddle': QColor(255, 165, 0),    # Orange
+                'laser': QColor(255, 0, 0),             # Red
+                'slow_ball': QColor(0, 255, 255),       # Cyan (brighter than blue)
+                'fast_ball': QColor(255, 255, 255),     # White
+                'reverse_paddle': QColor(128, 0, 128),  # Purple
+                'sticky_paddle': QColor(255, 255, 0)    # Yellow
+            }
+
+            # Show at most 3 power-ups to fit in the UI bar
+            power_up_list = list(self.active_power_ups.keys())[:3]
+            remaining_count = len(self.active_power_ups) - len(power_up_list)
+
+            for power_up in power_up_list:
+                # Draw colored indicator circle
+                color = power_up_colors.get(power_up, QColor(200, 200, 200))
+                painter.setBrush(color)
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(right_x - 12, y_offset - 6, 8, 8)
+
+                # Draw power-up name
+                painter.setPen(QColor(255, 255, 255))  # White text
+                display_name = power_up.replace('_', ' ').title()
+                painter.drawText(right_x + 5, y_offset, display_name)
                 y_offset += 15
+
+            # If there are more power-ups, show a count
+            if remaining_count > 0:
+                painter.setPen(QColor(255, 255, 255))  # White text
+                painter.drawText(right_x + 5, y_offset, f"+{remaining_count} more")
+        else:
+            painter.setPen(QColor(255, 255, 255))  # White text
+            painter.setFont(info_font)
+            painter.drawText(right_x, 35, "No active power-ups")
         
         # Draw Paddle
         paddle_color = QColor(0, 180, 255)
@@ -656,7 +738,7 @@ class Board(QWidget):
             
         # Draw Balls
         for ball in self.balls:
-            painter.setBrush(QColor(50, 50, 50))
+            painter.setBrush(QColor(255, 255, 255))
             painter.drawEllipse(ball['rect'])
 
         # Draw Bricks
@@ -691,7 +773,7 @@ class Board(QWidget):
 
     def drawInfoText(self, painter, text):
         """Draws informational text on the screen."""
-        painter.setPen(QColor(50, 50, 50))
+        painter.setPen(QColor(255, 255, 255))  # White text
         painter.setFont(QFont('Arial', 15))
         text_rect = painter.fontMetrics().boundingRect(text)
         x = (self.width() - text_rect.width()) // 2
@@ -810,7 +892,8 @@ class Board(QWidget):
         if not self.isStarted:
             self.resetBall()
             self.isStarted = True
-            self.timer.start(self.GAME_SPEED, self)
+            self.timer.timeout.connect(self.update_game)
+            self.timer.start(self.GAME_SPEED)
 
     def pauseGame(self):
         """Pauses or unpauses the game."""
@@ -819,18 +902,22 @@ class Board(QWidget):
             if self.isPaused:
                 self.timer.stop()
             else:
-                self.timer.start(self.GAME_SPEED, self)
+                self.timer.start(self.GAME_SPEED)
 
-    def timerEvent(self, event):
+    def update_game(self):
         """The main game loop, called by the timer."""
-        if event.timerId() == self.timer.timerId():
-            self.moveBalls()
-            self.updatePowerUps()
-            self.updateLasers()
-            self.updateParticles()
-            self.updateTrails()
-            self.checkCollision()
+        if hasattr(self.parent_window, 'title_timer') and self.parent_window.title_timer > 0:
+            self.parent_window.title_timer -= 1
             self.update()
+            return
+
+        self.moveBalls()
+        self.updatePowerUps()
+        self.updateLasers()
+        self.updateParticles()
+        self.updateTrails()
+        self.checkCollision()
+        self.update()
 
     def moveBalls(self):
         """Moves all balls according to their direction vectors."""
@@ -1242,36 +1329,35 @@ class BreakoutGame(QMainWindow):
         # Initialize the game board
         self.board = None
         self.difficulty = "Medium"  # Default difficulty
+        # For title animation
+        self.title_timer = 0
 
     def start_game(self):
-        """Start the game by showing difficulty selection and initializing the game window and UI."""
-        # Show difficulty selection dialog
-        difficulty_dialog = DifficultyDialog(self)
-        if difficulty_dialog.exec_() == QDialog.Accepted:
-            self.difficulty = difficulty_dialog.get_difficulty()
-            
-            # Show welcome dialog with instructions
-            welcome_msg = (
-                f"Welcome to Breakout - {self.difficulty} Mode!\n\n"
-                "Features:\n"
-                " - Multiple difficulty levels with score multipliers\n"
-                " - Power-ups: Multiball, Paddle size, Sticky paddle, Lasers, etc.\n"
-                " - Particle effects and visual enhancements\n"
-                " - High score tracking\n"
-                " - Progressive levels with increasing difficulty\n"
-                " - Lives system and combo scoring\n\n"
-                "Controls:\n"
-                " - Use 'A' to move paddle left\n"
-                " - Use 'D' to move paddle right\n"
-                " - Press SPACE to start game or shoot lasers\n"
-                " - Press P to pause/unpause\n\n"
-                "Click 'OK' to start playing!"
-            )
-            if QMessageBox.information(self, 
-                                       "Welcome to Breakout", 
-                                       welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
-                self.init_game()                   # Create board and set dimensions.
-                self.init_ui()                     # Set up UI dimensions.
+        """Start the game by initializing the game window and UI."""
+        self.difficulty = "Hard"
+        
+        # Show welcome dialog with instructions
+        welcome_msg = (
+            f"Welcome to Breakout - {self.difficulty} Mode!\n\n"
+            "Features:\n"
+            " - Multiple difficulty levels with score multipliers\n"
+            " - Power-ups: Multiball, Paddle size, Sticky paddle, Lasers, etc.\n"
+            " - Particle effects and visual enhancements\n"
+            " - High score tracking\n"
+            " - Progressive levels with increasing difficulty\n"
+            " - Lives system and combo scoring\n\n"
+            "Controls:\n"
+            " - Use 'A' to move paddle left\n"
+            " - Use 'D' to move paddle right\n"
+            " - Press SPACE to start game or shoot lasers\n"
+            " - Press P to pause/unpause\n\n"
+            "Click 'OK' to start playing!"
+        )
+        if QMessageBox.information(self, 
+                                   "Welcome to Breakout", 
+                                   welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
+            self.init_game()                   # Create board and set dimensions.
+            self.init_ui()                     # Set up UI dimensions.
         else:
             self.close()
 
@@ -1300,11 +1386,15 @@ class BreakoutGame(QMainWindow):
         """Initialize the game board with selected difficulty."""
         self.board = Board(self, self.difficulty)
         self.setCentralWidget(self.board)
+        self.title_timer = 10  # Show title for 0.5 seconds
 
     def game_over(self, won=False, score=0):
         """Display game over message and handle restart/close."""
         # Check if it's a high score
         is_high_score = self.high_score_manager.add_score(self.difficulty, score)
+        
+        # Get level before board might be set to None
+        level_reached = self.board.current_level if self.board else 0
         
         if won:
             title = "Congratulations!"
@@ -1314,7 +1404,7 @@ class BreakoutGame(QMainWindow):
             message = f"Game over on {self.difficulty} mode!\n\n"
             
         message += f"Final Score: {score}\n"
-        message += f"Level Reached: {self.board.current_level}\n"
+        message += f"Level Reached: {level_reached}\n"
         
         if is_high_score:
             message += "\n🎉 NEW HIGH SCORE! 🎉\n"

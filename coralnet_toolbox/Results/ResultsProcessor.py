@@ -1,6 +1,5 @@
 from PyQt5.QtCore import QPointF
 
-from torchvision.ops import nms
 from ultralytics.utils.nms import TorchNMS
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation

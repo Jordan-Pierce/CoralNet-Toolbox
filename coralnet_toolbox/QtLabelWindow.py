@@ -667,6 +667,7 @@ class LabelWindow(QWidget):
                 self.active_label.setToolTip(self.active_label.long_label_code)
                 self.update_labels_per_row()
                 self.reorganize_labels()
+                self.main_window.image_window.update_search_bars()
 
     def add_review_label(self):
         """Add a review label to the window and place it at the front of the label list."""
@@ -938,8 +939,8 @@ class LabelWindow(QWidget):
                 annotation.update_label(label_to_update)
 
         # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
-        if self.annotation_window.mask_annotation and self.annotation_window._is_in_mask_editing_mode():
-            self.annotation_window.mask_annotation.update_graphics_item()
+        if self.annotation_window.current_mask_annotation and self.annotation_window._is_in_mask_editing_mode():
+            self.annotation_window.current_mask_annotation.update_graphics_item()
 
         # Force a repaint of the label widget itself and reorganize the grid
         label_to_update.update()
@@ -1001,6 +1002,7 @@ class LabelWindow(QWidget):
             self.update_annotation_count()
             
         self.sync_all_masks_with_labels()
+        self.main_window.image_window.update_search_bars()
 
         # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
@@ -1085,6 +1087,9 @@ class LabelWindow(QWidget):
             
         # Update the label map in the annotation window
         self.sync_all_masks_with_labels()
+
+        # Update the search bars to remove the deleted label
+        self.main_window.image_window.update_search_bars()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
