@@ -266,7 +266,7 @@ class AnnotationWindow(QGraphicsView):
         self.selected_tool = tool
 
         # Switch between mask editing mode and vector annotation mode
-        if self.selected_tool in self.mask_tools and previous_tool not in self.mask_tools:
+        if self.selected_tool in self.mask_tools or previous_tool in self.mask_tools:
             mask_anno = self.current_mask_annotation
             vector_annos = self.get_image_annotations()
             
