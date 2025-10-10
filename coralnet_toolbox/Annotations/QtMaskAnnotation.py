@@ -362,134 +362,29 @@ class MaskAnnotation(Annotation):
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
 
-    def replace_class(self, old_class_id: int, new_class_id: int):
-        """Replaces all pixels of one class ID with another across the entire mask."""
-        self.mask_data[self.mask_data == old_class_id] = new_class_id
-        self.update_graphics_item()
-        self.annotationUpdated.emit(self)
-
-    def _rasterize_annotation_group(self, annotations: list, class_id: int):
-        """Burns a list of vector annotations OF THE SAME CLASS into the mask."""
-        height, width = self.mask_data.shape
-
-        geometries = []
-        for anno in annotations:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
-
-        if not geometries:
-            return
-
-        # Rasterize all geometries into a single boolean mask
-        stencil_np = rasterize(
-            geometries,
-            out_shape=(height, width),
-            transform=from_origin(0, 0, 1, 1),
-            fill=0,          # Pixels outside shapes are 0 (not burned)
-            default_value=1, # Pixels inside shapes are 1 (burned)
-            dtype=np.uint8
-        ).astype(bool)
-
-        # Add the LOCK_BIT to the class_id to mark these pixels as protected.
-        self.mask_data[stencil_np] = class_id + self.LOCK_BIT
-        
-    def _create_stencil_for_group(self, annotations: list) -> np.ndarray:
-        """Creates a boolean numpy stencil for a list of annotations using rasterio."""
-        height, width = self.mask_data.shape
-
-        geometries = []
-        for anno in annotations:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
-
-        if not geometries:
-            return np.zeros((height, width), dtype=bool)
-
-        # Rasterize all geometries into a single boolean mask
-        stencil = rasterize(
-            geometries,
-            out_shape=(height, width),
-            transform=from_origin(0, 0, 1, 1),
-            fill=0,          # Pixels outside shapes are 0 (not in stencil)
-            default_value=1, # Pixels inside shapes are 1 (in stencil)
-            dtype=np.uint8
-        ).astype(bool)
-        
-        return stencil
-    
-    def _create_local_lock_mask(self, rect: QRectF, annotations: list) -> np.ndarray:
-        """
-        Creates a boolean numpy stencil for a given rectangular area by rasterizing
-        the provided annotations. True means the pixel is protected.
-        """
-        width, height = int(rect.width()), int(rect.height())
-        if width <= 0 or height <= 0:
-            return np.zeros((height, width), dtype=bool)
-
-        geometries = []
-        for anno in annotations:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
-
-        if not geometries:
-            return np.zeros((height, width), dtype=bool)
-
-        # Create a transform that maps the global coordinates of the geometries
-        # to the local coordinate system of our output numpy array.
-        transform = from_origin(rect.x(), rect.y(), 1, 1)
-
-        # Rasterize the shapes into a numpy array.
-        lock_mask = rasterize(
-            geometries,
-            out_shape=(height, width),
-            transform=transform,
-            fill=0,          # Pixels outside the shapes are 0 (not locked)
-            default_value=1, # Pixels inside the shapes are 1 (locked)
-            dtype=np.uint8
-        ).astype(bool)
-        
-        return lock_mask
-    
-    def _create_lock_mask_with_rasterio(self, rect: QRectF, annotations: list) -> np.ndarray:
-        """
-        Creates a boolean lock mask for a given rectangular area using the
-        highly optimized rasterio.features.rasterize function.
-        """
-        geometries = []
-        for anno in annotations:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
-        
-        if not geometries:
-            return np.zeros((int(rect.height()), int(rect.width())), dtype=bool)
-    
-        # Create a transform that maps the global coordinates of the geometries
-        # to the local coordinate system of our output numpy array.
-        transform = from_origin(rect.x(), rect.y(), 1, 1)
-    
-        # Rasterize the shapes into a numpy array.
-        lock_mask = rasterize(
-            geometries,
-            out_shape=(int(rect.height()), int(rect.width())),
-            transform=transform,
-            fill=0,          # Pixels outside the shapes are 0 (not locked)
-            default_value=1, # Pixels inside the shapes are 1 (locked)
-            dtype=np.uint8
-        ).astype(bool)
-        
-        return lock_mask
+    def _fast_rasterize(self, geometries, width, height):
+        """Fast vectorized rasterization using Shapely"""
+        try:
+            from shapely.vectorized import contains
+            
+            # Create coordinate grids - much faster than manual iteration
+            y_coords, x_coords = np.mgrid[0:height, 0:width]
+            
+            # Create empty mask
+            lock_mask = np.zeros((height, width), dtype=bool)
+            
+            # Process each geometry
+            for geom in geometries:
+                if geom.is_valid:
+                    # Vectorized point-in-polygon check - VERY fast
+                    mask = contains(geom, x_coords, y_coords)
+                    lock_mask = lock_mask | mask
+                    
+            return lock_mask
+            
+        except ImportError:
+            print("DEBUG: Shapely vectorized not available, falling back to manual")
+            return self._manual_rasterize(geometries, width, height)
 
     def rasterize_annotations(self, all_annotations: list):
         """
@@ -525,18 +420,16 @@ class MaskAnnotation(Annotation):
             return
 
         # Rasterize all geometries into a single boolean mask
-        lock_mask = rasterize(
-            geometries,
-            out_shape=(height, width),
-            transform=from_origin(0, 0, 1, 1),
-            fill=0,           # Pixels outside shapes are 0 (not locked)
-            default_value=1,  # Pixels inside shapes are 1 (locked)
-            dtype=np.uint8
-        ).astype(bool)
+        lock_mask = self._fast_rasterize(geometries, width, height)
 
-        # Apply locking: Add LOCK_BIT to pixels that are not already locked
+        # Apply locking
         to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
+        # total_to_lock = np.sum(to_lock)
         self.mask_data[to_lock] += self.LOCK_BIT
+
+        # if total_to_lock > 0:
+        #     self._update_full_canvas()
+        #     self.update_graphics_item()
 
     def unrasterize_annotations(self):
         """

@@ -255,7 +255,7 @@ class AnnotationWindow(QGraphicsView):
         
         self.selected_tool = tool
 
-        # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING ---
+        # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING (DO NOT CHANGE) ---
         # Determine if we are entering or leaving mask editing mode
         is_entering_mask_mode = self.selected_tool in self.mask_tools
         is_leaving_mask_mode = previous_tool in self.mask_tools
@@ -267,11 +267,13 @@ class AnnotationWindow(QGraphicsView):
         # Transitioning from a mask tool to a vector tool: UNLOCK the vector annotations
         elif is_leaving_mask_mode and not is_entering_mask_mode:
             self.unrasterize_annotations()
+            mask_annotation = self.current_mask_annotation
+            if mask_annotation:
+                mask_annotation.clear_pixels_for_annotations(self.get_image_annotations())
         
         # If we are transitioning between either mode, unselect annotations
         if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
-            self.current_mask_annotation.clear_pixels_for_annotations(self.get_image_annotations())
         # --------------------------------------------------------
         
         if self.selected_tool:
