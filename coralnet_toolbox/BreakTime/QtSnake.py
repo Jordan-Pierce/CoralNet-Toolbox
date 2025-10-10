@@ -8,7 +8,7 @@ import queue
 import random
 
 from PyQt5.QtCore import Qt, QBasicTimer
-from PyQt5.QtGui import QPainter, QBrush
+from PyQt5.QtGui import QPainter, QBrush, QColor, QFont
 from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QButtonGroup)
 
@@ -312,11 +312,11 @@ class SnakeGame(QMainWindow):
         self.status_bar = self.statusBar()
         # Create brushes for drawing the board cells
         self.brush = [
-            QBrush(Qt.white, Qt.SolidPattern),
-            QBrush(Qt.green, Qt.SolidPattern),
-            QBrush(Qt.darkGreen, Qt.SolidPattern),
-            QBrush(Qt.yellow, Qt.SolidPattern),
-            QBrush(Qt.red, Qt.SolidPattern)
+            QBrush(QColor(144, 238, 144), Qt.SolidPattern),  # Light green (grass-like) for BLANK
+            QBrush(Qt.black, Qt.SolidPattern),               # HEAD starts as black
+            QBrush(Qt.green, Qt.SolidPattern),               # BODY (will be overridden dynamically)
+            QBrush(Qt.yellow, Qt.SolidPattern),              # FOOD
+            QBrush(QColor(128, 0, 128), Qt.SolidPattern)     # Purple for SPECIAL_FOOD
         ]
         # Initialize time counter
         self.time_count = 0
@@ -324,6 +324,8 @@ class SnakeGame(QMainWindow):
         self.speed = BASE_SPEED
         # Store difficulty level
         self.difficulty = "Medium"
+        # For title animation
+        self.title_timer = 0
 
     def setup_difficulty_parameters(self):
         """Set game parameters based on difficulty level."""
@@ -386,7 +388,7 @@ class SnakeGame(QMainWindow):
             " - Use 'D' to move right\n"
             " - Avoid colliding with walls or your tail.\n"
             " - Eat yellow food to grow!\n"
-            " - Eat red special food for extra growth!\n\n"
+            " - Eat purple special food for extra growth!\n\n"
             "Click 'OK' to start playing."
         )
         if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
@@ -441,6 +443,7 @@ class SnakeGame(QMainWindow):
         self.snake = Snake()
         self.row = self.snake.row
         self.column = self.snake.column
+        self.title_timer = 10  # Show title for 0.5 seconds
 
     def paintEvent(self, event):
         """
@@ -451,8 +454,13 @@ class SnakeGame(QMainWindow):
         # Draw each cell based on the board data with centering offset
         for x in range(self.column):
             for y in range(self.row):
-                # Set the brush based on the current block state
-                painter.setBrush(self.brush[self.snake.board[x][y]])
+                cell_type = self.snake.board[x][y]
+                if cell_type == BODY:
+                    # Dynamic coloring for snake body based on length
+                    brush = self.get_snake_body_brush(x, y)
+                else:
+                    brush = self.brush[cell_type]
+                painter.setBrush(brush)
                 # Draw the corresponding rectangle for the cell with offset for centering
                 painter.drawRect(
                     x * self.size + self.board_offset_x, 
@@ -462,10 +470,72 @@ class SnakeGame(QMainWindow):
                 )
         painter.end()
 
+        # Draw coral snake title animation
+        if self.title_timer > 0:
+            painter.begin(self)
+            title_font = QFont('Arial', 36, QFont.Bold)
+            painter.setFont(title_font)
+
+            # Create animated colors matching coral snake theme
+            colors = [QColor(255, 0, 0), QColor(255, 255, 0), QColor(0, 0, 0), QColor(255, 0, 0)]
+            color_index = (self.title_timer // 10) % len(colors)
+            painter.setPen(colors[color_index])
+
+            title_text = "CORAL SNAKE"
+            text_rect = painter.fontMetrics().boundingRect(title_text)
+            x = (self.width() - text_rect.width()) // 2
+            y = self.height() // 2
+
+            # Add glow effect to title
+            glow_colors = [QColor(255, 0, 0, 150), QColor(255, 255, 0, 150)]
+            glow_index = (self.title_timer // 5) % len(glow_colors)
+            painter.setPen(glow_colors[glow_index])
+            painter.drawText(x - 2, y - 2, title_text)
+            painter.drawText(x + 2, y - 2, title_text)
+            painter.drawText(x - 2, y + 2, title_text)
+            painter.drawText(x + 2, y + 2, title_text)
+
+            painter.setPen(colors[color_index])
+            painter.drawText(x, y, title_text)
+            painter.end()
+
+    def get_snake_body_brush(self, x, y):
+        """
+        Get the appropriate brush for a snake body segment based on its position and snake length.
+        """
+        # Find the position of this segment in the snake
+        position = 0
+        snake_positions = list(self.snake.snake_queue.queue)
+        for i, pos in enumerate(snake_positions):
+            if pos[0] == x and pos[1] == y:
+                position = i
+                break
+        
+        # Coral snake pattern: red touches yellow, with black bands
+        # Pattern: black (head), red, black, yellow, black, red, black, yellow...
+        # Head (position 0) is always black
+        if position == 0:
+            return QBrush(Qt.black, Qt.SolidPattern)
+        else:
+            pattern_index = (position - 1) % 4
+            if pattern_index == 0:
+                return QBrush(Qt.red, Qt.SolidPattern)     # Red
+            elif pattern_index == 1:
+                return QBrush(Qt.black, Qt.SolidPattern)   # Black
+            elif pattern_index == 2:
+                return QBrush(Qt.yellow, Qt.SolidPattern)  # Yellow
+            else:
+                return QBrush(Qt.black, Qt.SolidPattern)   # Black
+
     def timerEvent(self, event):
         """
         Handle game updates on each timer tick.
         """
+        if self.title_timer > 0:
+            self.title_timer -= 1
+            self.update()
+            return
+
         # Adjust the speed based on the snake's growth (each food eaten speeds up the snake)
         # Use difficulty-based speed increase factor
         new_speed = max(BASE_SPEED - (self.snake.length - 1) * self.speed_increase_factor, 50)
@@ -549,7 +619,8 @@ class SnakeGame(QMainWindow):
         Display a message box when the game is over and handle restarting or closing.
         """
         # Show game-over dialog offering the choice to play again or get back to work.
-        message = f"Difficulty: {self.difficulty}\nTime: {self.time_count}\nLength: {self.snake.length}\n\nDo you want to play again?"
+        message = (f"Difficulty: {self.difficulty}\nTime: {self.time_count}\n"
+                   f"Length: {self.snake.length}\n\nDo you want to play again?")
         reply = QMessageBox.question(
             self,
             "Game Over",
