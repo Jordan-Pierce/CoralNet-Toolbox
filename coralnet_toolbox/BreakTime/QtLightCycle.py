@@ -157,7 +157,7 @@ class LightCycle:
             return
         self.direction = new_direction
 
-    def check_collision(self, board_width, board_height, opponent_trail):
+    def check_collision(self, board_width, board_height, opponent_trail, obstacles):
         """Check if the cycle has crashed."""
         # Wall collision
         if self.x < 0 or self.x >= board_width or self.y < 0 or self.y >= board_height:
@@ -171,6 +171,11 @@ class LightCycle:
 
         # Opponent collision
         if (self.x, self.y) in opponent_trail:
+            self.alive = False
+            return True
+
+        # Obstacle collision
+        if (self.x, self.y) in obstacles:
             self.alive = False
             return True
 
@@ -247,7 +252,9 @@ class LightCycleAI:
                 new_pos = (nx, ny)
                 
                 # Check bounds and walls
-                if (nx < 0 or nx >= board_width or ny < 0 or ny >= board_height or
+                if (nx < 0 or 
+                    nx >= board_width or 
+                    ny < 0 or ny >= board_height or 
                     new_pos in occupied_positions):
                     continue
                     
@@ -275,13 +282,15 @@ class LightCycleAI:
                 # Count open neighbors
                 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                     nx, ny = x + dx, y + dy
-                    if (0 <= nx < board_width and 0 <= ny < board_height and
+                    if (0 <= nx < board_width and 
+                        0 <= ny < board_height and
                         (nx, ny) not in occupied_positions):
                         player_edges += 1
             elif owner == 'opponent':
                 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                     nx, ny = x + dx, y + dy
-                    if (0 <= nx < board_width and 0 <= ny < board_height and
+                    if (0 <= nx < board_width and 
+                        0 <= ny < board_height and
                         (nx, ny) not in occupied_positions):
                         opponent_edges += 1
         
@@ -489,16 +498,22 @@ class LightCycleAI:
         base_score = (node_score + edge_score) * 1000  # Scale up for integer math
         
         # --- START OF AGGRESSIVENESS CODE ---
-        # 1. Proximity Bonus: Reward AI for being close to the player
+        # 1. Proximity Bonus: Reward AI for being close to the player.
+        # The original formula (e.g., 5000 / distance) creates a weak gradient at long
+        # range, leading to passive play. A linear bonus provides a stronger, constant
+        # incentive to engage the opponent.
         distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
-        proximity_bonus = 0
-        if distance > 0:
-            proximity_bonus = 5000 / distance
-            
-        # 2. Battlefront Bonus: Reward AI for controlling the contested border
+        max_dist = board_width + board_height
+        # A high weight (e.g., 500) makes the score change from moving one step closer
+        # comparable to the score from gaining territory, encouraging aggression.
+        proximity_bonus = (max_dist - distance) * 1000
+
+        # 2. Battlefront Bonus: Reward AI for controlling the contested border.
+        # Being on the "battlefront" (neutral squares) is a key strategic goal.
+        # This bonus should be large to heavily incentivize moving to contested areas.
         battlefront_bonus = 0
         if opponent_pos in neutral_squares:
-            battlefront_bonus = 250
+            battlefront_bonus = 10000
         # --- END OF AGGRESSIVENESS CODE ---
         
         # Add space-filling bonus - prefer moves that don't waste edges
@@ -567,26 +582,43 @@ class LightCycleAI:
                 if self.is_valid_move(board_width, board_height, occupied_positions, new_opponent_pos):
                     
                     # --- START OF PURSUIT REVERSAL BONUS ---
+                    # This tactical bonus encourages the AI to make sharp turns
+                    # to cut off a player it is trailing ("pursuing").
                     reversal_bonus = 0
                     distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
-                    if 2 < distance < 15:
+                    if 2 < distance < 15:  # Only applies at medium-close range
                         is_behind = False
-                        if opponent_dir == RIGHT and player_pos[0] < opponent_pos[0]: is_behind = True
-                        elif opponent_dir == LEFT and player_pos[0] > opponent_pos[0]: is_behind = True
-                        elif opponent_dir == DOWN and player_pos[1] < opponent_pos[1]: is_behind = True
-                        elif opponent_dir == UP and player_pos[1] > opponent_pos[1]: is_behind = True
-                        
+                        # Check if AI is generally "behind" the player, relative to its direction of travel.
+                        if opponent_dir == RIGHT and player_pos[0] > opponent_pos[0]: 
+                            is_behind = True
+                        elif opponent_dir == LEFT and player_pos[0] < opponent_pos[0]: 
+                            is_behind = True
+                        elif opponent_dir == DOWN and player_pos[1] > opponent_pos[1]: 
+                            is_behind = True
+                        elif opponent_dir == UP and player_pos[1] < opponent_pos[1]: 
+                            is_behind = True
+
                         is_turn = (opponent_dir != direction)
-                        
+
                         if is_behind and is_turn:
-                            reversal_bonus = 400
+                            # A large bonus makes this a high-priority tactical move.
+                            reversal_bonus = 8000
                     # --- END OF PURSUIT REVERSAL BONUS ---
                     
                     new_occupied = occupied_positions.union({new_opponent_pos})
-                    eval_score = self.minimax(board_width, board_height, new_occupied, player_pos, player_dir,
-                                            new_opponent_pos, direction, depth - 1, False, alpha, beta)
+                    eval_score = self.minimax(board_width, 
+                                              board_height, 
+                                              new_occupied, 
+                                              player_pos, 
+                                              player_dir,
+                                              new_opponent_pos, 
+                                              direction, 
+                                              depth - 1, 
+                                              False,
+                                              alpha, 
+                                              beta)
                     
-                    eval_score += reversal_bonus # Add bonus to the evaluated score for this move
+                    eval_score += reversal_bonus  # Add bonus to the evaluated score for this move
                     
                     max_eval = max(max_eval, eval_score)
                     alpha = max(alpha, eval_score)
@@ -610,8 +642,18 @@ class LightCycleAI:
                 new_player_pos = self.simulate_move(player_pos, direction)
                 if self.is_valid_move(board_width, board_height, occupied_positions, new_player_pos):
                     new_occupied = occupied_positions.union({new_player_pos})
-                    eval_score = self.minimax(board_width, board_height, new_occupied, new_player_pos, direction,
-                                            opponent_pos, opponent_dir, depth - 1, True, alpha, beta)
+                    eval_score = self.minimax(board_width, 
+                                              board_height, 
+                                              new_occupied, 
+                                              new_player_pos, 
+                                              direction,
+                                              opponent_pos, 
+                                              opponent_dir, 
+                                              depth - 1, 
+                                              True, 
+                                              alpha, 
+                                              beta)
+                    
                     min_eval = min(min_eval, eval_score)
                     beta = min(beta, eval_score)
                     if beta <= alpha:
@@ -639,7 +681,7 @@ class LightCycleAI:
         x, y = pos
         return (0 <= x < board_width and 0 <= y < board_height and pos not in occupied_positions)
 
-    def choose_direction(self, opponent, player, board_width, board_height):
+    def choose_direction(self, opponent, player, board_width, board_height, occupied_positions):
         """
         Choose the best direction using advanced AI techniques.
         """
@@ -656,7 +698,6 @@ class LightCycleAI:
                     
                 # Check if move is valid
                 new_pos = self.simulate_move((opponent.x, opponent.y), direction)
-                occupied_positions = set(opponent.trail + player.trail)
                 if self.is_valid_move(board_width, board_height, occupied_positions, new_pos):
                     valid_directions.append(direction)
             
@@ -664,7 +705,6 @@ class LightCycleAI:
                 return random.choice(valid_directions)
         
         # Use minimax search for best move
-        occupied_positions = set(opponent.trail + player.trail)
         best_direction = opponent.direction
         best_score = float('-inf')
         
@@ -683,10 +723,15 @@ class LightCycleAI:
             
             # Use minimax to evaluate this move
             new_occupied = occupied_positions.union({new_opponent_pos})
-            score = self.minimax(board_width, board_height, new_occupied,
-                               (player.x, player.y), player.direction,
-                               new_opponent_pos, direction, 
-                               min(self.search_depth, 4), False)  # Start with player's turn
+            score = self.minimax(board_width, 
+                                 board_height, 
+                                 new_occupied,
+                                 (player.x, player.y), 
+                                 player.direction,
+                                 new_opponent_pos, 
+                                 direction, 
+                                 min(self.search_depth, 4), 
+                                 False)  # Start with player's turn
             
             if score > best_score:
                 best_score = score
@@ -704,8 +749,11 @@ class LightCycleAI:
                 
                 new_pos = self.simulate_move((opponent.x, opponent.y), direction)
                 if self.is_valid_move(board_width, board_height, occupied_positions, new_pos):
-                    edge_removal = self.count_edge_removal(board_width, board_height, occupied_positions,
-                                                         new_pos[0], new_pos[1])
+                    edge_removal = self.count_edge_removal(board_width, 
+                                                           board_height, 
+                                                           occupied_positions,
+                                                           new_pos[0], 
+                                                           new_pos[1])
                     if edge_removal < best_edge_removal:
                         best_edge_removal = edge_removal
                         best_direction = direction
@@ -743,10 +791,11 @@ class LightCycleGame(QMainWindow):
 
         # Initialize game
         self.player = None
-        self.opponent = None
-        self.ai = None  # AI opponent
+        self.opponents = []  # List of AI opponents
+        self.ais = []  # List of AI instances
         self.game_started = False
         self.title_timer = 0  # For title animation
+        self.obstacles = set()  # Set of (x, y) positions for obstacles
 
     def start_game(self):
         """Start the game by initializing."""
@@ -771,8 +820,8 @@ class LightCycleGame(QMainWindow):
             f"Welcome to Light Cycle - {self.difficulty} Mode!\n\n"
             "Rules:\n"
             " - Use WASD keys to turn your cycle (gold)\n"
-            " - Avoid walls, your trail, and the opponent's trail (red)\n"
-            " - The opponent moves automatically\n"
+            " - Avoid walls, your trail, and the opponents' trails (red)\n"
+            " - The opponents move automatically\n"
             " - Last cycle standing wins!\n\n"
             "Click 'OK' to start playing."
         )
@@ -807,11 +856,34 @@ class LightCycleGame(QMainWindow):
         # Player starts at bottom left, moving right
         self.player = LightCycle(5, self.board_height - 5, RIGHT, PLAYER_COLOR)
 
-        # Opponent starts at top right, moving left
-        self.opponent = LightCycle(self.board_width - 5, 5, LEFT, OPPONENT_COLOR)
+        # Create 5 opponents at different starting positions
+        opponent_starts = [
+            (self.board_width // 2, self.board_height // 2, DOWN),  # center
+            (10, 10, DOWN),  # top-left
+            (self.board_width - 10, 10, LEFT),  # top-right
+            (10, self.board_height - 10, RIGHT),  # bottom-left
+            (self.board_width - 10, self.board_height - 10, UP)  # bottom-right
+        ]
+        self.opponents = []
+        for x, y, direction in opponent_starts:
+            opponent = LightCycle(x, y, direction, OPPONENT_COLOR)
+            self.opponents.append(opponent)
 
-        # Initialize AI with current difficulty
-        self.ai = LightCycleAI(self.difficulty)
+        # Create AI instances for each opponent
+        self.ais = [LightCycleAI(self.difficulty) for _ in range(5)]
+
+        # Generate 100 random obstacles
+        self.obstacles = set()
+        opponent_positions = [(x, y) for x, y, _ in opponent_starts]
+        for _ in range(100):
+            while True:
+                x = random.randint(0, self.board_width - 1)
+                y = random.randint(0, self.board_height - 1)
+                pos = (x, y)
+                player_start = (5, self.board_height - 5)
+                if pos not in [player_start] + opponent_positions and pos not in self.obstacles:
+                    self.obstacles.add(pos)
+                    break
 
         self.game_started = True
         self.title_timer = 10  # Show title for 0.5 seconds (30 frames at ~60fps)
@@ -848,20 +920,26 @@ class LightCycleGame(QMainWindow):
                 painter.drawRect(x * self.cell_size, y * self.cell_size,
                                  self.cell_size, self.cell_size)
 
-        if self.opponent:
+        for opponent in self.opponents:
             # Draw glow/shadow first
             painter.setPen(Qt.NoPen)
             glow_color = QColor(0, 255, 255, 100)  # Semi-transparent cyan glow
             painter.setBrush(QBrush(glow_color))
-            for x, y in self.opponent.trail:
+            for x, y in opponent.trail:
                 painter.drawRect((x * self.cell_size) - 1, (y * self.cell_size) - 1,
                                  self.cell_size + 2, self.cell_size + 2)
 
             # Draw main trail
-            painter.setBrush(QBrush(self.opponent.color))
-            for x, y in self.opponent.trail:
+            painter.setBrush(QBrush(opponent.color))
+            for x, y in opponent.trail:
                 painter.drawRect(x * self.cell_size, y * self.cell_size,
                                  self.cell_size, self.cell_size)
+
+        # Draw obstacles
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(128, 128, 128)))  # Gray
+        for x, y in self.obstacles:
+            painter.drawRect(x * self.cell_size, y * self.cell_size, self.cell_size, self.cell_size)
 
         painter.end()
 
@@ -909,26 +987,78 @@ class LightCycleGame(QMainWindow):
             # Move player once per frame at constant speed
             self.player.move()
             
-            # AI decides opponent's next move
-            if self.ai and self.opponent.alive:
-                best_direction = self.ai.choose_direction(
-                    self.opponent, self.player, self.board_width, self.board_height)
-                self.opponent.turn(best_direction)
+            # Calculate current occupied positions
+            all_trails = self.player.trail + [pos for opp in self.opponents for pos in opp.trail]
+            occupied_positions = set(all_trails) | self.obstacles
             
-            # Move opponent
-            self.opponent.move()
+            # AI decides each opponent's next move
+            intended_moves = {}
+            for i, opponent in enumerate(self.opponents):
+                if opponent.alive:
+                    best_direction = self.ais[i].choose_direction(
+                        opponent, self.player, self.board_width, self.board_height, occupied_positions)
+                    new_pos = self.ais[i].simulate_move((opponent.x, opponent.y), best_direction)
+                    intended_moves[i] = (best_direction, new_pos)
+            
+            # Check for conflicts in intended positions
+            new_positions = [pos for _, pos in intended_moves.values()]
+            position_counts = {}
+            for pos in new_positions:
+                position_counts[pos] = position_counts.get(pos, 0) + 1
+            
+            # Resolve conflicts by re-choosing for conflicting opponents
+            for i in intended_moves:
+                direction, new_pos = intended_moves[i]
+                if position_counts[new_pos] > 1:
+                    # Conflict, choose a random valid direction avoiding other intended moves
+                    opponent = self.opponents[i]
+                    valid_directions = []
+                    for d in [UP, DOWN, LEFT, RIGHT]:
+                        if ((opponent.direction == UP and d == DOWN) or
+                            (opponent.direction == DOWN and d == UP) or
+                            (opponent.direction == LEFT and d == RIGHT) or
+                            (opponent.direction == RIGHT and d == LEFT)):
+                            continue
+                        np = self.ais[i].simulate_move((opponent.x, opponent.y), d)
+                        # Occupied includes current + other intended (excluding this one's current intended)
+                        other_intended = set([p for j, p in intended_moves.values() if j != i])
+                        occ = occupied_positions | other_intended
+                        if self.ais[i].is_valid_move(self.board_width, self.board_height, occ, np):
+                            valid_directions.append(d)
+                    if valid_directions:
+                        new_dir = random.choice(valid_directions)
+                        new_pos = self.ais[i].simulate_move((opponent.x, opponent.y), new_dir)
+                        intended_moves[i] = (new_dir, new_pos)
+            
+            # Apply the moves
+            for i, opponent in enumerate(self.opponents):
+                if opponent.alive:
+                    direction, _ = intended_moves[i]
+                    opponent.turn(direction)
+                    opponent.move()
 
-            # Check collisions
-            player_crashed = self.player.check_collision(self.board_width, self.board_height, self.opponent.trail)
-            opponent_crashed = self.opponent.check_collision(self.board_width, self.board_height, self.player.trail)
+            # Check player collision
+            all_opponent_trails = [pos for opp in self.opponents for pos in opp.trail]
+            player_crashed = self.player.check_collision(self.board_width, 
+                                                         self.board_height, 
+                                                         all_opponent_trails, 
+                                                         self.obstacles)
+            
+            # Check each opponent collision
+            for opponent in self.opponents:
+                if opponent.alive:
+                    other_trails = (self.player.trail +
+                                    [pos for opp in self.opponents 
+                                     if opp != opponent for pos in opp.trail])
+                    opponent_crashed = opponent.check_collision(
+                        self.board_width, self.board_height, other_trails, self.obstacles)
 
             # Check win conditions
-            if player_crashed and opponent_crashed:
-                self.game_over("It's a tie!")
-            elif player_crashed:
-                self.game_over("You crashed! Opponent wins.")
-            elif opponent_crashed:
-                self.game_over("Opponent crashed! You win!")
+            alive_opponents = sum(1 for opp in self.opponents if opp.alive)
+            if player_crashed:
+                self.game_over("You crashed! Opponents win.")
+            elif alive_opponents == 0:
+                self.game_over("All opponents crashed! You win!")
 
             self.update()
 
