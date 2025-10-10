@@ -313,8 +313,8 @@ class SnakeGame(QMainWindow):
         # Create brushes for drawing the board cells
         self.brush = [
             QBrush(Qt.white, Qt.SolidPattern),
-            QBrush(Qt.darkBlue, Qt.SolidPattern),
             QBrush(Qt.green, Qt.SolidPattern),
+            QBrush(Qt.darkGreen, Qt.SolidPattern),
             QBrush(Qt.yellow, Qt.SolidPattern),
             QBrush(Qt.red, Qt.SolidPattern)
         ]
@@ -371,31 +371,28 @@ class SnakeGame(QMainWindow):
 
     def start_game(self):
         """
-        Start the game by showing difficulty selection and initializing the game window and UI.
+        Start the game by initializing the game window and UI.
         """
-        # Show difficulty selection dialog
-        difficulty_dialog = DifficultyDialog(self)
-        if difficulty_dialog.exec_() == DifficultyDialog.Accepted:
-            self.difficulty = difficulty_dialog.get_difficulty()
-            self.setup_difficulty_parameters()
-            
-            # Show welcome dialog with instructions before starting the game.
-            welcome_msg = (
-                f"Welcome to Snake - {self.difficulty} Mode!\n\n"
-                "Rules:\n"
-                " - Use 'W' to move up\n"
-                " - Use 'A' to move left\n"
-                " - Use 'S' to move down\n"
-                " - Use 'D' to move right\n"
-                " - Avoid colliding with walls or your tail.\n"
-                " - Eat yellow food to grow!\n"
-                " - Eat red special food for extra growth!\n\n"
-                "Click 'OK' to start playing."
-            )
-            if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
-                self.init_game()                   # Create snake and set board dimensions.
-                self.init_ui()                     # Use self.row and self.column for UI sizing.
-                self.update_timer.start(self.speed, self)  # Start the timer.
+        self.difficulty = "Hard"
+        self.setup_difficulty_parameters()
+        
+        # Show welcome dialog with instructions before starting the game.
+        welcome_msg = (
+            f"Welcome to Snake - {self.difficulty} Mode!\n\n"
+            "Rules:\n"
+            " - Use 'W' to move up\n"
+            " - Use 'A' to move left\n"
+            " - Use 'S' to move down\n"
+            " - Use 'D' to move right\n"
+            " - Avoid colliding with walls or your tail.\n"
+            " - Eat yellow food to grow!\n"
+            " - Eat red special food for extra growth!\n\n"
+            "Click 'OK' to start playing."
+        )
+        if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
+            self.init_game()                   # Create snake and set board dimensions.
+            self.init_ui()                     # Use self.row and self.column for UI sizing.
+            self.update_timer.start(self.speed, self)  # Start the timer.
         else:
             self.close()
 
