@@ -232,10 +232,9 @@ class MaskAnnotation(Annotation):
             self._update_full_canvas()
             self.graphics_item.update()
 
-    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int, annotation_window):
+    def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """
-        Modify the mask data based on a brush stroke, creating on-the-fly
-        protection for vector annotations in the brush area.
+        Modify the mask data based on a brush stroke, respecting pre-locked pixels.
         """
         x_start, y_start = int(brush_location.x()), int(brush_location.y())
         brush_h, brush_w = brush_mask.shape
@@ -250,21 +249,6 @@ class MaskAnnotation(Annotation):
         if clipped_x_start >= x_end or clipped_y_start >= y_end:
             return
             
-        # This is the rectangular region of the main mask we are about to modify
-        update_rect = QRectF(clipped_x_start, 
-                             clipped_y_start, 
-                             x_end - clipped_x_start, 
-                             y_end - clipped_y_start)
-        
-        # 1. Quickly find any vector annotations that overlap with our update area
-        intersecting_annos = annotation_window.get_image_annotations()
-        
-        # 2. If there are any, create a localized boolean mask of the protected pixels
-        if intersecting_annos:
-            local_lock_mask = self._create_local_lock_mask(update_rect, intersecting_annos)
-        else:
-            local_lock_mask = None
-
         # Get the slice of the main mask data we will be updating
         target_slice = self.mask_data[clipped_y_start:y_end, clipped_x_start:x_end]
         
@@ -274,13 +258,11 @@ class MaskAnnotation(Annotation):
         clipped_brush_mask = brush_mask[brush_y_offset:brush_y_offset + target_slice.shape[0],
                                         brush_x_offset:brush_x_offset + target_slice.shape[1]]
         
-        # 3. Apply protection: remove protected pixels from the brush mask
-        if local_lock_mask is not None:
-            # The brush can only paint where the original brush mask is True
-            # AND the local lock mask is False.
-            final_brush_mask = clipped_brush_mask & ~local_lock_mask
-        else:
-            final_brush_mask = clipped_brush_mask
+        # Identify pixels within the target slice that are NOT locked
+        unlocked_pixels_mask = target_slice < self.LOCK_BIT
+        
+        # The final brush can only be applied where the brush shape is true AND the target pixel is not locked
+        final_brush_mask = clipped_brush_mask & unlocked_pixels_mask
 
         # Apply the final, protected brush mask to the data
         target_slice[final_brush_mask] = new_class_id
@@ -342,14 +324,17 @@ class MaskAnnotation(Annotation):
 
     # --- Data Manipulation & Editing Methods ---
 
-    def fill_region(self, point: QPointF, new_class_id: int, annotation_window):
+    def fill_region(self, point: QPointF, new_class_id: int):
         """
-        Fills a contiguous region with a new class ID, protecting against
-        overwriting vector annotations within the fill area.
+        Fills a contiguous region with a new class ID, respecting pre-locked pixels.
         """
         x, y = int(point.x()), int(point.y())
         height, width = self.mask_data.shape
         if not (0 <= y < height and 0 <= x < width):
+            return
+
+        # Check if the starting pixel is locked. If so, we cannot fill from it.
+        if self.mask_data[y, x] >= self.LOCK_BIT:
             return
 
         old_class_id = self.mask_data[y, x]
@@ -358,42 +343,19 @@ class MaskAnnotation(Annotation):
         
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Find all contiguous pixels with the same starting class ID
+        # Find all contiguous pixels with the same starting class ID. This automatically respects
+        # locked areas because they will have a different ID (e.g., 3 vs 131) and act as a border.
         labeled_array, num_features = ndimage_label(self.mask_data == old_class_id)
         region_label = labeled_array[y, x]
         fill_mask = labeled_array == region_label
         
-        if not np.any(fill_mask):
-            QApplication.restoreOverrideCursor()
-            return
-
-        # Find bounding box of the area to be filled to limit our protection check
-        coords = np.where(fill_mask)
-        y_min, y_max = coords[0].min(), coords[0].max()
-        x_min, x_max = coords[1].min(), coords[1].max()
-        fill_bbox = QRectF(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
-        
-        # Find vector annotations that overlap with the fill area
-        intersecting_annos = annotation_window.get_image_annotations()
-
-        # If any exist, create a local protection mask
-        if intersecting_annos:
-            # Call the new, faster rasterio-based helper
-            local_lock_mask = self._create_lock_mask_with_rasterio(fill_bbox, intersecting_annos)
-            
-            # Get the slice of the fill_mask corresponding to the lock_mask
-            fill_mask_slice = fill_mask[y_min: y_max + 1, x_min: x_max + 1]
-            
-            # Remove protected pixels from the fill mask
-            protected_fill_mask_slice = fill_mask_slice & ~local_lock_mask
-            
-            # Place the updated, protected slice back into the full-size fill mask
-            fill_mask[y_min: y_max + 1, x_min: x_max + 1] = protected_fill_mask_slice
-
-        # Apply the final, protected fill mask to the data
+        # Apply the fill. No further checks are needed because locked pixels were excluded by the ndimage_label step.
         self.mask_data[fill_mask] = new_class_id
         
         # Use localized update for efficiency
+        coords = np.where(fill_mask)
+        y_min, y_max = coords[0].min(), coords[0].max()
+        x_min, x_max = coords[1].min(), coords[1].max()
         update_rect = (x_min, y_min, x_max + 1, y_max + 1)
         self.update_graphics_item(update_rect=update_rect)
 

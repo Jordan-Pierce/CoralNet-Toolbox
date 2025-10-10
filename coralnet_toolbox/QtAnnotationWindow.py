@@ -255,20 +255,24 @@ class AnnotationWindow(QGraphicsView):
         
         self.selected_tool = tool
 
-        # Switch between mask editing mode and vector annotation mode
-        if self.selected_tool in self.mask_tools or previous_tool in self.mask_tools:
-            mask_anno = self.current_mask_annotation
-            vector_annos = self.get_image_annotations()
-            
-            if mask_anno and vector_annos:
-                # This ensures new vector annotations "erase" any underlying mask data.
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                try:
-                    mask_anno.clear_pixels_for_annotations(vector_annos)
-                finally:
-                    QApplication.restoreOverrideCursor()
+        # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING ---
+        # Determine if we are entering or leaving mask editing mode
+        is_entering_mask_mode = self.selected_tool in self.mask_tools
+        is_leaving_mask_mode = previous_tool in self.mask_tools
 
+        # Transitioning from a vector tool to a mask tool: LOCK the vector annotations
+        if is_entering_mask_mode and not is_leaving_mask_mode:
+            self.rasterize_annotations()
+        
+        # Transitioning from a mask tool to a vector tool: UNLOCK the vector annotations
+        elif is_leaving_mask_mode and not is_entering_mask_mode:
+            self.unrasterize_annotations()
+        
+        # If we are transitioning between either mode, unselect annotations
+        if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
+            self.current_mask_annotation.clear_pixels_for_annotations(self.get_image_annotations())
+        # --------------------------------------------------------
         
         if self.selected_tool:
             self.tools[self.selected_tool].activate()

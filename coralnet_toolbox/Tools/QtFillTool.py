@@ -86,7 +86,7 @@ class FillTool(Tool):
             return  # Label not found in map
         
         # Call the fill_region method on the MaskAnnotation object
-        mask_annotation.fill_region(scene_pos, new_class_id, self.annotation_window)
+        mask_annotation.fill_region(scene_pos, new_class_id)
         
         # Update the display to reflect changes
         self.annotation_window.update_scene()
