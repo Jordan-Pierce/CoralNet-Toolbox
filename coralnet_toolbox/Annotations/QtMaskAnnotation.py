@@ -364,27 +364,22 @@ class MaskAnnotation(Annotation):
 
     def _fast_rasterize(self, geometries, width, height):
         """Fast vectorized rasterization using Shapely"""
-        try:
-            from shapely.vectorized import contains
-            
-            # Create coordinate grids - much faster than manual iteration
-            y_coords, x_coords = np.mgrid[0:height, 0:width]
-            
-            # Create empty mask
-            lock_mask = np.zeros((height, width), dtype=bool)
-            
-            # Process each geometry
-            for geom in geometries:
-                if geom.is_valid:
-                    # Vectorized point-in-polygon check - VERY fast
-                    mask = contains(geom, x_coords, y_coords)
-                    lock_mask = lock_mask | mask
-                    
-            return lock_mask
-            
-        except ImportError:
-            print("DEBUG: Shapely vectorized not available, falling back to manual")
-            return self._manual_rasterize(geometries, width, height)
+        from shapely.vectorized import contains
+        
+        # Create coordinate grids - much faster than manual iteration
+        y_coords, x_coords = np.mgrid[0:height, 0:width]
+        
+        # Create empty mask
+        lock_mask = np.zeros((height, width), dtype=bool)
+        
+        # Process each geometry
+        for geom in geometries:
+            if geom.is_valid:
+                # Vectorized point-in-polygon check - VERY fast
+                mask = contains(geom, x_coords, y_coords)
+                lock_mask = lock_mask | mask
+                
+        return lock_mask
 
     def rasterize_annotations(self, all_annotations: list):
         """
