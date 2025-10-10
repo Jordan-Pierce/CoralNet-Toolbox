@@ -565,9 +565,29 @@ class LightCycleAI:
                 # Simulate move
                 new_opponent_pos = self.simulate_move(opponent_pos, direction)
                 if self.is_valid_move(board_width, board_height, occupied_positions, new_opponent_pos):
+                    
+                    # --- START OF PURSUIT REVERSAL BONUS ---
+                    reversal_bonus = 0
+                    distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
+                    if 2 < distance < 15:
+                        is_behind = False
+                        if opponent_dir == RIGHT and player_pos[0] < opponent_pos[0]: is_behind = True
+                        elif opponent_dir == LEFT and player_pos[0] > opponent_pos[0]: is_behind = True
+                        elif opponent_dir == DOWN and player_pos[1] < opponent_pos[1]: is_behind = True
+                        elif opponent_dir == UP and player_pos[1] > opponent_pos[1]: is_behind = True
+                        
+                        is_turn = (opponent_dir != direction)
+                        
+                        if is_behind and is_turn:
+                            reversal_bonus = 400
+                    # --- END OF PURSUIT REVERSAL BONUS ---
+                    
                     new_occupied = occupied_positions.union({new_opponent_pos})
                     eval_score = self.minimax(board_width, board_height, new_occupied, player_pos, player_dir,
                                             new_opponent_pos, direction, depth - 1, False, alpha, beta)
+                    
+                    eval_score += reversal_bonus # Add bonus to the evaluated score for this move
+                    
                     max_eval = max(max_eval, eval_score)
                     alpha = max(alpha, eval_score)
                     if beta <= alpha:
@@ -691,7 +711,7 @@ class LightCycleAI:
                         best_direction = direction
         
         return best_direction
-
+    
 
 class LightCycleGame(QMainWindow):
     """
@@ -759,6 +779,11 @@ class LightCycleGame(QMainWindow):
         if QMessageBox.information(self, "Welcome to Light Cycle", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
             self.init_game()
             self.init_ui()
+            # Disconnect any existing connection to avoid multiple calls
+            try:
+                self.timer.timeout.disconnect(self.update_game)
+            except TypeError:
+                pass  # Signal was not connected, which is fine
             self.timer.timeout.connect(self.update_game)
             self.timer.start(self.game_speed)
         else:
@@ -953,3 +978,11 @@ class LightCycleGame(QMainWindow):
             self.timer.stop()
         self.game_started = False
         event.accept()
+
+        # Disconnect any existing connection to avoid multiple calls
+        try:
+            self.timer.timeout.disconnect(self.update_game)
+        except TypeError:
+            pass  # Signal was not connected, which is fine
+
+        self.timer.timeout.connect(self.update_game)

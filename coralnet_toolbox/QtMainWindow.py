@@ -694,7 +694,7 @@ class MainWindow(QMainWindow):
         # Light Cycle Game
         light_cycle_game_action = QAction("Light Cycle Game", self)
         light_cycle_game_action.triggered.connect(self.open_light_cycle_game_dialog)
-        # break_time_menu.addAction(light_cycle_game_action)
+        break_time_menu.addAction(light_cycle_game_action)
 
         # ----------------------------------------
         # Create and add the toolbar
