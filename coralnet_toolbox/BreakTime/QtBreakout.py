@@ -21,6 +21,7 @@ from coralnet_toolbox.Icons import get_icon
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 # Define base game constants
 BASE_WIDTH = 700
 BASE_HEIGHT = 700
@@ -34,6 +35,7 @@ BASE_GAME_SPEED = 5  # Lower is faster
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class BallTrail:
     """Represents a trailing effect behind the ball."""

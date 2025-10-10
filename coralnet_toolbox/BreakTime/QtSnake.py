@@ -19,6 +19,7 @@ from coralnet_toolbox.Icons import get_icon
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 # Base game settings (will be modified by difficulty)
 BASE_FOOD_NUM = 30
 BASE_TIME_INTERVAL = 5

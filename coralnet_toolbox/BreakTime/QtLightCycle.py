@@ -1,8 +1,7 @@
 # Credit: https://www.a1k0n.net/code/tron.html
 
-import warnings
-
 import random
+import warnings
 
 warnings.filterwarnings("ignore")
 
@@ -13,9 +12,11 @@ from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout,
 
 from coralnet_toolbox.Icons import get_icon
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 # Game settings
 BOARD_WIDTH = 80
@@ -40,6 +41,7 @@ PLAYER_ALIVE = 0
 PLAYER_CRASHED = 1
 OPPONENT_ALIVE = 0
 OPPONENT_CRASHED = 1
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -190,8 +192,8 @@ class LightCycleAI:
         difficulty_settings = {
             "Easy": {"think_ahead": 2, "mistake_chance": 0.15, "search_depth": 3},
             "Medium": {"think_ahead": 3, "mistake_chance": 0.08, "search_depth": 4},
-            "Hard": {"think_ahead": 4, "mistake_chance": 0.04, "search_depth": 5},
-            "Insane": {"think_ahead": 5, "mistake_chance": 0.02, "search_depth": 6}
+            "Hard": {"think_ahead": 4, "mistake_chance": 0.04, "search_depth": 6},
+            "Insane": {"think_ahead": 5, "mistake_chance": 0.01, "search_depth": 8}
         }
         
         if difficulty in difficulty_settings:
@@ -203,8 +205,8 @@ class LightCycleAI:
             self.search_depth = 5
             
         # Voronoi heuristic coefficients (from data mining in original contest)
-        self.node_coefficient = 0.055
-        self.edge_coefficient = 0.194
+        self.node_coefficient = 0.080
+        self.edge_coefficient = 0.150
 
     def compute_voronoi_territories(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
         """
@@ -283,7 +285,10 @@ class LightCycleAI:
                         (nx, ny) not in occupied_positions):
                         opponent_edges += 1
         
-        return player_nodes, opponent_nodes, player_edges, opponent_edges
+        # Find neutral (battlefront) squares
+        neutral_squares = {pos for pos, owner in territories.items() if owner == 'neutral'}
+        
+        return player_nodes, opponent_nodes, player_edges, opponent_edges, neutral_squares
 
     def find_articulation_points(self, board_width, board_height, occupied_positions):
         """
@@ -366,7 +371,7 @@ class LightCycleAI:
         In Tron, players alternate between "red" and "black" squares, so surplus squares
         of one color will be wasted.
         """
-        player_nodes, opponent_nodes, player_edges, opponent_edges = self.compute_voronoi_territories(
+        player_nodes, opponent_nodes, player_edges, opponent_edges, _ = self.compute_voronoi_territories(
             board_width, board_height, occupied_positions, player_pos, opponent_pos)
         
         # Count red/black squares for each player's territory
@@ -466,7 +471,7 @@ class LightCycleAI:
             return -10000  # Player wins
         
         # Compute Voronoi territories
-        player_nodes, opponent_nodes, player_edges, opponent_edges = self.compute_voronoi_territories(
+        player_nodes, opponent_nodes, player_edges, opponent_edges, neutral_squares = self.compute_voronoi_territories(
             board_width, board_height, occupied_positions, player_pos, opponent_pos)
         
         # If players are separated, use territory count with endgame bonus
@@ -482,6 +487,19 @@ class LightCycleAI:
         edge_score = (opponent_edges - player_edges) * self.edge_coefficient
         
         base_score = (node_score + edge_score) * 1000  # Scale up for integer math
+        
+        # --- START OF AGGRESSIVENESS CODE ---
+        # 1. Proximity Bonus: Reward AI for being close to the player
+        distance = abs(player_pos[0] - opponent_pos[0]) + abs(player_pos[1] - opponent_pos[1])
+        proximity_bonus = 0
+        if distance > 0:
+            proximity_bonus = 5000 / distance
+            
+        # 2. Battlefront Bonus: Reward AI for controlling the contested border
+        battlefront_bonus = 0
+        if opponent_pos in neutral_squares:
+            battlefront_bonus = 250
+        # --- END OF AGGRESSIVENESS CODE ---
         
         # Add space-filling bonus - prefer moves that don't waste edges
         space_filling_bonus = 0
@@ -499,7 +517,7 @@ class LightCycleAI:
             if player_dist <= 2:
                 articulation_penalty += 50
         
-        return int(base_score + space_filling_bonus + articulation_penalty)
+        return int(base_score + space_filling_bonus + articulation_penalty + proximity_bonus + battlefront_bonus)
 
     def are_players_separated(self, board_width, board_height, occupied_positions, player_pos, opponent_pos):
         """
@@ -709,8 +727,6 @@ class LightCycleGame(QMainWindow):
         self.ai = None  # AI opponent
         self.game_started = False
         self.title_timer = 0  # For title animation
-        self.pressed_keys = set()  # Track pressed movement keys for speed boost
-        self.player_speed = 1  # Speed multiplier for player
 
     def start_game(self):
         """Start the game by initializing."""
@@ -762,8 +778,6 @@ class LightCycleGame(QMainWindow):
         """Initialize the game state."""
         # Reset game state completely
         self.game_started = False
-        self.pressed_keys = set()
-        self.player_speed = 1
         
         # Player starts at bottom left, moving right
         self.player = LightCycle(5, self.board_height - 5, RIGHT, PLAYER_COLOR)
@@ -867,9 +881,8 @@ class LightCycleGame(QMainWindow):
             return
 
         if self.game_started:
-            # Move player multiple times based on speed
-            for _ in range(self.player_speed):
-                self.player.move()
+            # Move player once per frame at constant speed
+            self.player.move()
             
             # AI decides opponent's next move
             if self.ai and self.opponent.alive:
@@ -900,34 +913,20 @@ class LightCycleGame(QMainWindow):
             return
 
         key = event.key()
-        movement_keys = {Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D}
         
-        if key in movement_keys:
-            self.pressed_keys.add(key)
-            self.adjust_speed()
-            
-            # Handle movement
-            if key == Qt.Key_W:
-                self.player.turn(UP)
-            elif key == Qt.Key_S:
-                self.player.turn(DOWN)
-            elif key == Qt.Key_A:
-                self.player.turn(LEFT)
-            elif key == Qt.Key_D:
-                self.player.turn(RIGHT)
+        # Handle movement
+        if key == Qt.Key_W:
+            self.player.turn(UP)
+        elif key == Qt.Key_S:
+            self.player.turn(DOWN)
+        elif key == Qt.Key_A:
+            self.player.turn(LEFT)
+        elif key == Qt.Key_D:
+            self.player.turn(RIGHT)
 
     def keyReleaseEvent(self, event):
-        """Handle key releases for speed control."""
-        key = event.key()
-        movement_keys = {Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D}
-        
-        if key in movement_keys and key in self.pressed_keys:
-            self.pressed_keys.remove(key)
-            self.adjust_speed()
-
-    def adjust_speed(self):
-        """Adjust player speed based on pressed keys."""
-        self.player_speed = 2 if self.pressed_keys else 1
+        """Handle key releases (no longer needed for speed control)."""
+        pass
 
     def game_over(self, message):
         """Handle game over."""
