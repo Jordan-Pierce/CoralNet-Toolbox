@@ -401,25 +401,52 @@ class MaskAnnotation(Annotation):
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
 
-    def _fast_rasterize(self, geometries, width, height):
-        """Fast vectorized rasterization using Shapely"""
-        from shapely.vectorized import contains
+    def _fast_rasterize(self, geometries, width, height, mode="shapely"):
+        """
+        Fast vectorized rasterization using either Shapely or Rasterio.
         
-        # Create coordinate grids - much faster than manual iteration
-        y_coords, x_coords = np.mgrid[0:height, 0:width]
+        Args:
+            geometries: List of Shapely Polygon geometries
+            width, height: Dimensions of the output mask
+            mode: "shapely" for Shapely vectorized method, "rasterio" for rasterio.features.rasterize
         
-        # Create empty mask
-        lock_mask = np.zeros((height, width), dtype=bool)
+        Returns:
+            Boolean numpy array where True indicates pixels covered by geometries
+        """
+        if mode == "shapely":
+            # Use Shapely vectorized method (very fast for many points)
+            from shapely.vectorized import contains
+            
+            # Create coordinate grids - much faster than manual iteration
+            y_coords, x_coords = np.mgrid[0:height, 0:width]
+            
+            # Create empty mask
+            raster_mask = np.zeros((height, width), dtype=bool)
+            
+            # Process each geometry
+            for geom in geometries:
+                if geom.is_valid:
+                    # Vectorized point-in-polygon check - VERY fast
+                    mask = contains(geom, x_coords, y_coords)
+                    raster_mask = raster_mask | mask
+                    
+            return raster_mask
+            
+        elif mode == "rasterio":
+            # Use rasterio.features.rasterize (more robust for complex geometries)
+            raster_mask = rasterize(
+                geometries,
+                out_shape=(height, width),
+                fill=0,
+                default_value=1,
+                dtype=np.uint8
+            ).astype(bool)
+            
+            return raster_mask
         
-        # Process each geometry
-        for geom in geometries:
-            if geom.is_valid:
-                # Vectorized point-in-polygon check - VERY fast
-                mask = contains(geom, x_coords, y_coords)
-                lock_mask = lock_mask | mask
-                
-        return lock_mask
-
+        else:
+            raise ValueError(f"Unknown rasterization mode: {mode}. Use 'shapely' or 'rasterio'.")
+        
     def rasterize_annotations(self, all_annotations: list):
         """
         Mark pixels covered by vector annotations as locked to prevent painting over them.
@@ -429,11 +456,14 @@ class MaskAnnotation(Annotation):
         Args:
             all_annotations: List of vector annotations to protect
         """
+        import time
         if not all_annotations:
             return
 
         height, width = self.mask_data.shape
 
+        # Section 1: Building geometries list
+        start_time = time.time()
         geometries = []
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
@@ -449,16 +479,31 @@ class MaskAnnotation(Annotation):
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
+        end_time = time.time()
+        print(f"Section 1 (Building geometries): {end_time - start_time:.3f} seconds")
 
         if not geometries:
             return
 
-        # Rasterize all geometries into a single boolean mask
+        # Section 2: Rasterizing geometries
+        start_time = time.time()
         lock_mask = self._fast_rasterize(geometries, width, height)
+        end_time = time.time()
+        print(f"Section 2 (Rasterizing geometries): {end_time - start_time:.3f} seconds")
 
-        # Apply locking
+        # Section 3: Applying locking
+        start_time = time.time()
         to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
         self.mask_data[to_lock] += self.LOCK_BIT
+        end_time = time.time()
+        print(f"Section 3 (Applying locking): {end_time - start_time:.3f} seconds")
+        
+        # Does this do anything?
+        # Section 4: Trigger repaint
+        start_time = time.time()
+        self.update_graphics_item()
+        end_time = time.time()
+        print(f"Section 4 (Trigger repaint): {end_time - start_time:.3f} seconds")
 
     def unrasterize_annotations(self):
         """
@@ -487,10 +532,12 @@ class MaskAnnotation(Annotation):
         Rasterizes a list of vector annotations and sets the corresponding
         pixels in the mask_data to 0 (unclassified).
         """
+        import time
         if not annotations_to_clear:
             return
 
         # 1. Convert all annotation polygons to Shapely Polygons.
+        start_time = time.time()
         geometries = []
         for anno in annotations_to_clear:
             if hasattr(anno, 'get_polygon'):
@@ -498,6 +545,8 @@ class MaskAnnotation(Annotation):
                 points = [(p.x(), p.y()) for p in qt_polygon]
                 if len(points) >= 3:
                     geometries.append(Polygon(points))
+        end_time = time.time()
+        print(f"Section 1 (Convert polygons): {end_time - start_time:.3f} seconds")
 
         if not geometries:
             return
@@ -505,6 +554,7 @@ class MaskAnnotation(Annotation):
         # 2. Rasterize all shapes at once into a boolean mask.
         # This creates a numpy array where 'True' indicates a pixel is covered
         # by at least one of the vector annotations.
+        start_time = time.time()
         height, width = self.mask_data.shape
         clear_mask = rasterize(
             geometries,
@@ -513,12 +563,93 @@ class MaskAnnotation(Annotation):
             default_value=1,
             dtype=np.uint8
         ).astype(bool)
+        end_time = time.time()
+        print(f"Section 2 (Rasterize shapes): {end_time - start_time:.3f} seconds")
 
         # 3. Apply the mask to the data, setting pixels to 0.
+        start_time = time.time()
         self.mask_data[clear_mask] = 0
+        end_time = time.time()
+        print(f"Section 3 (Apply mask): {end_time - start_time:.3f} seconds")
 
         # 4. Trigger a full repaint of the mask to show the changes.
+        start_time = time.time()
         self.update_graphics_item()
+        end_time = time.time()
+        print(f"Section 4 (Trigger repaint): {end_time - start_time:.3f} seconds")
+        
+    def rasterize_and_clear(self, all_annotations: list):
+        """
+        Unified method to sync vector annotations with the mask.
+        
+        Args:
+            all_annotations: List of vector annotations to process
+        """
+        import time
+        if not all_annotations:
+            return
+            
+        height, width = self.mask_data.shape
+        
+        # Section 1: Build geometries list
+        start_time = time.time()
+        geometries = []
+        for annotation in all_annotations:
+            if not hasattr(annotation, 'get_polygon'):
+                continue
+            try:
+                polygon = annotation.get_polygon()
+                if polygon is None or polygon.isEmpty():
+                    continue
+                points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
+                if len(points) < 3:
+                    continue
+                geometries.append(Polygon(points))
+            except Exception as e:
+                print(f"Warning: Could not process annotation {annotation.id}: {e}")
+                continue
+        end_time = time.time()
+        print(f"Section 1 (Build geometries list): {end_time - start_time:.3f} seconds")
+
+        if not geometries:
+            return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Section 2: Rasterize geometries
+        start_time = time.time()
+        annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
+        end_time = time.time()
+        print(f"Section 2 (Rasterize geometries): {end_time - start_time:.3f} seconds")
+        
+        # Section 3: Clear mask pixels under annotations FIRST
+        start_time = time.time()
+        if np.any(annotation_mask):
+            # Clear mask pixels under annotations (set to 0)
+            self.mask_data[annotation_mask] = 0
+        end_time = time.time()
+        print(f"Section 3 (Clear mask pixels): {end_time - start_time:.3f} seconds")
+        
+        # Section 4: Apply locking to the cleared areas
+        start_time = time.time()
+        # Only lock pixels that are NOT already locked
+        to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
+        if np.any(to_lock):
+            self.mask_data[to_lock] += self.LOCK_BIT
+        end_time = time.time()
+        print(f"Section 4 (Apply locking): {end_time - start_time:.3f} seconds")
+            
+        # Section 5: Trigger repaint
+        start_time = time.time()
+        # Trigger a full repaint if any changes were made
+        if np.any(to_lock) or np.any(annotation_mask):
+            self.update_graphics_item()
+        end_time = time.time()
+        print(f"Section 5 (Trigger repaint): {end_time - start_time:.3f} seconds")
+            
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     # --- Analysis & Information Retrieval Methods ---
 
