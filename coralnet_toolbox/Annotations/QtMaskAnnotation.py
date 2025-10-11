@@ -231,6 +231,45 @@ class MaskAnnotation(Annotation):
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
             self.graphics_item.update()
+            
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
+        """
+        Updates a subset area of the mask with a provided mask containing multiple labels.
+        
+        Args:
+            subset_mask: A 2D numpy array with class IDs for the subset area.
+            top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
+        """
+        x, y = top_left
+        h, w = subset_mask.shape
+        
+        # Calculate the region in the full mask where the subset will be applied
+        x_end = min(x + w, self.mask_data.shape[1])
+        y_end = min(y + h, self.mask_data.shape[0])
+        x_start = max(x, 0)
+        y_start = max(y, 0)
+        
+        # Calculate the corresponding region in the subset mask
+        sx_start = x_start - x
+        sy_start = y_start - y
+        sx_end = sx_start + (x_end - x_start)
+        sy_end = sy_start + (y_end - y_start)
+        
+        # Get the target slice
+        target_slice = self.mask_data[y_start:y_end, x_start:x_end]
+        subset_slice = subset_mask[sy_start:sy_end, sx_start:sx_end]
+        
+        # Identify pixels within the target slice that are NOT locked
+        unlocked_pixels_mask = target_slice < self.LOCK_BIT
+        
+        # Apply the subset mask only to unlocked pixels
+        target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
+        
+        # Trigger a visual update for the changed rectangle
+        update_rect = (x_start, y_start, x_end, y_end)
+        self.update_graphics_item(update_rect=update_rect)
+        
+        self.annotationUpdated.emit(self)
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """
@@ -690,3 +729,4 @@ class MaskAnnotation(Annotation):
     def __repr__(self):
         return (f"MaskAnnotation(id={self.id}, image_path={self.image_path}, "
                 f"shape={self.mask_data.shape})")
+
