@@ -449,145 +449,18 @@ class MaskAnnotation(Annotation):
         
     def rasterize_annotations(self, all_annotations: list):
         """
-        Mark pixels covered by vector annotations as locked to prevent painting over them.
-        Uses rasterio.features.rasterize for robust and efficient polygon rasterization.
-        Vector annotations remain visible while their pixel areas become protected.
-        
-        Args:
-            all_annotations: List of vector annotations to protect
-        """
-        import time
-        if not all_annotations:
-            return
-
-        height, width = self.mask_data.shape
-
-        # Section 1: Building geometries list
-        start_time = time.time()
-        geometries = []
-        for annotation in all_annotations:
-            if not hasattr(annotation, 'get_polygon'):
-                continue
-            try:
-                polygon = annotation.get_polygon()
-                if polygon is None or polygon.isEmpty():
-                    continue
-                points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
-                if len(points) < 3:
-                    continue
-                geometries.append(Polygon(points))
-            except Exception as e:
-                print(f"Warning: Could not process annotation {annotation.id}: {e}")
-                continue
-        end_time = time.time()
-        print(f"Section 1 (Building geometries): {end_time - start_time:.3f} seconds")
-
-        if not geometries:
-            return
-
-        # Section 2: Rasterizing geometries
-        start_time = time.time()
-        lock_mask = self._fast_rasterize(geometries, width, height)
-        end_time = time.time()
-        print(f"Section 2 (Rasterizing geometries): {end_time - start_time:.3f} seconds")
-
-        # Section 3: Applying locking
-        start_time = time.time()
-        to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
-        self.mask_data[to_lock] += self.LOCK_BIT
-        end_time = time.time()
-        print(f"Section 3 (Applying locking): {end_time - start_time:.3f} seconds")
-        
-        # Does this do anything?
-        # Section 4: Trigger repaint
-        start_time = time.time()
-        self.update_graphics_item()
-        end_time = time.time()
-        print(f"Section 4 (Trigger repaint): {end_time - start_time:.3f} seconds")
-
-    def unrasterize_annotations(self):
-        """
-        Remove lock protection from all pixels that were marked as locked.
-        This allows mask editing over previously protected vector annotation areas.
-        """
-        # Find all pixels that have the lock bit set and remove it
-        locked_pixels = self.mask_data >= self.LOCK_BIT
-        
-        # Remove the lock bit from these pixels, keeping their original class
-        self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
-
-    def clear_pixels_for_class(self, class_id: int):
-        """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
-        if class_id == 0:  # Cannot clear background class
-            return
-
-        # Create a boolean mask of all pixels whose real class ID matches.
-        pixels_to_clear = (self.mask_data % self.LOCK_BIT) == class_id
-        
-        # Set these pixels back to 0 (unclassified).
-        self.mask_data[pixels_to_clear] = 0
-        
-    def clear_pixels_for_annotations(self, annotations_to_clear: list):
-        """
-        Rasterizes a list of vector annotations and sets the corresponding
-        pixels in the mask_data to 0 (unclassified).
-        """
-        import time
-        if not annotations_to_clear:
-            return
-
-        # 1. Convert all annotation polygons to Shapely Polygons.
-        start_time = time.time()
-        geometries = []
-        for anno in annotations_to_clear:
-            if hasattr(anno, 'get_polygon'):
-                qt_polygon = anno.get_polygon()
-                points = [(p.x(), p.y()) for p in qt_polygon]
-                if len(points) >= 3:
-                    geometries.append(Polygon(points))
-        end_time = time.time()
-        print(f"Section 1 (Convert polygons): {end_time - start_time:.3f} seconds")
-
-        if not geometries:
-            return
-
-        # 2. Rasterize all shapes at once into a boolean mask.
-        # This creates a numpy array where 'True' indicates a pixel is covered
-        # by at least one of the vector annotations.
-        start_time = time.time()
-        height, width = self.mask_data.shape
-        clear_mask = rasterize(
-            geometries,
-            out_shape=(height, width),
-            fill=0,
-            default_value=1,
-            dtype=np.uint8
-        ).astype(bool)
-        end_time = time.time()
-        print(f"Section 2 (Rasterize shapes): {end_time - start_time:.3f} seconds")
-
-        # 3. Apply the mask to the data, setting pixels to 0.
-        start_time = time.time()
-        self.mask_data[clear_mask] = 0
-        end_time = time.time()
-        print(f"Section 3 (Apply mask): {end_time - start_time:.3f} seconds")
-
-        # 4. Trigger a full repaint of the mask to show the changes.
-        start_time = time.time()
-        self.update_graphics_item()
-        end_time = time.time()
-        print(f"Section 4 (Trigger repaint): {end_time - start_time:.3f} seconds")
-        
-    def rasterize_and_clear(self, all_annotations: list):
-        """
         Unified method to sync vector annotations with the mask.
         
         Args:
             all_annotations: List of vector annotations to process
         """
         import time
+        
         if not all_annotations:
-            return
+            return  # Nothing to do if no annotations
+        
+        if not self.mask_data.any():
+            return  # Nothing to do on an empty mask
             
         height, width = self.mask_data.shape
         
@@ -650,6 +523,66 @@ class MaskAnnotation(Annotation):
             
         # Restore cursor
         QApplication.restoreOverrideCursor()
+
+    def unrasterize_annotations(self):
+        """
+        Remove lock protection from all pixels that were marked as locked.
+        This allows mask editing over previously protected vector annotation areas.
+        """
+        # Find all pixels that have the lock bit set and remove it
+        locked_pixels = self.mask_data >= self.LOCK_BIT
+        
+        # Remove the lock bit from these pixels, keeping their original class
+        self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
+
+    def clear_pixels_for_class(self, class_id: int):
+        """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
+        if class_id == 0:  # Cannot clear background class
+            return
+
+        # Create a boolean mask of all pixels whose real class ID matches.
+        pixels_to_clear = (self.mask_data % self.LOCK_BIT) == class_id
+        
+        # Set these pixels back to 0 (unclassified).
+        self.mask_data[pixels_to_clear] = 0
+        
+    def clear_pixels_for_annotations(self, annotations_to_clear: list):
+        """
+        Rasterizes a list of vector annotations and sets the corresponding
+        pixels in the mask_data to 0 (unclassified).
+        """
+        if not annotations_to_clear:
+            return
+
+        # 1. Convert all annotation polygons to Shapely Polygons.
+        geometries = []
+        for anno in annotations_to_clear:
+            if hasattr(anno, 'get_polygon'):
+                qt_polygon = anno.get_polygon()
+                points = [(p.x(), p.y()) for p in qt_polygon]
+                if len(points) >= 3:
+                    geometries.append(Polygon(points))
+
+        if not geometries:
+            return
+
+        # 2. Rasterize all shapes at once into a boolean mask.
+        # This creates a numpy array where 'True' indicates a pixel is covered
+        # by at least one of the vector annotations.
+        height, width = self.mask_data.shape
+        clear_mask = rasterize(
+            geometries,
+            out_shape=(height, width),
+            fill=0,
+            default_value=1,
+            dtype=np.uint8
+        ).astype(bool)
+
+        # 3. Apply the mask to the data, setting pixels to 0.
+        self.mask_data[clear_mask] = 0
+
+        # 4. Trigger a full repaint of the mask to show the changes.
+        self.update_graphics_item()
 
     # --- Analysis & Information Retrieval Methods ---
 
