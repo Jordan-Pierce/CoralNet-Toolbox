@@ -17,10 +17,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class TimerWorker(QThread):
     """Worker thread for accurate timing."""
-    update_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self.update_signal = pyqtSignal()
         self.running = False
         self.reset_flag = False
         self.stop_flag = False
@@ -54,24 +54,34 @@ class TimerWidget(QWidget):
         super().__init__(parent)
         self.time_elapsed = 0  # Time in seconds
 
-        # Worker thread for accurate timing
+        # Worker thread for user interactive timing
         self.worker = TimerWorker()
         self.worker.update_signal.connect(self.update_time)
         self.worker.start()  # Start the thread
 
+        # Background worker for total duration tracking (always running)
+        self.background_worker = TimerWorker()
+        self.background_worker.update_signal.connect(self.update_background_time)
+        self.background_worker.start()
+        self.background_worker.start_timer()  # Always running
+        self.background_total_duration = 0
+
         # Logging attributes
         self.start_time = datetime.now()
         self.events = []
-        self.total_duration = 0  # Total seconds the timer has been running
+        self.total_duration = 0  # Total seconds the timer has been running (from background)
         self.last_start_time = None
 
         self.setup_ui()
 
     def closeEvent(self, event):
-        """Stop the worker thread when closing."""
+        """Stop the worker threads when closing."""
         self.worker.stop()
         self.worker.quit()
         self.worker.wait()
+        self.background_worker.stop()
+        self.background_worker.quit()
+        self.background_worker.wait()
         super().closeEvent(event)
 
     def setup_ui(self):
@@ -148,6 +158,11 @@ class TimerWidget(QWidget):
         self.time_elapsed += 1
         self.update_display()
 
+    def update_background_time(self):
+        """Update the background total duration."""
+        self.background_total_duration += 1
+        self.total_duration = self.background_total_duration
+
     def update_display(self):
         """Update the time display."""
         hours = self.time_elapsed // 3600
@@ -160,7 +175,8 @@ class TimerWidget(QWidget):
         return {
             'start_time': self.start_time.isoformat(),
             'events': self.events,
-            'total_duration': self.total_duration
+            'total_duration': self.total_duration,
+            'background_total_duration': self.background_total_duration
         }
 
     @classmethod
@@ -170,6 +186,7 @@ class TimerWidget(QWidget):
         instance.start_time = datetime.fromisoformat(data['start_time'])
         instance.events = data['events']
         instance.total_duration = data['total_duration']
+        instance.background_total_duration = data.get('background_total_duration', data['total_duration'])
         # Note: time_elapsed is reset to 0, as it's the current session display
         return instance
 
@@ -194,8 +211,14 @@ class TimerGroupBox(QGroupBox):
         """Deserialize the timer group box data from a dictionary."""
         instance = cls()
         instance.timer_widget = TimerWidget.from_dict(data)
-        # Re-setup the layout since we replaced the widget
-        layout = QVBoxLayout(instance)
-        layout.addWidget(instance.timer_widget)
-        instance.setLayout(layout)
+        # Update the layout with the new timer widget
+        layout = instance.layout()
+        if layout:
+            # Remove the old timer widget
+            old_widget = layout.itemAt(0).widget() if layout.count() > 0 else None
+            if old_widget:
+                layout.removeWidget(old_widget)
+                old_widget.setParent(None)
+            # Add the new timer widget
+            layout.addWidget(instance.timer_widget)
         return instance

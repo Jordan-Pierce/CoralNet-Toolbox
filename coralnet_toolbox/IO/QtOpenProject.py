@@ -157,6 +157,8 @@ class OpenProject(QDialog):
             # Import timer data if present
             if 'timer' in project_data:
                 self.main_window.timer_group = TimerGroupBox.from_dict(project_data['timer'])
+                # Start the user timer by default after loading project
+                self.main_window.timer_group.timer_widget.start_timer()
             
             # Update current project path
             self.current_project_path = file_path
