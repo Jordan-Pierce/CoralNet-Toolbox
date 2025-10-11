@@ -5,18 +5,22 @@ from .Community.cfg import get_available_configs
 from .TuneModel.QtClassify import Classify as TuneClassify
 from .TuneModel.QtDetect import Detect as TuneDetect
 from .TuneModel.QtSegment import Segment as TuneSegment
+from .TuneModel.QtSemantic import Semantic as TuneSemantic
 
 from .TrainModel.QtClassify import Classify as TrainClassify
 from .TrainModel.QtDetect import Detect as TrainDetect 
 from .TrainModel.QtSegment import Segment as TrainSegment
+from .TrainModel.QtSemantic import Semantic as TrainSemantic
 
 from .DeployModel.QtClassify import Classify as DeployClassify
 from .DeployModel.QtDetect import Detect as DeployDetect
 from .DeployModel.QtSegment import Segment as DeploySegment
+from .DeployModel.QtSemantic import Semantic as DeploySemantic
 
 from .BatchInference.QtClassify import Classify as BatchClassify
 from .BatchInference.QtDetect import Detect as BatchDetect
 from .BatchInference.QtSegment import Segment as BatchSegment
+from .BatchInference.QtSemantic import Semantic as BatchSemantic
 
 from .VideoInference.QtDetect import Detect as VideoDetect
 from .VideoInference.QtSegment import Segment as VideoSegment
@@ -32,6 +36,7 @@ from .ExportDataset.QtSemantic import Semantic as ExportSemantic
 from .EvaluateModel.QtClassify import Classify as EvalClassify
 from .EvaluateModel.QtDetect import Detect as EvalDetect
 from .EvaluateModel.QtSegment import Segment as EvalSegment
+from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 
 from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .OptimizeModel.QtBase import Base as Optimize
@@ -41,15 +46,19 @@ __all__ = [
     "TuneClassify",
     "TuneDetect",
     "TuneSegment",
+    "TuneSemantic",
     'TrainClassify', 
     'TrainDetect', 
     'TrainSegment',
+    'TrainSemantic',
     'DeployClassify', 
     'DeployDetect', 
     'DeploySegment', 
+    'DeploySemantic',
     'BatchClassify',
     'BatchDetect', 
     'BatchSegment',
+    'BatchSemantic',
     'VideoDetect',
     'VideoSegment',
     'ImportDetect', 
@@ -61,6 +70,7 @@ __all__ = [
     'EvalClassify', 
     'EvalDetect', 
     'EvalSegment',
+    'EvalSemantic',
     'TileDetect',
     'TileSegment',
     'MergeClassify', 
