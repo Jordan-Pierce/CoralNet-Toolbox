@@ -17,10 +17,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class TimerWorker(QThread):
     """Worker thread for accurate timing."""
+    update_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.update_signal = pyqtSignal()
         self.running = False
         self.reset_flag = False
         self.stop_flag = False
