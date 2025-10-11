@@ -77,12 +77,21 @@ class TimerWidget(QWidget):
     def closeEvent(self, event):
         """Stop the worker threads when closing."""
         self.worker.stop()
-        self.worker.quit()
-        self.worker.wait()
         self.background_worker.stop()
-        self.background_worker.quit()
+        self.worker.update_signal.disconnect()
+        self.background_worker.update_signal.disconnect()
+        self.worker.wait()
         self.background_worker.wait()
         super().closeEvent(event)
+
+    def stop_threads(self):
+        """Stop the worker threads."""
+        self.worker.stop()
+        self.background_worker.stop()
+        self.worker.update_signal.disconnect()
+        self.background_worker.update_signal.disconnect()
+        self.worker.wait()
+        self.background_worker.wait()
 
     def setup_ui(self):
         """Set up the user interface."""
@@ -210,7 +219,13 @@ class TimerGroupBox(QGroupBox):
     def from_dict(cls, data):
         """Deserialize the timer group box data from a dictionary."""
         instance = cls()
+        # Stop the old threads first
+        if hasattr(instance, 'timer_widget'):
+            instance.timer_widget.stop_threads()
+        
+        # Create new timer widget with deserialized data
         instance.timer_widget = TimerWidget.from_dict(data)
+        
         # Update the layout with the new timer widget
         layout = instance.layout()
         if layout:

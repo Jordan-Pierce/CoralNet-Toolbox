@@ -156,6 +156,9 @@ class OpenProject(QDialog):
             
             # Import timer data if present
             if 'timer' in project_data:
+                # Stop the old timer threads if exists
+                if hasattr(self.main_window, 'timer_group') and self.main_window.timer_group:
+                    self.main_window.timer_group.timer_widget.stop_threads()
                 self.main_window.timer_group = TimerGroupBox.from_dict(project_data['timer'])
                 # Start the user timer by default after loading project
                 self.main_window.timer_group.timer_widget.start_timer()
