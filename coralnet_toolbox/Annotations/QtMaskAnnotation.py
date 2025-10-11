@@ -461,12 +461,17 @@ class MaskAnnotation(Annotation):
         
         if not self.mask_data.any():
             return  # Nothing to do on an empty mask
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
             
         height, width = self.mask_data.shape
         
-        # Section 1: Build geometries list
+        # Section 1: Build geometries list AND calculate combined bounds
         start_time = time.time()
         geometries = []
+        all_bounds = []  # Store individual bounds for smart combining
+        
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
                 continue
@@ -477,18 +482,37 @@ class MaskAnnotation(Annotation):
                 points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
                 if len(points) < 3:
                     continue
-                geometries.append(Polygon(points))
+                shapely_poly = Polygon(points)
+                geometries.append(shapely_poly)
+                all_bounds.append(shapely_poly.bounds)
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
-        end_time = time.time()
-        print(f"Section 1 (Build geometries list): {end_time - start_time:.3f} seconds")
-
+        
         if not geometries:
+            # No valid geometries to rasterize
+            QApplication.restoreOverrideCursor()
             return
         
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Calculate smart combined bounding box
+        if all_bounds:
+            min_x = min(b[0] for b in all_bounds)
+            min_y = min(b[1] for b in all_bounds)
+            max_x = max(b[2] for b in all_bounds)
+            max_y = max(b[3] for b in all_bounds)
+            
+            # Add padding (5 pixels) to handle anti-aliasing edges
+            x_min = max(0, int(min_x) - 5)
+            y_min = max(0, int(min_y) - 5)
+            x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
+            y_max = min(height, int(max_y) + 6)
+            
+            update_rect = (x_min, y_min, x_max, y_max)
+        else:
+            update_rect = None
+        
+        end_time = time.time()
+        print(f"Section 1 (Build geometries + bounds): {end_time - start_time:.3f} seconds")
 
         # Section 2: Rasterize geometries
         start_time = time.time()
@@ -513,14 +537,20 @@ class MaskAnnotation(Annotation):
         end_time = time.time()
         print(f"Section 4 (Apply locking): {end_time - start_time:.3f} seconds")
             
-        # Section 5: Trigger repaint
+        # Section 5: Smart localized repaint
         start_time = time.time()
-        # Trigger a full repaint if any changes were made
         if np.any(to_lock) or np.any(annotation_mask):
-            self.update_graphics_item()
+            if update_rect and (x_max - x_min) * (y_max - y_min) < width * height * 0.3:  # If < 30% of image
+                # Use localized update - much faster
+                self.update_graphics_item(update_rect=update_rect)
+                print(f"  Using LOCALIZED update: {update_rect}")
+            else:
+                # Fall back to full update if annotations cover too much area
+                self.update_graphics_item()
+                print(f"  Using FULL update (large area)")
         end_time = time.time()
         print(f"Section 5 (Trigger repaint): {end_time - start_time:.3f} seconds")
-            
+    
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
