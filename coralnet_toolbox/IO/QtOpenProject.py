@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLa
 
 from coralnet_toolbox.QtLabelWindow import Label
 
+from coralnet_toolbox.QtTimer import TimerGroupBox
+
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -151,6 +153,10 @@ class OpenProject(QDialog):
             self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
             self.import_annotations(project_data.get('annotations'))
+            
+            # Import timer data if present
+            if 'timer' in project_data:
+                self.main_window.timer_group = TimerGroupBox.from_dict(project_data['timer'])
             
             # Update current project path
             self.current_project_path = file_path

@@ -129,6 +129,8 @@ from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 
 from coralnet_toolbox.Icons import get_icon
 
+from coralnet_toolbox.QtTimer import TimerGroupBox
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -947,13 +949,13 @@ class MainWindow(QMainWindow):
         self.status_bar_layout = QHBoxLayout()
 
         # Labels for project, image dimensions and mouse position
-        self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.view_dimensions_label = QLabel("View: 0 x 0")
-
-        # Set fixed width for labels to prevent them from resizing
-        self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
+        
+        self.image_dimensions_label = QLabel("Image: 0 x 0")
+        self.image_dimensions_label.setFixedWidth(150)
+
+        self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setFixedWidth(150)
 
         # Slider
@@ -1076,8 +1078,8 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addStretch()
@@ -1105,6 +1107,10 @@ class MainWindow(QMainWindow):
         # Label panel (left)
         self.label_layout = QVBoxLayout()
         self.label_layout.addWidget(self.label_window)
+
+        # Add the timer group box under the label window (which contains Counts)
+        self.timer_group = TimerGroupBox(self)
+        self.label_layout.addWidget(self.timer_group)
 
         # Annotation panel (center) (in a group box since it's a QGraphicsView)
         self.annotation_layout = QVBoxLayout()
@@ -1657,11 +1663,7 @@ class MainWindow(QMainWindow):
             self.work_area_tool_action.setChecked(False)
     
     def get_available_devices(self):
-        """
-        Get available devices
-
-        :return:
-        """
+        """Get a list of available devices for PyTorch."""
         devices = ['cpu',]
         if torch.backends.mps.is_available():
             devices.append('mps')
@@ -1671,6 +1673,7 @@ class MainWindow(QMainWindow):
         return devices
 
     def toggle_device(self):
+        """Open a dialog to select the device and update the icon and tooltip accordingly."""
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
             self.selected_devices = dialog.selected_devices
@@ -1726,13 +1729,16 @@ class MainWindow(QMainWindow):
         # Update the window title
         self.setWindowTitle(text)
 
+    def update_mouse_position(self, x, y):
+        """Update the mouse position label in the status bar"""
+        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+        
     def update_image_dimensions(self, width, height):
+        """Update the image dimensions label in the status bar"""
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
-    def update_mouse_position(self, x, y):
-        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
-
     def update_view_dimensions(self, original_width, original_height):
+        """Update the view dimensions label in the status bar"""
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
 

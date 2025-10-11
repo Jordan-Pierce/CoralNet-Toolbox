@@ -99,7 +99,8 @@ class SaveProject(QDialog):
             project_data = {
                 'images': self.get_images(),
                 'labels': self.get_labels(),
-                'annotations': self.get_annotations()
+                'annotations': self.get_annotations(),
+                'timer': self.main_window.timer_group.to_dict()
             }
 
             with open(file_path, 'w') as file:
