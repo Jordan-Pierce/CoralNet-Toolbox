@@ -420,7 +420,7 @@ class MaskAnnotation(Annotation):
         
         return not is_correctly_locked
 
-    def _fast_rasterize(self, geometries, width, height, mode="shapely"):
+    def _fast_rasterize(self, geometries, width, height, mode="rasterio"):
         """
         Fast vectorized rasterization using either Shapely or Rasterio.
         
@@ -478,6 +478,13 @@ class MaskAnnotation(Annotation):
         if not all_annotations:
             return  # Nothing to do if no annotations
         
+        # This is slower, but does it all in one go
+        # # All pixels are already locked, nothing to do
+        # unlocked_pixels_exist = np.any(self.mask_data < self.LOCK_BIT)
+        # if not unlocked_pixels_exist and not np.any(self.mask_data == 0):
+        #     return
+        
+        # This is faster, but requires enter exit and then enter again to re-lock
         if not self.mask_data.any():
             return  # Nothing to do on an empty mask
         
