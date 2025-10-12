@@ -401,26 +401,6 @@ class MaskAnnotation(Annotation):
 
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
-        
-    def _annotation_needs_processing(self, polygon, expected_class_id):
-        """
-        Only process annotations that aren't already locked correctly.
-        The exact pixel values don't matter as long as they're locked.
-        """
-        centroid = polygon.centroid
-        x, y = int(centroid.x), int(centroid.y)
-        
-        if not (0 <= y < self.mask_data.shape[0] and 0 <= x < self.mask_data.shape[1]):
-            return True
-        
-        current_value = self.mask_data[y, x]
-        
-        # The ONLY thing that matters: is the centroid locked with the correct class?
-        is_correctly_locked = current_value == (expected_class_id + self.LOCK_BIT)
-        print(f"Annotation centroid at ({x},{y}) has mask value {current_value}, "
-              f"expected {expected_class_id + self.LOCK_BIT}. Needs processing: {not is_correctly_locked}")
-        
-        return not is_correctly_locked
 
     def _fast_rasterize(self, geometries, width, height, mode="rasterio"):
         """
@@ -474,17 +454,9 @@ class MaskAnnotation(Annotation):
         
         Args:
             all_annotations: List of vector annotations to process
-        """
-        import time
-        
+        """        
         if not all_annotations:
             return  # Nothing to do if no annotations
-        
-        update_canvas = True  # Track if we need to update the entire canvas
-        
-        # No need to update if the mask is empty
-        if not self.mask_data.any():
-            update_canvas = False
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -492,7 +464,6 @@ class MaskAnnotation(Annotation):
         height, width = self.mask_data.shape
         
         # Section 1: Build geometries list AND filter annotations that actually need processing
-        start_time = time.time()
         geometries = []
         annotations_to_process = []
         all_bounds = []
@@ -514,10 +485,6 @@ class MaskAnnotation(Annotation):
                 if class_id is None:
                     continue  # Skip if label not in mask
                     
-                # Quick check: does this annotation need processing?
-                if not self._annotation_needs_processing(shapely_poly, class_id):
-                    continue  # Skip - mask already matches annotation
-                    
                 geometries.append(shapely_poly)
                 annotations_to_process.append(annotation)
                 all_bounds.append(shapely_poly.bounds)
@@ -531,35 +498,26 @@ class MaskAnnotation(Annotation):
             QApplication.restoreOverrideCursor()
             return
         
-        end_time = time.time()
-        print(f"Section 1 (Build geometries + bounds): {end_time - start_time:.3f} seconds")
+        # No need to update if the mask is already empty, check before rasterization
+        update_canvas = True if np.any(self.mask_data) else False
 
         # Section 2: Rasterize geometries
-        start_time = time.time()
         annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
-        end_time = time.time()
-        print(f"Section 2 (Rasterize geometries): {end_time - start_time:.3f} seconds")
         
         # Section 3: Clear mask pixels under annotations FIRST
-        start_time = time.time()
         if np.any(annotation_mask):
             # Clear mask pixels under annotations (set to 0)
             self.mask_data[annotation_mask] = 0
-        end_time = time.time()
-        print(f"Section 3 (Clear mask pixels): {end_time - start_time:.3f} seconds")
         
         # Section 4: Apply locking to the cleared areas
-        start_time = time.time()
         # Only lock pixels that are NOT already locked
         to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
         if np.any(to_lock):
             self.mask_data[to_lock] += self.LOCK_BIT
-        end_time = time.time()
-        print(f"Section 4 (Apply locking): {end_time - start_time:.3f} seconds")
         
         if not update_canvas:
             QApplication.restoreOverrideCursor()
-            return  # No visual update needed if nothing changed
+            return  # No visual update needed
         
         # Calculate smart combined bounding box
         if all_bounds:
@@ -579,19 +537,14 @@ class MaskAnnotation(Annotation):
             update_rect = None
             
         # Section 5: Smart localized repaint
-        start_time = time.time()
         if np.any(to_lock) or np.any(annotation_mask):
             if update_rect and (x_max - x_min) * (y_max - y_min) < width * height * 0.3:  # If < 30% of image
                 # Use localized update - much faster
                 self.update_graphics_item(update_rect=update_rect)
-                print(f"  Using LOCALIZED update: {update_rect}")
             else:
                 # Fall back to full update if annotations cover too much area
                 self.update_graphics_item()
-                print(f"  Using FULL update (large area)")
-        end_time = time.time()
-        print(f"Section 5 (Trigger repaint): {end_time - start_time:.3f} seconds")
-    
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
