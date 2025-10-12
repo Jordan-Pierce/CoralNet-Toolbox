@@ -478,15 +478,11 @@ class MaskAnnotation(Annotation):
         if not all_annotations:
             return  # Nothing to do if no annotations
         
-        # This is slower, but does it all in one go
-        # # All pixels are already locked, nothing to do
-        # unlocked_pixels_exist = np.any(self.mask_data < self.LOCK_BIT)
-        # if not unlocked_pixels_exist and not np.any(self.mask_data == 0):
-        #     return
+        update_canvas = True  # Track if we need to update the entire canvas
         
-        # This is faster, but requires enter exit and then enter again to re-lock
+        # No need to update if the mask is empty
         if not self.mask_data.any():
-            return  # Nothing to do on an empty mask
+            update_canvas = False
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -533,23 +529,6 @@ class MaskAnnotation(Annotation):
             QApplication.restoreOverrideCursor()
             return
         
-        # Calculate smart combined bounding box
-        if all_bounds:
-            min_x = min(b[0] for b in all_bounds)
-            min_y = min(b[1] for b in all_bounds)
-            max_x = max(b[2] for b in all_bounds)
-            max_y = max(b[3] for b in all_bounds)
-            
-            # Add padding (5 pixels) to handle anti-aliasing edges
-            x_min = max(0, int(min_x) - 5)
-            y_min = max(0, int(min_y) - 5)
-            x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
-            y_max = min(height, int(max_y) + 6)
-            
-            update_rect = (x_min, y_min, x_max, y_max)
-        else:
-            update_rect = None
-        
         end_time = time.time()
         print(f"Section 1 (Build geometries + bounds): {end_time - start_time:.3f} seconds")
 
@@ -575,6 +554,27 @@ class MaskAnnotation(Annotation):
             self.mask_data[to_lock] += self.LOCK_BIT
         end_time = time.time()
         print(f"Section 4 (Apply locking): {end_time - start_time:.3f} seconds")
+        
+        if not update_canvas:
+            QApplication.restoreOverrideCursor()
+            return  # No visual update needed if nothing changed
+        
+        # Calculate smart combined bounding box
+        if all_bounds:
+            min_x = min(b[0] for b in all_bounds)
+            min_y = min(b[1] for b in all_bounds)
+            max_x = max(b[2] for b in all_bounds)
+            max_y = max(b[3] for b in all_bounds)
+            
+            # Add padding (5 pixels) to handle anti-aliasing edges
+            x_min = max(0, int(min_x) - 5)
+            y_min = max(0, int(min_y) - 5)
+            x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
+            y_max = min(height, int(max_y) + 6)
+            
+            update_rect = (x_min, y_min, x_max, y_max)
+        else:
+            update_rect = None
             
         # Section 5: Smart localized repaint
         start_time = time.time()
