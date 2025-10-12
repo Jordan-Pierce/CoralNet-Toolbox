@@ -8,9 +8,10 @@ import numpy as np
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
 
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, Point
+
 from rasterio.features import rasterize
-from rasterio.transform import from_origin
+
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -400,6 +401,24 @@ class MaskAnnotation(Annotation):
 
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
+        
+    def _annotation_needs_processing(self, polygon, expected_class_id):
+        """
+        Only process annotations that aren't already locked correctly.
+        The exact pixel values don't matter as long as they're locked.
+        """
+        centroid = polygon.centroid
+        x, y = int(centroid.x), int(centroid.y)
+        
+        if not (0 <= y < self.mask_data.shape[0] and 0 <= x < self.mask_data.shape[1]):
+            return True
+        
+        current_value = self.mask_data[y, x]
+        
+        # The ONLY thing that matters: is the centroid locked with the correct class?
+        is_correctly_locked = current_value == (expected_class_id + self.LOCK_BIT)
+        
+        return not is_correctly_locked
 
     def _fast_rasterize(self, geometries, width, height, mode="shapely"):
         """
@@ -467,10 +486,11 @@ class MaskAnnotation(Annotation):
             
         height, width = self.mask_data.shape
         
-        # Section 1: Build geometries list AND calculate combined bounds
+        # Section 1: Build geometries list AND filter annotations that actually need processing
         start_time = time.time()
         geometries = []
-        all_bounds = []  # Store individual bounds for smart combining
+        annotations_to_process = []
+        all_bounds = []
         
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
@@ -483,8 +503,20 @@ class MaskAnnotation(Annotation):
                 if len(points) < 3:
                     continue
                 shapely_poly = Polygon(points)
+                
+                # Get the class ID for this annotation's label
+                class_id = self.label_id_to_class_id_map.get(annotation.label.id)
+                if class_id is None:
+                    continue  # Skip if label not in mask
+                    
+                # Quick check: does this annotation need processing?
+                if not self._annotation_needs_processing(shapely_poly, class_id):
+                    continue  # Skip - mask already matches annotation
+                    
                 geometries.append(shapely_poly)
+                annotations_to_process.append(annotation)
                 all_bounds.append(shapely_poly.bounds)
+                
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
