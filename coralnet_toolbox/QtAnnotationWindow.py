@@ -266,8 +266,8 @@ class AnnotationWindow(QGraphicsView):
         
         # Transitioning from a mask tool to a vector tool: UNLOCK the vector annotations
         elif is_leaving_mask_mode and not is_entering_mask_mode:
-            self.unrasterize_annotations()
-        
+            pass  # self.unrasterize_annotations() doesn't need to be called here anymore
+
         # If we are transitioning between either mode, unselect annotations
         if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
