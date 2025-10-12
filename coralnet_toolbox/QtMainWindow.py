@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
         # Tune Semantic Segmentation Model
         self.ml_semantic_tune_model_action = QAction("Semantic", self)
         self.ml_semantic_tune_model_action.triggered.connect(self.open_semantic_tune_model_dialog)
-        self.ml_tune_model_menu.addAction(self.ml_semantic_tune_model_action)
+        # self.ml_tune_model_menu.addAction(self.ml_semantic_tune_model_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -569,7 +569,7 @@ class MainWindow(QMainWindow):
         # Train Semantic Segmentation Model
         self.ml_semantic_train_model_action = QAction("Semantic", self)
         self.ml_semantic_train_model_action.triggered.connect(self.open_semantic_train_model_dialog)
-        self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
+        # self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
 
         # Evaluate Model submenu
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
@@ -588,7 +588,7 @@ class MainWindow(QMainWindow):
         # Evaluate Semantic Segmentation Model
         self.ml_semantic_evaluate_model_action = QAction("Semantic", self)
         self.ml_semantic_evaluate_model_action.triggered.connect(self.open_semantic_evaluate_model_dialog)
-        self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
+        # self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
 
         # Optimize Model
         self.ml_optimize_model_action = QAction("Optimize Model", self)
@@ -612,7 +612,7 @@ class MainWindow(QMainWindow):
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
-        self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
+        # self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
@@ -631,7 +631,7 @@ class MainWindow(QMainWindow):
         # Batch Inference Semantic Segmentation
         self.ml_semantic_batch_inference_action = QAction("Semantic", self)
         self.ml_semantic_batch_inference_action.triggered.connect(self.open_semantic_batch_inference_dialog)
-        self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
+        # self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
 
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
@@ -1278,7 +1278,7 @@ class MainWindow(QMainWindow):
         # Get the currently selected tool from AnnotationWindow
         selected_tool = self.annotation_window.get_selected_tool()
         
-        # Semantic-specif annotation tools toggle
+        # Semantic-specific annotation tools toggle
         if selected_tool == 'brush':
             self.choose_specific_tool('erase')
             return
