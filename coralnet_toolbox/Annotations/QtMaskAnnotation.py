@@ -417,6 +417,8 @@ class MaskAnnotation(Annotation):
         
         # The ONLY thing that matters: is the centroid locked with the correct class?
         is_correctly_locked = current_value == (expected_class_id + self.LOCK_BIT)
+        print(f"Annotation centroid at ({x},{y}) has mask value {current_value}, "
+              f"expected {expected_class_id + self.LOCK_BIT}. Needs processing: {not is_correctly_locked}")
         
         return not is_correctly_locked
 
@@ -479,6 +481,12 @@ class MaskAnnotation(Annotation):
             return  # Nothing to do if no annotations
         
         update_canvas = True  # Track if we need to update the entire canvas
+        
+        # Instead of the problematic check, you could do:
+        # unlocked_pixels_exist = np.any(self.mask_data < self.LOCK_BIT)
+        # if not unlocked_pixels_exist and not np.any(self.mask_data == 0):
+        #     # All pixels are already locked, nothing to do
+        #     return
         
         # No need to update if the mask is empty
         if not self.mask_data.any():
