@@ -482,12 +482,6 @@ class MaskAnnotation(Annotation):
         
         update_canvas = True  # Track if we need to update the entire canvas
         
-        # Instead of the problematic check, you could do:
-        # unlocked_pixels_exist = np.any(self.mask_data < self.LOCK_BIT)
-        # if not unlocked_pixels_exist and not np.any(self.mask_data == 0):
-        #     # All pixels are already locked, nothing to do
-        #     return
-        
         # No need to update if the mask is empty
         if not self.mask_data.any():
             update_canvas = False
