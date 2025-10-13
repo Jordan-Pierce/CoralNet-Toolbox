@@ -6,14 +6,11 @@ import os
 import json
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel,
-                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, QFormLayout, 
-                             QLineEdit)
+from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton,
+                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, 
+                             QFormLayout, QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
-
-from coralnet_toolbox.QtTimer import TimerGroupBox
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -154,14 +151,7 @@ class OpenProject(QDialog):
             self.import_labels(project_data.get('labels'))
             self.import_annotations(project_data.get('annotations'))
             
-            # Import timer data if present
-            if 'timer' in project_data:
-                # Stop the old timer threads if exists
-                if hasattr(self.main_window, 'timer_group') and self.main_window.timer_group:
-                    self.main_window.timer_group.timer_widget.stop_threads()
-                self.main_window.timer_group = TimerGroupBox.from_dict(project_data['timer'])
-                # Start the user timer by default after loading project
-                self.main_window.timer_group.timer_widget.start_timer()
+            # Note: Timer import/export functionality temporarily removed
             
             # Update current project path
             self.current_project_path = file_path

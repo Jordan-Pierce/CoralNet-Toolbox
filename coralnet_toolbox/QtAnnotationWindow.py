@@ -1088,9 +1088,7 @@ class AnnotationWindow(QGraphicsView):
 
     def delete_annotation(self, annotation_id):
         """Delete an annotation by its ID from dicts."""
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+        # Check if the annotation ID exists
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
@@ -1112,14 +1110,17 @@ class AnnotationWindow(QGraphicsView):
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
-            
-        # Restore the cursor
-        QApplication.restoreOverrideCursor()
 
     def delete_annotations(self, annotations):
         """Delete a list of annotations."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         for annotation in annotations:
             self.delete_annotation(annotation.id)
+            
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def delete_selected_annotations(self):
         """Delete all currently selected annotations."""
