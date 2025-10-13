@@ -67,15 +67,19 @@ from coralnet_toolbox.MachineLearning import (
     TuneClassify as ClassifyTuneDialog,
     TuneDetect as DetectTuneDialog,
     TuneSegment as SegmentTuneDialog,
+    TuneSemantic as SemanticTuneDialog,
     TrainClassify as ClassifyTrainModelDialog,
     TrainDetect as DetectTrainModelDialog,
     TrainSegment as SegmentTrainModelDialog,
+    TrainSemantic as SemanticTrainModelDialog,
     DeployClassify as ClassifyDeployModelDialog,
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
+    DeploySemantic as SemanticDeployModelDialog,
     BatchClassify as ClassifyBatchInferenceDialog,
     BatchDetect as DetectBatchInferenceDialog,
     BatchSegment as SegmentBatchInferenceDialog,
+    BatchSemantic as SemanticBatchInferenceDialog,
     VideoDetect as DetectVideoInferenceDialog,
     VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
@@ -87,6 +91,7 @@ from coralnet_toolbox.MachineLearning import (
     EvalClassify as ClassifyEvaluateModelDialog,
     EvalDetect as DetectEvaluateModelDialog,
     EvalSegment as SegmentEvaluateModelDialog,
+    EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
     Optimize as OptimizeModelDialog
 )
@@ -123,6 +128,8 @@ from coralnet_toolbox.BreakTime import (
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 
 from coralnet_toolbox.Icons import get_icon
+
+from coralnet_toolbox.QtTimer import TimerGroupBox
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -245,19 +252,24 @@ class MainWindow(QMainWindow):
         self.classify_tune_model_dialog = ClassifyTuneDialog(self)
         self.detect_tune_model_dialog = DetectTuneDialog(self)
         self.segment_tune_model_dialog = SegmentTuneDialog(self)
+        self.semantic_tune_model_dialog = SemanticTuneDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
+        self.semantic_train_model_dialog = SemanticTrainModelDialog(self)
         self.classify_evaluate_model_dialog = ClassifyEvaluateModelDialog(self)
         self.detect_evaluate_model_dialog = DetectEvaluateModelDialog(self)
         self.segment_evaluate_model_dialog = SegmentEvaluateModelDialog(self)
+        self.semantic_evaluate_model_dialog = SemanticEvaluateModelDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
+        self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
+        self.semantic_batch_inference_dialog = SemanticBatchInferenceDialog(self)
         self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
         self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
@@ -535,6 +547,10 @@ class MainWindow(QMainWindow):
         self.ml_segment_tune_model_action = QAction("Segment", self)
         self.ml_segment_tune_model_action.triggered.connect(self.open_segment_tune_model_dialog)
         self.ml_tune_model_menu.addAction(self.ml_segment_tune_model_action)
+        # Tune Semantic Segmentation Model
+        self.ml_semantic_tune_model_action = QAction("Semantic", self)
+        self.ml_semantic_tune_model_action.triggered.connect(self.open_semantic_tune_model_dialog)
+        # self.ml_tune_model_menu.addAction(self.ml_semantic_tune_model_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -550,6 +566,10 @@ class MainWindow(QMainWindow):
         self.ml_segment_train_model_action = QAction("Segment", self)
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
+        # Train Semantic Segmentation Model
+        self.ml_semantic_train_model_action = QAction("Semantic", self)
+        self.ml_semantic_train_model_action.triggered.connect(self.open_semantic_train_model_dialog)
+        # self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
 
         # Evaluate Model submenu
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
@@ -565,11 +585,16 @@ class MainWindow(QMainWindow):
         self.ml_segment_evaluate_model_action = QAction("Segment", self)
         self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_segment_evaluate_model_action)
+        # Evaluate Semantic Segmentation Model
+        self.ml_semantic_evaluate_model_action = QAction("Semantic", self)
+        self.ml_semantic_evaluate_model_action.triggered.connect(self.open_semantic_evaluate_model_dialog)
+        # self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
 
         # Optimize Model
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
+        
         # Deploy Model submenu
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
         # Deploy Classification Model
@@ -584,6 +609,10 @@ class MainWindow(QMainWindow):
         self.ml_segment_deploy_model_action = QAction("Segment", self)
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
+        # Deploy Semantic Segmentation Model
+        self.ml_semantic_deploy_model_action = QAction("Semantic", self)
+        self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
+        # self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
@@ -599,7 +628,11 @@ class MainWindow(QMainWindow):
         self.ml_segment_batch_inference_action = QAction("Segment", self)
         self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
-        
+        # Batch Inference Semantic Segmentation
+        self.ml_semantic_batch_inference_action = QAction("Semantic", self)
+        self.ml_semantic_batch_inference_action.triggered.connect(self.open_semantic_batch_inference_dialog)
+        # self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
+
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
         # Video Inference Detection
@@ -916,13 +949,13 @@ class MainWindow(QMainWindow):
         self.status_bar_layout = QHBoxLayout()
 
         # Labels for project, image dimensions and mouse position
-        self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.view_dimensions_label = QLabel("View: 0 x 0")
-
-        # Set fixed width for labels to prevent them from resizing
-        self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
+        
+        self.image_dimensions_label = QLabel("Image: 0 x 0")
+        self.image_dimensions_label.setFixedWidth(150)
+
+        self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setFixedWidth(150)
 
         # Slider
@@ -1045,8 +1078,8 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addStretch()
@@ -1074,6 +1107,10 @@ class MainWindow(QMainWindow):
         # Label panel (left)
         self.label_layout = QVBoxLayout()
         self.label_layout.addWidget(self.label_window)
+
+        # Add the timer group box under the label window (which contains Counts)
+        self.timer_group = TimerGroupBox(self)
+        self.label_layout.addWidget(self.timer_group)
 
         # Annotation panel (center) (in a group box since it's a QGraphicsView)
         self.annotation_layout = QVBoxLayout()
@@ -1241,7 +1278,7 @@ class MainWindow(QMainWindow):
         # Get the currently selected tool from AnnotationWindow
         selected_tool = self.annotation_window.get_selected_tool()
         
-        # Semantic-specif annotation tools toggle
+        # Semantic-specific annotation tools toggle
         if selected_tool == 'brush':
             self.choose_specific_tool('erase')
             return
@@ -1626,11 +1663,7 @@ class MainWindow(QMainWindow):
             self.work_area_tool_action.setChecked(False)
     
     def get_available_devices(self):
-        """
-        Get available devices
-
-        :return:
-        """
+        """Get a list of available devices for PyTorch."""
         devices = ['cpu',]
         if torch.backends.mps.is_available():
             devices.append('mps')
@@ -1640,6 +1673,7 @@ class MainWindow(QMainWindow):
         return devices
 
     def toggle_device(self):
+        """Open a dialog to select the device and update the icon and tooltip accordingly."""
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
             self.selected_devices = dialog.selected_devices
@@ -1695,13 +1729,16 @@ class MainWindow(QMainWindow):
         # Update the window title
         self.setWindowTitle(text)
 
+    def update_mouse_position(self, x, y):
+        """Update the mouse position label in the status bar"""
+        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+        
     def update_image_dimensions(self, width, height):
+        """Update the image dimensions label in the status bar"""
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
-    def update_mouse_position(self, x, y):
-        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
-
     def update_view_dimensions(self, original_width, original_height):
+        """Update the view dimensions label in the status bar"""
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
 
@@ -2340,6 +2377,14 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+    def open_semantic_tune_model_dialog(self):
+        """Open the Semantic Tune Model dialog to tune a semantic segmentation model."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_tune_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
     def open_classify_train_model_dialog(self):
         """Open the Classify Train Model dialog to train a classification model."""
         try:
@@ -2361,6 +2406,14 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_semantic_train_model_dialog(self):
+        """Open the Semantic Train Model dialog to train a semantic segmentation model."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -2385,6 +2438,14 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_evaluate_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_semantic_evaluate_model_dialog(self):
+        """Open the Semantic Evaluate Model dialog to evaluate a semantic segmentation model."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -2435,6 +2496,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_semantic_deploy_model_dialog(self):
+        """Open the Semantic Deploy Model dialog to deploy a semantic segmentation model."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Semantic Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.semantic_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -2504,11 +2579,23 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_classify_video_inference_dialog(self):
-        """Open the Classify Video Inference dialog to run inference on video files."""
+    def open_semantic_batch_inference_dialog(self):
+        """Open the Semantic Batch Inference dialog to run batch inference on semantic segmentation models."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.semantic_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
         try:
             self.untoggle_all_tools()
-            self.classify_video_inference_dialog.exec_()
+            self.semantic_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             

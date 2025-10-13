@@ -100,6 +100,7 @@ class SaveProject(QDialog):
                 'images': self.get_images(),
                 'labels': self.get_labels(),
                 'annotations': self.get_annotations()
+                # Note: Timer information removed for now
             }
 
             with open(file_path, 'w') as file:

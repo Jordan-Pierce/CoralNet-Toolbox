@@ -6,10 +6,9 @@ import os
 import json
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel,
-                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, QFormLayout, 
-                             QLineEdit)
+from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton,
+                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, 
+                             QFormLayout, QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -151,6 +150,8 @@ class OpenProject(QDialog):
             self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
             self.import_annotations(project_data.get('annotations'))
+            
+            # Note: Timer import/export functionality temporarily removed
             
             # Update current project path
             self.current_project_path = file_path

@@ -645,7 +645,7 @@ def simplify_polygon(xy_points, simplify_tolerance=0.1):
         return simplified_coords[:-1]
 
     except Exception as e:
-        print(f"Error filtering/simplifying polygon: {e}")
+        print(f"Warning: Error filtering/simplifying polygon: {e}")
         # Return original points if something went wrong
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
@@ -676,7 +676,7 @@ def densify_polygon(xy_points):
         return densified
 
     except Exception as e:
-        print(f"Error densifying polygon: {e}")
+        print(f"Warning: Error densifying polygon: {e}")
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
 

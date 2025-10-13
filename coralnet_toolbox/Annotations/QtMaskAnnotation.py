@@ -8,9 +8,10 @@ import numpy as np
 from scipy.ndimage import label as ndimage_label
 from skimage.measure import find_contours
 
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, Point
+
 from rasterio.features import rasterize
-from rasterio.transform import from_origin
+
 from pycocotools import mask
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -231,6 +232,45 @@ class MaskAnnotation(Annotation):
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
             self.graphics_item.update()
+            
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
+        """
+        Updates a subset area of the mask with a provided mask containing multiple labels.
+        
+        Args:
+            subset_mask: A 2D numpy array with class IDs for the subset area.
+            top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
+        """
+        x, y = top_left
+        h, w = subset_mask.shape
+        
+        # Calculate the region in the full mask where the subset will be applied
+        x_end = min(x + w, self.mask_data.shape[1])
+        y_end = min(y + h, self.mask_data.shape[0])
+        x_start = max(x, 0)
+        y_start = max(y, 0)
+        
+        # Calculate the corresponding region in the subset mask
+        sx_start = x_start - x
+        sy_start = y_start - y
+        sx_end = sx_start + (x_end - x_start)
+        sy_end = sy_start + (y_end - y_start)
+        
+        # Get the target slice
+        target_slice = self.mask_data[y_start:y_end, x_start:x_end]
+        subset_slice = subset_mask[sy_start:sy_end, sx_start:sx_end]
+        
+        # Identify pixels within the target slice that are NOT locked
+        unlocked_pixels_mask = target_slice < self.LOCK_BIT
+        
+        # Apply the subset mask only to unlocked pixels
+        target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
+        
+        # Trigger a visual update for the changed rectangle
+        update_rect = (x_start, y_start, x_end, y_end)
+        self.update_graphics_item(update_rect=update_rect)
+        
+        self.annotationUpdated.emit(self)
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """
@@ -362,40 +402,72 @@ class MaskAnnotation(Annotation):
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
 
-    def _fast_rasterize(self, geometries, width, height):
-        """Fast vectorized rasterization using Shapely"""
-        from shapely.vectorized import contains
-        
-        # Create coordinate grids - much faster than manual iteration
-        y_coords, x_coords = np.mgrid[0:height, 0:width]
-        
-        # Create empty mask
-        lock_mask = np.zeros((height, width), dtype=bool)
-        
-        # Process each geometry
-        for geom in geometries:
-            if geom.is_valid:
-                # Vectorized point-in-polygon check - VERY fast
-                mask = contains(geom, x_coords, y_coords)
-                lock_mask = lock_mask | mask
-                
-        return lock_mask
-
-    def rasterize_annotations(self, all_annotations: list):
+    def _fast_rasterize(self, geometries, width, height, mode="rasterio"):
         """
-        Mark pixels covered by vector annotations as locked to prevent painting over them.
-        Uses rasterio.features.rasterize for robust and efficient polygon rasterization.
-        Vector annotations remain visible while their pixel areas become protected.
+        Fast vectorized rasterization using either Shapely or Rasterio.
         
         Args:
-            all_annotations: List of vector annotations to protect
+            geometries: List of Shapely Polygon geometries
+            width, height: Dimensions of the output mask
+            mode: "shapely" for Shapely vectorized method, "rasterio" for rasterio.features.rasterize
+        
+        Returns:
+            Boolean numpy array where True indicates pixels covered by geometries
         """
+        if mode == "shapely":
+            # Use Shapely vectorized method (very fast for many points)
+            from shapely.vectorized import contains
+            
+            # Create coordinate grids - much faster than manual iteration
+            y_coords, x_coords = np.mgrid[0:height, 0:width]
+            
+            # Create empty mask
+            raster_mask = np.zeros((height, width), dtype=bool)
+            
+            # Process each geometry
+            for geom in geometries:
+                if geom.is_valid:
+                    # Vectorized point-in-polygon check - VERY fast
+                    mask = contains(geom, x_coords, y_coords)
+                    raster_mask = raster_mask | mask
+                    
+            return raster_mask
+            
+        elif mode == "rasterio":
+            # Use rasterio.features.rasterize (more robust for complex geometries)
+            raster_mask = rasterize(
+                geometries,
+                out_shape=(height, width),
+                fill=0,
+                default_value=1,
+                dtype=np.uint8
+            ).astype(bool)
+            
+            return raster_mask
+        
+        else:
+            raise ValueError(f"Unknown rasterization mode: {mode}. Use 'shapely' or 'rasterio'.")
+        
+    def rasterize_annotations(self, all_annotations: list):
+        """
+        Unified method to sync vector annotations with the mask.
+        
+        Args:
+            all_annotations: List of vector annotations to process
+        """        
         if not all_annotations:
-            return
-
+            return  # Nothing to do if no annotations
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+            
         height, width = self.mask_data.shape
-
+        
+        # Section 1: Build geometries list AND filter annotations that actually need processing
         geometries = []
+        annotations_to_process = []
+        all_bounds = []
+        
         for annotation in all_annotations:
             if not hasattr(annotation, 'get_polygon'):
                 continue
@@ -406,20 +478,75 @@ class MaskAnnotation(Annotation):
                 points = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
                 if len(points) < 3:
                     continue
-                geometries.append(Polygon(points))
+                shapely_poly = Polygon(points)
+                
+                # Get the class ID for this annotation's label
+                class_id = self.label_id_to_class_id_map.get(annotation.label.id)
+                if class_id is None:
+                    continue  # Skip if label not in mask
+                    
+                geometries.append(shapely_poly)
+                annotations_to_process.append(annotation)
+                all_bounds.append(shapely_poly.bounds)
+                
             except Exception as e:
                 print(f"Warning: Could not process annotation {annotation.id}: {e}")
                 continue
-
+        
         if not geometries:
+            # No valid geometries to rasterize
+            QApplication.restoreOverrideCursor()
             return
+        
+        # No need to update if the mask is already empty, check before rasterization
+        update_canvas = True if np.any(self.mask_data) else False
 
-        # Rasterize all geometries into a single boolean mask
-        lock_mask = self._fast_rasterize(geometries, width, height)
+        # Section 2: Rasterize geometries
+        annotation_mask = self._fast_rasterize(geometries, width, height, mode="rasterio")
+        
+        # Section 3: Clear mask pixels under annotations FIRST
+        if np.any(annotation_mask):
+            # Clear mask pixels under annotations (set to 0)
+            self.mask_data[annotation_mask] = 0
+        
+        # Section 4: Apply locking to the cleared areas
+        # Only lock pixels that are NOT already locked
+        to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
+        if np.any(to_lock):
+            self.mask_data[to_lock] += self.LOCK_BIT
+        
+        if not update_canvas:
+            QApplication.restoreOverrideCursor()
+            return  # No visual update needed
+        
+        # Calculate smart combined bounding box
+        if all_bounds:
+            min_x = min(b[0] for b in all_bounds)
+            min_y = min(b[1] for b in all_bounds)
+            max_x = max(b[2] for b in all_bounds)
+            max_y = max(b[3] for b in all_bounds)
+            
+            # Add padding (5 pixels) to handle anti-aliasing edges
+            x_min = max(0, int(min_x) - 5)
+            y_min = max(0, int(min_y) - 5)
+            x_max = min(width, int(max_x) + 6)  # +1 for inclusive, +5 for padding
+            y_max = min(height, int(max_y) + 6)
+            
+            update_rect = (x_min, y_min, x_max, y_max)
+        else:
+            update_rect = None
+            
+        # Section 5: Smart localized repaint
+        if np.any(to_lock) or np.any(annotation_mask):
+            if update_rect and (x_max - x_min) * (y_max - y_min) < width * height * 0.3:  # If < 30% of image
+                # Use localized update - much faster
+                self.update_graphics_item(update_rect=update_rect)
+            else:
+                # Fall back to full update if annotations cover too much area
+                self.update_graphics_item()
 
-        # Apply locking
-        to_lock = lock_mask & (self.mask_data < self.LOCK_BIT)
-        self.mask_data[to_lock] += self.LOCK_BIT
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def unrasterize_annotations(self):
         """
@@ -690,3 +817,4 @@ class MaskAnnotation(Annotation):
     def __repr__(self):
         return (f"MaskAnnotation(id={self.id}, image_path={self.image_path}, "
                 f"shape={self.mask_data.shape})")
+
