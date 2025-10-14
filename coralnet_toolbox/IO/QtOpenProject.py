@@ -341,7 +341,7 @@ class OpenProject(QDialog):
                             annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
                         
                         # Add vector annotation to the main dictionary
-                        self.annotation_window.add_annotation_to_dict(annotation)
+                        self.annotation_window.add_annotation(annotation)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
                     

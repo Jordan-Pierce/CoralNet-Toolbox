@@ -421,4 +421,4 @@ class ResultsProcessor:
         # Unselect all annotations
         self.annotation_window.unselect_annotations()
         # Add the annotation to the annotation window
-        self.annotation_window.add_annotation_to_dict(annotation)
+        self.annotation_window.add_annotation(annotation)

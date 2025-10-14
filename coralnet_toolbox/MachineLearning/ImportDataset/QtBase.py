@@ -557,7 +557,7 @@ class Base(QDialog):
                                                label.id, 
                                                self.main_window.get_transparency_value())
 
-            self.annotation_window.add_annotation_to_dict(annotation)
+            self.annotation_window.add_annotation(annotation)
             newly_created_annotations.append(annotation)
             
             progress_bar.update_progress()

@@ -651,7 +651,7 @@ class PatchSamplingDialog(QDialog):
                     )
                     
                     # Add annotation to the annotation window
-                    self.annotation_window.add_annotation_to_dict(new_annotation)
+                    self.annotation_window.add_annotation(new_annotation)
                     sampled_annotations.append(new_annotation)
                     progress_bar.update_progress()
 

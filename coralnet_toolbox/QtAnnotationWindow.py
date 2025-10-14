@@ -42,6 +42,69 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class Action:
+    """Base class for undo/redo actions."""
+    def do(self):
+        raise NotImplementedError
+
+    def undo(self):
+        raise NotImplementedError
+
+
+class AddAnnotationAction(Action):
+    def __init__(self, annotation_window, annotation):
+        self.annotation_window = annotation_window
+        self.annotation = annotation
+
+    def do(self):
+        # Only add if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.add_annotation_from_tool(self.annotation)
+
+    def undo(self):
+        # Only delete if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.delete_annotation(self.annotation.id)
+
+
+class DeleteAnnotationAction(Action):
+    def __init__(self, annotation_window, annotation):
+        self.annotation_window = annotation_window
+        self.annotation = annotation
+
+    def do(self):
+        # Only delete if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.delete_annotation(self.annotation.id)
+
+    def undo(self):
+        # Only add if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.add_annotation_from_tool(self.annotation)
+
+
+class ActionStack:
+    def __init__(self):
+        self.undo_stack = []
+        self.redo_stack = []
+
+    def push(self, action):
+        self.undo_stack.append(action)
+        self.redo_stack.clear()
+
+    def undo(self):
+        if self.undo_stack:
+            action = self.undo_stack.pop()
+            action.undo()
+            self.redo_stack.append(action)
+
+    def redo(self):
+        if self.redo_stack:
+            action = self.redo_stack.pop()
+            action.do()
+            self.undo_stack.append(action)
+
+
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
@@ -111,10 +174,12 @@ class AnnotationWindow(QGraphicsView):
             "fill": FillTool(self),
             "erase": EraseTool(self)
         }
+
         # Defines which tools trigger mask mode
-        self.mask_tools = {"brush", 
-                           "fill", 
-                           "erase"}  
+        self.mask_tools = {"brush", "fill", "erase"}
+
+        # Initialize the action stack for undo/redo
+        self.action_stack = ActionStack()
 
     def _is_in_mask_editing_mode(self):
         """Check if the annotation window is currently in mask editing mode."""
@@ -206,7 +271,20 @@ class AnnotationWindow(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
-        """Handle keyboard press events including deletion of selected annotations."""
+        """Handle keyboard press events including undo/redo and deletion of selected annotations."""
+        # Undo: Ctrl+Z
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Z:
+            if event.modifiers() & Qt.ShiftModifier:
+                # Redo: Ctrl+Shift+Z
+                if self.selected_tool:
+                    self.action_stack.redo()
+                    return
+            else:
+                # Undo: Ctrl+Z
+                if self.selected_tool:
+                    self.action_stack.undo()
+                    return
+
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
@@ -1065,12 +1143,12 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Add to annotation dict
-        self.add_annotation_to_dict(annotation)
+        self.add_annotation(annotation)
 
         # Update the table in ImageWindow
         self.annotationCreated.emit(annotation.id)
 
-    def add_annotation_to_dict(self, annotation):
+    def add_annotation(self, annotation, record_action=True):
         """Add an annotation to the internal dictionaries."""
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
@@ -1086,7 +1164,11 @@ class AnnotationWindow(QGraphicsView):
         # Update the ImageWindow Table
         self.main_window.image_window.update_annotation_count(annotation.id)
 
-    def delete_annotation(self, annotation_id):
+        # Record action for undo/redo if requested
+        if record_action:
+            self.action_stack.push(AddAnnotationAction(self, annotation))
+
+    def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""
         # Check if the annotation ID exists
         if annotation_id in self.annotations_dict:
@@ -1110,6 +1192,10 @@ class AnnotationWindow(QGraphicsView):
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
+
+            # Record action for undo/redo if requested
+            if record_action:
+                self.action_stack.push(DeleteAnnotationAction(self, annotation))
 
     def delete_annotations(self, annotations):
         """Delete a list of annotations."""

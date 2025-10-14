@@ -181,7 +181,7 @@ class ImportCoralNetAnnotations:
                         annotation.set_verified(verified)
                             
                     # Add annotation to the dict
-                    self.annotation_window.add_annotation_to_dict(annotation)
+                    self.annotation_window.add_annotation(annotation)
                 
                 # Update the progress bar
                 progress_bar.update_progress()

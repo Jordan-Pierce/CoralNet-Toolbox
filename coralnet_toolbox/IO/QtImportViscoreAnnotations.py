@@ -305,7 +305,7 @@ class ImportViscoreAnnotations(QDialog):
                         'ViewCount': row['ViewCount']
                     }
 
-                    self.annotation_window.add_annotation_to_dict(annotation)
+                    self.annotation_window.add_annotation(annotation)
 
                 self.image_window.update_image_annotations(image_path)
                 progress_bar.update_progress()
