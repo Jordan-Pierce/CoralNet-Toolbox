@@ -1044,7 +1044,7 @@ class AnnotationWindow(QGraphicsView):
             return annotations
 
     def add_annotation_from_tool(self, annotation):
-        """Add a new annotation at the specified position using the current tool."""
+        """Add a new annotation for the current image using the current tool."""
 
         if annotation is None:
             self.toggle_cursor_annotation()

@@ -614,7 +614,8 @@ class PatchSamplingDialog(QDialog):
                     if propagate:
                         center = QPointF(x + size // 2, y + size // 2)
                         
-                        # First, check the MaskAnnotation for label propagation (since masks and vectors don't overlap, this is safe)
+                        # First, check the MaskAnnotation for label propagation 
+                        # (since masks and vectors don't overlap, this is safe)
                         mask_annotation = self.annotation_window.current_mask_annotation
                         if mask_annotation and image_path == mask_annotation.image_path:
                             class_id = mask_annotation.get_class_at_point(center)
