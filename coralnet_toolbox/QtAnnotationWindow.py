@@ -272,19 +272,6 @@ class AnnotationWindow(QGraphicsView):
 
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
-        # Undo: Ctrl+Z
-        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Z:
-            if event.modifiers() & Qt.ShiftModifier:
-                # Redo: Ctrl+Shift+Z
-                if self.selected_tool:
-                    self.action_stack.redo()
-                    return
-            else:
-                # Undo: Ctrl+Z
-                if self.selected_tool:
-                    self.action_stack.undo()
-                    return
-
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
