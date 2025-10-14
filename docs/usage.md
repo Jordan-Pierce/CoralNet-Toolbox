@@ -326,6 +326,8 @@ The main window consists of several components:
 
 - <kbd>Escape</kbd>: Exit the program
 - <kbd>Ctrl</kbd> + <kbd>S</kbd>: Save the project
+- <kbd>Ctrl + Z</kbd>: Undo the last addition or deletion of an annotation
+- <kbd>Ctrl + Shift + Z</kbd>: Redo the previously undone addition or deletion of an annotation
 - <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images
 - <kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels
 - <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations
