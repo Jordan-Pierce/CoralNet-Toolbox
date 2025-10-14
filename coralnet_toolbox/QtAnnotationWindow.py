@@ -59,12 +59,12 @@ class AddAnnotationAction(Action):
     def do(self):
         # Only add if the annotation's image is the current image
         if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.add_annotation_from_tool(self.annotation)
+            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
 
     def undo(self):
         # Only delete if the annotation's image is the current image
         if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.delete_annotation(self.annotation.id)
+            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
 
 
 class DeleteAnnotationAction(Action):
@@ -75,12 +75,12 @@ class DeleteAnnotationAction(Action):
     def do(self):
         # Only delete if the annotation's image is the current image
         if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.delete_annotation(self.annotation.id)
+            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
 
     def undo(self):
         # Only add if the annotation's image is the current image
         if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.add_annotation_from_tool(self.annotation)
+            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
 
 
 class ActionStack:
@@ -568,6 +568,10 @@ class AnnotationWindow(QGraphicsView):
         
         # Clean up
         self.clear_scene()
+
+        # Clear the action stack to prevent actions from the previous image from carrying over
+        self.action_stack.undo_stack.clear()
+        self.action_stack.redo_stack.clear()
 
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
@@ -1121,7 +1125,7 @@ class AnnotationWindow(QGraphicsView):
         if return_annotations:
             return annotations
 
-    def add_annotation_from_tool(self, annotation):
+    def add_annotation_from_tool(self, annotation, record_action=True):
         """Add a new annotation for the current image using the current tool."""
 
         if annotation is None:
@@ -1143,7 +1147,7 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Add to annotation dict
-        self.add_annotation(annotation)
+        self.add_annotation(annotation, record_action=record_action)
 
         # Update the table in ImageWindow
         self.annotationCreated.emit(annotation.id)
