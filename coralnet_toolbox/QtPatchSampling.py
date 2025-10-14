@@ -575,8 +575,9 @@ class PatchSamplingDialog(QDialog):
         progress_bar.start_progress(len(image_paths) * num_annotations)
 
         try:
+            sampled_annotations = []  # Initialize ONCE outside the loop
+
             for image_path in image_paths:
-                sampled_annotations = []
 
                 # Get the raster from the manager
                 raster = self.image_window.raster_manager.get_raster(image_path)
@@ -649,31 +650,29 @@ class PatchSamplingDialog(QDialog):
                         used_label.id,
                         transparency=self.main_window.get_transparency_value()
                     )
-                    
-                    # Add annotation to the annotation window
-                    self.annotation_window.add_annotation(new_annotation)
-                    sampled_annotations.append(new_annotation)
+                    sampled_annotations.append(new_annotation)  # Appends to the SHARED list
                     progress_bar.update_progress()
-
-                # Update the raster's annotation info
-                self.image_window.update_image_annotations(image_path)
                 
-            # Load the annotations for current image
-            self.annotation_window.load_annotations(image_path=image_path, annotations=sampled_annotations)
+                # Update the raster's annotation info for each processed image
+                self.image_window.update_image_annotations(image_path)
+
+            # Add sampled annotations to the annotation window
+            for sampled_annotation in sampled_annotations:
+                self.annotation_window.add_annotation(sampled_annotation)
+
+            # Refresh the view of the annotation window if the current image has new sampled annotations
+            if image_paths and self.annotation_window.current_image_path in image_paths:
+                self.annotation_window.load_annotations(self.annotation_window.current_image_path)
 
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(self, "Error", f"Error adding sampled annotations: {str(e)}")
             raise e
         finally:
-            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-
-            # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
 
-        # Close the dialog
         self.accept()
 
     def clear_annotation_graphics(self):

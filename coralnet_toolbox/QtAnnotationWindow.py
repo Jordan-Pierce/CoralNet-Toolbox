@@ -1112,52 +1112,108 @@ class AnnotationWindow(QGraphicsView):
         if return_annotations:
             return annotations
 
-    def add_annotation_from_tool(self, annotation, record_action=True):
-        """Add a new annotation for the current image using the current tool."""
+    # def add_annotation_from_tool(self, annotation, record_action=True):
+    #     """Add a new annotation for the current image using the current tool."""
 
+    #     if annotation is None:
+    #         self.toggle_cursor_annotation()
+    #         return
+
+    #     # Connect update signals
+    #     annotation.selected.connect(self.select_annotation)
+    #     annotation.annotationDeleted.connect(self.delete_annotation)
+    #     annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+    #     # Create the graphics item and cropped image
+    #     if not annotation.graphics_item:
+    #         annotation.create_graphics_item(self.scene)
+    #     if not annotation.cropped_image:
+    #         annotation.create_cropped_image(self.rasterio_image)
+
+    #     # Display the cropped image in the confidence window
+    #     self.main_window.confidence_window.display_cropped_image(annotation)
+
+    #     # Add to annotation dict
+    #     self.add_annotation(annotation, record_action=record_action)
+
+    #     # Update the table in ImageWindow
+    #     self.annotationCreated.emit(annotation.id)
+
+    # def add_annotation(self, annotation, record_action=True):
+    #     """Add an annotation to the internal dictionaries."""
+    #     # Add to annotation dict
+    #     self.annotations_dict[annotation.id] = annotation
+    #     # Add to image annotations dict (if not already present)
+    #     if annotation.image_path not in self.image_annotations_dict:
+    #         self.image_annotations_dict[annotation.image_path] = []
+    #     if annotation not in self.image_annotations_dict[annotation.image_path]:
+    #         self.image_annotations_dict[annotation.image_path].append(annotation)
+
+    #     # Set the visibility based on the hide button state
+    #     self.set_annotation_visibility(annotation)
+
+    #     # Update the ImageWindow Table
+    #     self.main_window.image_window.update_annotation_count(annotation.id)
+
+    #     # Record action for undo/redo if requested
+    #     if record_action:
+    #         self.action_stack.push(AddAnnotationAction(self, annotation))
+    
+    def add_annotation_from_tool(self, annotation, record_action=True):
+        """Adds a new annotation created by a user tool."""
+        # This method now delegates all logic to the primary add_annotation method.
+        self.add_annotation(annotation, record_action=record_action)
+        
+    def add_annotation(self, annotation, record_action=True):
+        """
+        The single, primary method for adding an annotation.
+
+        It adds the annotation to data structures and connects signals. It will only create
+        graphics and cropped images if the annotation's image is currently displayed.
+        """
         if annotation is None:
-            self.toggle_cursor_annotation()
             return
 
-        # Connect update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-        # Create the graphics item and cropped image
-        if not annotation.graphics_item:
-            annotation.create_graphics_item(self.scene)
-        if not annotation.cropped_image:
-            annotation.create_cropped_image(self.rasterio_image)
-
-        # Display the cropped image in the confidence window
-        self.main_window.confidence_window.display_cropped_image(annotation)
-
-        # Add to annotation dict
-        self.add_annotation(annotation, record_action=record_action)
-
-        # Update the table in ImageWindow
-        self.annotationCreated.emit(annotation.id)
-
-    def add_annotation(self, annotation, record_action=True):
-        """Add an annotation to the internal dictionaries."""
-        # Add to annotation dict
+        # --- Core Logic (runs for every annotation) ---
+        # Add to the main annotation dictionary
         self.annotations_dict[annotation.id] = annotation
-        # Add to image annotations dict (if not already present)
+
+        # Add to the dictionary that groups annotations by image path
         if annotation.image_path not in self.image_annotations_dict:
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
-        # Set the visibility based on the hide button state
+        # Connect signals for future interaction
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # --- Conditional UI Logic (runs only if the image is visible) ---
+        if annotation.image_path == self.current_image_path:
+            # Create graphics item for display in the scene
+            if not annotation.graphics_item:
+                annotation.create_graphics_item(self.scene)
+            
+            # Create a cropped image for the confidence window
+            if not annotation.cropped_image and self.rasterio_image:
+                annotation.create_cropped_image(self.rasterio_image)
+            
+            # Display the cropped image in the confidence window
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+        # --- Finalization ---
+        # Set the visibility based on the current UI state
         self.set_annotation_visibility(annotation)
+        # Update the annotation count in the ImageWindow table
+        self.main_window.image_window.update_image_annotations(annotation.image_path)
 
-        # Update the ImageWindow Table
-        self.main_window.image_window.update_annotation_count(annotation.id)
-
-        # Record action for undo/redo if requested
+        # If requested, record this single addition as an undo-able action
         if record_action:
             self.action_stack.push(AddAnnotationAction(self, annotation))
+        
+        # Emit the signal that an annotation was created
+        self.annotationCreated.emit(annotation.id)
 
     def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""
