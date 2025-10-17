@@ -47,6 +47,7 @@ class Annotation(QObject):
         self.data = {}
         self.rasterio_src = None
         self.cropped_image = None
+        self._cached_cropped_image_graphic = None
 
         self.show_message = show_msg
     
@@ -74,6 +75,8 @@ class Annotation(QObject):
 
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the annotation area."""
+        # Clear cached graphic when creating new cropped image
+        self._cached_cropped_image_graphic = None
         raise NotImplementedError("Subclasses must implement this method.")
 
     def get_area(self):
@@ -102,6 +105,17 @@ class Annotation(QObject):
 
     def get_cropped_image_graphic(self):
         """Get graphical representation of the cropped image area."""
+        # Return cached version if available
+        if self._cached_cropped_image_graphic is not None:
+            return self._cached_cropped_image_graphic
+            
+        # Create and cache the graphic
+        graphic = self._create_cropped_image_graphic()
+        self._cached_cropped_image_graphic = graphic
+        return graphic
+    
+    def _create_cropped_image_graphic(self):
+        """Create the graphical representation - to be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement this method.")
 
     def update_polygon(self, delta):

@@ -172,8 +172,8 @@ class PatchAnnotation(Annotation):
         half_size = self.annotation_size / 2
         return QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size)
 
-    def get_cropped_image_graphic(self):
-        """Get the cropped image with a solid outline."""
+    def _create_cropped_image_graphic(self):
+        """Create the cropped image with a solid outline."""
         if self.cropped_image is None:
             return None
 
@@ -225,6 +225,9 @@ class PatchAnnotation(Annotation):
 
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the rasterio source based on the annotation's bounding box."""
+        # Clear cached graphic when creating new cropped image
+        self._cached_cropped_image_graphic = None
+        
         self.rasterio_src = rasterio_src
 
         # Calculate the half size of the annotation

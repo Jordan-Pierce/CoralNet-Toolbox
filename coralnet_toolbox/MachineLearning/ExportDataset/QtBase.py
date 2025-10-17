@@ -641,9 +641,6 @@ class Base(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.close()
-        progress_bar = None
 
     def is_ready(self):
         """Check if the dataset is ready to be created."""
