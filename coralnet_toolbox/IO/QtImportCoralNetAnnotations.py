@@ -173,39 +173,6 @@ class ImportCoralNetAnnotations:
             progress_bar.stop_progress()
             progress_bar.close()
 
-    def _process_image_annotations(self, group, image_path, label_cache, annotation_size):
-        """Process all annotations for a single image efficiently."""
-        annotations = []
-        
-        for _, row in group.iterrows():
-            # Get cached label
-            label = label_cache[row['Label']]
-            
-            # Create annotation
-            annotation = PatchAnnotation(
-                QPointF(row['Column'], row['Row']),
-                row.get('Patch Size', annotation_size),
-                label.short_label_code,
-                label.long_label_code,
-                label.color,
-                image_path,
-                label.id
-            )
-            
-            # Process machine confidence efficiently
-            machine_confidence = self._extract_machine_confidence(row, label_cache)
-            if machine_confidence:
-                annotation.update_machine_confidence(machine_confidence, from_import=True)
-            
-            # Set verified status
-            if 'Verified' in row:
-                verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1
-                annotation.set_verified(verified)
-            
-            annotations.append(annotation)
-        
-        return annotations
-
     def _extract_machine_confidence(self, row, label_cache):
         """Extract machine confidence data efficiently."""
         confidence_cols = [col for col in row.index if col.startswith('Machine confidence')]
