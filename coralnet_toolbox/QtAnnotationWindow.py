@@ -1185,9 +1185,15 @@ class AnnotationWindow(QGraphicsView):
         
     def add_annotations(self, annotations_list: list):
         """
-        Efficiently adds a list of annotations to the data models without
-        triggering individual UI updates or recording undo actions.
+        Efficiently adds a list of annotations to the data models and then
+        updates the relevant UI components in a single batch.
         """
+        if not annotations_list:
+            return
+
+        # Use a set to efficiently track unique image paths that need updating
+        images_to_update = set()
+
         for annotation in annotations_list:
             if annotation is None or annotation.id in self.annotations_dict:
                 continue
@@ -1198,10 +1204,22 @@ class AnnotationWindow(QGraphicsView):
                 self.image_annotations_dict[annotation.image_path] = []
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
+            # Track the image path for a final UI update
+            images_to_update.add(annotation.image_path)
+
             # --- Connect signals for future interaction ---
             annotation.selected.connect(self.select_annotation)
             annotation.annotationDeleted.connect(self.delete_annotation)
             annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # --- Final UI Updates (after all annotations are processed) ---
+        if images_to_update:
+            # Update the annotation count in the ImageWindow table for each affected image
+            for path in images_to_update:
+                self.main_window.image_window.update_image_annotations(path)
+            
+            # Update the global annotation counts in the LabelWindow once
+            self.main_window.label_window.update_annotation_count()
 
     def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""
