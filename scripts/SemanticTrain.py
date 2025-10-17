@@ -828,14 +828,14 @@ class ExperimentManager:
         with open(self.results_csv_path, 'a') as f:
             f.write(row + "\n")
 
-    def save_best_model(self, model, epoch, train_loss, valid_loss):
+    def save_best_model(self, model):
         """Save the best model weights as best.pt."""
         path = os.path.join(self.weights_dir, 'best.pt')
         torch.save(model, path)
         print(f'💾 Best model saved to {path}')
         return path
 
-    def save_last_model(self, model, epoch):
+    def save_last_model(self, model):
         """Save the model weights for the current (last) epoch."""
         path = os.path.join(self.weights_dir, 'last.pt')
         torch.save(model, path)
@@ -1013,7 +1013,7 @@ class Trainer:
                 self._visualize_validation_sample(e_idx)
 
                 # Save the model for the current epoch
-                self.experiment_manager.save_last_model(self.model, e_idx)
+                self.experiment_manager.save_last_model(self.model)
 
                 # Check for best model and handle early stopping
                 should_continue = self._update_training_state(e_idx, train_logs, valid_logs)
@@ -1069,7 +1069,7 @@ class Trainer:
             print(f"🏆 New best epoch {epoch}")
 
             # Save the model
-            self.experiment_manager.save_best_model(self.model, epoch, train_loss, valid_loss)
+            self.experiment_manager.save_best_model(self.model)
         else:
             # Increment the counters
             self.since_best += 1
