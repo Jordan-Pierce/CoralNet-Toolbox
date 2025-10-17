@@ -564,6 +564,35 @@ class Annotation(QObject):
                 self.label = max(self.machine_confidence, key=self.machine_confidence.get)
             self.update_graphics_item()
             self.show_message = True
+            
+    def to_nms_detection(self):
+        """Convert annotation to NMS-compatible detection format.
+        
+        Returns a dictionary with bounding box coordinates, confidence score,
+        class information, and reference to the original annotation.
+        """
+        # Get bounding box directly from existing methods - much more efficient!
+        top_left = self.get_bounding_box_top_left()
+        bottom_right = self.get_bounding_box_bottom_right()
+        
+        # Get confidence score (prefer machine confidence if available, otherwise use 1.0)
+        confidence = 1.0  # Default for existing annotations
+        if self.machine_confidence:
+            # Use the highest machine confidence score
+            confidence = max(self.machine_confidence.values())
+        elif self.user_confidence:
+            # Use user confidence if no machine confidence
+            confidence = max(self.user_confidence.values())
+        
+        return {
+            'bbox': [top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()],  # xyxy format
+            'confidence': float(confidence),
+            'class_name': self.label.short_label_code,
+            'class_id': self.label.id,
+            'annotation': self,  # Keep reference to original
+            'is_existing': True,
+            'area': self.get_area()
+        }
 
     def to_coralnet(self):
         """Convert annotation to CoralNet format for export."""
