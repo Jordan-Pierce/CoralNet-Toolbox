@@ -1850,7 +1850,7 @@ class MainWindow(QMainWindow):
         # Update transparency for ALL vector annotations based on their label's checkbox state
         # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
         # Mask annotations are handled separately through the raster system
-        for annotation in self.annotation_window.annotations_dict.values():
+        for annotation in self.annotation_window.get_image_annotations():
             # Update each vector annotation based on its label's checkbox state
             if annotation.label in linked_labels:
                 # Label is checked - use the slider transparency value

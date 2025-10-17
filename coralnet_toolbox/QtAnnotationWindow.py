@@ -443,9 +443,16 @@ class AnnotationWindow(QGraphicsView):
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency to match the annotation's own label transparency (not active label)
+            # Update transparency based on whether the label is "linked"
             if not hasattr(annotation, 'mask_data'):  # Vector annotations only
-                annotation.update_transparency(annotation.label.transparency)
+                linked_labels = self.main_window.label_window.get_linked_labels()
+                if annotation.label in linked_labels:
+                    # If linked, use the global slider value
+                    slider_value = self.main_window.get_transparency_value()
+                    annotation.update_transparency(slider_value)
+                else:
+                    # If not linked, use the label's own stored transparency
+                    annotation.update_transparency(annotation.label.transparency)
             # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
             # Hide the annotation
@@ -836,7 +843,7 @@ class AnnotationWindow(QGraphicsView):
         if annotation in self.selected_annotations and multi_select:
             self.unselect_annotation(annotation)
             return
-
+        
         # If not adding to selection (Ctrl not pressed), deselect all others first
         if not multi_select:
             self.unselect_annotations()
@@ -856,7 +863,6 @@ class AnnotationWindow(QGraphicsView):
             
             # If this is the only selected annotation, update label window and confidence window
             if len(self.selected_annotations) == 1:
-                
                 if not quiet_mode:
                     # Emit the label selected signal, unless in quiet mode.
                     # This is in Explorer to avoid overwriting preview label.
@@ -865,7 +871,7 @@ class AnnotationWindow(QGraphicsView):
                 # Make sure we have a cropped image
                 if not annotation.cropped_image:
                     annotation.create_cropped_image(self.rasterio_image)
-                    
+                
                 # Display in confidence window
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
@@ -879,7 +885,7 @@ class AnnotationWindow(QGraphicsView):
         self.set_annotation_visibility(annotation)
         # Always update the viewport
         self.viewport().update()
-
+        
     def select_annotations(self):
         """Select all annotations in the current image."""
         # Make cursor busy
@@ -972,6 +978,15 @@ class AnnotationWindow(QGraphicsView):
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
+
+        # Get the set of currently linked labels from the LabelWindow
+        linked_labels = self.main_window.label_window.get_linked_labels()
+        
+        # If this annotation's label is linked, update its transparency
+        # to match the global slider value before creating its graphics.
+        if annotation.label in linked_labels:
+            current_slider_value = self.main_window.get_transparency_value()
+            annotation.update_transparency(current_slider_value)
 
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)

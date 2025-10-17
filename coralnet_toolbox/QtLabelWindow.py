@@ -709,6 +709,10 @@ class LabelWindow(QWidget):
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
+        # Skip if already active
+        if self.active_label == selected_label:
+            return
+            
         if self.active_label and self.active_label != selected_label:
             # Deselect the active label
             self.deselect_active_label()
