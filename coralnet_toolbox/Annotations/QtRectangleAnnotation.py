@@ -150,7 +150,7 @@ class RectangleAnnotation(Annotation):
         """Get the bottom-right corner of the bounding box."""
         return self.bottom_right
 
-    def get_cropped_image_graphic(self):
+    def _create_cropped_image_graphic(self):
         """Create a cropped image with a mask and solid outline."""
         if self.cropped_image is None:
             return None
@@ -206,6 +206,9 @@ class RectangleAnnotation(Annotation):
 
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the rasterio source."""
+        # Clear cached graphic when creating new cropped image
+        self._cached_cropped_image_graphic = None
+        
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation

@@ -47,6 +47,7 @@ class Annotation(QObject):
         self.data = {}
         self.rasterio_src = None
         self.cropped_image = None
+        self._cached_cropped_image_graphic = None
 
         self.show_message = show_msg
     
@@ -74,6 +75,8 @@ class Annotation(QObject):
 
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the annotation area."""
+        # Clear cached graphic when creating new cropped image
+        self._cached_cropped_image_graphic = None
         raise NotImplementedError("Subclasses must implement this method.")
 
     def get_area(self):
@@ -102,6 +105,17 @@ class Annotation(QObject):
 
     def get_cropped_image_graphic(self):
         """Get graphical representation of the cropped image area."""
+        # Return cached version if available
+        if self._cached_cropped_image_graphic is not None:
+            return self._cached_cropped_image_graphic
+            
+        # Create and cache the graphic
+        graphic = self._create_cropped_image_graphic()
+        self._cached_cropped_image_graphic = graphic
+        return graphic
+    
+    def _create_cropped_image_graphic(self):
+        """Create the graphical representation - to be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement this method.")
 
     def update_polygon(self, delta):
@@ -564,6 +578,35 @@ class Annotation(QObject):
                 self.label = max(self.machine_confidence, key=self.machine_confidence.get)
             self.update_graphics_item()
             self.show_message = True
+            
+    def to_nms_detection(self):
+        """Convert annotation to NMS-compatible detection format.
+        
+        Returns a dictionary with bounding box coordinates, confidence score,
+        class information, and reference to the original annotation.
+        """
+        # Get bounding box directly from existing methods - much more efficient!
+        top_left = self.get_bounding_box_top_left()
+        bottom_right = self.get_bounding_box_bottom_right()
+        
+        # Get confidence score (prefer machine confidence if available, otherwise use 1.0)
+        confidence = 1.0  # Default for existing annotations
+        if self.machine_confidence:
+            # Use the highest machine confidence score
+            confidence = max(self.machine_confidence.values())
+        elif self.user_confidence:
+            # Use user confidence if no machine confidence
+            confidence = max(self.user_confidence.values())
+        
+        return {
+            'bbox': [top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()],  # xyxy format
+            'confidence': float(confidence),
+            'class_name': self.label.short_label_code,
+            'class_id': self.label.id,
+            'annotation': self,  # Keep reference to original
+            'is_existing': True,
+            'area': self.get_area()
+        }
 
     def to_coralnet(self):
         """Convert annotation to CoralNet format for export."""

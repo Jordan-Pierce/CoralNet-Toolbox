@@ -97,7 +97,19 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Right:
                     self.annotation_window.cycle_annotations(1)
                     return True
+
+                # Handle undo/redo hotkeys globally to avoid focus issues
+                if event.key() == Qt.Key_Z:
+                    if self.annotation_window.selected_tool:
+                        self.annotation_window.action_stack.undo()
+                        return True
                 
+            # Handle redo hotkey (Ctrl+Shift+Z)
+            if event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+                if self.annotation_window.selected_tool:
+                    self.annotation_window.action_stack.redo()
+                    return True
+            
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
                 # Check if a text input field has focus first

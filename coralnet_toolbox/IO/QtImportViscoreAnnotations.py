@@ -255,65 +255,74 @@ class ImportViscoreAnnotations(QDialog):
 
             # Pre-create required labels
             progress_bar.setWindowTitle("Creating Labels")
-            progress_bar.start_progress(len(df['Label'].unique()))
+            label_codes = df['Label'].unique()
+            progress_bar.start_progress(len(label_codes))
 
-            for label_code in df['Label'].unique():
+            for label_code in label_codes:
                 if pd.notna(label_code):
-                    # Get the label information
                     short_code = str(label_code)
-                    # Create the label if it does not exist
-                    label = self.label_window.add_label_if_not_exists(short_code)
-                    
+                    self.label_window.add_label_if_not_exists(short_code)
                 progress_bar.update_progress()
 
             # Import annotations
             progress_bar.setWindowTitle("Importing Annotations")
-            progress_bar.start_progress(len(df['Name'].unique()))
+            progress_bar.start_progress(len(df))
 
             annotation_size = self.size_spinbox.value()
-
-            for image_name, group in df.groupby('Name'):
-                image_path = image_path_map.get(os.path.basename(image_name))
+            
+            all_new_annotations = []
+            images_to_update = set()
+            
+            # 1. Create all annotation objects in memory first
+            for _, row in df.iterrows():
+                image_name = os.path.basename(row['Name'])
+                image_path = image_path_map.get(image_name)
                 if not image_path:
                     progress_bar.update_progress()
                     continue
 
-                for _, row in group.iterrows():
-                    row_coord = int(row['Row'])
-                    col_coord = int(row['Column'])
-                    label_code = str(row['Label'])
+                row_coord = int(row['Row'])
+                col_coord = int(row['Column'])
+                label_code = str(row['Label'])
 
-                    existing_label = self.label_window.get_label_by_codes(label_code, label_code)
+                existing_label = self.label_window.get_label_by_codes(label_code, label_code)
 
-                    annotation = PatchAnnotation(
-                        QPointF(col_coord, row_coord),
-                        annotation_size,
-                        label_code,
-                        label_code,
-                        existing_label.color,
-                        image_path,
-                        existing_label.id
-                    )
+                annotation = PatchAnnotation(
+                    QPointF(col_coord, row_coord),
+                    annotation_size,
+                    label_code,
+                    label_code,
+                    existing_label.color,
+                    image_path,
+                    existing_label.id
+                )
 
-                    annotation.data = {
-                        'Dot': row['Dot'],
-                        'X': row['X'],
-                        'Y': row['Y'],
-                        'Z': row['Z'],
-                        'ReprojectionError': row['ReprojectionError'],
-                        'ViewIndex': row['ViewIndex'],
-                        'ViewCount': row['ViewCount']
-                    }
+                annotation.data = {
+                    'Dot': row['Dot'],
+                    'X': row['X'],
+                    'Y': row['Y'],
+                    'Z': row['Z'],
+                    'ReprojectionError': row['ReprojectionError'],
+                    'ViewIndex': row['ViewIndex'],
+                    'ViewCount': row['ViewCount']
+                }
 
-                    self.annotation_window.add_annotation_to_dict(annotation)
-
-                self.image_window.update_image_annotations(image_path)
+                all_new_annotations.append(annotation)
+                images_to_update.add(image_path)
                 progress_bar.update_progress()
 
+            # 2. Add all created annotations in a single, efficient batch operation
+            if all_new_annotations:
+                self.annotation_window.add_annotations(all_new_annotations)
+            
+            # 3. Update UI counts for each affected image only ONCE
+            for path in images_to_update:
+                self.image_window.update_image_annotations(path)
+                
             # Load annotations for current image
             self.annotation_window.load_annotations()
 
         except Exception as e:
             QMessageBox.critical(self, 
-                                 "Critical Error",
-                                 f"Failed to process annotations: {str(e)}")
+                                "Critical Error",
+                                f"Failed to process annotations: {str(e)}")

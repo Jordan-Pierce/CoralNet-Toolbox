@@ -42,6 +42,69 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class Action:
+    """Base class for undo/redo actions."""
+    def do(self):
+        raise NotImplementedError
+
+    def undo(self):
+        raise NotImplementedError
+
+
+class AddAnnotationAction(Action):
+    def __init__(self, annotation_window, annotation):
+        self.annotation_window = annotation_window
+        self.annotation = annotation
+
+    def do(self):
+        # Only add if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
+
+    def undo(self):
+        # Only delete if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
+
+
+class DeleteAnnotationAction(Action):
+    def __init__(self, annotation_window, annotation):
+        self.annotation_window = annotation_window
+        self.annotation = annotation
+
+    def do(self):
+        # Only delete if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
+
+    def undo(self):
+        # Only add if the annotation's image is the current image
+        if self.annotation_window.current_image_path == self.annotation.image_path:
+            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
+
+
+class ActionStack:
+    def __init__(self):
+        self.undo_stack = []
+        self.redo_stack = []
+
+    def push(self, action):
+        self.undo_stack.append(action)
+        self.redo_stack.clear()
+
+    def undo(self):
+        if self.undo_stack:
+            action = self.undo_stack.pop()
+            action.undo()
+            self.redo_stack.append(action)
+
+    def redo(self):
+        if self.redo_stack:
+            action = self.redo_stack.pop()
+            action.do()
+            self.undo_stack.append(action)
+
+
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
@@ -111,10 +174,12 @@ class AnnotationWindow(QGraphicsView):
             "fill": FillTool(self),
             "erase": EraseTool(self)
         }
+
         # Defines which tools trigger mask mode
-        self.mask_tools = {"brush", 
-                           "fill", 
-                           "erase"}  
+        self.mask_tools = {"brush", "fill", "erase"}
+
+        # Initialize the action stack for undo/redo
+        self.action_stack = ActionStack()
 
     def _is_in_mask_editing_mode(self):
         """Check if the annotation window is currently in mask editing mode."""
@@ -206,7 +271,7 @@ class AnnotationWindow(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
-        """Handle keyboard press events including deletion of selected annotations."""
+        """Handle keyboard press events including undo/redo and deletion of selected annotations."""
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
@@ -378,9 +443,16 @@ class AnnotationWindow(QGraphicsView):
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency to match the annotation's own label transparency (not active label)
+            # Update transparency based on whether the label is "linked"
             if not hasattr(annotation, 'mask_data'):  # Vector annotations only
-                annotation.update_transparency(annotation.label.transparency)
+                linked_labels = self.main_window.label_window.get_linked_labels()
+                if annotation.label in linked_labels:
+                    # If linked, use the global slider value
+                    slider_value = self.main_window.get_transparency_value()
+                    annotation.update_transparency(slider_value)
+                else:
+                    # If not linked, use the label's own stored transparency
+                    annotation.update_transparency(annotation.label.transparency)
             # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
             # Hide the annotation
@@ -490,6 +562,10 @@ class AnnotationWindow(QGraphicsView):
         
         # Clean up
         self.clear_scene()
+
+        # Clear the action stack to prevent actions from the previous image from carrying over
+        self.action_stack.undo_stack.clear()
+        self.action_stack.redo_stack.clear()
 
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
@@ -767,7 +843,7 @@ class AnnotationWindow(QGraphicsView):
         if annotation in self.selected_annotations and multi_select:
             self.unselect_annotation(annotation)
             return
-
+        
         # If not adding to selection (Ctrl not pressed), deselect all others first
         if not multi_select:
             self.unselect_annotations()
@@ -787,7 +863,6 @@ class AnnotationWindow(QGraphicsView):
             
             # If this is the only selected annotation, update label window and confidence window
             if len(self.selected_annotations) == 1:
-                
                 if not quiet_mode:
                     # Emit the label selected signal, unless in quiet mode.
                     # This is in Explorer to avoid overwriting preview label.
@@ -796,7 +871,7 @@ class AnnotationWindow(QGraphicsView):
                 # Make sure we have a cropped image
                 if not annotation.cropped_image:
                     annotation.create_cropped_image(self.rasterio_image)
-                    
+                
                 # Display in confidence window
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
@@ -810,7 +885,7 @@ class AnnotationWindow(QGraphicsView):
         self.set_annotation_visibility(annotation)
         # Always update the viewport
         self.viewport().update()
-
+        
     def select_annotations(self):
         """Select all annotations in the current image."""
         # Make cursor busy
@@ -903,6 +978,15 @@ class AnnotationWindow(QGraphicsView):
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
+
+        # Get the set of currently linked labels from the LabelWindow
+        linked_labels = self.main_window.label_window.get_linked_labels()
+        
+        # If this annotation's label is linked, update its transparency
+        # to match the global slider value before creating its graphics.
+        if annotation.label in linked_labels:
+            current_slider_value = self.main_window.get_transparency_value()
+            annotation.update_transparency(current_slider_value)
 
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)
@@ -1042,51 +1126,102 @@ class AnnotationWindow(QGraphicsView):
 
         if return_annotations:
             return annotations
+    
+    def add_annotation_from_tool(self, annotation, record_action=True):
+        """Adds a new annotation created by a user tool."""
+        # This method now delegates all logic to the primary add_annotation method.
+        self.add_annotation(annotation, record_action=record_action)
+        
+    def add_annotation(self, annotation, record_action=True):
+        """
+        The single, primary method for adding an annotation.
 
-    def add_annotation_from_tool(self, annotation):
-        """Add a new annotation at the specified position using the current tool."""
-
+        It adds the annotation to data structures and connects signals. It will only create
+        graphics and cropped images if the annotation's image is currently displayed.
+        """
         if annotation is None:
-            self.toggle_cursor_annotation()
             return
 
-        # Connect update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-        # Create the graphics item and cropped image
-        if not annotation.graphics_item:
-            annotation.create_graphics_item(self.scene)
-        if not annotation.cropped_image:
-            annotation.create_cropped_image(self.rasterio_image)
-
-        # Display the cropped image in the confidence window
-        self.main_window.confidence_window.display_cropped_image(annotation)
-
-        # Add to annotation dict
-        self.add_annotation_to_dict(annotation)
-
-        # Update the table in ImageWindow
-        self.annotationCreated.emit(annotation.id)
-
-    def add_annotation_to_dict(self, annotation):
-        """Add an annotation to the internal dictionaries."""
-        # Add to annotation dict
+        # --- Core Logic (runs for every annotation) ---
+        # Add to the main annotation dictionary
         self.annotations_dict[annotation.id] = annotation
-        # Add to image annotations dict (if not already present)
+
+        # Add to the dictionary that groups annotations by image path
         if annotation.image_path not in self.image_annotations_dict:
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
-        # Set the visibility based on the hide button state
+        # Connect signals for future interaction
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # --- Conditional UI Logic (runs only if the image is visible) ---
+        if annotation.image_path == self.current_image_path:
+            # Create graphics item for display in the scene
+            if not annotation.graphics_item:
+                annotation.create_graphics_item(self.scene)
+            
+            # Create a cropped image for the confidence window
+            if not annotation.cropped_image and self.rasterio_image:
+                annotation.create_cropped_image(self.rasterio_image)
+            
+            # Display the cropped image in the confidence window
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+        # --- Finalization ---
+        # Set the visibility based on the current UI state
         self.set_annotation_visibility(annotation)
+        # Update the annotation count in the ImageWindow table
+        self.main_window.image_window.update_image_annotations(annotation.image_path)
 
-        # Update the ImageWindow Table
-        self.main_window.image_window.update_annotation_count(annotation.id)
+        # If requested, record this single addition as an undo-able action
+        if record_action:
+            self.action_stack.push(AddAnnotationAction(self, annotation))
+        
+        # Emit the signal that an annotation was created
+        self.annotationCreated.emit(annotation.id)
+        
+    def add_annotations(self, annotations_list: list):
+        """
+        Efficiently adds a list of annotations to the data models and then
+        updates the relevant UI components in a single batch.
+        """
+        if not annotations_list:
+            return
 
-    def delete_annotation(self, annotation_id):
+        # Use a set to efficiently track unique image paths that need updating
+        images_to_update = set()
+
+        for annotation in annotations_list:
+            if annotation is None or annotation.id in self.annotations_dict:
+                continue
+
+            # --- Core Logic: Only update data dictionaries ---
+            self.annotations_dict[annotation.id] = annotation
+            if annotation.image_path not in self.image_annotations_dict:
+                self.image_annotations_dict[annotation.image_path] = []
+            self.image_annotations_dict[annotation.image_path].append(annotation)
+
+            # Track the image path for a final UI update
+            images_to_update.add(annotation.image_path)
+
+            # --- Connect signals for future interaction ---
+            annotation.selected.connect(self.select_annotation)
+            annotation.annotationDeleted.connect(self.delete_annotation)
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # --- Final UI Updates (after all annotations are processed) ---
+        if images_to_update:
+            # Update the annotation count in the ImageWindow table for each affected image
+            for path in images_to_update:
+                self.main_window.image_window.update_image_annotations(path)
+            
+            # Update the global annotation counts in the LabelWindow once
+            self.main_window.label_window.update_annotation_count()
+
+    def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""
         # Check if the annotation ID exists
         if annotation_id in self.annotations_dict:
@@ -1110,6 +1245,10 @@ class AnnotationWindow(QGraphicsView):
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
+
+            # Record action for undo/redo if requested
+            if record_action:
+                self.action_stack.push(DeleteAnnotationAction(self, annotation))
 
     def delete_annotations(self, annotations):
         """Delete a list of annotations."""

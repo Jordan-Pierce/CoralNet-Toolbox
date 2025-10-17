@@ -30,6 +30,7 @@ class ImportAnnotations:
         self.annotation_window = main_window.annotation_window
 
     def import_annotations(self):
+        """Import annotations from JSON files into the current project."""
         self.main_window.untoggle_all_tools()
 
         if not self.annotation_window.active_image:
@@ -52,8 +53,6 @@ class ImportAnnotations:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self.annotation_window, title="Reading Annotation File(s)")
             progress_bar.show()
-
-            # Start the progress bar
             progress_bar.start_progress(len(file_paths))
 
             # Read the annotations
@@ -62,8 +61,6 @@ class ImportAnnotations:
                 with open(file_path, 'r') as file:
                     data = json.load(file)
                     all_data.update(data)
-
-                # Update the progress bar
                 progress_bar.update_progress()
 
         except Exception as e:
@@ -89,71 +86,53 @@ class ImportAnnotations:
         filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.raster_manager.image_paths}
         total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
-        # Make cursor busy
+        # --- This section for updating labels and colors can remain as is ---
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
         progress_bar.show()
-
-        # Start the progress bar
         progress_bar.start_progress(total_annotations)
-
         updated_annotations = False
-
         try:
-            # Load the labels
             for image_path, image_annotations in filtered_annotations.items():
-
                 for annotation in image_annotations:
-                    # Skip if missing required keys
                     if not all(key in annotation for key in keys):
                         continue
-
-                    # Extract label data
                     short_label = annotation['label_short_code']
                     long_label = annotation['label_long_code']
                     color = QColor(*annotation['annotation_color'])
                     label_id = annotation['label_id']
-
-                    # Add label if it doesn't exist
-                    label = self.label_window.add_label_if_not_exists(short_label, 
-                                                                      long_label, 
-                                                                      color,
-                                                                      label_id)
+                    label = self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id)
                     if label.color != color:
                         annotation['annotation_color'] = label.color.getRgb()
                         updated_annotations = True
-
-                    # Update progress
                     progress_bar.update_progress()
-
         except Exception as e:
             print(f"Error loading label: {str(e)}")
-
         finally:
-            # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-
         if updated_annotations:
-            QMessageBox.information(self.annotation_window,
-                                    "Annotations Updated",
-                                    "Some annotations have been updated to match the "
-                                    "color of the labels already in the project.")
+            QMessageBox.information(self.annotation_window, "Annotations Updated",
+                                    "Some annotations have been updated to match the color of the labels "
+                                    "already in the project.")
+        # --- End of label update section ---
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
         progress_bar.show()
-
-        # Start the progress bar
         progress_bar.start_progress(total_annotations)
         
         skipped_count = 0
         duplicate_count = 0
+        
+        # OPTIMIZATION: Create lists to hold objects for batch processing
+        all_new_annotations = []
+        images_to_update = set()
 
         try:
-            # Load the annotations
+            # Load the annotations by first creating all objects
             for image_path, image_annotations in filtered_annotations.items():
                 
                 for annotation_dict in image_annotations:
@@ -170,35 +149,42 @@ class ImportAnnotations:
                         continue
 
                     annotation_type = annotation_dict.get('type')
+                    annotation = None
 
+                    # Create annotation objects without adding them to the window yet
                     if annotation_type == 'MaskAnnotation':
-                        # Deserialize the mask and assign it to the correct raster
                         annotation = MaskAnnotation.from_dict(annotation_dict, self.label_window)
                         raster = self.image_window.raster_manager.get_raster(image_path)
                         if raster:
                             raster.mask_annotation = annotation
-                    else:  # This handles all vector annotation types
-                        if annotation_type == 'PatchAnnotation':
-                            annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'PolygonAnnotation':
-                            annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'RectangleAnnotation':
-                            annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'MultiPolygonAnnotation':
-                            annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                        else:
-                            raise ValueError(f"Unknown annotation type: {annotation_type}")
+                    elif annotation_type == 'PatchAnnotation':
+                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'PolygonAnnotation':
+                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'RectangleAnnotation':
+                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'MultiPolygonAnnotation':
+                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                    else:
+                        raise ValueError(f"Unknown annotation type: {annotation_type}")
 
-                        # Add vector annotation to the dict
-                        self.annotation_window.add_annotation_to_dict(annotation)
+                    if annotation and not isinstance(annotation, MaskAnnotation):
+                        all_new_annotations.append(annotation)
+                        images_to_update.add(image_path)
 
                     # Update the progress bar
                     progress_bar.update_progress()
 
-                # Update the image window's image dict
-                self.image_window.update_image_annotations(image_path)
+            # Add all created vector annotations in a single batch operation.
+            # This requires a corresponding `add_annotations_batch` method in AnnotationWindow.
+            if all_new_annotations:
+                self.annotation_window.add_annotations(all_new_annotations)
 
-            # Load the annotations for current image
+            # Update UI counts only ONCE per image after the batch is added.
+            for path in images_to_update:
+                self.image_window.update_image_annotations(path)
+
+            # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
             QMessageBox.information(self.annotation_window,

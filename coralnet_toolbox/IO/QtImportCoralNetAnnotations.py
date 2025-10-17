@@ -29,6 +29,7 @@ class ImportCoralNetAnnotations:
         self.annotation_window = main_window.annotation_window
 
     def import_annotations(self):
+        """Import annotations from CoralNet CSV export files into the current project."""
         self.main_window.untoggle_all_tools()
 
         if not self.annotation_window.active_image:
@@ -65,11 +66,8 @@ class ImportCoralNetAnnotations:
                 df = pd.read_csv(file_path)
                 all_data.append(df)
 
-            # Concatenate all the data
             df = pd.concat(all_data, ignore_index=True)
             
-            # Check if Label Code is present instead of Label; 
-            # in the CoralNet Annotation file, 'Label code' refers 'Shot Code' in Labelset file.
             if 'Label code' in df.columns and 'Label' not in df.columns:
                 df = df.rename(columns={'Label code': 'Label'})
 
@@ -79,7 +77,6 @@ class ImportCoralNetAnnotations:
             if missing_columns:
                 raise Exception(f"The selected CSV file(s) are missing necessary columns: {missing_columns}")
 
-            # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
             df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
@@ -101,95 +98,65 @@ class ImportCoralNetAnnotations:
             progress_bar.stop_progress()
             progress_bar.close()
             
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
-        progress_bar.start_progress(len(df['Name'].unique()))
+        progress_bar.start_progress(len(df)) # Progress per annotation row
         progress_bar.show()
         
-        # Import the annotations
         try:
-            # Iterate over the rows of annotations by image basename
-            for image_name, group in df.groupby('Name'):
-                
-                # Check that the image exists (using basename)
+            # Pre-process labels to avoid repeated lookups
+            unique_labels = set(df['Label'].unique())
+            if 'Machine suggestion' in df.columns:
+                unique_labels.update(df['Machine suggestion'].dropna().unique())
+            
+            label_cache = {}
+            for label_code in unique_labels:
+                label = self.label_window.add_label_if_not_exists(label_code, label_code)
+                label_cache[label_code] = label
+            
+            annotations_to_add = []
+            images_to_update = set()
+            
+            # 1. Create all annotation objects in memory first
+            for _, row in df.iterrows():
+                image_name = row['Name']
                 image_path = image_path_map.get(image_name)
                 if not image_path:
                     continue
+
+                label = label_cache[row['Label']]
                 
-                # Iterate over the rows of annotations (for this image)
-                for index, row in group.iterrows():
-                    # Read from the row
-                    row_coord = row['Row']
-                    col_coord = row['Column']
-                    label_code = row['Label']
-                    
-                    # Get the label codes
-                    short_label_code = label_code
-                    # If the user previously exported from the Toolbox, the 'Long Label' column will be present
-                    long_label_code = row['Long Label'] if 'Long Label' in row and pd.notna(row['Long Label']) else None
-                    
-                    # Check if the label already exists, create it if not
-                    label = self.label_window.add_label_if_not_exists(short_label_code, 
-                                                                      long_label_code,
-                                                                      color=None,
-                                                                      label_id=None)
-                    # Get the label color and ID
-                    color = label.color
-                    label_id = label.id
-                            
-                    # Create the annotation
-                    annotation = PatchAnnotation(QPointF(col_coord, row_coord),
-                                                 row['Patch Size'] if "Patch Size" in row else annotation_size,
-                                                 short_label_code,
-                                                 long_label_code,
-                                                 color,
-                                                 image_path,
-                                                 label_id)
-
-                    machine_confidence = {}
-                    
-                    # Get all confidence and suggestion columns
-                    confidence_cols = [col for col in row.index if col.startswith('Machine confidence')]
-                    suggestion_cols = [col for col in row.index if col.startswith('Machine suggestion')]
-                    
-                    # Create pairs of valid confidence and suggestion values
-                    valid_pairs = {
-                        (str(row[sug]), float(row[conf]))
-                        for conf, sug in zip(confidence_cols, suggestion_cols)
-                        if pd.notna(row[conf]) and pd.notna(row[sug])
-                    }
-                    
-                    # Check if the sum of all valid confidences is greater than 1
-                    if sum([conf for sug, conf in valid_pairs]) > 1:
-                        valid_pairs = [(sug, conf / 100) for sug, conf in valid_pairs]
-                        
-                    # Process all valid pairs at once
-                    for suggestion, confidence in valid_pairs:
-                        # Get the label object using the short code (because that's all that's available)
-                        suggested_label = self.label_window.add_label_if_not_exists(short_label_code=suggestion, 
-                                                                                    long_label_code=suggestion)
-                            
-                        machine_confidence[suggested_label] = confidence
-
-                    # Update the machine confidence
+                annotation = PatchAnnotation(
+                    QPointF(row['Column'], row['Row']),
+                    row.get('Patch Size', annotation_size),
+                    label.short_label_code,
+                    label.long_label_code,
+                    label.color,
+                    image_path,
+                    label.id
+                )
+                
+                machine_confidence = self._extract_machine_confidence(row, label_cache)
+                if machine_confidence:
                     annotation.update_machine_confidence(machine_confidence, from_import=True)
-                    
-                    if 'Verified' in row:
-                        # If the verified status is True, update the annotation's verified status
-                        verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1 
-                        annotation.set_verified(verified)
-                            
-                    # Add annotation to the dict
-                    self.annotation_window.add_annotation_to_dict(annotation)
                 
-                # Update the progress bar
+                if 'Verified' in row:
+                    verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1
+                    annotation.set_verified(verified)
+                
+                annotations_to_add.append(annotation)
+                images_to_update.add(image_path)
                 progress_bar.update_progress()
-
-                # Update the image window's image dict
+            
+            # 2. Add all created annotations in a single, efficient batch operation
+            if annotations_to_add:
+                self.annotation_window.add_annotations_batch(annotations_to_add)
+            
+            # 3. Update UI counts for each affected image only ONCE
+            for image_path in images_to_update:
                 self.image_window.update_image_annotations(image_path)
-
-            # Load the annotations for current image
+                        
+            # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
             QMessageBox.information(self.annotation_window,
@@ -202,7 +169,36 @@ class ImportCoralNetAnnotations:
                                 f"An error occurred while importing annotations: {str(e)}")
 
         finally:
-            # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def _extract_machine_confidence(self, row, label_cache):
+        """Extract machine confidence data efficiently."""
+        confidence_cols = [col for col in row.index if col.startswith('Machine confidence')]
+        suggestion_cols = [col for col in row.index if col.startswith('Machine suggestion')]
+        
+        if not confidence_cols or not suggestion_cols:
+            return {}
+        
+        # Vectorized approach for confidence extraction
+        valid_data = [
+            (row[sug], row[conf])
+            for conf, sug in zip(confidence_cols, suggestion_cols)
+            if pd.notna(row[conf]) and pd.notna(row[sug])
+        ]
+        
+        if not valid_data:
+            return {}
+        
+        # Normalize if sum > 1
+        suggestions, confidences = zip(*valid_data)
+        total_confidence = sum(confidences)
+        if total_confidence > 1:
+            confidences = [conf / 100 for conf in confidences]
+        
+        # Build confidence dict using cached labels
+        return {
+            label_cache[str(suggestion)]: confidence
+            for suggestion, confidence in zip(suggestions, confidences)
+        }

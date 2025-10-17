@@ -346,13 +346,15 @@ class Base(QDialog):
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
 
-    # In: QtBase.py
-
     def browse_data_yaml(self):
         """Open a file dialog to select the data YAML file and populate advanced options."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Data YAML", "", "YAML Files (*.yaml);;All Files (*)", options=options
+            self, 
+            "Select Data YAML",
+            "", 
+            "YAML Files (*.yaml);;All Files (*)", 
+            options=options
         )
         if not file_path:
             return
@@ -363,21 +365,19 @@ class Base(QDialog):
             
             names_data = data.get('names')
             if not names_data:
-                QMessageBox.warning(self, "Warning", "Could not find a 'names' entry in the selected YAML file.")
+                QMessageBox.warning(self,
+                                    "Warning", 
+                                    "Could not find a 'names' entry in the selected YAML file.")
                 return
 
-            # Handle both dictionary and list formats for class names
             names_to_display = []
             if isinstance(names_data, dict):
-                # If it's a dictionary (e.g., {0: 'coral'}), extract the values, sorting by key
-                # to preserve the intended class order.
                 names_to_display = [str(names_data[key]) for key in sorted(names_data.keys())]
             elif isinstance(names_data, list):
-                # If it's already a list, use it directly.
                 names_to_display = [str(name) for name in names_data]
             else:
-                # Handle any other unexpected format.
-                QMessageBox.warning(self, "Format Error", 
+                QMessageBox.warning(self, 
+                                    "Format Error", 
                                     f"The 'names' entry in the YAML has an unexpected format: {type(names_data)}.")
                 return
             
@@ -386,13 +386,11 @@ class Base(QDialog):
             self.output_dir_label.setText(yaml_dir)
             self.output_folder_name.setText("data")
 
-            # Clear any existing checkboxes before adding new ones
             for checkbox in self.class_checkboxes:
                 self.class_layout.removeWidget(checkbox)
                 checkbox.deleteLater()
             self.class_checkboxes.clear()
 
-            # Create checkboxes using the processed list of names
             for name in names_to_display:
                 checkbox = QCheckBox(name)
                 checkbox.setChecked(True)
@@ -449,47 +447,34 @@ class Base(QDialog):
                 "This can cause files to be overwritten in the output directory."
             )
             msg_box.setInformativeText("How would you like to handle these conflicts?")
-
-            # Add buttons with proper line breaks
-            rename_button = msg_box.addButton(
-                "Rename Files (Safe)", 
-                QMessageBox.AcceptRole
-            )
-            overwrite_button = msg_box.addButton(
-                "Overwrite", 
-                QMessageBox.DestructiveRole
-            )
-            cancel_button = msg_box.addButton(
-                "Cancel", 
-                QMessageBox.RejectRole
-            )
-
+            rename_button = msg_box.addButton("Rename Files (Safe)", QMessageBox.AcceptRole)
+            overwrite_button = msg_box.addButton("Overwrite", QMessageBox.DestructiveRole)
+            cancel_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
             msg_box.setDefaultButton(rename_button)
             msg_box.exec_()
-
             clicked_button = msg_box.clickedButton()
-            if clicked_button == cancel_button:
+            if clicked_button == cancel_button: 
                 return
-            elif clicked_button == rename_button:
+            elif clicked_button == rename_button: 
                 rename_files = True
-            elif clicked_button == overwrite_button:
+            elif clicked_button == overwrite_button: 
                 rename_files = False
-            else:
+            else: 
                 return
 
         excluded_classes = set()
         if self.advanced_options_toggle.isEnabled():
-            for checkbox in self.class_checkboxes:
-                if not checkbox.isChecked():
-                    excluded_classes.add(checkbox.text())
+            for cb in self.class_checkboxes:
+                if not cb.isChecked():
+                    excluded_classes.add(cb.text())
+                
         image_import_policy = 'all' if self.import_all_images_radio.isChecked() else 'annotated_only'
+        import_as = 'polygon' if 'Polygon' in self.import_as_combo.currentText() else 'rectangle'
 
         self.button_box.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self.progress_bar = ProgressBar(self, title="Preparing to Import...")
         self.progress_bar.show()
-
-        import_as = 'polygon' if 'Polygon' in self.import_as_combo.currentText() else 'rectangle'
 
         self.thread = QThread()
         self.worker = DatasetProcessor(
@@ -526,17 +511,18 @@ class Base(QDialog):
         progress_bar.start_progress(len(image_paths))
         
         for path in image_paths:
-            # Call the manager directly to add the raster silently,
-            # bypassing ImageWindow.add_image and its signal handlers.
             if self.image_window.raster_manager.add_raster(path, emit_signal=False):
                 added_paths.append(path)
             progress_bar.update_progress()
 
         newly_created_annotations = []
-        progress_bar.set_title(f"Adding {len(raw_annotations)} annotations...")
+        progress_bar.set_title(f"Creating {len(raw_annotations)} annotation objects...")
         progress_bar.start_progress(len(raw_annotations))
+
+        # 1. Create all annotation objects in memory first
         for raw_ann in raw_annotations:
             label = self.main_window.label_window.add_label_if_not_exists(raw_ann["class_name"])
+            annotation = None
             if raw_ann["type"] == "RectangleAnnotation":
                 tl, br = raw_ann["top_left"], raw_ann["bottom_right"]
                 annotation = RectangleAnnotation(QPointF(tl[0], tl[1]), 
@@ -547,7 +533,7 @@ class Base(QDialog):
                                                  raw_ann["image_path"], 
                                                  label.id, 
                                                  self.main_window.get_transparency_value())
-            else:
+            else: # PolygonAnnotation
                 points = [QPointF(p[0], p[1]) for p in raw_ann["points"]]
                 annotation = PolygonAnnotation(points, 
                                                label.short_label_code, 
@@ -556,11 +542,16 @@ class Base(QDialog):
                                                raw_ann["image_path"], 
                                                label.id, 
                                                self.main_window.get_transparency_value())
-
-            self.annotation_window.add_annotation_to_dict(annotation)
-            newly_created_annotations.append(annotation)
+            
+            if annotation:
+                newly_created_annotations.append(annotation)
             
             progress_bar.update_progress()
+
+        # 2. Add all created annotations to the project in a single batch operation
+        if newly_created_annotations:
+            progress_bar.set_title("Adding annotations to project...")
+            self.annotation_window.add_annotations(newly_created_annotations)
 
         progress_bar.set_title("Exporting annotations.json...")
         self._export_annotations_to_json(newly_created_annotations, self.output_folder)
@@ -574,8 +565,10 @@ class Base(QDialog):
         self.image_window.filter_images()
 
         if added_paths:
-            self.image_window.load_image_by_path(added_paths[-1])
-            self.image_window.update_image_annotations(added_paths[-1])
+            last_image_path = added_paths[-1]
+            self.image_window.load_image_by_path(last_image_path)
+            for path in added_paths:
+                self.image_window.update_image_annotations(path)
             self.annotation_window.load_annotations()
 
         summary_message = "Dataset has been successfully imported."
@@ -592,52 +585,38 @@ class Base(QDialog):
         """
         Merges the list of annotation objects into an existing annotations.json file,
         or creates a new one if it doesn't exist.
-        The output is a dictionary mapping image paths to lists of annotation dicts.
         """
         export_dict = {}
         json_path = os.path.join(output_dir, "annotations.json")
 
-        # Step 1: Check for the existing file and load it if present.
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r') as file:
                     export_dict = json.load(file)
-                # Ensure the loaded data is a dictionary
                 if not isinstance(export_dict, dict):
                     raise TypeError("annotations.json is not in the expected format (dict).")
             except (json.JSONDecodeError, TypeError, IOError) as e:
-                # If file is corrupt, unreadable, or has wrong format, warn the user and start fresh.
                 QMessageBox.warning(self, 
                                     "Read Error",
                                     f"Could not read or parse existing annotations.json:\n{e}\n\n"
                                     "A new file will be created, overwriting the old one.")
-                export_dict = {}  # Reset to be safe
+                export_dict = {}
 
-        # Step 2: Iterate through new annotations and merge them into the dictionary.
         for annotation in annotations_list:
             image_path = annotation.image_path
-            
-            # Use setdefault to initialize a list for a new image path or get the existing one.
             export_dict.setdefault(image_path, [])
             
-            # Create the dictionary for the annotation using its own method
+            annotation_dict = annotation.to_dict()
             if isinstance(annotation, RectangleAnnotation):
-                annotation_dict = {
-                    'type': 'RectangleAnnotation',
-                    **annotation.to_dict()
-                }
+                annotation_dict['type'] = 'RectangleAnnotation'
             elif isinstance(annotation, PolygonAnnotation):
-                annotation_dict = {
-                    'type': 'PolygonAnnotation',
-                    **annotation.to_dict()
-                }
+                annotation_dict['type'] = 'PolygonAnnotation'
             else:
                 warnings.warn(f"Unknown annotation type skipped during export: {type(annotation)}")
                 continue
 
             export_dict[image_path].append(annotation_dict)
 
-        # Step 3: Write the final, merged dictionary back to the JSON file.
         try:
             with open(json_path, 'w') as file:
                 json.dump(export_dict, file, indent=4)

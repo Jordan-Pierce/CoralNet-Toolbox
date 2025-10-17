@@ -231,7 +231,7 @@ class PolygonAnnotation(Annotation):
         """Get the bottom-right corner of the annotation's bounding box."""
         return QPointF(self.cropped_bbox[2], self.cropped_bbox[3])
 
-    def get_cropped_image_graphic(self):
+    def _create_cropped_image_graphic(self):
         """
         Get the cropped image with the polygon and its holes correctly masked.
         """
@@ -300,6 +300,9 @@ class PolygonAnnotation(Annotation):
 
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the rasterio source based on the polygon points."""
+        # Clear cached graphic when creating new cropped image
+        self._cached_cropped_image_graphic = None
+        
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation

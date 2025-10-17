@@ -141,119 +141,97 @@ class ImportTagLabAnnotations:
         progress_bar.start_progress(total_annotations)
 
         try:
-            # Import the annotations
+            # OPTIMIZATION: Create lists to hold objects for batch processing
+            all_polygon_annotations = []
+            all_patch_annotations = []
+            images_to_update = set()
+            
+            # 1. Create all annotation objects in memory first
             for image_data in merged_data['images']:
-                # Get the basename from the TagLab project file (not path)
                 image_basename = os.path.basename(image_data['channels'][0]['filename'])
-                # Check to see if there is a matching image (using basename) in the current project
                 if image_basename not in image_path_map:
-                    continue  # Skip this image
+                    progress_bar.update_progress(len(image_data['annotations']['regions']) + 
+                                                 len(image_data['annotations']['points']))
+                    continue
 
-                # Get the full path to the image
                 image_full_path = image_path_map[image_basename]
+                images_to_update.add(image_full_path)
 
-                # Loop through all the polygon annotations for this image
-                for annotation in list(image_data['annotations']['regions']):
+                # Process Polygon annotations (regions)
+                for annotation in image_data['annotations']['regions']:
                     try:
-                        # Get the information for the label for this annotation
                         label_id = annotation['class name']
                         label_info = merged_data['labels'][label_id]
                         short_label_code = label_info['name'].strip()
-                        long_label_code = label_info['name'].strip()
                         color = QColor(*label_info['fill'])
-                       
-                        # Pack all other data into a dict
-                        imported_data = {
-                            'bbox': annotation.get('bbox'),
-                            'centroid': annotation.get('centroid'),
-                            'area': annotation.get('area'),
-                            'perimeter': annotation.get('perimeter'),
-                            'class_name': annotation.get('class name'),
-                            'instance_name': annotation.get('instance name'),
-                            'blob_name': annotation.get('blob name'),
-                            'id': annotation.get('id'),
-                            'note': annotation.get('note'),
-                            'data': annotation.get('data'),
-                        }
-
-                        # Convert contour string to points
+                        
+                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id)
+                        
                         points = self.parse_contour(annotation['contour'])
-                        # Convert inner contours to a list of lists of points (holes)
                         holes = [self.parse_contour(inner) for inner in annotation.get('inner contours', [])]
 
-                        # Create the label if it doesn't exist
-                        label = self.label_window.add_label_if_not_exists(short_label_code,
-                                                                          long_label_code,
-                                                                          color,
-                                                                          label_id)
-                        # Create the polygon annotation
                         polygon_annotation = PolygonAnnotation(
                             points=points,
                             short_label_code=short_label_code,
-                            long_label_code=long_label_code,
+                            long_label_code=short_label_code,
                             color=color,
                             image_path=image_full_path,
                             label_id=label_id,
                             holes=holes,
                         )
-                        # Add additional data to the annotation
-                        polygon_annotation.data = imported_data
-                        
-                        # Add annotation to the dict
-                        self.annotation_window.add_annotation_to_dict(polygon_annotation)
+                        polygon_annotation.data = {k: annotation.get(k) for k in ['bbox', 
+                                                                                  'centroid', 
+                                                                                  'area', 
+                                                                                  'perimeter', 
+                                                                                  'class name', 
+                                                                                  'instance_name', 
+                                                                                  'blob_name', 
+                                                                                  'id', 
+                                                                                  'note', 
+                                                                                  'data']}
+                        all_polygon_annotations.append(polygon_annotation)
 
                     except Exception as e:
-                        print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
+                        print(f"Error importing region annotation: {str(e)}\n{traceback.print_exc()}")
                     finally:
-                        # Update the progress bar
                         progress_bar.update_progress()
 
-                # Loop through all the point annotations for this image
-                for annotation in list(image_data['annotations']['points']):
+                # Process Patch annotations (points)
+                for annotation in image_data['annotations']['points']:
                     try:
-                        # Get the information for the label for this annotation
-                        label_id = annotation['Class']  # Inconsistent
+                        label_id = annotation['Class']
                         label_info = merged_data['labels'][label_id]
                         short_label_code = label_info['name'].strip()
-                        long_label_code = label_info['name'].strip()
                         color = QColor(*label_info['fill'])
 
-                        # Unpack the annotation data
-                        class_name = annotation['Class']
-                        x = annotation['X']
-                        y = annotation['Y']
-                        idx = annotation['Id']
-                        note = annotation['Note']
-                        data = annotation['Data']
-
-                        # Create the label if it doesn't exist
-                        label = self.label_window.add_label_if_not_exists(short_label_code,
-                                                                          long_label_code,
-                                                                          color,
-                                                                          label_id)
-                        # Create the patch annotation
+                        self.label_window.add_label_if_not_exists(short_label_code, short_label_code, color, label_id)
+                        
                         patch_annotation = PatchAnnotation(
-                            center_xy=QPointF(x, y),
+                            center_xy=QPointF(annotation['X'], annotation['Y']),
                             annotation_size=annotation_size,
                             short_label_code=short_label_code,
-                            long_label_code=long_label_code,
+                            long_label_code=short_label_code,
                             color=color,
                             image_path=image_full_path,
                             label_id=label_id
                         )
-                        # Add annotation to the dict
-                        self.annotation_window.add_annotation_to_dict(patch_annotation)
-
+                        all_patch_annotations.append(patch_annotation)
                     except Exception as e:
-                        print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
+                        print(f"Error importing point annotation: {str(e)}\n{traceback.print_exc()}")
                     finally:
-                        # Update the progress bar
                         progress_bar.update_progress()
 
-                # Update the image window's image dict
-                self.image_window.update_image_annotations(image_full_path)
-
-            # Load the annotations for current image
+            # 2. Add all created annotations in efficient batch operations
+            if all_polygon_annotations:
+                self.annotation_window.add_annotations(all_polygon_annotations)
+            if all_patch_annotations:
+                self.annotation_window.add_annotations(all_patch_annotations)
+                
+            # 3. Update UI counts for each affected image only ONCE
+            for path in images_to_update:
+                self.image_window.update_image_annotations(path)
+                
+            # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
             QMessageBox.information(self.annotation_window,
@@ -261,15 +239,12 @@ class ImportTagLabAnnotations:
                                     "Annotations have been successfully imported.")
 
         except Exception as e:
-            print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
-
+            print(f"Error importing annotations: {str(e)}\n{traceback.print_exc()}")
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
-                                f"An error occurred while importing annotations:\n\n{str(e)}\
-                                    \n\nPlease check the console for more details.")
-
+                                f"An error occurred while importing annotations:\n\n{str(e)}\n\n"
+                                "Please check the console for more details.")
         finally:
-            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
             QApplication.restoreOverrideCursor()

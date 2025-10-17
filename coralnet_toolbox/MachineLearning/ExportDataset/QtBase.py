@@ -97,10 +97,6 @@ class Base(QDialog):
         group_box = QGroupBox("Output Parameters")
         layout = QFormLayout()
 
-        # Dataset Name
-        self.dataset_name_edit = QLineEdit()
-        layout.addRow("Dataset Name:", self.dataset_name_edit)
-
         # Output Directory with Browse button on same line
         output_layout = QHBoxLayout()
         self.output_dir_edit = QLineEdit()
@@ -108,8 +104,11 @@ class Base(QDialog):
         self.output_dir_button.clicked.connect(self.browse_output_dir)
         output_layout.addWidget(self.output_dir_edit)
         output_layout.addWidget(self.output_dir_button)
-
         layout.addRow("Output Directory:", output_layout)
+        
+        # Dataset Name
+        self.dataset_name_edit = QLineEdit()
+        layout.addRow("Dataset Name:", self.dataset_name_edit)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -582,9 +581,6 @@ class Base(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, "Updating Summary Statistics")
-        progress_bar.show()
-        progress_bar.start_progress(100)
 
         self.updating_summary_statistics = True
 
@@ -645,9 +641,6 @@ class Base(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.close()
-        progress_bar = None
 
     def is_ready(self):
         """Check if the dataset is ready to be created."""
