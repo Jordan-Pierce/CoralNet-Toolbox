@@ -408,7 +408,8 @@ class ResultsProcessor:
         # If the confidence is below the threshold, set the label to review
         if conf < self.uncertainty_thresh:
             review_label = self.label_window.get_label_by_id('-1')
-            annotation.update_label(review_label, set_review=True)
+            annotation.update_label(review_label)
+            annotation.set_verified(False)  # Mark as unverified since it needs review
 
         # If the image is currently displayed in the annotation window, update the graphics item
         if image_path == self.annotation_window.current_image_path:
