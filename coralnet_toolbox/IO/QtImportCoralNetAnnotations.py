@@ -29,6 +29,7 @@ class ImportCoralNetAnnotations:
         self.annotation_window = main_window.annotation_window
 
     def import_annotations(self):
+        """Import annotations from CoralNet CSV export files into the current project."""
         self.main_window.untoggle_all_tools()
 
         if not self.annotation_window.active_image:
@@ -65,11 +66,8 @@ class ImportCoralNetAnnotations:
                 df = pd.read_csv(file_path)
                 all_data.append(df)
 
-            # Concatenate all the data
             df = pd.concat(all_data, ignore_index=True)
             
-            # Check if Label Code is present instead of Label; 
-            # in the CoralNet Annotation file, 'Label code' refers 'Shot Code' in Labelset file.
             if 'Label code' in df.columns and 'Label' not in df.columns:
                 df = df.rename(columns={'Label code': 'Label'})
 
@@ -79,7 +77,6 @@ class ImportCoralNetAnnotations:
             if missing_columns:
                 raise Exception(f"The selected CSV file(s) are missing necessary columns: {missing_columns}")
 
-            # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
             df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
@@ -101,59 +98,65 @@ class ImportCoralNetAnnotations:
             progress_bar.stop_progress()
             progress_bar.close()
             
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
-        progress_bar.start_progress(len(df['Name'].unique()))
+        progress_bar.start_progress(len(df)) # Progress per annotation row
         progress_bar.show()
         
-        # Import the annotations
         try:
             # Pre-process labels to avoid repeated lookups
             unique_labels = set(df['Label'].unique())
             if 'Machine suggestion' in df.columns:
                 unique_labels.update(df['Machine suggestion'].dropna().unique())
             
-            # Create all labels upfront
             label_cache = {}
             for label_code in unique_labels:
                 label = self.label_window.add_label_if_not_exists(label_code, label_code)
                 label_cache[label_code] = label
             
-            # Batch process annotations by image
             annotations_to_add = []
+            images_to_update = set()
             
-            for image_name, group in df.groupby('Name'):
+            # 1. Create all annotation objects in memory first
+            for _, row in df.iterrows():
+                image_name = row['Name']
                 image_path = image_path_map.get(image_name)
                 if not image_path:
                     continue
+
+                label = label_cache[row['Label']]
                 
-                # Process all annotations for this image at once
-                image_annotations = self._process_image_annotations(
-                    group, image_path, label_cache, annotation_size
+                annotation = PatchAnnotation(
+                    QPointF(row['Column'], row['Row']),
+                    row.get('Patch Size', annotation_size),
+                    label.short_label_code,
+                    label.long_label_code,
+                    label.color,
+                    image_path,
+                    label.id
                 )
-                annotations_to_add.extend(image_annotations)
                 
+                machine_confidence = self._extract_machine_confidence(row, label_cache)
+                if machine_confidence:
+                    annotation.update_machine_confidence(machine_confidence, from_import=True)
+                
+                if 'Verified' in row:
+                    verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1
+                    annotation.set_verified(verified)
+                
+                annotations_to_add.append(annotation)
+                images_to_update.add(image_path)
                 progress_bar.update_progress()
             
-            # Batch add all annotations
-            progress_bar.set_title("Adding Annotations to Images")
-            progress_bar.start_progress(len(annotations_to_add))
+            # 2. Add all created annotations in a single, efficient batch operation
+            if annotations_to_add:
+                self.annotation_window.add_annotations_batch(annotations_to_add)
             
-            for i, annotation in enumerate(annotations_to_add):
-                self.annotation_window.add_annotation(annotation)
-                progress_bar.update_progress()
-            
-            # Batch update image annotations
-            unique_image_paths = set(image_path_map.values())
-            progress_bar.set_title("Updating Image Annotations")
-            progress_bar.start_progress(len(unique_image_paths))
-            
-            for image_path in unique_image_paths:
+            # 3. Update UI counts for each affected image only ONCE
+            for image_path in images_to_update:
                 self.image_window.update_image_annotations(image_path)
-                progress_bar.update_progress()
-            
-            # Load the annotations for current image
+                        
+            # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
             QMessageBox.information(self.annotation_window,
@@ -166,7 +169,6 @@ class ImportCoralNetAnnotations:
                                 f"An error occurred while importing annotations: {str(e)}")
 
         finally:
-            # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()

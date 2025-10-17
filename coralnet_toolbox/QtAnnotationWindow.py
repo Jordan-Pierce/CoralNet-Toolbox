@@ -1126,53 +1126,6 @@ class AnnotationWindow(QGraphicsView):
 
         if return_annotations:
             return annotations
-
-    # def add_annotation_from_tool(self, annotation, record_action=True):
-    #     """Add a new annotation for the current image using the current tool."""
-
-    #     if annotation is None:
-    #         self.toggle_cursor_annotation()
-    #         return
-
-    #     # Connect update signals
-    #     annotation.selected.connect(self.select_annotation)
-    #     annotation.annotationDeleted.connect(self.delete_annotation)
-    #     annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-    #     # Create the graphics item and cropped image
-    #     if not annotation.graphics_item:
-    #         annotation.create_graphics_item(self.scene)
-    #     if not annotation.cropped_image:
-    #         annotation.create_cropped_image(self.rasterio_image)
-
-    #     # Display the cropped image in the confidence window
-    #     self.main_window.confidence_window.display_cropped_image(annotation)
-
-    #     # Add to annotation dict
-    #     self.add_annotation(annotation, record_action=record_action)
-
-    #     # Update the table in ImageWindow
-    #     self.annotationCreated.emit(annotation.id)
-
-    # def add_annotation(self, annotation, record_action=True):
-    #     """Add an annotation to the internal dictionaries."""
-    #     # Add to annotation dict
-    #     self.annotations_dict[annotation.id] = annotation
-    #     # Add to image annotations dict (if not already present)
-    #     if annotation.image_path not in self.image_annotations_dict:
-    #         self.image_annotations_dict[annotation.image_path] = []
-    #     if annotation not in self.image_annotations_dict[annotation.image_path]:
-    #         self.image_annotations_dict[annotation.image_path].append(annotation)
-
-    #     # Set the visibility based on the hide button state
-    #     self.set_annotation_visibility(annotation)
-
-    #     # Update the ImageWindow Table
-    #     self.main_window.image_window.update_annotation_count(annotation.id)
-
-    #     # Record action for undo/redo if requested
-    #     if record_action:
-    #         self.action_stack.push(AddAnnotationAction(self, annotation))
     
     def add_annotation_from_tool(self, annotation, record_action=True):
         """Adds a new annotation created by a user tool."""
@@ -1229,6 +1182,26 @@ class AnnotationWindow(QGraphicsView):
         
         # Emit the signal that an annotation was created
         self.annotationCreated.emit(annotation.id)
+        
+    def add_annotations(self, annotations_list: list):
+        """
+        Efficiently adds a list of annotations to the data models without
+        triggering individual UI updates or recording undo actions.
+        """
+        for annotation in annotations_list:
+            if annotation is None or annotation.id in self.annotations_dict:
+                continue
+
+            # --- Core Logic: Only update data dictionaries ---
+            self.annotations_dict[annotation.id] = annotation
+            if annotation.image_path not in self.image_annotations_dict:
+                self.image_annotations_dict[annotation.image_path] = []
+            self.image_annotations_dict[annotation.image_path].append(annotation)
+
+            # --- Connect signals for future interaction ---
+            annotation.selected.connect(self.select_annotation)
+            annotation.annotationDeleted.connect(self.delete_annotation)
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
     def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""

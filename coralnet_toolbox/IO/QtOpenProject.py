@@ -286,8 +286,13 @@ class OpenProject(QDialog):
 
         skipped_count = 0
         duplicate_count = 0
+        
+        # OPTIMIZATION: Create lists to hold objects for batch processing
+        all_new_annotations = []
+        images_to_update = set()
+
         try:
-            # Loop through the annotations
+            # Loop through the annotations to create objects
             for image_path, image_annotations in annotations.items():
                 
                 # Checking if the image path is updated (moved)
@@ -300,6 +305,7 @@ class OpenProject(QDialog):
                         updated_path = True
                     else:
                         print(f"Warning: Image not found: {image_path}")
+                        skipped_count += total_annotations - len(all_new_annotations) # Approximate skipped
                         continue
                 
                 for annotation_dict in image_annotations:
@@ -319,38 +325,42 @@ class OpenProject(QDialog):
                         annotation_dict['image_path'] = image_path
 
                     annotation_type = annotation_dict.get('type')
-                    
+                    annotation = None
+
+                    # Create annotation objects without adding to the window yet
                     if annotation_type == 'MaskAnnotation':
-                        # Deserialize the mask and assign it to the correct raster
                         annotation = MaskAnnotation.from_dict(annotation_dict, self.label_window)
                         raster = self.image_window.raster_manager.get_raster(image_path)
                         if raster:
                             raster.mask_annotation = annotation
-                    elif annotation_type in ['PatchAnnotation', 
-                                             'PolygonAnnotation', 
-                                             'RectangleAnnotation', 
-                                             'MultiPolygonAnnotation']:
-                        # Handle vector annotations as before
-                        if annotation_type == 'PatchAnnotation':
-                            annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'PolygonAnnotation':
-                            annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'RectangleAnnotation':
-                            annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
-                        elif annotation_type == 'MultiPolygonAnnotation':
-                            annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                        
-                        # Add vector annotation to the main dictionary
-                        self.annotation_window.add_annotation(annotation)
+                    elif annotation_type == 'PatchAnnotation':
+                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'PolygonAnnotation':
+                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'RectangleAnnotation':
+                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
+                    elif annotation_type == 'MultiPolygonAnnotation':
+                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
                     else:
-                        raise ValueError(f"Unknown annotation type: {annotation_type}")
+                        print(f"Warning: Unknown annotation type: {annotation_type}")
+                        skipped_count += 1
+                        continue
                     
+                    if annotation and not isinstance(annotation, MaskAnnotation):
+                        all_new_annotations.append(annotation)
+                        images_to_update.add(image_path) # Track which images need UI updates
+
                     # Update the progress bar
                     progress_bar.update_progress()
-                    
-                # Update the image window's image annotations
-                self.image_window.update_image_annotations(image_path)
 
+            # Add all vector annotations in a single batch operation
+            if all_new_annotations:
+                self.annotation_window.add_annotations(all_new_annotations)
+
+            # Update UI and counts only ONCE after the batch is added
+            for path in images_to_update:
+                self.image_window.update_image_annotations(path)
+            
             # Load the annotations for current image and update counts
             self.annotation_window.load_annotations()
             self.label_window.update_annotation_count()
@@ -362,7 +372,7 @@ class OpenProject(QDialog):
 
         finally:
             if skipped_count > 0:
-                print(f"Warning: Skipped {skipped_count} annotations due to missing keys.")
+                print(f"Warning: Skipped {skipped_count} annotations due to missing keys or other issues.")
             if duplicate_count > 0:
                 print(f"Warning: Skipped {duplicate_count} duplicate annotations based on ID.")
             
