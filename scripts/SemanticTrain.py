@@ -133,9 +133,9 @@ def format_logs_pretty(logs, title="Results"):
     
     for k, v in logs.items():
         if 'loss' in k.lower():
-            loss_items.append(f"{k}: {v:.4f}")
+            loss_items.append(f"{k:}: {v:.4f}")
         else:
-            metric_items.append(f"{k}: {v:.4f}")
+            metric_items.append(f"{k:}: {v:.4f}")
     
     # Combine all items
     all_items = loss_items + metric_items
@@ -782,7 +782,7 @@ class ExperimentManager:
     def _setup_directories(self):
         """Create experiment directories."""
         # Run Name
-        self.run = f"{self.encoder_name}_{self.decoder_name}_{get_now()}"
+        self.run = f"{get_now()}_{self.encoder_name}_{self.decoder_name}"
 
         # Set run directory directly under output_dir
         self.run_dir = os.path.join(self.output_dir, self.run)
@@ -907,9 +907,24 @@ class DatasetManager:
 
     def _create_dataloaders(self):
         """Create data loaders for training and validation."""
-        self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0)
-        self.valid_loader = DataLoader(self.valid_dataset, batch_size=1, shuffle=False, num_workers=0)
-        self.test_loader = DataLoader(self.test_dataset, batch_size=1, shuffle=False, num_workers=0)
+        self.train_loader = DataLoader(
+            self.train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True, 
+            pin_memory=torch.cuda.is_available()
+        )
+        self.valid_loader = DataLoader(
+            self.valid_dataset, 
+            batch_size=1, 
+            shuffle=False, 
+            pin_memory=torch.cuda.is_available()
+        )
+        self.test_loader = DataLoader(
+            self.test_dataset, 
+            batch_size=1, 
+            shuffle=False, 
+            pin_memory=torch.cuda.is_available()
+        )
 
     def visualize_training_samples(self, logs_dir, class_colors):
         """Visualize training samples and save to logs directory."""
@@ -994,7 +1009,7 @@ class Trainer:
         try:
             # Training loop
             for e_idx in range(1, self.num_epochs + 1):
-                print(f"\n📊 Epoch {e_idx}/{self.num_epochs}")
+                print(f"\n🦖 Epoch {e_idx}/{self.num_epochs}")
                 print("-" * 40)
 
                 # Go through an epoch for train, valid
@@ -1130,7 +1145,12 @@ class Evaluator:
         print("=" * 60)
 
         # Create test dataloader
-        test_loader = DataLoader(self.test_dataset, batch_size=1, shuffle=False, num_workers=0)
+        test_loader = DataLoader(
+            self.test_dataset, 
+            batch_size=1, 
+            shuffle=False, 
+            pin_memory=torch.cuda.is_available()
+        )
 
         # Evaluate on the test set
         test_epoch = ValidEpoch(
@@ -1229,7 +1249,41 @@ class Evaluator:
 
 def main():
     """Parse command line arguments and run semantic segmentation training."""
-    parser = argparse.ArgumentParser(description='Semantic Segmentation')
+    # Get available options for help text
+    available_encoders = get_segmentation_encoders()
+    available_decoders = get_segmentation_decoders()
+    available_losses = get_segmentation_losses()
+    available_metrics = get_segmentation_metrics()
+    available_optimizers = get_segmentation_optimizers()
+    
+    # Build help strings safely
+    encoder_list = ', '.join(available_encoders)
+    decoder_list = ', '.join(available_decoders)
+    loss_list = ', '.join(available_losses)
+    metrics_list = ', '.join(available_metrics)
+    optimizer_list = ', '.join(available_optimizers)
+    
+    encoder_help = f"Name of the encoder backbone to use ({encoder_list})"
+    decoder_help = f"Name of the decoder architecture to use ({decoder_list})"
+    loss_help = f"Loss function to use during training ({loss_list})"
+    metrics_help = f"List of metrics to use during training ({metrics_list})"
+    optimizer_help = f"Optimizer to use during training ({optimizer_list})"
+    
+    # Build epilog text
+    epilog_text = """
+    Available Options:
+    Encoders: """ + encoder_list + """
+    Decoders: """ + decoder_list + """
+    Loss Functions: """ + loss_list + """
+    Metrics: """ + metrics_list + """
+    Optimizers: """ + optimizer_list + """
+    """
+    
+    parser = argparse.ArgumentParser(
+        description='Semantic Segmentation Training',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog_text
+    )
 
     parser.add_argument('--data_yaml', type=str, required=True,
                         help='Path to YOLO data.yaml file')
@@ -1238,22 +1292,22 @@ def main():
                         help='Path to pre-trained model of the same architecture')
 
     parser.add_argument('--encoder_name', type=str, default='resnet34',
-                        help='The convolutional encoder to fine-tune; pretrained on Imagenet')
+                        help=encoder_help)
 
     parser.add_argument('--decoder_name', type=str, default='Unet',
-                        help='The convolutional decoder')
+                        help=decoder_help)
 
     parser.add_argument('--metrics', type=str, nargs='+', default=get_segmentation_metrics(),
-                        help='The metrics to evaluate the model')
+                        help=metrics_help)
 
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
-                        help='The loss function to use to train the model')
+                        help=loss_help)
 
-    parser.add_argument('--freeze_encoder', type=float, default=0.0,
-                        help='Freeze N% of the encoder [0 - 1]')
+    parser.add_argument('--freeze_encoder', type=float, default=0.80,
+                        help='Freeze N percent of the encoder [0 - 1]')
 
     parser.add_argument('--optimizer', type=str, default='Adam',
-                        help='The optimizer to use to train the model')
+                        help=optimizer_help)
 
     parser.add_argument('--learning_rate', type=float, default=0.0001,
                         help='Starting learning rate')
@@ -1279,6 +1333,8 @@ def main():
     parser.add_argument('--num_vis_samples', type=int, default=10,
                         help='Number of test samples to visualize during evaluation')
 
+    parser.add_argument('--num_workers', type=int, default=0,
+                        help='Number of worker processes for data loading')
     args = parser.parse_args()
     
     # Check imgsz is divisible by 32
