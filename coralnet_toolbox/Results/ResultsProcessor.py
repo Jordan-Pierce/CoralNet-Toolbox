@@ -442,9 +442,8 @@ class ResultsProcessor:
                 progress_bar.update_progress()
         
         # Add surviving annotations
-        for annotation in annotations_to_add:
-            self.annotation_window.add_annotation(annotation)
-            
+        if annotations_to_add:
+            self.annotation_window.add_annotations(annotations_to_add)
         # After adding new annotations, check if any added belong to current image; refresh view
         affected_paths = {ann.image_path for ann in annotations_to_add}
         if self.annotation_window.current_image_path in affected_paths:
