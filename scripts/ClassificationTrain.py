@@ -27,8 +27,6 @@ from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
 
-from coralnet_toolshed.Common import console_user
-
 torch.cuda.empty_cache()
 
 warnings.filterwarnings('ignore')
@@ -405,7 +403,7 @@ def build_dataframe_from_yolo_classification(data_dir):
     
     splits = ['train', 'val', 'test']
     
-    for split in splits:
+    for split in tqdm(splits, desc="Processing splits", file=sys.stdout):
         split_dir = os.path.join(data_dir, split)
         if not os.path.exists(split_dir):
             print(f"⚠️ {split} directory not found, skipping")
@@ -414,7 +412,7 @@ def build_dataframe_from_yolo_classification(data_dir):
         # Get all class subfolders
         class_folders = [f for f in os.listdir(split_dir) if os.path.isdir(os.path.join(split_dir, f))]
         
-        for class_name in class_folders:
+        for class_name in tqdm(class_folders, desc=f"Processing classes in {split}", file=sys.stdout, leave=False):
             class_dir = os.path.join(split_dir, class_name)
             image_files = []
             image_files.extend(glob.glob(os.path.join(class_dir, '*.jpg')))
@@ -423,9 +421,10 @@ def build_dataframe_from_yolo_classification(data_dir):
             image_files.extend(glob.glob(os.path.join(class_dir, '*.JPG')))
             image_files.extend(glob.glob(os.path.join(class_dir, '*.PNG')))
             
-            for img_path in image_files:
+            for img_path in tqdm(image_files, desc=f"Processing images in {class_name}", file=sys.stdout, leave=False):
                 data_rows.append({
-                    'Image Path': img_path,
+                    'Name': os.path.basename(img_path),
+                    'Path': img_path,
                     'Label': class_name,
                     'Split': split
                 })
@@ -843,7 +842,7 @@ class DataConfig:
         class_names = sorted(self.patches_df['Label'].unique())
         self.num_classes = len(class_names)
         self.class_map = {class_names[_]: _ for _ in range(self.num_classes)}
-        print(f"🏷️ Classes Found: {self.num_classes} ({class_names})")
+        print(f"🏷️ Classes Found: {self.num_classes}")
 
     def get_dataframes(self):
         """Return the loaded dataframe and class map."""
@@ -1055,7 +1054,7 @@ class Trainer:
     """Handles the training loop with early stopping and learning rate scheduling."""
 
     def __init__(self, model, loss_function, metrics, optimizer, train_loader, valid_loader, 
-                 num_epochs, logs_dir, experiment_manager):
+                 num_epochs, logs_dir, experiment_manager, loss_function_name):
         self.model = model
         self.loss_function = loss_function
         self.metrics = metrics
@@ -1065,6 +1064,7 @@ class Trainer:
         self.num_epochs = num_epochs
         self.logs_dir = logs_dir
         self.experiment_manager = experiment_manager
+        self.loss_function_name = loss_function_name
 
         self.train_epoch = TrainEpoch(self.model, self.loss_function, self.metrics, self.optimizer, self.logs_dir)
         self.valid_epoch = ValidEpoch(self.model, self.loss_function, self.metrics, self.logs_dir)
@@ -1084,7 +1084,7 @@ class Trainer:
         print("📋 Training Configuration:")
         print(f"   • Epochs: {self.num_epochs}")
         print(f"   • Model: {type(self.model).__name__}")
-        print(f"   • Loss: {self.loss_function.__name__}")
+        print(f"   • Loss: {self.loss_function_name}")
         print(f"   • Metrics: {[m.__name__ for m in self.metrics]}")
         print()
 
@@ -1095,8 +1095,8 @@ class Trainer:
                 print("-" * 40)
 
                 # Go through an epoch for train, valid
-                train_logs = self.train_epoch.run(self.train_loader)
-                valid_logs = self.valid_epoch.run(self.valid_loader)
+                train_logs = self.train_epoch.run(self.train_loader, e_idx)
+                valid_logs = self.valid_epoch.run(self.valid_loader, e_idx)
 
                 # Print training metrics
                 print(f"  📈 Train: {format_logs_pretty(train_logs)}")
@@ -1274,6 +1274,7 @@ def main():
         print()
 
         # Load data
+        print("=" * 60)
         print("📂 Loading dataset configuration...")
         data_config = DataConfig(args.data_dir)
         patches_df, class_map = data_config.get_dataframes()
@@ -1286,6 +1287,7 @@ def main():
         print()
 
         # Build model
+        print("=" * 60)
         print("🤖 Model Summary:")
         model_builder = ModelBuilder(
             encoder_name=args.encoder_name,
@@ -1298,11 +1300,13 @@ def main():
         preprocessing_fn = model_builder.preprocessing_fn
 
         # Setup experiment
+        print("=" * 60)
         print("📁 Experiment Setup:")
         print(f"   • Output Directory: {args.output_dir}")
         experiment_manager = ExperimentManager(args.output_dir, args.encoder_name, class_map)
 
         # Setup datasets
+        print("=" * 60)
         print("📦 Dataset Configuration:")
         print(f"   • Augmentation: {'Enabled' if args.augment_data else 'Disabled'}")
         print(f"   • Batch Size: {args.batch_size}")
@@ -1340,7 +1344,8 @@ def main():
             valid_loader=dataset_manager.valid_loader,
             num_epochs=args.num_epochs,
             logs_dir=experiment_manager.logs_dir,
-            experiment_manager=experiment_manager
+            experiment_manager=experiment_manager,
+            loss_function_name=args.loss_function
         )
 
         best_epoch = trainer.train()
