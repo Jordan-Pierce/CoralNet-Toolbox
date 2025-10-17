@@ -279,7 +279,7 @@ def plot_confusion_matrix(matrix, writer, epoch, class_names, mode='Train', save
 
 
 def plot_matrix(ax, matrix, class_names, title):
-    """Plot confusion matrix on axis."""
+    """Plot confusion matrix on axis with normalized values."""
     im = ax.imshow(matrix, cmap='Blues')
     ax.set_xticks(np.arange(len(class_names)))
     ax.set_yticks(np.arange(len(class_names)))
@@ -290,6 +290,14 @@ def plot_matrix(ax, matrix, class_names, title):
     ax.set_title(title)
     ax.figure.colorbar(im, ax=ax)
     plt.subplots_adjust(bottom=0.2)
+
+    # Show normalized values in each cell
+    num_rows, num_cols = matrix.shape
+    for i in range(num_rows):
+        for j in range(num_cols):
+            value = matrix[i, j]
+            ax.text(j, i, f"{value:.2f}", ha="center", va="center",
+                    color="white" if value > matrix.max() * 0.5 else "black", fontsize=8)
 
 
 def plot_gridded_predictions(model, data_loader, num_rows=5):
