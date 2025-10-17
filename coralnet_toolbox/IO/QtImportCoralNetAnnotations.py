@@ -199,6 +199,6 @@ class ImportCoralNetAnnotations:
         
         # Build confidence dict using cached labels
         return {
-            label_cache.get(str(suggestion), label_cache[str(suggestion)]): confidence
+            label_cache[str(suggestion)]: confidence
             for suggestion, confidence in zip(suggestions, confidences)
         }
