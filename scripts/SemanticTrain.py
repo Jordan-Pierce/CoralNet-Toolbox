@@ -3,14 +3,12 @@ import sys
 import json
 import yaml
 import glob
-import shutil
 import inspect
 import warnings
 import argparse
 import traceback
 from tqdm import tqdm
 from datetime import datetime
-
 
 import cv2
 import numpy as np
@@ -19,7 +17,6 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 import torch
-import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as BaseDataset
 import torch.amp
@@ -30,8 +27,13 @@ from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
 
-torch.cuda.empty_cache()
+try:
+    from ultralytics.engine.results import Results, Boxes, Masks
+except ImportError:
+    print("Warning: `ultralytics` package not found. Prediction output will be raw numpy arrays.")
+    Results, Boxes, Masks = None, None, None
 
+torch.cuda.empty_cache()
 warnings.filterwarnings('ignore')
 
 
@@ -297,7 +299,9 @@ def build_dataframe_from_yolo(base_path, train_dir, val_dir, test_dir):
             return
             
         images_dir = split_dir
-        labels_dir = split_dir.replace('images', 'labels')
+        if not images_dir.endswith('images'):
+            images_dir = os.path.join(images_dir, 'images')
+        labels_dir = images_dir.replace('images', 'labels')
         
         if not (os.path.exists(images_dir) and os.path.exists(labels_dir)):
             return
@@ -635,79 +639,670 @@ class DataConfig:
         return train_df, valid_df, test_df
 
 
-class ModelBuilder:
-    """Handles construction and configuration of segmentation models."""
+# ----------------------------------------------------------------------------------------------------------------------
+# NEW: Main Model Class (Replaces ModelBuilder and integrates Predictor)
+# ----------------------------------------------------------------------------------------------------------------------
 
-    def __init__(self, encoder_name, decoder_name, num_classes, freeze_encoder=0.0, pre_trained_path=None):
-        """Initialize ModelBuilder with model configuration."""
-        self.encoder_name = encoder_name
-        self.decoder_name = decoder_name
-        self.num_classes = num_classes
-        self.freeze_encoder = freeze_encoder
-        self.pre_trained_path = pre_trained_path
+class SemanticModel:
+    """
+    A class that encapsulates semantic segmentation model training and prediction,
+    mimicking the Ultralytics API.
+    """
 
-        self._validate_options()
-        self._build_model()
-        self._load_pretrained_weights()
-        self._freeze_encoder()
+    def __init__(self, model_path=None):
+        """
+        Initializes the SemanticModel.
 
-    def _validate_options(self):
-        """Validate that encoder and decoder options are available."""
-        if self.encoder_name not in get_segmentation_encoders():
+        Args:
+            model_path (str, optional): Path to a pre-trained .pt model.
+                                      If None, a new model must be built via .train().
+        """
+        self.model = None
+        self.name = None  # Stashed model name
+        self.preprocessing_fn = None
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.task = 'segment'
+        self.data_config = None
+        self.class_names = []
+        self.class_colors = []
+        self.num_classes = 0
+        self.imgsz = None
+        self.color_map = {}
+
+        # Prediction optimization settings
+        self._optimized_model = None
+        self._last_pred_config = {}
+
+        if model_path:
+            self.load(model_path)
+
+    def load(self, model_path):
+        """Loads a pre-trained model and associated metadata."""
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+        print(f"Loading model from {model_path}...")
+        self.model = torch.load(model_path, map_location=self.device, weights_only=False)
+        
+        # Retrieve the stashed model name, if it exists
+        self.name = getattr(self.model, 'name', None)
+        if self.name:
+            print(f"   • Retrieved stashed model name: {self.name}")
+        else:
+            print("   • No stashed model name found (likely an older model file).")
+
+        self.model.to(self.device)
+        self.model.eval()
+        print("Model loaded successfully.")
+
+        # Try to load metadata (data.yaml or color_map.json)
+        # Assumes model_path is like .../results/RUN_NAME/weights/best.pt
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(model_path)))
+        
+        # Try to find data.yaml in the parent directory
+        data_yaml_path = None
+        potential_yaml = glob.glob(os.path.join(base_dir, "*.yaml"))
+        if not potential_yaml:
+            # Check one level higher if it's inside a 'results' dir
+            base_dir = os.path.dirname(base_dir)
+            potential_yaml = glob.glob(os.path.join(base_dir, "*.yaml"))
+
+        if potential_yaml:
+            data_yaml_path = potential_yaml[0]
+            print(f"Loading metadata from {data_yaml_path}")
+            self.data_config = DataConfig(data_yaml_path)
+            self.class_names = self.data_config.class_names
+            self.class_colors = self.data_config.class_colors
+            self.num_classes = self.data_config.nc
+            self.color_map = self.data_config.color_map
+        else:
+            print("Warning: Could not find associated data.yaml. "
+                  "Class names and preprocessing info will be limited.")
+
+        # Infer preprocessing function from the stashed model name
+        try:
+            if not self.name:
+                raise Exception("Model name not stashed.")
+            
+            # self.name is "Decoder-Encoder", e.g., "Unet-resnet34"
+            encoder_name = self.name.split('-')[1] 
+            
+            self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, 'imagenet')
+            print(f"Inferred preprocessing for encoder: {encoder_name}")
+        except Exception as e:
+            print(f"Warning: Could not infer preprocessing function from stashed name '{self.name}'. "
+                  f"Using no-op. Error: {e}")
+            self.preprocessing_fn = lambda x: x  # No-op
+
+    def _build_model(self, encoder_name, decoder_name, num_classes, freeze_encoder, pre_trained_path):
+        """Internal method to build a new model. (Logic from original ModelBuilder)"""
+        # Validate options
+        if encoder_name not in get_segmentation_encoders():
             raise Exception(f"ERROR: Encoder must be one of {get_segmentation_encoders()}")
-
-        if self.decoder_name not in get_segmentation_decoders():
+        if decoder_name not in get_segmentation_decoders():
             raise Exception(f"ERROR: Decoder must be one of {get_segmentation_decoders()}")
 
-    def _build_model(self):
-        """Build the segmentation model."""
+        # Build model
         encoder_weights = 'imagenet'
-
-        self.model = getattr(smp, self.decoder_name)(
-            encoder_name=self.encoder_name,
+        self.model = getattr(smp, decoder_name)(
+            encoder_name=encoder_name,
             encoder_weights=encoder_weights,
-            classes=self.num_classes,
+            classes=num_classes,
             activation='softmax2d',
         )
 
-        print(f"   • Architecture: {self.encoder_name} → {self.decoder_name}")
-        print(f"   • Output classes: {self.num_classes}")
+        # Create and stash the model name string
+        self.name = f"{decoder_name}-{encoder_name}"
+        self.model.name = self.name
+        print(f"   • Stashing model name: {self.model.name}")
 
-        # Get preprocessing function
-        self.preprocessing_fn = smp.encoders.get_preprocessing_fn(self.encoder_name, encoder_weights)
+        print(f"   • Architecture: {encoder_name} → {decoder_name}")
+        print(f"   • Output classes: {num_classes}")
+        self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, encoder_weights)
 
-    def _load_pretrained_weights(self):
-        """Load pretrained weights if provided."""
-        if self.pre_trained_path:
-            if not os.path.exists(self.pre_trained_path):
+        # Load pretrained weights
+        if pre_trained_path:
+            if not os.path.exists(pre_trained_path):
                 print("⚠️ Pre-trained encoder path not found, using random initialization")
-                return
-
-            pre_trained_model = torch.load(self.pre_trained_path, map_location='cpu')
-
-            try:
-                # Getting the encoder name (preprocessing), and encoder state
-                encoder_name = pre_trained_model.name
-                state_dict = pre_trained_model.encoder.state_dict()
-            except:
-                encoder_name = pre_trained_model.encoder.name
-                state_dict = pre_trained_model.encoder.encoder.state_dict()
-
-            self.model.encoder.load_state_dict(state_dict, strict=True)
-            print(f"📥 Loaded pre-trained weights from {encoder_name}")
+            else:
+                pre_trained_model = torch.load(pre_trained_path, map_location='cpu')
+                try:
+                    encoder_name_loaded = pre_trained_model.name
+                    state_dict = pre_trained_model.encoder.state_dict()
+                except:
+                    encoder_name_loaded = pre_trained_model.encoder.name
+                    state_dict = pre_trained_model.encoder.encoder.state_dict()
+                self.model.encoder.load_state_dict(state_dict, strict=True)
+                print(f"📥 Loaded pre-trained weights from {encoder_name_loaded}")
         else:
             print("📥 Using ImageNet pretrained weights")
 
-    def _freeze_encoder(self):
-        """Freeze a percentage of the encoder weights."""
+        # Freeze encoder
         num_params = len(list(self.model.encoder.parameters()))
-        freeze_params = int(num_params * self.freeze_encoder)
-
-        # Give users the ability to freeze N percent of the encoder
-        print(f"🧊 Freezing {self.freeze_encoder}% of encoder weights")
+        freeze_params = int(num_params * freeze_encoder)
+        print(f"🧊 Freezing {freeze_encoder * 100}% of encoder weights ({freeze_params}/{num_params})")
         for idx, param in enumerate(self.model.encoder.parameters()):
             if idx < freeze_params:
                 param.requires_grad = False
+        
+        self.model.to(self.device)
+
+    def train(self, data_yaml, encoder_name='resnet34', decoder_name='Unet',
+              pre_trained_path=None, freeze_encoder=0.8,
+              metrics=None, loss_function='JaccardLoss',
+              optimizer='Adam', learning_rate=0.0001, augment_data=False,
+              num_epochs=25, batch_size=8, imgsz=640, amp=False,
+              output_dir=None, num_vis_samples=10):
+        """
+        Train the semantic segmentation model.
+        (This method encapsulates the logic from SemanticTrain.py's main())
+        """
+        if metrics is None:
+            metrics = ['iou_score', 'f1_score']
+
+        print("\n" + "=" * 60)
+        print("🚀 STARTING SEMANTIC SEGMENTATION TRAINING")
+        print("=" * 60)
+        
+        # Store key info on self
+        self.imgsz = imgsz
+
+        # 1. Load Data Config
+        print("📂 Loading dataset configuration...")
+        self.data_config = DataConfig(data_yaml)
+        train_df, valid_df, test_df = self.data_config.get_split_dataframes()
+        self.class_names = self.data_config.class_names
+        self.class_colors = self.data_config.class_colors
+        self.num_classes = self.data_config.nc
+        self.color_map = self.data_config.color_map
+
+        print("📊 Dataset Summary:")
+        print(f"   • Training samples: {len(train_df)}")
+        print(f"   • Validation samples: {len(valid_df)}")
+        print(f"   • Test samples: {len(test_df)}")
+        print(f"   • Classes ({self.num_classes}): {self.class_names}")
+
+        # 2. Build Model (if not already loaded)
+        if self.model is None:
+            print("🔧 Building new model...")
+            self._build_model(
+                encoder_name=encoder_name,
+                decoder_name=decoder_name,
+                num_classes=self.num_classes,
+                freeze_encoder=freeze_encoder,
+                pre_trained_path=pre_trained_path
+            )
+        else:
+            print("🔧 Using pre-loaded model for training.")
+            self.model.to(self.device)
+
+        # 3. Setup Training Config
+        training_config = TrainingConfig(
+            model=self.model,
+            loss_function_name=loss_function,
+            optimizer_name=optimizer,
+            learning_rate=learning_rate,
+            metrics_list=metrics,
+            class_ids=self.data_config.class_ids,
+            device=self.device
+        )
+
+        # 4. Setup Experiment Manager
+        if output_dir is None:
+            output_dir = os.path.join(os.path.dirname(data_yaml), "results")
+
+        experiment_manager = ExperimentManager(
+            output_dir=output_dir,
+            decoder_name=decoder_name,
+            encoder_name=encoder_name,
+            color_map=self.data_config.color_map,
+            metrics=training_config.metrics
+        )
+        experiment_manager.save_dataframes(train_df, valid_df, test_df)
+
+        # 5. Setup Datasets
+        dataset_manager = DatasetManager(
+            train_df=train_df, valid_df=valid_df, test_df=test_df,
+            class_ids=self.data_config.class_ids,
+            preprocessing_fn=self.preprocessing_fn,  # Use the one from self
+            augment_data=augment_data,
+            batch_size=batch_size,
+            imgsz=self.imgsz  # Use the one from self
+        )
+        dataset_manager.visualize_training_samples(
+            experiment_manager.logs_dir, self.data_config.class_colors
+        )
+
+        # 6. Run Trainer
+        trainer = Trainer(
+            model=self.model,
+            loss_function=training_config.loss_function,
+            metrics=training_config.metrics,
+            optimizer=training_config.optimizer,
+            device=self.device,
+            num_epochs=num_epochs,
+            train_loader=dataset_manager.train_loader,
+            valid_loader=dataset_manager.valid_loader,
+            valid_dataset=dataset_manager.valid_dataset,
+            valid_dataset_vis=dataset_manager.valid_dataset_vis,
+            experiment_manager=experiment_manager,
+            class_ids=self.data_config.class_ids,
+            class_colors=self.data_config.class_colors,
+            amp_enabled=amp
+        )
+        trainer.train()
+
+        # 7. Evaluate
+        print("\n📥 Loading best weights for evaluation...")
+        best_weights = os.path.join(experiment_manager.weights_dir, "best.pt")
+        # Load best model back into self.model (this will also update self.name)
+        self.load(best_weights) 
+        
+        evaluator = Evaluator(
+            model=self.model,
+            loss_function=training_config.loss_function,
+            metrics=training_config.metrics,
+            device=self.device,
+            test_dataset=dataset_manager.test_dataset,
+            test_dataset_vis=dataset_manager.test_dataset_vis,
+            experiment_manager=experiment_manager,
+            class_ids=self.data_config.class_ids,
+            class_colors=self.data_config.class_colors,
+            num_vis_samples=num_vis_samples
+        )
+        evaluator.evaluate()
+        evaluator.visualize_results()
+
+        print(f"\n✅ Training pipeline completed! Best model at {best_weights}")
+        self.model.eval()
+        # Clear any optimized model from previous runs
+        self._optimized_model = None
+        
+        return best_weights
+
+    # --- Prediction Methods ---
+    
+    def __call__(self, source, **kwargs):
+        """Alias for self.predict()"""
+        return self.predict(source, **kwargs)
+
+    def _load_image(self, path):
+        """Loads a single image from a file path."""
+        image = cv2.imread(path)
+        if image is None:
+            print(f"Warning: Could not read image from path: {path}, skipping.")
+            return None
+        return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    def _tensor_to_numpy(self, tensor):
+        """Converts a torch.Tensor to a numpy.ndarray (H, W, C)."""
+        tensor = tensor.cpu()
+        if tensor.dtype == torch.half:
+            tensor = tensor.float()
+        
+        img_np = tensor.numpy()
+
+        # Handle different tensor formats
+        if img_np.ndim == 3:
+            if img_np.shape[0] in [1, 3]:  # (C, H, W)
+                if img_np.shape[0] == 1:  # Grayscale to RGB
+                    img_np = np.concatenate([img_np] * 3, axis=0)
+                return img_np.transpose(1, 2, 0)
+            elif img_np.shape[2] in [1, 3]:  # (H, W, C)
+                if img_np.shape[2] == 1:  # Grayscale to RGB
+                    img_np = np.concatenate([img_np] * 3, axis=2)
+                return img_np
+        
+        elif img_np.ndim == 4:
+            if img_np.shape[1] in [1, 3]:  # (B, C, H, W)
+                if img_np.shape[1] == 1:
+                    img_np = np.concatenate([img_np] * 3, axis=1)
+                return img_np.transpose(0, 2, 3, 1)
+            elif img_np.shape[3] in [1, 3]:  # (B, H, W, C)
+                if img_np.shape[3] == 1:
+                    img_np = np.concatenate([img_np] * 3, axis=3)
+                return img_np
+
+        raise ValueError(f"Unsupported tensor shape: {tensor.shape}")
+
+    def _normalize_source(self, source):
+        """
+        Normalizes diverse input sources into a list of (image, path) tuples.
+        Returns: (list[np.ndarray], list[str])
+        """
+        images, paths = [], []
+        
+        if isinstance(source, str):
+            # Single image path
+            img = self._load_image(source)
+            if img is not None:
+                images, paths = [img], [source]
+        
+        elif isinstance(source, np.ndarray):
+            # Handle all numpy array formats
+            
+            # Ensure images are uint8. Albumentations can be picky.
+            if source.dtype != np.uint8:
+                print(f"Warning: Numpy array is dtype {source.dtype}, not uint8. "
+                      "Attempting to convert. This may cause issues if data is not 0-255.")
+                if np.max(source) <= 1.0 and np.min(source) >= 0.0:
+                    source = (source * 255).astype(np.uint8)  # Handle float 0-1
+                else:
+                    source = source.astype(np.uint8)  # Hope for the best
+
+            if source.ndim == 3:
+                if source.shape[0] in [1, 3]:  # (C, H, W)
+                    if source.shape[0] == 1:
+                        source = np.concatenate([source] * 3, axis=0)
+                    img = source.transpose(1, 2, 0)  # (H, W, C)
+                elif source.shape[2] in [1, 3]:  # (H, W, C)
+                    if source.shape[2] == 1:
+                        source = np.concatenate([source] * 3, axis=2)
+                    img = source
+                else:
+                    raise ValueError(f"Unsupported 3D numpy array shape: {source.shape}. "
+                                     "Expected (H, W, C) or (C, H, W).")
+                images, paths = [img], ["image.jpg"]
+            
+            elif source.ndim == 4:
+                if source.shape[1] in [1, 3]:  # (B, C, H, W)
+                    if source.shape[1] == 1:
+                        source = np.concatenate([source] * 3, axis=1)
+                    img_batch = source.transpose(0, 2, 3, 1) # (B, H, W, C)
+                elif source.shape[3] in [1, 3]:  # (B, H, W, C)
+                    if source.shape[3] == 1:
+                        source = np.concatenate([source] * 3, axis=3)
+                    img_batch = source
+                else:
+                    raise ValueError(f"Unsupported 4D numpy array shape: {source.shape}. "
+                                     "Expected (B, H, W, C) or (B, C, H, W).")
+                
+                images = [img_batch[i] for i in range(img_batch.shape[0])]
+                paths = [f"image_{i}.jpg" for i in range(len(images))]
+            # --- END MODIFIED BLOCK ---
+            else:
+                raise ValueError(f"Unsupported numpy array dimensions: {source.ndim}. Expected 3 or 4.")
+        
+        elif isinstance(source, list):
+            # List of paths or images
+            if not source:
+                return [], []
+            
+            if isinstance(source[0], str):  # List of paths
+                for p in source:
+                    img = self._load_image(p)
+                    if img is not None:
+                        images.append(img)
+                        paths.append(p)
+            
+            elif isinstance(source[0], np.ndarray):  # List of images
+                # Recursively normalize each image in the list
+                normalized_list = [self._normalize_source(img) for img in source]
+                images = [item[0][0] for item in normalized_list if item[0]]
+                paths = [item[1][0] for item in normalized_list if item[1]]
+            
+            else:
+                raise TypeError(f"Unsupported list element type: {type(source[0])}")
+        
+        elif isinstance(source, torch.Tensor):
+            # Single image or batch as torch.Tensor
+            img_np = self._tensor_to_numpy(source)
+            # After conversion, img_np is (H,W,C) or (B,H,W,C), so we can
+            # recursively call this function to handle it as a numpy array.
+            return self._normalize_source(img_np)
+
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
+            
+        return images, paths
+
+    def predict(self, source, confidence_threshold=0.5, 
+                use_fp16=True, compile_model=True, use_int8=False,
+                imgsz=None):
+        """
+        Run inference on a variety of sources.
+
+        Args:
+            source (str, np.ndarray, torch.Tensor, list): Input source. Can be:
+                - str: Path to a single image.
+                - np.ndarray: A (H, W, 3) image or (B, H, W, 3) batch.
+                - torch.Tensor: A (C, H, W), (H, W, C) image or
+                                  (B, C, H, W), (B, H, W, C) batch.
+                - list[str]: A list of image paths.
+                - list[np.ndarray]: A list of (H, W, 3) images.
+            confidence_threshold (float): Min confidence to keep a pixel's class.
+            use_fp16 (bool): Use FP16 precision.
+            compile_model (bool): Use torch.compile.
+            use_int8 (bool): Use INT8 quantization.
+            imgsz (int, optional): Image size for preprocessing. Uses model's
+                                   training size if None.
+
+        Returns:
+            (ultralytics.engine.results.Results or list): 
+            - A single Results object if the input was a single item.
+            - A list of Results objects if the input was a batch or list.
+        """
+        if self.model is None:
+            raise Exception("Model is not loaded. Load a model first.")
+
+        # --- 1. Setup ---
+        # Use training imgsz if not provided
+        if imgsz is None:
+            imgsz = self.imgsz if self.imgsz else 640  # Default to 640
+
+        # Prepare the optimized model (re-optimize if config changed)
+        pred_config = (use_fp16, compile_model, use_int8)
+        if self._optimized_model is None or self._last_pred_config != pred_config:
+            print("Initializing/Optimizing model for prediction...")
+            self._prepare_optimized_model(use_fp16, compile_model, use_int8)
+            self._last_pred_config = pred_config
+
+        # Prepare data preprocessors
+        val_aug = get_validation_augmentation(imgsz)
+        if self.preprocessing_fn is None:
+            print("Warning: `preprocessing_fn` not set. Using no-op.")
+            self.preprocessing_fn = lambda x: x
+        preproc = get_preprocessing(self.preprocessing_fn)
+
+        # --- 2. Normalize Input ---
+        # `is_batch` checks if the *original* input was a list or batch,
+        # to decide whether to return a list or a single item.
+        is_batch = isinstance(source, list) or \
+                   (isinstance(source, (np.ndarray, torch.Tensor)) and source.ndim == 4)
+                   
+        images, paths = self._normalize_source(source)
+        
+        if not images:
+            return [] if is_batch else None
+
+        # --- 3. Preprocess Batch ---
+        preprocessed_tensors = []
+        orig_shapes = []
+        for img in images:
+            orig_shapes.append(img.shape)
+            augmented = val_aug(image=img)
+            preprocessed = preproc(image=augmented['image'], mask=augmented['image']) # mask is dummy
+            preprocessed_tensors.append(torch.from_numpy(preprocessed['image']))
+
+        batch_tensor = torch.stack(preprocessed_tensors).to(self.device)
+
+        # Handle data type for fp16/int8
+        if self._last_pred_config[0] and not self._last_pred_config[2]:  # FP16 on, INT8 off
+            batch_tensor = batch_tensor.half()
+        
+        # --- 4. Run Inference ---
+        with torch.no_grad():
+            pred_logits = self._optimized_model(batch_tensor)
+        
+        # Post-process logits
+        pred_classes = self._process_logits(pred_logits, confidence_threshold)
+        
+        # Squeeze batch dim and move to CPU
+        mask_arrays_aug = [pred_classes[i].cpu().numpy().astype(np.uint8) for i in range(len(images))]
+        
+        # --- 5. Post-process Results ---
+        results_list = []
+        for i, mask_aug in enumerate(mask_arrays_aug):
+            h, w = orig_shapes[i][:2]
+            # Resize mask from (imgsz, imgsz) back to (h, w)
+            mask_array = cv2.resize(mask_aug, (w, h), interpolation=cv2.INTER_NEAREST)
+            
+            results_list.append(
+                self._post_process(mask_array, orig_shapes[i], paths[i], images[i])
+            )
+
+        # Return single item or list based on original input type
+        return results_list if is_batch else results_list[0]
+
+    def _process_logits(self, pred_logits, confidence_threshold):
+        """Applies softmax, max, and thresholding to raw logits."""
+        pred_probs = torch.softmax(pred_logits, dim=1)
+        pred_confidence, pred_class = torch.max(pred_probs, dim=1)
+        pred_class = torch.where(
+            pred_confidence >= confidence_threshold,
+            pred_class,
+            torch.zeros_like(pred_class) # Set to background
+        )
+        return pred_class
+
+    def _post_process(self, mask_array, orig_shape, path, orig_img):
+        """Converts a numpy mask array into an Ultralytics Results object."""
+        if Results is None:
+            print("Warning: `ultralytics` not installed. Returning raw numpy mask.")
+            return mask_array
+
+        h, w = orig_shape[:2]
+        
+        # 1. Create Masks object
+        # We need to convert (H, W) class index mask to (NumClasses, H, W) one-hot mask
+        one_hot_mask = np.zeros((self.num_classes, h, w), dtype=np.uint8)
+        
+        present_classes = np.unique(mask_array)
+        
+        for c in present_classes:
+            if c == 0: 
+                continue  # Skip background
+            if c >= self.num_classes: 
+                continue  # Safety check
+            
+            one_hot_mask[c][mask_array == c] = 1
+
+        # Filter out empty masks
+        non_empty_indices = [int(c) for c in present_classes if c != 0 and c < self.num_classes]
+        
+        if not non_empty_indices:
+            # No detections, return empty Results
+            return Results(
+                orig_img=orig_img,
+                path=path,
+                names=dict(enumerate(self.class_names)),
+                boxes=Boxes(torch.empty(0, 6), (h, w)) if Boxes is not None else None,
+                masks=Masks(torch.empty(0, h, w), (h, w)) if Masks is not None else None
+            )
+        
+        final_masks_tensor = torch.from_numpy(one_hot_mask[non_empty_indices])
+        
+        ult_masks = Masks(final_masks_tensor, (h, w)) if Masks is not None else None
+
+        # 2. Create Boxes object (dummy boxes from masks)
+        ult_boxes = None
+        if Boxes is not None and ult_masks is not None:
+            try:
+                # Use .from_mask (may not exist in all versions, hence the try/except)
+                if hasattr(Boxes, 'from_mask'):
+                    ult_boxes = Boxes.from_mask(ult_masks.data, orig_shape)
+                else: 
+                    # Manual fallback to get bounding boxes
+                    boxes_xyxy = []
+                    for mask in ult_masks.data:
+                        pos = torch.where(mask)
+                        if pos[0].shape[0] > 0:
+                            xmin, ymin = pos[1].min(), pos[0].min()
+                            xmax, ymax = pos[1].max(), pos[0].max()
+                            boxes_xyxy.append([xmin, ymin, xmax, ymax])
+                        else:
+                            boxes_xyxy.append([0, 0, 0, 0])
+                    ult_boxes = Boxes(torch.tensor(boxes_xyxy), (h, w))
+                
+                # We need to add class and conf
+                box_data = ult_boxes.data
+                # We don't have per-instance confidence, so use 1.0
+                conf = torch.ones(len(non_empty_indices), dtype=torch.float)
+                cls = torch.tensor(non_empty_indices, dtype=torch.float)
+                
+                # Combine xyxy, conf, cls
+                final_box_data = torch.cat([
+                    box_data[:, :4],
+                    conf.unsqueeze(1),
+                    cls.unsqueeze(1)
+                ], dim=1)
+                
+                ult_boxes = Boxes(final_box_data, (h, w))
+                
+            except Exception as e:
+                # Fallback if Boxes.from_mask fails (e.g., empty masks)
+                print(f"Warning: Could not generate boxes from masks: {e}")
+                ult_boxes = Boxes(torch.empty(0, 6), (h, w))
+
+        return Results(
+            orig_img=orig_img,
+            path=path,
+            names=dict(enumerate(self.class_names)),
+            boxes=ult_boxes,
+            masks=ult_masks
+        )
+
+    # --- Optimization Methods (from Predictor) ---
+    
+    def _prepare_optimized_model(self, use_fp16, compile_model, use_int8):
+        """Applies optimizations (compile, fp16, int8) to a copy of the model."""
+        # Start from a fresh copy of the trained model
+        # Use deepcopy to avoid modifying the original model
+        self._optimized_model = self.model
+        
+        # Move to device and set to eval mode
+        self._optimized_model.to(self.device)
+        self._optimized_model.eval()
+
+        # Compile model
+        if compile_model and hasattr(torch, 'compile'):
+            try:
+                self._optimized_model = torch.compile(self._optimized_model, mode='max-autotune')
+                print("🚀 Model compiled for optimized inference")
+            except Exception as e:
+                print(f"⚠️ Model compilation failed: {e}")
+        
+        # Use INT8 quantization (highest priority)
+        if use_int8 and 'cuda' in self.device:
+            self._quantize_model()
+        # Use half precision if requested (not compatible with INT8)
+        elif use_fp16 and 'cuda' in self.device:
+            self._optimized_model = self._optimized_model.half()
+            print("⚡ Using FP16 precision")
+
+    def _quantize_model(self):
+        """Apply INT8 quantization to the `_optimized_model`."""
+        try:
+            self._optimized_model.eval()
+            self._optimized_model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+            torch.quantization.prepare(self._optimized_model, inplace=True)
+            self._calibrate_quantization()
+            torch.quantization.convert(self._optimized_model, inplace=True)
+            print("✅ Model successfully quantized to INT8")
+        except Exception as e:
+            print(f"⚠️ INT8 quantization failed, falling back: {e}")
+            # Reset to non-quantized model
+            self._optimized_model = self.model
+            self._optimized_model.to(self.device).eval()
+
+    def _calibrate_quantization(self):
+        """Calibrate quantization with dummy data."""
+        # Use a dummy input based on imgsz
+        size = self.imgsz if self.imgsz else 640
+        dummy_input = torch.randn(1, 3, size, size).to(self.device)
+        with torch.no_grad():
+            for _ in range(10):
+                _ = self._optimized_model(dummy_input)
 
 
 class TrainingConfig:
@@ -1027,11 +1622,13 @@ class Trainer:
                 # Visualize a validation sample
                 self._visualize_validation_sample(e_idx)
 
-                # Save the model for the current epoch
-                self.experiment_manager.save_last_model(self.model)
-
                 # Check for best model and handle early stopping
                 should_continue = self._update_training_state(e_idx, train_logs, valid_logs)
+                
+                # Save the model for the current epoch
+                self.experiment_manager.save_last_model(self.model)
+                
+                # Check to exit early
                 if not should_continue:
                     break
 
@@ -1113,7 +1710,7 @@ class Trainer:
         """Log training error to file."""
         print(f"📄 Error details saved to {self.experiment_manager.logs_dir}Error.txt")
         with open(os.path.join(self.experiment_manager.logs_dir, "Error.txt"), 'a') as file:
-            file.write(f"Caught exception: {str(error)}\n")
+            file.write(f"Caught exception: {str(error)}\n{traceback.format_exc()}\n")
 
 
 class Evaluator:
@@ -1198,7 +1795,7 @@ class Evaluator:
                 # Get the original image and mask without preprocessing
                 image_vis, gt_mask_vis = self.test_dataset_vis[n]
                 image_vis = image_vis.numpy()
-                gt_mask_vis = gt_mask_vis.numpy()
+                gt_mask_vis = gt_mask_vis.numpy().squeeze()
 
                 # Get dimensions of the current image
                 current_width, current_height = Image.open(self.test_dataset_vis.images_fps[n]).size
@@ -1239,7 +1836,7 @@ class Evaluator:
         """Log evaluation error to file."""
         print(f"📄 Error details saved to {self.experiment_manager.logs_dir}Error.txt")
         with open(os.path.join(self.experiment_manager.logs_dir, "Error.txt"), 'a') as file:
-            file.write(f"Caught exception: {str(error)}\n")
+            file.write(f"Caught exception: {str(error)}\n{traceback.format_exc()}\n")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1337,146 +1934,44 @@ def main():
                         help='Number of worker processes for data loading')
     args = parser.parse_args()
     
-    # Check imgsz is divisible by 32
+    args = parser.parse_args()
+    
+    # Check imgsz
     if args.imgsz % 32 != 0:
-        # Adjust to nearest multiple of 32
         new_size = (args.imgsz // 32) * 32
         print(f"⚠️ imgsz must be divisible by 32. Adjusting from {args.imgsz} to {new_size}.")
         args.imgsz = new_size
 
-    # Validate AMP compatibility
+    # Validate AMP
     if args.amp and not torch.cuda.is_available():
-        print("⚠️ AMP requires CUDA. Disabling AMP and using CPU training.")
+        print("⚠️ AMP requires CUDA. Disabling AMP.")
         args.amp = False
 
-    # Set output directory to "results" folder in the same directory as data.yaml
-    output_dir = os.path.join(os.path.dirname(args.data_yaml), "results")
-
     try:
-        # Main function for semantic segmentation training pipeline
-        print("\n" + "=" * 60)
-        print("🧠 SEMANTIC SEGMENTATION TRAINING PIPELINE")
-        print("=" * 60)
-        print("🔧 Initializing...")
-
-        # Check for CUDA
-        print(f"   • PyTorch: {torch.__version__}")
-        print(f"   • CUDA Available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"   • GPU: {torch.cuda.get_device_name(0)}")
-        print(f"   • Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
-        print()
-
-        # Whether to run on GPU or CPU
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-        # Load and parse data configuration
-        print("📂 Loading dataset configuration...")
-        data_config = DataConfig(args.data_yaml)
-        train_df, valid_df, test_df = data_config.get_split_dataframes()
-
-        print("📊 Dataset Summary:")
-        print(f"   • Training samples: {len(train_df)}")
-        print(f"   • Validation samples: {len(valid_df)}")
-        print(f"   • Test samples: {len(test_df)}")
-        print(f"   • Classes: {data_config.class_names}")
-
-        # Build model
-        model_builder = ModelBuilder(
+        # Initialize the model (it will be built inside .train())
+        model = SemanticModel()
+        
+        # Start training
+        model.train(
+            data_yaml=args.data_yaml,
             encoder_name=args.encoder_name,
             decoder_name=args.decoder_name,
-            num_classes=len(data_config.class_names),
+            pre_trained_path=args.pre_trained_path,
             freeze_encoder=args.freeze_encoder,
-            pre_trained_path=args.pre_trained_path
-        )
-
-        # Setup training configuration
-        training_config = TrainingConfig(
-            model=model_builder.model,
-            loss_function_name=args.loss_function,
-            optimizer_name=args.optimizer,
+            metrics=args.metrics,
+            loss_function=args.loss_function,
+            optimizer=args.optimizer,
             learning_rate=args.learning_rate,
-            metrics_list=args.metrics,
-            class_ids=data_config.class_ids,
-            device=device
-        )
-
-        # Setup experiment management
-        experiment_manager = ExperimentManager(
-            output_dir=output_dir,
-            decoder_name=args.decoder_name,
-            encoder_name=args.encoder_name,
-            color_map=data_config.color_map,
-            metrics=training_config.metrics
-        )
-
-        # Save dataframes
-        experiment_manager.save_dataframes(train_df, valid_df, test_df)
-
-        # Create datasets and dataloaders
-        dataset_manager = DatasetManager(
-            train_df=train_df,
-            valid_df=valid_df,
-            test_df=test_df,
-            class_ids=data_config.class_ids,
-            preprocessing_fn=model_builder.preprocessing_fn,
             augment_data=args.augment_data,
-            batch_size=args.batch_size,
-            imgsz=args.imgsz
-        )
-
-        # Visualize training samples
-        dataset_manager.visualize_training_samples(
-            experiment_manager.logs_dir, data_config.class_colors
-        )
-
-        # Train the model
-        trainer = Trainer(
-            model=model_builder.model,
-            loss_function=training_config.loss_function,
-            metrics=training_config.metrics,
-            optimizer=training_config.optimizer,
-            device=device,
             num_epochs=args.num_epochs,
-            train_loader=dataset_manager.train_loader,
-            valid_loader=dataset_manager.valid_loader,
-            valid_dataset=dataset_manager.valid_dataset,
-            valid_dataset_vis=dataset_manager.valid_dataset_vis,
-            experiment_manager=experiment_manager,
-            class_ids=data_config.class_ids,
-            class_colors=data_config.class_colors,
-            amp_enabled=args.amp
-        )
-
-        best_epoch = trainer.train()
-
-        # Load best model for evaluation
-        best_weights = os.path.join(experiment_manager.weights_dir, "best.pt")
-        model = torch.load(best_weights, weights_only=False)
-        print(f"📥 Loaded best weights from {best_weights}")
-
-        # Evaluate model
-        evaluator = Evaluator(
-            model=model,
-            loss_function=training_config.loss_function,
-            metrics=training_config.metrics,
-            device=device,
-            test_dataset=dataset_manager.test_dataset,
-            test_dataset_vis=dataset_manager.test_dataset_vis,
-            experiment_manager=experiment_manager,
-            class_ids=data_config.class_ids,
-            class_colors=data_config.class_colors,
+            batch_size=args.batch_size,
+            imgsz=args.imgsz,
+            amp=args.amp,
             num_vis_samples=args.num_vis_samples
         )
 
-        evaluator.evaluate()
-        evaluator.visualize_results()
-
-        print(f"\n💾 Best model saved to {best_weights}")
-        print("✅ Training pipeline completed successfully!\n")
-
     except Exception as e:
-        print(f"{e}\n{traceback.format_exc()}")
+        print(f"Error: {e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':
