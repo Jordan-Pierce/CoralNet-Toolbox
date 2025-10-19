@@ -649,7 +649,7 @@ class SemanticModel:
     mimicking the Ultralytics API.
     """
 
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, device=None):
         """
         Initializes the SemanticModel.
 
@@ -660,8 +660,13 @@ class SemanticModel:
         self.model = None
         self.name = None  # Stashed model name
         self.preprocessing_fn = None
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.task = 'segment'
+        
+        if device is None:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+            
+        self.task = 'semantic'
         self.data_config = None
         self.class_names = []
         self.class_colors = []
@@ -676,10 +681,13 @@ class SemanticModel:
         if model_path:
             self.load(model_path)
 
-    def load(self, model_path):
+    def load(self, model_path, device=None):
         """Loads a pre-trained model and associated metadata."""
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+        if device is not None:
+            self.device = device
 
         print(f"Loading model from {model_path}...")
         self.model = torch.load(model_path, map_location=self.device, weights_only=False)
@@ -717,7 +725,7 @@ class SemanticModel:
                   f"Using no-op. Error: {e}")
             self.preprocessing_fn = lambda x: x  # No-op
 
-    def _build_model(self, encoder_name, decoder_name, num_classes, freeze_encoder, pre_trained_path):
+    def _build_model(self, encoder_name, decoder_name, num_classes, freeze, pre_trained_path, pretrained=True, device=None):
         """Internal method to build a new model. (Logic from original ModelBuilder)"""
         # Validate options
         if encoder_name not in get_segmentation_encoders():
@@ -725,8 +733,11 @@ class SemanticModel:
         if decoder_name not in get_segmentation_decoders():
             raise Exception(f"ERROR: Decoder must be one of {get_segmentation_decoders()}")
 
+        if device is not None:
+            self.device = device
+
         # Build model
-        encoder_weights = 'imagenet'
+        encoder_weights = 'imagenet' if pretrained else None
         self.model = getattr(smp, decoder_name)(
             encoder_name=encoder_name,
             encoder_weights=encoder_weights,
@@ -762,8 +773,8 @@ class SemanticModel:
 
         # Freeze encoder
         num_params = len(list(self.model.encoder.parameters()))
-        freeze_params = int(num_params * freeze_encoder)
-        print(f"🧊 Freezing {freeze_encoder * 100}% of encoder weights ({freeze_params}/{num_params})")
+        freeze_params = int(num_params * freeze)
+        print(f"🧊 Freezing {freeze * 100}% of encoder weights ({freeze_params}/{num_params})")
         for idx, param in enumerate(self.model.encoder.parameters()):
             if idx < freeze_params:
                 param.requires_grad = False
@@ -771,15 +782,18 @@ class SemanticModel:
         self.model.to(self.device)
 
     def train(self, data_yaml, encoder_name='resnet34', decoder_name='Unet',
-              pre_trained_path=None, freeze_encoder=0.8,
+              pre_trained_path=None, freeze=0.8,
               metrics=None, loss_function='JaccardLoss',
-              optimizer='Adam', learning_rate=0.0001, augment_data=False,
-              num_epochs=25, batch_size=8, imgsz=640, amp=False,
-              output_dir=None, num_vis_samples=10):
+              optimizer='Adam', lr=0.0001, augment_data=False,
+              epochs=25, batch=8, imgsz=640, amp=False,
+              output_dir=None, num_vis_samples=10, patience=100, device=None,
+              project=None, name=None, exist_ok=False, pretrained=True):
         """
         Train the semantic segmentation model.
         (This method encapsulates the logic from SemanticTrain.py's main())
         """
+        print(f"🚀 Training parameters: { {k: v for k, v in locals().items() if k != 'self'} }")
+        
         if metrics is None:
             metrics = ['iou_score', 'f1_score']
 
@@ -789,6 +803,43 @@ class SemanticModel:
         
         # Store key info on self
         self.imgsz = imgsz
+
+        # Set device
+        if device is not None:
+            self.device = device
+        else:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # Handle device types
+        if isinstance(self.device, int):
+            self.device = f'cuda:{self.device}'
+        elif isinstance(self.device, list):
+            # Multi-GPU
+            self.model = torch.nn.DataParallel(self.model, device_ids=self.device)
+            self.device = f'cuda:{self.device[0]}'
+        elif self.device == -1:
+            # Auto-select most idle GPU (simple: use GPU 0)
+            if torch.cuda.is_available():
+                self.device = 'cuda:0'
+            else:
+                self.device = 'cpu'
+
+        # Handle pretrained
+        if isinstance(pretrained, str):
+            pre_trained_path = pretrained
+            pretrained = True
+
+        # Handle output directory
+        if project is None:
+            project = os.path.dirname(data_yaml)
+        if name is None:
+            name = "results"
+        output_dir = os.path.join(project, name)
+        if os.path.exists(output_dir) and not exist_ok:
+            n = 1
+            while os.path.exists(f"{output_dir} {n}"):
+                n += 1
+                output_dir = f"{output_dir} {n}"
 
         # 1. Load Data Config
         print("📂 Loading dataset configuration...")
@@ -812,8 +863,10 @@ class SemanticModel:
                 encoder_name=encoder_name,
                 decoder_name=decoder_name,
                 num_classes=self.num_classes,
-                freeze_encoder=freeze_encoder,
-                pre_trained_path=pre_trained_path
+                freeze=freeze,
+                pre_trained_path=pre_trained_path,
+                pretrained=pretrained,
+                device=self.device
             )
         else:
             print("🔧 Using pre-loaded model for training.")
@@ -831,16 +884,13 @@ class SemanticModel:
             model=self.model,
             loss_function_name=loss_function,
             optimizer_name=optimizer,
-            learning_rate=learning_rate,
+            lr=lr,
             metrics_list=metrics,
             class_ids=self.data_config.class_ids,
             device=self.device
         )
 
         # 4. Setup Experiment Manager
-        if output_dir is None:
-            output_dir = os.path.join(os.path.dirname(data_yaml), "results")
-
         experiment_manager = ExperimentManager(
             output_dir=output_dir,
             decoder_name=decoder_name,
@@ -856,7 +906,7 @@ class SemanticModel:
             class_ids=self.data_config.class_ids,
             preprocessing_fn=self.preprocessing_fn,  # Use the one from self
             augment_data=augment_data,
-            batch_size=batch_size,
+            batch=batch,
             imgsz=self.imgsz  # Use the one from self
         )
         dataset_manager.visualize_training_samples(
@@ -870,7 +920,7 @@ class SemanticModel:
             metrics=training_config.metrics,
             optimizer=training_config.optimizer,
             device=self.device,
-            num_epochs=num_epochs,
+            epochs=epochs,
             train_loader=dataset_manager.train_loader,
             valid_loader=dataset_manager.valid_loader,
             valid_dataset=dataset_manager.valid_dataset,
@@ -878,7 +928,8 @@ class SemanticModel:
             experiment_manager=experiment_manager,
             class_ids=self.data_config.class_ids,
             class_colors=self.data_config.class_colors,
-            amp_enabled=amp
+            amp_enabled=amp,
+            patience=patience
         )
         trainer.train()
 
@@ -913,7 +964,7 @@ class SemanticModel:
     # --- Evalutation Methods ---
     
     def eval(self, data_yaml, split='test', num_vis_samples=10, output_dir=None,
-             loss_function='JaccardLoss', metrics=None):
+             loss_function='JaccardLoss', metrics=None, device=None):
         """
         Run standalone evaluation on a trained model.
 
@@ -925,6 +976,7 @@ class SemanticModel:
                 If None, creates a new dir next to the model's 'weights' dir.
             loss_function (str): Name of the loss function to use for eval.
             metrics (list[str], optional): List of metric names to calculate.
+            device (str, optional): Device to use for evaluation. If None, uses self.device.
         """
         if self.model is None:
             raise Exception("Model is not loaded. Load a model first.")
@@ -932,6 +984,9 @@ class SemanticModel:
         if self.imgsz is None:
             raise Exception("Model `imgsz` is not set. Load a model trained "
                             "with this framework or provide `imgsz` manually.")
+
+        if device is not None:
+            self.device = device
 
         if metrics is None:
             metrics = ['iou_score', 'f1_score']
@@ -1171,7 +1226,7 @@ class SemanticModel:
 
     def predict(self, source, confidence_threshold=0.5, 
                 use_fp16=True, compile_model=True, use_int8=False,
-                imgsz=None):
+                imgsz=None, device=None):
         """
         Run inference on a variety of sources.
 
@@ -1189,6 +1244,7 @@ class SemanticModel:
             use_int8 (bool): Use INT8 quantization.
             imgsz (int, optional): Image size for preprocessing. Uses model's
                                    training size if None.
+            device (str, optional): Device to use for prediction. If None, uses self.device.
 
         Returns:
             (ultralytics.engine.results.Results or list): 
@@ -1202,6 +1258,9 @@ class SemanticModel:
         # Use training imgsz if not provided
         if imgsz is None:
             imgsz = self.imgsz if self.imgsz else 640  # Default to 640
+
+        if device is not None:
+            self.device = device
 
         # Prepare the optimized model (re-optimize if config changed)
         pred_config = (use_fp16, compile_model, use_int8)
@@ -1425,12 +1484,12 @@ class SemanticModel:
 class TrainingConfig:
     """Handles configuration of loss functions, optimizers, and metrics for training."""
 
-    def __init__(self, model, loss_function_name, optimizer_name, learning_rate, metrics_list, class_ids, device):
+    def __init__(self, model, loss_function_name, optimizer_name, lr, metrics_list, class_ids, device):
         """Initialize TrainingConfig with training components."""
         self.model = model
         self.loss_function_name = loss_function_name
         self.optimizer_name = optimizer_name
-        self.learning_rate = learning_rate
+        self.lr = lr
         self.metrics_list = metrics_list
         self.class_ids = class_ids
         self.device = device
@@ -1460,8 +1519,8 @@ class TrainingConfig:
     def _setup_optimizer(self):
         """Setup the optimizer."""
         assert self.optimizer_name in get_segmentation_optimizers()
-        self.optimizer = getattr(torch.optim, self.optimizer_name)(self.model.parameters(), self.learning_rate)
-        print(f"   • Optimizer: {self.optimizer_name} (lr={self.learning_rate})")
+        self.optimizer = getattr(torch.optim, self.optimizer_name)(self.model.parameters(), self.lr)
+        print(f"   • Optimizer: {self.optimizer_name} (lr={self.lr})")
 
     def _setup_metrics(self):
         """Setup the evaluation metrics."""
@@ -1651,7 +1710,7 @@ class DatasetManager:
     """Manages creation and configuration of training datasets."""
 
     def __init__(self, train_df, valid_df, test_df, class_ids, preprocessing_fn,
-                 augment_data=False, batch_size=8, imgsz=640):
+                 augment_data=False, batch=8, imgsz=640):
         """Initialize DatasetManager with dataframes and configuration."""
         self.train_df = train_df
         self.valid_df = valid_df
@@ -1659,7 +1718,7 @@ class DatasetManager:
         self.class_ids = class_ids
         self.preprocessing_fn = preprocessing_fn
         self.augment_data = augment_data
-        self.batch_size = batch_size
+        self.batch = batch
         self.imgsz = imgsz
 
         self._create_datasets()
@@ -1713,7 +1772,7 @@ class DatasetManager:
         """Create data loaders for training and validation."""
         self.train_loader = DataLoader(
             self.train_dataset, 
-            batch_size=self.batch_size, 
+            batch_size=self.batch, 
             shuffle=True, 
             pin_memory=torch.cuda.is_available()
         )
@@ -1731,7 +1790,7 @@ class DatasetManager:
         )
 
     def visualize_training_samples(self, logs_dir, class_colors):
-        """Visualize training samples and save to logs directory."""
+        """Visualize training samples in a 3x3 grid and save to a single image."""
         print("\n" + "=" * 60)
         print("👀 GENERATING TRAINING SAMPLE VISUALIZATIONS")
         print("=" * 60)
@@ -1741,34 +1800,50 @@ class DatasetManager:
                                  augmentation=get_training_augmentation(self.imgsz),
                                  classes=self.class_ids)
 
-        # Loop through a few samples
-        for i in range(5):
+        # Create a 3x3 grid figure
+        fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+        axes = axes.flatten()  # Flatten to easily iterate
+
+        # Loop through 9 samples
+        for i in range(9):
             try:
                 # Get a random sample from dataset
-                image, mask = sample_dataset[np.random.randint(0, len(self.train_df))]
-                # Visualize and save to logs dir
-                save_path = os.path.join(logs_dir, f'TrainingSample_{i}.png')
-                visualize(save_path=save_path,
-                          save_figure=True,
-                          image=image,
-                          training_sample=colorize_mask(mask, self.class_ids, class_colors))
-            except:
-                pass
+                image_tensor, mask_tensor = sample_dataset[np.random.randint(0, len(self.train_df))]
+                image = image_tensor.numpy()
+                mask = mask_tensor.numpy()
+
+                # Colorize the mask
+                colored_mask = colorize_mask(mask, self.class_ids, class_colors)
+                # Plot in the subplot
+                axes[i].imshow(image)
+                axes[i].imshow(colored_mask, alpha=0.5)
+                axes[i].set_title(f'Sample {i+1}')
+                axes[i].axis('off')
+            except Exception as e:
+                print(f"⚠️ Could not visualize sample {i}: {e}")
+                axes[i].axis('off')  # Hide empty subplots
+
+        # Save the grid to a single image
+        save_path = os.path.join(logs_dir, 'TrainingSamples_Grid.png')
+        plt.tight_layout()
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"🖼️ Training samples grid saved to {save_path}")
             
             
 class Trainer:
     """Handles the training loop with early stopping and learning rate scheduling."""
 
-    def __init__(self, model, loss_function, metrics, optimizer, device, num_epochs,
+    def __init__(self, model, loss_function, metrics, optimizer, device, epochs,
                  train_loader, valid_loader, valid_dataset, valid_dataset_vis,
-                 experiment_manager, class_ids, class_colors, amp_enabled=False):
+                 experiment_manager, class_ids, class_colors, amp_enabled=False, patience=100):
         """Initialize Trainer with training components."""
         self.model = model
         self.loss_function = loss_function
         self.metrics = metrics
         self.optimizer = optimizer
         self.device = device
-        self.num_epochs = num_epochs
+        self.epochs = epochs
         self.train_loader = train_loader
         self.valid_loader = valid_loader
         self.valid_dataset = valid_dataset
@@ -1777,6 +1852,7 @@ class Trainer:
         self.class_ids = class_ids
         self.class_colors = class_colors
         self.amp_enabled = amp_enabled
+        self.patience = patience
 
         # Initialize AMP scaler if enabled
         self.scaler = torch.amp.GradScaler() if amp_enabled else None
@@ -1802,7 +1878,7 @@ class Trainer:
         print("=" * 60)
 
         print("📋 Training Configuration:")
-        print(f"   • Epochs: {self.num_epochs}")
+        print(f"   • Epochs: {self.epochs}")
         print(f"   • Device: {self.device}")
         print(f"   • Model: {type(self.model).__name__}")
         print(f"   • Loss: {self.loss_function.__name__}")
@@ -1812,8 +1888,8 @@ class Trainer:
 
         try:
             # Training loop
-            for e_idx in range(1, self.num_epochs + 1):
-                print(f"\n🦖 Epoch {e_idx}/{self.num_epochs}")
+            for e_idx in range(1, self.epochs + 1):
+                print(f"\n🦖 Epoch {e_idx}/{self.epochs}")
                 print("-" * 40)
 
                 # Go through an epoch for train, valid
@@ -1852,29 +1928,50 @@ class Trainer:
         return self.best_epoch
 
     def _visualize_validation_sample(self, epoch):
-        """Visualize a validation sample for the current epoch."""
+        """Visualize validation samples for the current epoch in a 3x2 grid."""
         try:
-            n = np.random.choice(len(self.valid_dataset_vis))
-            # Get the image original image without preprocessing
-            image_vis = self.valid_dataset_vis[n][0].numpy()
-            # Get the preprocessed input for model prediction
-            image, gt_mask = self.valid_dataset[n]
-            gt_mask = gt_mask.squeeze().numpy()
-            x_tensor = image.to(self.device).unsqueeze(0)
-            # Make prediction
-            pr_mask = self.model.predict(x_tensor)
-            pr_mask = (pr_mask.squeeze().cpu().numpy().round())
-            pr_mask = np.argmax(pr_mask, axis=0)
-
-            # Visualize the colorized results locally
+            # Select 3 random samples
+            sample_indices = np.random.choice(len(self.valid_dataset_vis), 3, replace=False)
+            
+            # Create a 3x2 subplot grid
+            fig, axes = plt.subplots(3, 2, figsize=(12, 18))
+            
+            for i, n in enumerate(sample_indices):
+                # Get the original image without preprocessing
+                image_vis = self.valid_dataset_vis[n][0].numpy()
+                # Get the preprocessed input for model prediction
+                image, gt_mask = self.valid_dataset[n]
+                gt_mask = gt_mask.squeeze().numpy()
+                x_tensor = image.to(self.device).unsqueeze(0)
+                # Make prediction
+                pr_mask = self.model.predict(x_tensor)
+                pr_mask = (pr_mask.squeeze().cpu().numpy().round())
+                pr_mask = np.argmax(pr_mask, axis=0)
+                
+                # Colorize masks
+                gt_colored = colorize_mask(gt_mask, self.class_ids, self.class_colors)
+                pr_colored = colorize_mask(pr_mask, self.class_ids, self.class_colors)
+                
+                # Left column: Actual image with ground truth mask
+                axes[i, 0].imshow(image_vis)
+                axes[i, 0].imshow(gt_colored, alpha=0.5)
+                axes[i, 0].set_title(f'Sample {i+1}: Ground Truth')
+                axes[i, 0].axis('off')
+                
+                # Right column: Actual image with predicted mask
+                axes[i, 1].imshow(image_vis)
+                axes[i, 1].imshow(pr_colored, alpha=0.5)
+                axes[i, 1].set_title(f'Sample {i+1}: Prediction')
+                axes[i, 1].axis('off')
+            
+            # Save the grid to a single image
             save_path = os.path.join(self.experiment_manager.logs_dir, f'ValidResult_{epoch}.png')
-            visualize(save_path=save_path,
-                      save_figure=True,
-                      image=image_vis,
-                      ground_truth_mask=colorize_mask(gt_mask, self.class_ids, self.class_colors),
-                      predicted_mask=colorize_mask(pr_mask, self.class_ids, self.class_colors))
+            plt.tight_layout()
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
+            print(f"🖼️ Validation samples grid saved to {save_path}")
         except Exception as e:
-            print(f"⚠️ Could not visualize validation sample for epoch {epoch}: {e}")
+            print(f"⚠️ Could not visualize validation samples for epoch {epoch}: {e}")
 
     def _update_training_state(self, epoch, train_logs, valid_logs):
         """Update training state and handle early stopping."""
@@ -1909,7 +2006,7 @@ class Trainer:
             print(f"🔄 Decreased learning rate to {new_lr:.6f} after epoch {epoch}")
 
         # Exit early if progress stops
-        if self.since_best >= 10 and train_loss < valid_loss and self.since_drop >= 5:
+        if self.since_best >= self.patience and train_loss < valid_loss and self.since_drop >= 5:
             print("🛑 Training plateaued; stopping early")
             return False
 
@@ -2116,22 +2213,22 @@ def main():
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
                         help=loss_help)
 
-    parser.add_argument('--freeze_encoder', type=float, default=0.80,
+    parser.add_argument('--freeze', type=float, default=0.80,
                         help='Freeze N percent of the encoder [0 - 1]')
 
     parser.add_argument('--optimizer', type=str, default='Adam',
                         help=optimizer_help)
 
-    parser.add_argument('--learning_rate', type=float, default=0.0001,
+    parser.add_argument('--lr', type=float, default=0.0001,
                         help='Starting learning rate')
 
     parser.add_argument('--augment_data', action='store_true',
                         help='Apply affine augmentations to training data')
 
-    parser.add_argument('--num_epochs', type=int, default=25,
+    parser.add_argument('--epochs', type=int, default=25,
                         help='Starting learning rate')
 
-    parser.add_argument('--batch_size', type=int, default=8,
+    parser.add_argument('--batch', type=int, default=8,
                         help='Number of samples per batch during training')
 
     parser.add_argument('--imgsz', type=int, default=640,
@@ -2143,14 +2240,55 @@ def main():
     parser.add_argument('--int8', action='store_true',
                         help='Enable INT8 quantization for maximum inference speed (applied to saved models)')
 
-    parser.add_argument('--num_vis_samples', type=int, default=10,
+    parser.add_argument('--num_vis_samples', type=int, default=5,
                         help='Number of test samples to visualize during evaluation')
+
+    parser.add_argument('--patience', type=int, default=30,
+                        help='Number of epochs to wait without improvement in validation metrics before early stopping')
 
     parser.add_argument('--num_workers', type=int, default=0,
                         help='Number of worker processes for data loading')
-    args = parser.parse_args()
+
+    parser.add_argument('--device', type=str, default=None,
+                        help='Specifies the computational device(s) for training')
+
+    parser.add_argument('--project', type=str, default=None,
+                        help='Name of the project directory where training outputs are saved')
+
+    parser.add_argument('--name', type=str, default=None,
+                        help='Name of the training run.')
+
+    parser.add_argument('--exist_ok', action='store_true',
+                        help='If True, allows overwriting of an existing project/name directory')
+
+    parser.add_argument('--pretrained', type=str, default='True',
+                        help='Determines whether to start training from a pretrained model. Can be a boolean value or a string path to a specific model from which to load weights')
     
     args = parser.parse_args()
+    
+    # Parse device
+    device = None
+    if args.device is not None:
+        if args.device == 'cpu':
+            device = 'cpu'
+        elif args.device == 'mps':
+            device = 'mps'
+        elif args.device.isdigit():
+            device = int(args.device)
+        elif args.device == '-1':
+            device = -1
+        elif args.device.startswith('[') and args.device.endswith(']'):
+            device = eval(args.device)
+        else:
+            device = args.device
+    
+    # Parse pretrained
+    pretrained = args.pretrained
+    if pretrained.lower() == 'true':
+        pretrained = True
+    elif pretrained.lower() == 'false':
+        pretrained = False
+    # else keep as str
     
     # Check imgsz
     if args.imgsz % 32 != 0:
@@ -2173,17 +2311,23 @@ def main():
             encoder_name=args.encoder_name,
             decoder_name=args.decoder_name,
             pre_trained_path=args.pre_trained_path,
-            freeze_encoder=args.freeze_encoder,
+            freeze=args.freeze,
             metrics=args.metrics,
             loss_function=args.loss_function,
             optimizer=args.optimizer,
-            learning_rate=args.learning_rate,
+            lr=args.lr,
             augment_data=args.augment_data,
-            num_epochs=args.num_epochs,
-            batch_size=args.batch_size,
+            epochs=args.epochs,
+            batch=args.batch,
             imgsz=args.imgsz,
             amp=args.amp,
-            num_vis_samples=args.num_vis_samples
+            num_vis_samples=args.num_vis_samples,
+            patience=args.patience,
+            device=device,
+            project=args.project,
+            name=args.name,
+            exist_ok=args.exist_ok,
+            pretrained=pretrained
         )
 
     except Exception as e:
