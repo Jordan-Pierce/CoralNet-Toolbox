@@ -684,49 +684,32 @@ class SemanticModel:
         print(f"Loading model from {model_path}...")
         self.model = torch.load(model_path, map_location=self.device, weights_only=False)
         
-        # Retrieve the stashed model name, if it exists
+        # --- NEW: Retrieve stashed metadata directly from the model object ---
         self.name = getattr(self.model, 'name', None)
+        self.imgsz = getattr(self.model, 'imgsz', None)
+        self.class_names = getattr(self.model, 'class_names', [])
+        self.class_colors = getattr(self.model, 'class_colors', [])
+        self.num_classes = getattr(self.model, 'num_classes', 0)
+        self.color_map = getattr(self.model, 'color_map', {})
+        # Load class_ids, fallback to a range based on num_classes
+        self.class_ids = getattr(self.model, 'class_ids', list(range(self.num_classes)))
+
         if self.name:
             print(f"   • Retrieved stashed model name: {self.name}")
+            print(f"   • Retrieved stashed imgsz: {self.imgsz}")
+            print(f"   • Retrieved {self.num_classes} classes.")
         else:
-            print("   • No stashed model name found (likely an older model file).")
+            print("   • No stashed metadata found (likely an older model file).")
 
         self.model.to(self.device)
         self.model.eval()
         print("Model loaded successfully.")
 
-        # Try to load metadata (data.yaml or color_map.json)
-        # Assumes model_path is like .../results/RUN_NAME/weights/best.pt
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(model_path)))
-        
-        # Try to find data.yaml in the parent directory
-        data_yaml_path = None
-        potential_yaml = glob.glob(os.path.join(base_dir, "*.yaml"))
-        if not potential_yaml:
-            # Check one level higher if it's inside a 'results' dir
-            base_dir = os.path.dirname(base_dir)
-            potential_yaml = glob.glob(os.path.join(base_dir, "*.yaml"))
-
-        if potential_yaml:
-            data_yaml_path = potential_yaml[0]
-            print(f"Loading metadata from {data_yaml_path}")
-            self.data_config = DataConfig(data_yaml_path)
-            self.class_names = self.data_config.class_names
-            self.class_colors = self.data_config.class_colors
-            self.num_classes = self.data_config.nc
-            self.color_map = self.data_config.color_map
-        else:
-            print("Warning: Could not find associated data.yaml. "
-                  "Class names and preprocessing info will be limited.")
-
         # Infer preprocessing function from the stashed model name
         try:
             if not self.name:
                 raise Exception("Model name not stashed.")
-            
-            # self.name is "Decoder-Encoder", e.g., "Unet-resnet34"
-            encoder_name = self.name.split('-')[1] 
-            
+            encoder_name = self.name.split('-')[1]
             self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, 'imagenet')
             print(f"Inferred preprocessing for encoder: {encoder_name}")
         except Exception as e:
@@ -835,6 +818,13 @@ class SemanticModel:
         else:
             print("🔧 Using pre-loaded model for training.")
             self.model.to(self.device)
+            
+        print("📝 Stamping metadata onto model object for saving...")
+        self.model.imgsz = self.imgsz
+        self.model.class_names = self.class_names
+        self.model.class_colors = self.class_colors
+        self.model.num_classes = self.num_classes
+        self.model.color_map = self.color_map
 
         # 3. Setup Training Config
         training_config = TrainingConfig(
@@ -919,6 +909,129 @@ class SemanticModel:
         self._optimized_model = None
         
         return best_weights
+    
+    # --- Evalutation Methods ---
+    
+    def eval(self, data_yaml, split='test', num_vis_samples=10, output_dir=None,
+             loss_function='JaccardLoss', metrics=None):
+        """
+        Run standalone evaluation on a trained model.
+
+        Args:
+            data_yaml (str): Path to the data.yaml file.
+            split (str): Data split to evaluate on ('train', 'val', or 'test').
+            num_vis_samples (int): Number of result images to save.
+            output_dir (str, optional): Directory to save results.
+                If None, creates a new dir next to the model's 'weights' dir.
+            loss_function (str): Name of the loss function to use for eval.
+            metrics (list[str], optional): List of metric names to calculate.
+        """
+        if self.model is None:
+            raise Exception("Model is not loaded. Load a model first.")
+        
+        if self.imgsz is None:
+            raise Exception("Model `imgsz` is not set. Load a model trained "
+                            "with this framework or provide `imgsz` manually.")
+
+        if metrics is None:
+            metrics = ['iou_score', 'f1_score']
+
+        print("\n" + "=" * 60)
+        print(f"🚀 STARTING STANDALONE EVALUATION ON '{split}' SPLIT")
+        print("=" * 60)
+
+        # 1. Load Data
+        print(f"📂 Loading dataset from {data_yaml}...")
+        data_config = DataConfig(data_yaml)
+        all_dfs = data_config.get_split_dataframes()
+        
+        if split == 'train':
+            eval_df = all_dfs[0]
+        elif split == 'val':
+            eval_df = all_dfs[1]
+        elif split == 'test':
+            eval_df = all_dfs[2]
+        else:
+            raise ValueError(f"Invalid split '{split}'. Must be 'train', 'val', or 'test'.")
+
+        if eval_df.empty:
+            print(f"⚠️ No data found for split: {split}. Exiting.")
+            return
+
+        print(f"   • Evaluating on {len(eval_df)} samples from '{split}' split.")
+
+        # 2. Setup Datasets
+        print("📦 Creating evaluation datasets...")
+        eval_dataset = Dataset(
+            eval_df,
+            augmentation=get_validation_augmentation(self.imgsz),
+            preprocessing=get_preprocessing(self.preprocessing_fn),
+            classes=self.class_ids,
+        )
+        eval_dataset_vis = Dataset(
+            eval_df,
+            augmentation=get_validation_augmentation(self.imgsz),
+            classes=self.class_ids,
+        )
+        
+        # 3. Setup Metrics and Loss
+        print("⚙️ Configuring metrics...")
+        try:
+            loss_fn = getattr(smp.losses, loss_function)(mode='multiclass').to(self.device)
+            loss_fn.__name__ = loss_fn._get_name()
+            if 'ignore_index' in inspect.signature(loss_fn.__init__).parameters:
+                loss_fn.ignore_index = 0  # Ignore background
+            
+            metric_fns = [TorchMetic(getattr(smp.metrics, m)) for m in metrics]
+            print(f"   • Loss: {loss_function}")
+            print(f"   • Metrics: {metrics}")
+        except Exception as e:
+            print(f"❌ Error setting up metrics/loss: {e}")
+            return
+
+        # 4. Setup Experiment Manager
+        if output_dir is None:
+            # Place results in a new 'eval' dir at the same level as 'weights'
+            model_base_dir = os.path.dirname(os.path.dirname(self.model_path))
+            eval_run_name = f"eval_{split}_{get_now()}"
+            output_dir = os.path.join(model_base_dir, eval_run_name)
+            print(f"   • No output_dir provided. Saving results to: {output_dir}")
+
+        decoder_name, encoder_name = "Model", "eval" # Defaults
+        if self.name and '-' in self.name:
+             decoder_name, encoder_name = self.name.split('-', 1)
+        
+        experiment_manager = ExperimentManager(
+            output_dir=output_dir,
+            decoder_name=decoder_name,
+            encoder_name=encoder_name,
+            color_map=self.color_map,
+            metrics=metric_fns
+        )
+        # Save the dataframe used for this eval
+        eval_df.to_csv(os.path.join(experiment_manager.logs_dir, f"{split}_data.csv"), index=False)
+
+        # 5. Instantiate and Run Evaluator
+        print("🚀 Handing off to Evaluator...")
+        evaluator = Evaluator(
+            model=self.model,
+            loss_function=loss_fn,
+            metrics=metric_fns,
+            device=self.device,
+            test_dataset=eval_dataset,
+            test_dataset_vis=eval_dataset_vis,
+            experiment_manager=experiment_manager,
+            class_ids=self.class_ids,
+            class_colors=self.class_colors,
+            num_vis_samples=num_vis_samples
+        )
+
+        evaluator.evaluate()
+        evaluator.visualize_results()
+        
+        # Plotting metrics won't work well here as it's not run over epochs
+        # but the CSV with final scores will be saved.
+        print(f"\n✅ Evaluation complete! Results saved to {experiment_manager.run_dir}")
 
     # --- Prediction Methods ---
     
@@ -1192,14 +1305,16 @@ class SemanticModel:
         
         if not non_empty_indices:
             # No detections, return empty Results
-            return Results(
-                orig_img=orig_img,
-                path=path,
-                names=dict(enumerate(self.class_names)),
-                boxes=Boxes(torch.empty(0, 6), (h, w)) if Boxes is not None else None,
-                masks=Masks(torch.empty(0, h, w), (h, w)) if Masks is not None else None
-            )
-        
+            return [
+                Results(
+                    orig_img=orig_img,
+                    path=path,
+                    names=dict(enumerate(self.class_names)),
+                    boxes=Boxes(torch.empty(0, 6), (h, w)) if Boxes is not None else None,
+                    masks=Masks(torch.empty(0, h, w), (h, w)) if Masks is not None else None
+                )
+            ]
+
         final_masks_tensor = torch.from_numpy(one_hot_mask[non_empty_indices])
         
         ult_masks = Masks(final_masks_tensor, (h, w)) if Masks is not None else None
@@ -1244,13 +1359,15 @@ class SemanticModel:
                 print(f"Warning: Could not generate boxes from masks: {e}")
                 ult_boxes = Boxes(torch.empty(0, 6), (h, w))
 
-        return Results(
-            orig_img=orig_img,
-            path=path,
-            names=dict(enumerate(self.class_names)),
-            boxes=ult_boxes,
-            masks=ult_masks
-        )
+        return [
+            Results(
+                orig_img=orig_img,
+                path=path,
+                names=dict(enumerate(self.class_names)),
+                boxes=ult_boxes,
+                masks=ult_masks
+            )
+        ]
 
     # --- Optimization Methods (from Predictor) ---
     
@@ -1422,6 +1539,98 @@ class ExperimentManager:
             row += f",{logs.get(metric.__name__, 0)}"
         with open(self.results_csv_path, 'a') as f:
             f.write(row + "\n")
+            
+    def plot_metrics(self):
+        """
+        Reads the results.csv file and generates line plots for all
+        metrics, saving the plot to the logs directory.
+        """
+        print(f"\n📈 Generating metrics plot from {self.results_csv_path}...")
+        
+        try:
+            # 1. Read the data
+            if not os.path.exists(self.results_csv_path):
+                print(f"⚠️ Cannot plot metrics. File not found: {self.results_csv_path}")
+                return
+                
+            data = pd.read_csv(self.results_csv_path)
+            
+            if data.empty:
+                print(f"⚠️ Cannot plot metrics. File is empty: {self.results_csv_path}")
+                return
+
+            # 2. Identify metrics to plot
+            # Get metric names from the class instance, not just the file
+            metric_names = [m.__name__ for m in self.metrics]
+            all_metrics_to_plot = ['loss'] + metric_names
+            
+            # 3. Separate train and valid data
+            train_data = data[data['phase'] == 'train']
+            valid_data = data[data['phase'] == 'valid']
+
+            # 4. Create a dynamic subplot grid (2 rows, multiple columns)
+            num_metrics = len(all_metrics_to_plot)
+            num_rows = 2
+            num_cols = (num_metrics + num_rows - 1) // num_rows  # Ceiling division
+            
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(18, 6 * num_rows))
+            
+            # Flatten axes array for easy iteration, handling 1-row case
+            if num_rows == 1:
+                if num_cols == 1:
+                    axes = [axes]  # Make it iterable if 1x1
+                else:
+                    axes = axes.flatten()  # 1xN
+            else:
+                axes = axes.flatten()  # NxN
+
+            # 5. Iterate and plot each metric
+            for i, metric in enumerate(all_metrics_to_plot):
+                ax = axes[i]
+                
+                # Check if metric exists in the data
+                if metric not in train_data.columns or metric not in valid_data.columns:
+                    print(f"   - Skipping '{metric}', not found in CSV columns.")
+                    continue
+                
+                # Plot train data
+                ax.plot(train_data['epoch'], 
+                        train_data[metric], 
+                        label='Train', 
+                        marker='o', 
+                        linestyle='-', 
+                        markersize=4)
+                
+                # Plot valid data
+                ax.plot(valid_data['epoch'], 
+                        valid_data[metric], 
+                        label='Valid', 
+                        marker='x', 
+                        linestyle='--', 
+                        markersize=5)
+                
+                # Set titles and labels
+                ax.set_title(f'{metric.replace("_", " ").title()} Over Epochs')
+                ax.set_xlabel('Epoch')
+                ax.set_ylabel('Value')
+                ax.legend()
+                ax.grid(True, linestyle=':')
+
+            # 6. Clean up unused subplots
+            for j in range(i + 1, len(axes)):
+                fig.delaxes(axes[j])
+
+            # 7. Save the figure
+            plt.tight_layout()
+            save_path = os.path.join(self.logs_dir, "metrics_plot.png")
+            plt.savefig(save_path)
+            plt.close()  # Close the figure to free memory
+            
+            print(f"📊 Metrics plot saved to {save_path}")
+
+        except Exception as e:
+            print(f"⚠️ Could not generate metrics plot. Error: {e}")
+            print(traceback.format_exc())
 
     def save_best_model(self, model):
         """Save the best model weights as best.pt."""
@@ -1783,6 +1992,12 @@ class Evaluator:
         print("\n" + "=" * 60)
         print(f"🎨 VISUALIZING {self.num_vis_samples} TEST RESULTS")
         print("=" * 60)
+        
+        try:
+            # Plot metrics after visualizations
+            self.experiment_manager.plot_metrics()
+        except Exception as e:
+            print(f"⚠️ Could not plot metrics: {e}")
 
         try:
             # Empty cache from testing
@@ -1821,6 +2036,7 @@ class Evaluator:
                               image=image_vis,
                               ground_truth_mask=gt_mask,
                               predicted_mask=pr_mask)
+                    
                 except:
                     pass
                 
