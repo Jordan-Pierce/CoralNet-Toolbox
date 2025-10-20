@@ -171,19 +171,14 @@ class Semantic(Base):
         if not self.loaded_model:
             return
 
-        # --- Check for mask annotation ---
-        mask_annotation = self.annotation_window.current_mask_annotation
-        if mask_annotation is None:
-            QMessageBox.warning(self, 
-                                "Warning", 
-                                "Mask Annotation layer is not active. Please create or select a mask annotation.")
-            return
-            
         # ResultsProcessor is not instantiated here
 
         if not image_paths:
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
+
+        # Get project labels for mask annotation creation
+        project_labels = list(self.class_mapping.values())
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -199,6 +194,10 @@ class Semantic(Base):
                 inputs, raster = self._get_inputs(image_path)
                 if inputs is None:
                     continue
+
+                # Ensure the raster has a mask annotation
+                if raster.mask_annotation is None:
+                    raster.get_mask_annotation(project_labels)
 
                 results = self._apply_model(inputs)
                 # --- Pass raster to _process_results ---
@@ -276,7 +275,7 @@ class Semantic(Base):
         work_areas = raster.get_work_areas()
 
         # --- Get the mask annotation layer ---
-        mask_annotation = self.annotation_window.current_mask_annotation
+        mask_annotation = raster.mask_annotation
         if mask_annotation is None:
             print("Error: No mask annotation layer found to apply results to.")
             return
@@ -324,7 +323,7 @@ class Semantic(Base):
             # Reconstruct the (H, W) semantic mask from the Results object
             reconstructed_mask = _reconstruct_semantic_mask(
                 results,
-                self.loaded_model.class_names, # Model's map {0: 'bg', 1: 'coral'}
+                self.loaded_model.class_names,  # Model's map {0: 'bg', 1: 'coral'}
                 self.class_mapping,            # Project's map {'coral': LabelObj}
                 mask_annotation_map            # Mask's map {LabelObj.id: 2}
             )
