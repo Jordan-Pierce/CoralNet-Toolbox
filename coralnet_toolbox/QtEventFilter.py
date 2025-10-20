@@ -22,6 +22,7 @@ class GlobalEventFilter(QObject):
         self.classify_deploy_model_dialog = main_window.classify_deploy_model_dialog
         self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
+        self.semantic_deploy_model_dialog = main_window.semantic_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.see_anything_deploy_generator_dialog = main_window.see_anything_deploy_generator_dialog
         self.transformers_deploy_model_dialog = main_window.transformers_deploy_model_dialog
@@ -74,19 +75,24 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_3:
                     self.segment_deploy_model_dialog.predict()
                     return True
+                
+                # Handle hotkey for semantic segmentation prediction
+                if event.key() == Qt.Key_4:
+                    self.semantic_deploy_model_dialog.predict()
+                    return True
 
                 # Handle hotkey for segment everything prediction
-                if event.key() == Qt.Key_4:
+                if event.key() == Qt.Key_5:
                     self.sam_deploy_generator_dialog.predict()
                     return True
                 
                 # Handle hotkey for see anything (YOLOE) generator
-                if event.key() == Qt.Key_5:
+                if event.key() == Qt.Key_6:
                     self.see_anything_deploy_generator_dialog.predict()
                     return True
 
                 # Handle hotkey for transformers prediction
-                if event.key() == Qt.Key_6:
+                if event.key() == Qt.Key_7:
                     self.transformers_deploy_model_dialog.predict()
                     return True
 

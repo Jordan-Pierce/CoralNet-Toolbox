@@ -163,6 +163,8 @@ class MapResults:
                         segments_xyn.append(np.zeros((0, 2), dtype=np.float32))
                 
                 # Create a new Masks object directly using our updated Masks class
+                # Note: results.masks.data is still the small tile data here,
+                # but for polygon models, the ._xy attribute is what matters.
                 mapped_masks = Masks(results.masks.data, orig_shape=(orig_h, orig_w))
                 
                 # Just set the xy coordinates directly without a special update method
@@ -170,6 +172,40 @@ class MapResults:
                 mapped_masks._xyn = segments_xyn
                 
                 # Assign the new masks object to mapped_results
+                mapped_results.masks = mapped_masks
+            
+            # ELSE: This is raster data (from SemanticModel), not polygons.
+            # We must create a new full-size tensor and paste the tile into it.
+            else:
+                # Get the original tile mask data
+                tile_masks = results.masks.data  # (N, tile_h, tile_w) e.g., (N, 640, 640)
+                n, tile_h, tile_w = tile_masks.shape
+
+                # 1. Create a new, empty, full-size tensor for the mapped masks
+                full_masks = torch.zeros((n, orig_h, orig_w), device=device, dtype=tile_masks.dtype)
+
+                # 2. Get destination coordinates
+                y_start_dest, x_start_dest = wa_y, wa_x
+                y_end_dest, x_end_dest = wa_y + tile_h, wa_x + tile_w
+                
+                # 3. Clip destination coordinates to full image bounds
+                y_start_dest_clip = max(0, y_start_dest)
+                x_start_dest_clip = max(0, x_start_dest)
+                y_end_dest_clip = min(orig_h, y_end_dest)
+                x_end_dest_clip = min(orig_w, x_end_dest)
+
+                # 4. Calculate source coordinates from the tile based on clipping
+                y_start_src = y_start_dest_clip - y_start_dest
+                x_start_src = x_start_dest_clip - x_start_dest
+                y_end_src = y_start_src + (y_end_dest_clip - y_start_dest_clip)
+                x_end_src = x_start_src + (x_end_dest_clip - x_start_dest_clip)
+                
+                # 5. Paste the tile mask data into the full mask tensor
+                full_masks[:, y_start_dest_clip:y_end_dest_clip, x_start_dest_clip:x_end_dest_clip] = \
+                    tile_masks[:, y_start_src:y_end_src, x_start_src:x_end_src]
+                
+                # 6. Create the new Masks object using the NEWLY created full_masks data
+                mapped_masks = Masks(full_masks, orig_shape=(orig_h, orig_w))
                 mapped_results.masks = mapped_masks
         
         return mapped_results
@@ -190,3 +226,53 @@ class MapResults:
             mapped_results.update(probs=results.probs.data)
             
         return mapped_results
+
+    def reconstruct_semantic_mask(self, results, model_class_names, 
+                                  project_class_mapping, mask_annotation_map):
+        """
+        Converts an Ultralytics Results object (instance format) back into a
+        single semantic mask (H, W) with internal class IDs.
+        
+        Args:
+            results (ultralytics.Results): The result object from prediction.
+            model_class_names (list): List of class names from the model.
+            project_class_mapping (dict): Maps {model_name: LabelObject}.
+            mask_annotation_map (dict): Maps {LabelObject.id: internal_mask_id}.
+            
+        Returns:
+            np.ndarray: A (H, W) semantic mask with internal class IDs.
+        """
+        # If no masks or boxes, return an empty mask
+        if results.masks is None or results.boxes is None:
+            return np.zeros(results.orig_shape[:2], dtype=np.uint8)
+            
+        h, w = results.orig_shape[:2]
+        semantic_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # Get masks and class indices
+        masks = results.masks.data.cpu().numpy().astype(bool)  # (N, H, W)
+        classes = results.boxes.cls.cpu().numpy().astype(int)  # (N,)
+        
+        # Iterate over each detected instance
+        for i in range(len(classes)):
+            # 1. Get the class name from the model's results (e.g., index 1)
+            model_class_index = classes[i] 
+            if model_class_index >= len(model_class_names):
+                continue
+            model_class_name = model_class_names[model_class_index]
+            
+            # 2. Find the corresponding Label object from the project (e.g., 'coral-a')
+            label_obj = project_class_mapping.get(model_class_name)
+            if not label_obj:
+                continue  # Skip if this class isn't mapped in the project
+            
+            # 3. Find the internal ID for this label in the MaskAnnotation (e.g., 3)
+            mask_class_id = mask_annotation_map.get(label_obj.id)
+            if not mask_class_id:
+                continue   # Skip if this label isn't in the mask's map
+                
+            # 4. Apply this class ID to the semantic mask
+            instance_mask = masks[i]  # (H, W)
+            semantic_mask[instance_mask] = mask_class_id
+            
+        return semantic_mask

@@ -1132,7 +1132,7 @@ class SemanticModel:
             if img is not None:
                 images, paths = [img], [source]
         
-        elif isinstance(source, np.ndarray):
+        elif type(source) is np.ndarray:
             # Handle all numpy array formats
             
             # Ensure images are uint8. Albumentations can be picky.
@@ -1188,7 +1188,7 @@ class SemanticModel:
                         images.append(img)
                         paths.append(p)
             
-            elif isinstance(source[0], np.ndarray):  # List of images
+            elif type(source[0]) is np.ndarray:  # List of images
                 # Recursively normalize each image in the list
                 normalized_list = [self._normalize_source(img) for img in source]
                 images = [item[0][0] for item in normalized_list if item[0]]
@@ -1196,8 +1196,8 @@ class SemanticModel:
             
             else:
                 raise TypeError(f"Unsupported list element type: {type(source[0])}")
-        
-        elif isinstance(source, torch.Tensor):
+
+        elif type(source) is torch.Tensor:
             # Single image or batch as torch.Tensor
             img_np = self._tensor_to_numpy(source)
             # After conversion, img_np is (H,W,C) or (B,H,W,C), so we can
@@ -1209,8 +1209,7 @@ class SemanticModel:
             
         return images, paths
 
-    def predict(self, source, confidence_threshold=0.5, 
-                imgsz=None):
+    def predict(self, source, confidence_threshold=0.5, imgsz=None):
         """
         Run inference on a variety of sources.
 
@@ -1267,7 +1266,7 @@ class SemanticModel:
         for img in images:
             orig_shapes.append(img.shape)
             augmented = val_aug(image=img)
-            preprocessed = preproc(image=augmented['image'], mask=augmented['image']) # mask is dummy
+            preprocessed = preproc(image=augmented['image'], mask=augmented['image'])  # mask is dummy
             preprocessed_tensors.append(torch.from_numpy(preprocessed['image']))
 
         batch_tensor = torch.stack(preprocessed_tensors).to(self.device)
@@ -1303,7 +1302,7 @@ class SemanticModel:
         pred_class = torch.where(
             pred_confidence >= confidence_threshold,
             pred_class,
-            torch.zeros_like(pred_class) # Set to background
+            torch.zeros_like(pred_class)  # Set to background
         )
         return pred_class
 
@@ -1315,8 +1314,7 @@ class SemanticModel:
 
         h, w = orig_shape[:2]
         
-        # 1. Create Masks object
-        # We need to convert (H, W) class index mask to (NumClasses, H, W) one-hot mask
+        # 1. Create one-hot mask representation
         one_hot_mask = np.zeros((self.num_classes, h, w), dtype=np.uint8)
         
         present_classes = np.unique(mask_array)
@@ -1326,75 +1324,69 @@ class SemanticModel:
                 continue  # Skip background
             if c >= self.num_classes: 
                 continue  # Safety check
-            
+        
             one_hot_mask[c][mask_array == c] = 1
 
         # Filter out empty masks
         non_empty_indices = [int(c) for c in present_classes if c != 0 and c < self.num_classes]
         
         if not non_empty_indices:
-            # No detections, return empty Results
+            # No detections, return empty Results in a list
             return [
                 Results(
                     orig_img=orig_img,
                     path=path,
                     names=dict(enumerate(self.class_names)),
-                    boxes=Boxes(torch.empty(0, 6), (h, w)) if Boxes is not None else None,
-                    masks=Masks(torch.empty(0, h, w), (h, w)) if Masks is not None else None
+                    boxes=torch.empty(0, 6),  # Raw tensor: (N, 6) where 6 = [x1, y1, x2, y2, conf, cls]
+                    masks=torch.empty(0, h, w)  # Raw tensor: (N, H, W)
                 )
             ]
 
-        final_masks_tensor = torch.from_numpy(one_hot_mask[non_empty_indices])
+        # Create masks tensor for non-empty classes
+        final_masks_tensor = torch.from_numpy(one_hot_mask[non_empty_indices]).float()
         
-        ult_masks = Masks(final_masks_tensor, (h, w)) if Masks is not None else None
+        # 2. Create bounding boxes from masks
+        try:
+            boxes_xyxy = []
+            for mask in final_masks_tensor:
+                pos = torch.where(mask > 0)
+                if len(pos[0]) > 0:
+                    xmin = pos[1].min().item()
+                    ymin = pos[0].min().item() 
+                    xmax = pos[1].max().item()
+                    ymax = pos[0].max().item()
+                    boxes_xyxy.append([xmin, ymin, xmax, ymax])
+                else:
+                    boxes_xyxy.append([0, 0, 0, 0])
+        
+            # Convert to tensor
+            boxes_xyxy = torch.tensor(boxes_xyxy, dtype=torch.float32)
+        
+            # Add confidence and class columns
+            conf = torch.ones(len(non_empty_indices), dtype=torch.float32)
+            cls = torch.tensor(non_empty_indices, dtype=torch.float32)
+        
+            # Combine into final boxes format: [x1, y1, x2, y2, conf, cls]
+            boxes_data = torch.cat([
+                boxes_xyxy,
+                conf.unsqueeze(1),
+                cls.unsqueeze(1)
+            ], dim=1)
+        
+        except Exception as e:
+            print(f"Warning: Could not generate boxes from masks: {e}")
+            # Fallback to empty boxes and masks
+            boxes_data = torch.empty(0, 6)
+            final_masks_tensor = torch.empty(0, h, w)
 
-        # 2. Create Boxes object (dummy boxes from masks)
-        ult_boxes = None
-        if Boxes is not None and ult_masks is not None:
-            try:
-                # Use .from_mask (may not exist in all versions, hence the try/except)
-                if hasattr(Boxes, 'from_mask'):
-                    ult_boxes = Boxes.from_mask(ult_masks.data, orig_shape)
-                else: 
-                    # Manual fallback to get bounding boxes
-                    boxes_xyxy = []
-                    for mask in ult_masks.data:
-                        pos = torch.where(mask)
-                        if pos[0].shape[0] > 0:
-                            xmin, ymin = pos[1].min(), pos[0].min()
-                            xmax, ymax = pos[1].max(), pos[0].max()
-                            boxes_xyxy.append([xmin, ymin, xmax, ymax])
-                        else:
-                            boxes_xyxy.append([0, 0, 0, 0])
-                    ult_boxes = Boxes(torch.tensor(boxes_xyxy), (h, w))
-                
-                # We need to add class and conf
-                box_data = ult_boxes.data
-                # We don't have per-instance confidence, so use 1.0
-                conf = torch.ones(len(non_empty_indices), dtype=torch.float)
-                cls = torch.tensor(non_empty_indices, dtype=torch.float)
-                
-                # Combine xyxy, conf, cls
-                final_box_data = torch.cat([
-                    box_data[:, :4],
-                    conf.unsqueeze(1),
-                    cls.unsqueeze(1)
-                ], dim=1)
-                
-                ult_boxes = Boxes(final_box_data, (h, w))
-                
-            except Exception as e:
-                # Fallback if Boxes.from_mask fails (e.g., empty masks)
-                print(f"Warning: Could not generate boxes from masks: {e}")
-                ult_boxes = Boxes(torch.empty(0, 6), (h, w))
-
+        # Return Results in a list to match original API
         return [
             Results(
                 orig_img=orig_img,
                 path=path,
                 names=dict(enumerate(self.class_names)),
-                boxes=ult_boxes,
-                masks=ult_masks
+                boxes=boxes_data,  # Raw tensor data
+                masks=final_masks_tensor  # Raw tensor data
             )
         ]
 
@@ -1760,18 +1752,68 @@ class DatasetManager:
             try:
                 # Get a random sample from dataset
                 image_tensor, mask_tensor = sample_dataset[np.random.randint(0, len(self.train_df))]
-                image = image_tensor.numpy()
-                mask = mask_tensor.numpy()
+                
+                # Convert tensors to numpy arrays with proper handling
+                if isinstance(image_tensor, torch.Tensor):
+                    image = image_tensor.numpy()
+                else:
+                    image = image_tensor
+                    
+                if isinstance(mask_tensor, torch.Tensor):
+                    mask = mask_tensor.numpy()
+                else:
+                    mask = mask_tensor
+                
+                # Handle different image tensor shapes
+                if image.ndim == 3:
+                    if image.shape[0] in [1, 3]:  # (C, H, W) format
+                        image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
+                        # If grayscale, convert to RGB
+                        if image.shape[2] == 1:
+                            image = np.concatenate([image] * 3, axis=2)
+                # else already in (H, W, C) format
+                elif image.ndim == 4:
+                    # Remove batch dimension if present
+                    image = image.squeeze(0)
+                    if image.shape[0] in [1, 3]:  # (C, H, W) format
+                        image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
+                        if image.shape[2] == 1:
+                            image = np.concatenate([image] * 3, axis=2)
+                
+                # Handle mask tensor shapes
+                if mask.ndim >= 2:
+                    mask = mask.squeeze()  # Remove any extra dimensions
+                
+                # Ensure image values are in proper range for display
+                if image.dtype != np.uint8:
+                    if np.max(image) <= 1.0:
+                        image = (image * 255).astype(np.uint8)
+                    else:
+                        image = np.clip(image, 0, 255).astype(np.uint8)
+                
+                # Ensure mask is in proper format
+                if mask.dtype != np.uint8:
+                    mask = mask.astype(np.uint8)
 
                 # Colorize the mask
                 colored_mask = colorize_mask(mask, self.class_ids, class_colors)
+                
                 # Plot in the subplot
                 axes[i].imshow(image)
                 axes[i].imshow(colored_mask, alpha=0.5)
                 axes[i].set_title(f'Sample {i+1}')
                 axes[i].axis('off')
+                
             except Exception as e:
-                print(f"⚠️ Could not visualize sample {i}: {e}")
+                print(f"⚠️ Could not visualize sample {i+1}: {e}")
+                # Add debug information
+                try:
+                    print(f"   Debug info - Image shape: {image.shape if 'image' in locals() else 'N/A'}")
+                    print(f"   Debug info - Mask shape: {mask.shape if 'mask' in locals() else 'N/A'}")
+                    print(f"   Debug info - Image dtype: {image.dtype if 'image' in locals() else 'N/A'}")
+                    print(f"   Debug info - Mask dtype: {mask.dtype if 'mask' in locals() else 'N/A'}")
+                except:
+                    pass
                 axes[i].axis('off')  # Hide empty subplots
 
         # Save the grid to a single image

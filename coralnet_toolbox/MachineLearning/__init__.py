@@ -41,6 +41,7 @@ from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .OptimizeModel.QtBase import Base as Optimize
 
+
 __all__ = [
     'get_available_configs',
     "TuneClassify",

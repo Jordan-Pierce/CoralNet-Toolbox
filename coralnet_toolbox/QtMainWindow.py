@@ -612,7 +612,7 @@ class MainWindow(QMainWindow):
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
-        # self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
+        self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")

@@ -53,7 +53,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Transformers Deploy Model (Ctrl + 6)")
+        self.setWindowTitle("Transformers Deploy Model (Ctrl + 7)")
         self.resize(400, 325)
 
         # Initialize variables
