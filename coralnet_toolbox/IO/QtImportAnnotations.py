@@ -176,7 +176,7 @@ class ImportAnnotations:
                     progress_bar.update_progress()
 
             # Add all created vector annotations in a single batch operation.
-            # This requires a corresponding `add_annotations_batch` method in AnnotationWindow.
+            # This requires a corresponding `add_annotations` method in AnnotationWindow.
             if all_new_annotations:
                 self.annotation_window.add_annotations(all_new_annotations)
 
