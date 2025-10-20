@@ -822,11 +822,6 @@ class SemanticModel:
         if name is None:
             name = "results"
         output_dir = os.path.join(project, name)
-        if os.path.exists(output_dir) and not exist_ok:
-            n = 1
-            while os.path.exists(f"{output_dir} {n}"):
-                n += 1
-                output_dir = f"{output_dir} {n}"
 
         # 1. Load Data Config
         print("📂 Loading dataset configuration...")
@@ -883,7 +878,8 @@ class SemanticModel:
             decoder_name=decoder_name,
             encoder_name=encoder_name,
             color_map=self.data_config.color_map,
-            metrics=training_config.metrics
+            metrics=training_config.metrics,
+            exist_ok=exist_ok  # Pass exist_ok to ExperimentManager
         )
         experiment_manager.save_dataframes(train_df, valid_df, test_df)
 
@@ -1034,8 +1030,7 @@ class SemanticModel:
         if output_dir is None:
             # Place results in a new 'eval' dir at the same level as 'weights'
             model_base_dir = os.path.dirname(os.path.dirname(self.model_path))
-            eval_run_name = f"eval_{split}_{get_now()}"
-            output_dir = os.path.join(model_base_dir, eval_run_name)
+            output_dir = os.path.join(model_base_dir, 'logs', split)
             print(f"   • No output_dir provided. Saving results to: {output_dir}")
 
         decoder_name, encoder_name = "Model", "eval"  # Defaults
@@ -1284,10 +1279,36 @@ class SemanticModel:
         # --- 5. Post-process Results ---
         results_list = []
         for i, mask_aug in enumerate(mask_arrays_aug):
-            h, w = orig_shapes[i][:2]
-            # Resize mask from (imgsz, imgsz) back to (h, w)
-            mask_array = cv2.resize(mask_aug, (w, h), interpolation=cv2.INTER_NEAREST)
-            
+            h_orig, w_orig = orig_shapes[i][:2]
+
+            # 1. Re-calculate the intermediate size (after LongestMaxSize)
+            # This logic mimics albu.LongestMaxSize
+            if h_orig > w_orig:
+                new_h = imgsz
+                new_w = int(w_orig * (imgsz / h_orig))
+            else:
+                new_w = imgsz
+                new_h = int(h_orig * (imgsz / w_orig))
+
+            # 2. Re-calculate the padding (from PadIfNeeded)
+            pad_h = imgsz - new_h
+            pad_w = imgsz - new_w
+
+            # Albumentations centers the padding
+            top_pad = pad_h // 2
+            bottom_pad = pad_h - top_pad
+            left_pad = pad_w // 2
+            right_pad = pad_w - left_pad
+
+            # 3. Crop the padding from the predicted mask
+            # mask_aug is (imgsz, imgsz)
+            # This gives a mask of shape (new_h, new_w)
+            cropped_mask = mask_aug[top_pad: imgsz - bottom_pad, left_pad: imgsz - right_pad]
+
+            # 4. Resize the *cropped* mask back to the original image size
+            # cv2.resize expects dsize as (width, height)
+            mask_array = cv2.resize(cropped_mask, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+
             results_list.append(
                 self._post_process(mask_array, orig_shapes[i], paths[i], images[i])
             )
@@ -1482,13 +1503,14 @@ class TrainingConfig:
 class ExperimentManager:
     """Manages experiment directories, logging, and result tracking."""
 
-    def __init__(self, output_dir, decoder_name, encoder_name, color_map, metrics):
+    def __init__(self, output_dir, decoder_name, encoder_name, color_map, metrics, exist_ok=False):
         """Initialize ExperimentManager with experiment configuration."""
         self.output_dir = output_dir
         self.decoder_name = decoder_name
         self.encoder_name = encoder_name
         self.color_map = color_map
         self.metrics = metrics
+        self.exist_ok = exist_ok
 
         self._setup_directories()
         self._setup_logging()
@@ -1496,10 +1518,18 @@ class ExperimentManager:
     def _setup_directories(self):
         """Create experiment directories."""
         # Run Name
-        self.run = f"{get_now()}_{self.encoder_name}_{self.decoder_name}"
+        self.run = f"{self.encoder_name}_{self.decoder_name}"
 
         # Set run directory directly under output_dir
         self.run_dir = os.path.join(self.output_dir, self.run)
+        
+        # Check if run_dir exists and exist_ok is False, then append a number
+        if os.path.exists(self.run_dir) and not self.exist_ok:
+            n = 1
+            while os.path.exists(f"{self.run_dir} {n}"):
+                n += 1
+            self.run_dir = f"{self.run_dir} {n}"
+        
         self.weights_dir = os.path.join(self.run_dir, "weights")
         self.logs_dir = os.path.join(self.run_dir, "logs")
 
@@ -2097,12 +2127,6 @@ class Evaluator:
                 image_vis = image_vis.numpy()
                 gt_mask_vis = gt_mask_vis.numpy().squeeze()
 
-                # Get dimensions of the current image
-                current_width, current_height = Image.open(self.test_dataset_vis.images_fps[n]).size
-
-                # Colorize the ground truth mask
-                gt_mask = colorize_mask(gt_mask_vis, self.class_ids, self.class_colors)
-
                 # Get the preprocessed input for model prediction
                 image, _ = self.test_dataset[n]
                 x_tensor = image.to(self.device).unsqueeze(0)
@@ -2119,7 +2143,7 @@ class Evaluator:
                     visualize(save_path=save_path,
                               save_figure=True,
                               image=image_vis,
-                              ground_truth_mask=gt_mask,
+                              ground_truth_mask=gt_mask_vis,
                               predicted_mask=pr_mask)
                     
                 except:
@@ -2189,7 +2213,7 @@ def main():
     parser.add_argument('--pre_trained_path', type=str, default=None,
                         help='Path to pre-trained model of the same architecture')
 
-    parser.add_argument('--encoder_name', type=str, default='resnet34',
+    parser.add_argument('--encoder_name', type=str, default='mit_b0',
                         help=encoder_help)
 
     parser.add_argument('--decoder_name', type=str, default='Unet',

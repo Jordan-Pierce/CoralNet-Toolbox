@@ -285,8 +285,7 @@ def plot_matrix(ax, matrix, class_names, title):
     ax.set_yticks(np.arange(len(class_names)))
     ax.set_xticklabels(class_names)
     ax.set_yticklabels(class_names)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-             rotation_mode="anchor")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_title(title)
     ax.figure.colorbar(im, ax=ax)
     plt.subplots_adjust(bottom=0.2)
