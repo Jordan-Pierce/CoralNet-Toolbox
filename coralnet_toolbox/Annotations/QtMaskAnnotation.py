@@ -232,45 +232,6 @@ class MaskAnnotation(Annotation):
             # Full update for global changes (e.g., label color changes)
             self._update_full_canvas()
             self.graphics_item.update()
-            
-    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
-        """
-        Updates a subset area of the mask with a provided mask containing multiple labels.
-        
-        Args:
-            subset_mask: A 2D numpy array with class IDs for the subset area.
-            top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
-        """
-        x, y = top_left
-        h, w = subset_mask.shape
-        
-        # Calculate the region in the full mask where the subset will be applied
-        x_end = min(x + w, self.mask_data.shape[1])
-        y_end = min(y + h, self.mask_data.shape[0])
-        x_start = max(x, 0)
-        y_start = max(y, 0)
-        
-        # Calculate the corresponding region in the subset mask
-        sx_start = x_start - x
-        sy_start = y_start - y
-        sx_end = sx_start + (x_end - x_start)
-        sy_end = sy_start + (y_end - y_start)
-        
-        # Get the target slice
-        target_slice = self.mask_data[y_start:y_end, x_start:x_end]
-        subset_slice = subset_mask[sy_start:sy_end, sx_start:sx_end]
-        
-        # Identify pixels within the target slice that are NOT locked
-        unlocked_pixels_mask = target_slice < self.LOCK_BIT
-        
-        # Apply the subset mask only to unlocked pixels
-        target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
-        
-        # Trigger a visual update for the changed rectangle
-        update_rect = (x_start, y_start, x_end, y_end)
-        self.update_graphics_item(update_rect=update_rect)
-        
-        self.annotationUpdated.emit(self)
 
     def update_mask(self, brush_location: QPointF, brush_mask: np.ndarray, new_class_id: int):
         """
@@ -312,6 +273,96 @@ class MaskAnnotation(Annotation):
         self.update_graphics_item(update_rect=changed_rect_coords)
         
         self.annotationUpdated.emit(self)
+        
+    def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
+        """
+        Updates a subset area of the mask with a provided mask containing multiple labels.
+        
+        Args:
+            subset_mask: A 2D numpy array with class IDs for the subset area.
+            top_left: A tuple (x, y) specifying the top-left corner where to apply the subset.
+        """
+        x, y = top_left
+        h, w = subset_mask.shape
+        
+        # Calculate the region in the full mask where the subset will be applied
+        x_end = min(x + w, self.mask_data.shape[1])
+        y_end = min(y + h, self.mask_data.shape[0])
+        x_start = max(x, 0)
+        y_start = max(y, 0)
+        
+        # Calculate the corresponding region in the subset mask
+        sx_start = x_start - x
+        sy_start = y_start - y
+        sx_end = sx_start + (x_end - x_start)
+        sy_end = sy_start + (y_end - y_start)
+        
+        # Get the target slice
+        target_slice = self.mask_data[y_start:y_end, x_start:x_end]
+        subset_slice = subset_mask[sy_start:sy_end, sx_start:sx_end]
+        
+        # Identify pixels within the target slice that are NOT locked
+        unlocked_pixels_mask = target_slice < self.LOCK_BIT
+        
+        # Apply the subset mask only to unlocked pixels
+        target_slice[unlocked_pixels_mask] = subset_slice[unlocked_pixels_mask]
+        
+        # Trigger a visual update for the changed rectangle
+        update_rect = (x_start, y_start, x_end, y_end)
+        self.update_graphics_item(update_rect=update_rect)
+        
+        self.annotationUpdated.emit(self)
+        
+    def update_mask_with_prediction_mask(self, prediction_mask, top_left=(0, 0)):
+        """
+        Updates a full-size prediction mask with the current mask data.
+
+        This method is non-destructive; it only updates pixels where the
+        prediction_mask has a valid (non-background) prediction.
+        The final update respects any locked pixels.
+
+        Args:
+            prediction_mask (np.ndarray): A full-size (H, W) mask containing
+                                          the new predictions.
+        """
+        if prediction_mask.shape != self.mask_data.shape:
+            print(f"Error: Prediction mask shape {prediction_mask.shape} "
+                  f"does not match annotation shape {self.mask_data.shape}.")
+            return
+
+        # 1. Get (row, col) indices of all valid predictions (class > 0)
+        #    np.nonzero is highly efficient for sparse arrays.
+        pred_rows, pred_cols = np.nonzero(prediction_mask)
+        
+        if pred_rows.size == 0:
+            return  # No predictions, nothing to do.
+
+        # 2. Find the bounding box (Region of Interest) of the predictions
+        min_row, max_row = np.min(pred_rows), np.max(pred_rows)
+        min_col, max_col = np.min(pred_cols), np.max(pred_cols)
+        
+        # 3. Define the top-left (x, y) corner for pasting
+        #    Note: col = x, row = y
+        paste_top_left = (min_col, min_row)
+        
+        # 4. Extract the *small tile* from the prediction mask
+        prediction_tile = prediction_mask[min_row: max_row + 1, min_col: max_col + 1]
+
+        # 5. Extract the corresponding *small tile* from the *current* mask data
+        original_tile = self.mask_data[min_row: max_row + 1, min_col: max_col + 1]
+
+        # 6. Create the *merged tile*
+        #    Use np.where: if pred_tile > 0, use its value, else use original value.
+        merged_tile = np.where(
+            prediction_tile > 0,
+            prediction_tile,
+            original_tile
+        )
+        
+        # 7. Call the existing update method with the *small merged tile*
+        #    This re-uses all your existing logic for locked pixels and
+        #    graphics updates, but now only on a small, efficient region.
+        self.update_mask_with_mask(merged_tile, paste_top_left)
         
     def get_current_transparency(self):
         """Get the current transparency value for rendering."""

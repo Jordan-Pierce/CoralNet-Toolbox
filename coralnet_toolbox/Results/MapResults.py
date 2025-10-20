@@ -19,7 +19,7 @@ class MapResults:
     def __init__(self):
         pass
         
-    def map_results_from_work_area(self, results, raster, work_area, map_masks=True):
+    def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='instance'):
         """
         Maps coordinates in Results objects from work area to original image coordinates.
         
@@ -60,7 +60,7 @@ class MapResults:
         mapped_results = self._map_boxes(results, mapped_results, working_area_top_left, wa_w, wa_h)
         
         if map_masks:
-            mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h)
+            mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task=task)
             
         mapped_results = self._map_probs(results, mapped_results)
         
@@ -117,7 +117,7 @@ class MapResults:
             
         return mapped_results
     
-    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h):
+    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task='instance'):
         """
         Maps masks from work area to original image coordinates.
         
@@ -127,6 +127,7 @@ class MapResults:
             raster: Raster object containing the original image dimensions
             wa_x, wa_y: Top-left coordinates of the work area
             wa_w, wa_h: Width and height of the work area
+            task: The type of task ('instance' or 'semantic')
             
         Returns:
             Results: Updated Results object with mapped masks
@@ -136,7 +137,7 @@ class MapResults:
             device = results.masks.data.device
             
             # If the input masks already have polygon representations, use them directly
-            if hasattr(results.masks, 'xy') and results.masks.xy:
+            if task == 'instance' and hasattr(results.masks, 'xy') and results.masks.xy:
                 segments_xy = []
                 segments_xyn = []
                 for points in results.masks.xy:

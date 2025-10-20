@@ -459,7 +459,7 @@ class Raster(QObject):
         # Convert work area to numpy array
         work_area_data = work_area_to_numpy(self._rasterio_src, work_area) 
         
-        if as_format == 'BRG':
+        if as_format == 'BGR':
             # Convert to RGB to BGR format for OpenCV
             work_area_data = cv2.cvtColor(work_area_data, cv2.COLOR_RGB2BGR)
             

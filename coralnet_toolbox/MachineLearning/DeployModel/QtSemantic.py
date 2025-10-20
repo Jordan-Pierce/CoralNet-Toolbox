@@ -225,7 +225,7 @@ class Semantic(Base):
             work_areas_data = [raster.image_path]
         else:
             # Get the work areas
-            work_areas_data = raster.get_work_areas_data(as_format='BRG')
+            work_areas_data = raster.get_work_areas_data()
 
         # --- Return raster object ---
         return work_areas_data, raster
@@ -299,7 +299,7 @@ class Semantic(Base):
                     results_obj = map_results_util.map_results_from_work_area(results[0],
                                                                               raster,
                                                                               work_areas[idx],
-                                                                              self.task == 'semantic')
+                                                                              task=self.task)
                 else:
                     results_obj = results[0]
 
@@ -327,22 +327,11 @@ class Semantic(Base):
                 self.class_mapping,            # Project's map {'coral': LabelObj}
                 mask_annotation_map            # Mask's map {LabelObj.id: 2}
             )
-            
-            # Determine where to paste this mask
-            if work_areas and self.annotation_window.get_selected_tool() == "work_area":
-                # This was a work area tile
-                x, y, w, h = work_areas[idx]
-                top_left = (x, y)
-            else:
-                # This was a full image prediction, paste at (0, 0)
-                top_left = (0, 0)
-            
+    
             # Update the main mask annotation with this tile's data
             # This method respects locked pixels
-            mask_annotation.update_mask_with_mask(reconstructed_mask, top_left)
+            mask_annotation.update_mask_with_prediction_mask(reconstructed_mask, top_left=(0, 0))
         
-        # --- END UPDATED SECTION ---
-
         # Close the progress bar
         progress_bar.finish_progress()
         progress_bar.stop_progress()
