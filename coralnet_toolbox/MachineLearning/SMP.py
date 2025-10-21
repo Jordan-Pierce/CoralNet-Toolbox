@@ -2035,9 +2035,6 @@ class Trainer:
             self.best_epoch = epoch
             self.since_best = 0
             print(f"🏆 New best epoch {epoch}")
-
-            # Save the model
-            self.experiment_manager.save_best_model(self.model)
         else:
             # Increment the counters
             self.since_best += 1
@@ -2059,6 +2056,10 @@ class Trainer:
         if self.since_best >= self.patience and train_loss < valid_loss and self.since_drop >= 5:
             print("🛑 Training plateaued; stopping early")
             return False
+        
+        if self.since_best == 0:
+            # Save the best model
+            self.experiment_manager.save_best_model(self.model)
 
         return True
 

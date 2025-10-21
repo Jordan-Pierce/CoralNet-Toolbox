@@ -348,7 +348,7 @@ class OpenProject(QDialog):
                     
                     if annotation and not isinstance(annotation, MaskAnnotation):
                         all_new_annotations.append(annotation)
-                        images_to_update.add(image_path) # Track which images need UI updates
+                        images_to_update.add(image_path)  # Track which images need UI updates
 
                     # Update the progress bar
                     progress_bar.update_progress()
