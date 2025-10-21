@@ -229,6 +229,9 @@ class ExportMaskAnnotations(QDialog):
     def setup_annotation_layout(self, parent_layout=None):
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
+        
+        self.mask_checkbox = QCheckBox("Mask Annotations (Base Layer)")
+        self.mask_checkbox.setChecked(True)
         self.patch_checkbox = QCheckBox("Patch Annotations")
         self.patch_checkbox.setChecked(True)
         self.rectangle_checkbox = QCheckBox("Rectangle Annotations")
@@ -238,6 +241,7 @@ class ExportMaskAnnotations(QDialog):
         self.include_negative_samples_checkbox = QCheckBox("Include negative samples")
         self.include_negative_samples_checkbox.setChecked(True)
 
+        layout.addWidget(self.mask_checkbox)
         layout.addWidget(self.patch_checkbox)
         layout.addWidget(self.rectangle_checkbox)
         layout.addWidget(self.polygon_checkbox)
@@ -439,7 +443,8 @@ class ExportMaskAnnotations(QDialog):
             return False
         if not any([self.patch_checkbox.isChecked(), 
                     self.rectangle_checkbox.isChecked(), 
-                    self.polygon_checkbox.isChecked()]):
+                    self.polygon_checkbox.isChecked(),
+                    self.mask_checkbox.isChecked()]):
             QMessageBox.warning(self, 
                                 "Missing Input", 
                                 "Please select at least one annotation type.")
@@ -451,6 +456,7 @@ class ExportMaskAnnotations(QDialog):
             return
 
         self.labels_to_render = []
+        self.label_code_to_export_value = {}
         self.background_value = 0 
         
         # --- Collect data from UI based on mode ---
@@ -470,6 +476,7 @@ class ExportMaskAnnotations(QDialog):
                 if label_code == "Background":
                     self.background_value = mask_value
                 else:
+                    self.label_code_to_export_value[label_code] = mask_value
                     label = next((l for l in self.label_window.labels if l.short_label_code == label_code), None)
                     if label:
                         self.labels_to_render.append((label, mask_value))
@@ -500,14 +507,16 @@ class ExportMaskAnnotations(QDialog):
                             else:
                                 # Otherwise, assume it's a string (hex code) and convert it
                                 color_tuple = ImageColor.getrgb(label.color)
+                            
                             self.labels_to_render.append((label, color_tuple))
+                            self.label_code_to_export_value[label_code] = color_tuple
                         except (ValueError, TypeError) as e:
                             print(f"Warning: Invalid color format for label "
                                   f"'{label.short_label_code}': {label.color}. Error: {e}. Skipping.")
 
         # --- Check if any labels are selected to be drawn ---
-        if not self.labels_to_render:
-            QMessageBox.warning(self, "No Labels Selected", "Please select at least one label to include in the masks.")
+        if not self.labels_to_render and not self.mask_checkbox.isChecked():
+            QMessageBox.warning(self, "No Data Selected", "Please select at least one label or include Mask Annotations.")
             return
 
         # --- Setup paths and progress bar ---
@@ -525,6 +534,8 @@ class ExportMaskAnnotations(QDialog):
             QMessageBox.warning(self, "No Images", "No images found for processing.")
             return
             
+        # Store selected annotation types
+        self.include_mask_annotations = self.mask_checkbox.isChecked()
         self.annotation_types = []
         if self.patch_checkbox.isChecked(): 
             self.annotation_types.append(PatchAnnotation)
@@ -560,32 +571,45 @@ class ExportMaskAnnotations(QDialog):
             print(f"Skipping {image_path}: could not determine dimensions.")
             return
 
-        # Initialize mask based on mode
-        if self.mask_mode == 'rgb':
-            mask = np.full((height, width, 3), self.background_value, dtype=np.uint8)
-        else:  # semantic or sfm
-            mask = np.full((height, width), self.background_value, dtype=np.uint8)
+        mask = None
+        has_mask_data = False
+        
+        # --- 1. Render MaskAnnotation (Base Layer) ---
+        if self.include_mask_annotations:
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if raster and raster.mask_annotation:
+                mask = self._render_mask_annotation(raster.mask_annotation, height, width)
+                has_mask_data = True
+        
+        # --- 2. Create blank mask if no MaskAnnotation was rendered ---
+        if mask is None:
+            if self.mask_mode == 'rgb':
+                mask = np.full((height, width, 3), self.background_value, dtype=np.uint8)
+            else:  # semantic or sfm
+                mask = np.full((height, width), self.background_value, dtype=np.uint8)
 
-        has_annotations = False
+        # --- 3. Render Vector Annotations (Top Layer) ---
+        has_vector_annotations = False
+        if self.annotation_types:  # Only run if vector types were selected
+            if self.mask_mode in ['semantic', 'sfm']:
+                for label, value in self.labels_to_render:
+                    annotations = self.get_annotations_for_image(image_path, label)
+                    if annotations:
+                        has_vector_annotations = True
+                        self.draw_annotations_on_mask(mask, annotations, value)
+            elif self.mask_mode == 'rgb':
+                for label, color in self.labels_to_render:
+                    annotations = self.get_annotations_for_image(image_path, label)
+                    if annotations:
+                        has_vector_annotations = True
+                        self.draw_annotations_on_mask(mask, annotations, color)
         
-        # Draw annotations based on mode
-        if self.mask_mode in ['semantic', 'sfm']:
-            for label, value in self.labels_to_render:
-                annotations = self.get_annotations_for_image(image_path, label)
-                if annotations:
-                    has_annotations = True
-                    self.draw_annotations_on_mask(mask, annotations, value)
-        elif self.mask_mode == 'rgb':
-            for label, color in self.labels_to_render:
-                annotations = self.get_annotations_for_image(image_path, label)
-                if annotations:
-                    has_annotations = True
-                    self.draw_annotations_on_mask(mask, annotations, color)
-        
-        if not has_annotations and not self.include_negative_samples_checkbox.isChecked():
+        # --- 4. Check for negative samples ---
+        if not has_mask_data and not has_vector_annotations and \
+           not self.include_negative_samples_checkbox.isChecked():
             return
 
-        # Use the selected file format
+        # --- 5. Save the final mask ---
         filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
         mask_path = os.path.join(output_path, filename)
 
@@ -633,6 +657,44 @@ class ExportMaskAnnotations(QDialog):
             # Save using the appropriate format
             cv2.imwrite(mask_path, mask)
 
+    def _render_mask_annotation(self, mask_annotation, height, width):
+        """
+        Converts a MaskAnnotation's internal data to a new mask using
+        the export values (integer or RGB) from the UI.
+        """
+        try:
+            # 1. Initialize the output mask
+            if self.mask_mode == 'rgb':
+                output_mask = np.full((height, width, 3), self.background_value, dtype=np.uint8)
+            else: # semantic or sfm
+                output_mask = np.full((height, width), self.background_value, dtype=np.uint8)
+            
+            # 2. Get the source mask data and label mapping
+            mask_data = mask_annotation.mask_data
+            id_to_label_map = mask_annotation.class_id_to_label_map
+            
+            # 3. Get the lock bit (if it exists)
+            lock_bit = getattr(mask_annotation, 'LOCK_BIT', 128) 
+
+            # 4. Iterate over the mask's internal classes and map them
+            for class_id, label_obj in id_to_label_map.items():
+                label_code = label_obj.short_label_code
+                
+                # Find the export value (e.g., 5 or (255,0,0)) for this label
+                export_value = self.label_code_to_export_value.get(label_code)
+                
+                # Only render if this label is included in the export
+                if export_value is not None:
+                    # Find all pixels (locked and unlocked) for this class ID
+                    pixel_mask = (mask_data == class_id) | (mask_data == class_id + lock_bit)
+                    output_mask[pixel_mask] = export_value
+            
+            return output_mask
+        
+        except Exception as e:
+            print(f"Error rendering mask annotation: {e}")
+            return None  # Fallback to blank mask
+
     def export_metadata(self, output_path):
         if self.mask_mode == 'semantic':
             class_mapping = {}
@@ -665,6 +727,10 @@ class ExportMaskAnnotations(QDialog):
 
     def get_annotations_for_image(self, image_path, label):
         annotations = []
+        # self.annotation_types now only contains VECTOR types
+        if not self.annotation_types:
+            return [] 
+            
         for ann in self.annotation_window.get_image_annotations(image_path):
             if ann.label.short_label_code == label.short_label_code and isinstance(ann, tuple(self.annotation_types)):
                 if isinstance(ann, MultiPolygonAnnotation):
@@ -763,4 +829,3 @@ class ExportMaskAnnotations(QDialog):
 
     def closeEvent(self, event):
         super().closeEvent(event)
-

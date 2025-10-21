@@ -724,7 +724,7 @@ class SemanticModel:
             self.device = device
 
         # Build model
-        encoder_weights = 'imagenet' if pretrained else None
+        encoder_weights = 'imagenet'  # if pretrained else None
         self.model = getattr(smp, decoder_name)(
             encoder_name=encoder_name,
             encoder_weights=encoder_weights,
@@ -736,7 +736,6 @@ class SemanticModel:
         self.name = f"{decoder_name}-{encoder_name}"
         self.model.name = self.name
         print(f"   • Stashing model name: {self.model.name}")
-
         print(f"   • Architecture: {encoder_name} → {decoder_name}")
         print(f"   • Output classes: {num_classes}")
         self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, encoder_weights)
@@ -768,32 +767,26 @@ class SemanticModel:
         
         self.model.to(self.device)
 
-    def train(self, data_yaml, encoder_name='resnet34', decoder_name='Unet',
-              pre_trained_path=None, freeze=0.8,
-              metrics=None, loss_function='JaccardLoss',
-              optimizer='Adam', lr=0.0001, augment_data=False,
-              epochs=25, batch=8, imgsz=640, amp=False,
-              output_dir=None, num_vis_samples=10, patience=100, device=None,
-              project=None, name=None, exist_ok=False, pretrained=True):
+    def train(self, data_yaml, encoder_name=None, decoder_name=None,
+              pre_trained_path=None, freeze=0.8, **kwargs):
         """
         Train the semantic segmentation model.
-        (This method encapsulates the logic from SemanticTrain.py's main())
         """
         print(f"🚀 Training parameters: { {k: v for k, v in locals().items() if k != 'self'} }")
         
-        if metrics is None:
-            metrics = ['iou_score', 'f1_score']
+        if kwargs.get('metrics') is None:
+            kwargs['metrics'] = ['iou_score', 'f1_score']
 
         print("\n" + "=" * 60)
         print("🚀 STARTING SEMANTIC SEGMENTATION TRAINING")
         print("=" * 60)
         
         # Store key info on self
-        self.imgsz = imgsz
+        self.imgsz = kwargs.get('imgsz')
 
         # Set device
-        if device is not None:
-            self.device = device
+        if kwargs.get('device') is not None:
+            self.device = kwargs.get('device')
         else:
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -812,16 +805,26 @@ class SemanticModel:
                 self.device = 'cpu'
 
         # Handle pretrained
-        if isinstance(pretrained, str):
-            pre_trained_path = pretrained
+        if isinstance(kwargs.get('pretrained'), str):
+            pre_trained_path = kwargs.get('pretrained')
             pretrained = True
+        else:
+            pretrained = kwargs.get('pretrained')
 
         # Handle output directory
-        if project is None:
-            project = os.path.dirname(data_yaml)
-        if name is None:
-            name = "results"
-        output_dir = os.path.join(project, name)
+        if kwargs.get('project') is None:
+            kwargs['project'] = os.path.dirname(data_yaml)
+        
+        # Determine if user provided a custom name
+        user_provided_name = kwargs.get('name') if kwargs.get('name') else None
+        
+        # Set base output directory
+        if user_provided_name:
+            # User provided a name, use it as the final directory name
+            base_output_dir = os.path.join(kwargs['project'], user_provided_name)
+        else:
+            # No name provided, will use encoder_decoder naming in ExperimentManager
+            base_output_dir = kwargs['project']
 
         # 1. Load Data Config
         print("📂 Loading dataset configuration...")
@@ -841,19 +844,27 @@ class SemanticModel:
         # 2. Build Model (if not already loaded)
         if self.model is None:
             print("🔧 Building new model...")
-            self._build_model(
-                encoder_name=encoder_name,
-                decoder_name=decoder_name,
-                num_classes=self.num_classes,
-                freeze=freeze,
-                pre_trained_path=pre_trained_path,
-                pretrained=pretrained,
-                device=self.device
-            )
-        else:
-            print("🔧 Using pre-loaded model for training.")
-            self.model.to(self.device)
             
+            if pre_trained_path:
+                # Load existing model completely
+                self.load(pre_trained_path)
+                print(f"Loaded pre-trained model from: {pre_trained_path}")
+            else:
+                # Build new model from encoder/decoder
+                if not encoder_name or not decoder_name:
+                    raise ValueError("Must provide either pre_trained_path OR both encoder_name and decoder_name")
+                
+                self._build_model(
+                    encoder_name=encoder_name,
+                    decoder_name=decoder_name,
+                    num_classes=self.num_classes,
+                    freeze=freeze,
+                    pre_trained_path=None,  # This is for encoder weights only
+                    pretrained=pretrained,
+                    device=self.device
+                )
+    
+        # --- NEW: Automatically stamp metadata onto model ---
         print("📝 Stamping metadata onto model object for saving...")
         self.model.imgsz = self.imgsz
         self.model.class_names = self.class_names
@@ -864,22 +875,23 @@ class SemanticModel:
         # 3. Setup Training Config
         training_config = TrainingConfig(
             model=self.model,
-            loss_function_name=loss_function,
-            optimizer_name=optimizer,
-            lr=lr,
-            metrics_list=metrics,
+            loss_function_name=kwargs.get('loss_function'),
+            optimizer_name=kwargs.get('optimizer'),
+            lr=kwargs.get('lr'),
+            metrics_list=kwargs.get('metrics'),
             class_ids=self.data_config.class_ids,
             device=self.device
         )
 
         # 4. Setup Experiment Manager
         experiment_manager = ExperimentManager(
-            output_dir=output_dir,
+            output_dir=base_output_dir,
             decoder_name=decoder_name,
             encoder_name=encoder_name,
             color_map=self.data_config.color_map,
             metrics=training_config.metrics,
-            exist_ok=exist_ok  # Pass exist_ok to ExperimentManager
+            exist_ok=kwargs.get('exist_ok'),
+            user_provided_name=user_provided_name
         )
         experiment_manager.save_dataframes(train_df, valid_df, test_df)
 
@@ -888,8 +900,8 @@ class SemanticModel:
             train_df=train_df, valid_df=valid_df, test_df=test_df,
             class_ids=self.data_config.class_ids,
             preprocessing_fn=self.preprocessing_fn,  # Use the one from self
-            augment_data=augment_data,
-            batch=batch,
+            augment_data=kwargs.get('augment_data'),
+            batch=kwargs.get('batch'),
             imgsz=self.imgsz  # Use the one from self
         )
         dataset_manager.visualize_training_samples(
@@ -903,7 +915,7 @@ class SemanticModel:
             metrics=training_config.metrics,
             optimizer=training_config.optimizer,
             device=self.device,
-            epochs=epochs,
+            epochs=kwargs.get('epochs'),
             train_loader=dataset_manager.train_loader,
             valid_loader=dataset_manager.valid_loader,
             valid_dataset=dataset_manager.valid_dataset,
@@ -911,7 +923,7 @@ class SemanticModel:
             experiment_manager=experiment_manager,
             class_ids=self.data_config.class_ids,
             class_colors=self.data_config.class_colors,
-            patience=patience
+            patience=kwargs.get('patience')
         )
         trainer.train()
 
@@ -921,20 +933,16 @@ class SemanticModel:
         # Load best model back into self.model (this will also update self.name)
         self.load(best_weights) 
         
-        evaluator = Evaluator(
-            model=self.model,
-            loss_function=training_config.loss_function,
-            metrics=training_config.metrics,
-            device=self.device,
-            test_dataset=dataset_manager.test_dataset,
-            test_dataset_vis=dataset_manager.test_dataset_vis,
-            experiment_manager=experiment_manager,
-            class_ids=self.data_config.class_ids,
-            class_colors=self.data_config.class_colors,
-            num_vis_samples=num_vis_samples
+        # Call eval method for evaluation (same as standalone)
+        self.eval(
+            data_yaml=data_yaml,
+            split='test',
+            num_vis_samples=kwargs.get('num_vis_samples'),
+            output_dir=experiment_manager.run_dir,  # Integrate into training dir
+            loss_function=kwargs.get('loss_function'),
+            metrics=[m.__name__ for m in training_config.metrics],
+            device=self.device
         )
-        evaluator.evaluate()
-        evaluator.visualize_results()
 
         print(f"\n✅ Training pipeline completed! Best model at {best_weights}")
         self.model.eval()
@@ -1042,7 +1050,10 @@ class SemanticModel:
             decoder_name=decoder_name,
             encoder_name=encoder_name,
             color_map=self.color_map,
-            metrics=metric_fns
+            metrics=metric_fns,
+            exist_ok=True,  # For eval, we typically want to allow overwriting
+            is_eval=True,
+            user_provided_name=split  # Use split name as user provided name for eval
         )
         # Save the dataframe used for this eval
         eval_df.to_csv(os.path.join(experiment_manager.logs_dir, f"{split}_data.csv"), index=False)
@@ -1503,7 +1514,7 @@ class TrainingConfig:
 class ExperimentManager:
     """Manages experiment directories, logging, and result tracking."""
 
-    def __init__(self, output_dir, decoder_name, encoder_name, color_map, metrics, exist_ok=False):
+    def __init__(self, output_dir, decoder_name, encoder_name, color_map, metrics, exist_ok=False, is_eval=False, user_provided_name=None):
         """Initialize ExperimentManager with experiment configuration."""
         self.output_dir = output_dir
         self.decoder_name = decoder_name
@@ -1511,36 +1522,57 @@ class ExperimentManager:
         self.color_map = color_map
         self.metrics = metrics
         self.exist_ok = exist_ok
+        self.is_eval = is_eval
+        self.user_provided_name = user_provided_name
 
         self._setup_directories()
         self._setup_logging()
 
     def _setup_directories(self):
-        """Create experiment directories."""
-        # Run Name
-        self.run = f"{self.encoder_name}_{self.decoder_name}"
-
-        # Set run directory directly under output_dir
-        self.run_dir = os.path.join(self.output_dir, self.run)
+        """Create experiment directories with proper naming and conflict resolution."""
+        # Determine the run name and directory
+        if self.user_provided_name:
+            # User provided a name, use output_dir directly (which is already project/name)
+            self.run = self.user_provided_name
+            base_run_dir = self.output_dir
+        else:
+            # No user name provided, create encoder_decoder subfolder
+            self.run = f"{self.encoder_name}_{self.decoder_name}"
+            base_run_dir = os.path.join(self.output_dir, self.run)
         
-        # Check if run_dir exists and exist_ok is False, then append a number
-        if os.path.exists(self.run_dir) and not self.exist_ok:
-            n = 1
-            while os.path.exists(f"{self.run_dir} {n}"):
-                n += 1
-            self.run_dir = f"{self.run_dir} {n}"
+        # Handle existing directories by adding numbers if exist_ok is False
+        if not self.exist_ok and os.path.exists(base_run_dir):
+            counter = 1
+            original_run = self.run
+            while True:
+                if self.user_provided_name:
+                    # For user-provided names, add number to the name itself
+                    self.run = f"{original_run} {counter}"
+                    test_run_dir = os.path.join(os.path.dirname(base_run_dir), self.run)
+                else:
+                    # For auto-generated names, add number to the encoder_decoder name
+                    self.run = f"{original_run} {counter}"
+                    test_run_dir = os.path.join(self.output_dir, self.run)
+                
+                if not os.path.exists(test_run_dir):
+                    base_run_dir = test_run_dir
+                    break
+                counter += 1
         
-        self.weights_dir = os.path.join(self.run_dir, "weights")
+        self.run_dir = base_run_dir
+        self.weights_dir = os.path.join(self.run_dir, "weights") if not self.is_eval else None
         self.logs_dir = os.path.join(self.run_dir, "logs")
 
         # Make the directories
         os.makedirs(self.run_dir, exist_ok=True)
-        os.makedirs(self.weights_dir, exist_ok=True)
+        if self.weights_dir:
+            os.makedirs(self.weights_dir, exist_ok=True)
         os.makedirs(self.logs_dir, exist_ok=True)
 
         print(f"📁 Experiment: {self.run}")
         print(f"📁 Run Directory: {self.run_dir}")
-        print(f"📁 Weights Directory: {self.weights_dir}")
+        if self.weights_dir:
+            print(f"📁 Weights Directory: {self.weights_dir}")
         print(f"📁 Logs Directory: {self.logs_dir}")
 
     def _setup_logging(self):

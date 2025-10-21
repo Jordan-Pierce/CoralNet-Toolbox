@@ -77,6 +77,9 @@ class Raster(QObject):
         # Add a new attribute to hold the MaskAnnotation, initialized to None.
         self.mask_annotation: Optional[MaskAnnotation] = None
         
+        # Add a cache for the mask annotation's class statistics
+        self._mask_stats_cache: Optional[dict] = None
+        
         # Work Area state
         self.work_areas: List = []  # Store work area information
         
@@ -401,6 +404,36 @@ class Raster(QObject):
             self.mask_annotation.sync_label_map(project_labels)
         return self.mask_annotation
     
+    def get_mask_class_statistics(self, project_labels: list) -> dict:
+        """
+        Gets class statistics from the mask annotation, using a cache.
+        The cache is assumed valid until invalidated.
+
+        Args:
+            project_labels (list): The current project labels, needed by 
+                                   get_mask_annotation if the mask needs
+                                   to be created.
+
+        Returns:
+            dict: The cached class statistics for the mask.
+        """
+        # If cache is empty, calculate it
+        if self._mask_stats_cache is None:
+            # Ensure mask_annotation exists
+            mask = self.get_mask_annotation(project_labels) 
+            
+            if mask:
+                # This is the single, slow operation
+                self._mask_stats_cache = mask.get_class_statistics() 
+            else:
+                self._mask_stats_cache = {}  # Default to empty
+        
+        return self._mask_stats_cache
+    
+    def invalidate_mask_stats_cache(self):
+        """Clears the mask statistics cache, forcing a recalculation."""
+        self._mask_stats_cache = None
+            
     def add_work_area(self, work_area):
         """
         Add a work area to the raster.

@@ -139,6 +139,25 @@ class RasterTableModel(QAbstractTableModel):
                     type_counts_text = "".join(type_items)
                     tooltip_text += f"<br><b>Annotations by type:</b><ul>{type_counts_text}</ul>"
                 
+                # Add Mask Class Statistics (pixel percentage) if they are cached
+                # This now assumes the cache contains the 'percentage' key
+                if hasattr(raster, '_mask_stats_cache') and raster._mask_stats_cache:
+                    mask_items = []
+                    # Sort by label code for consistent order
+                    sorted_stats = sorted(raster._mask_stats_cache.items()) 
+                    
+                    for label, stat_dict in sorted_stats:
+                        # Get the percentage directly from the cached stats
+                        percentage = stat_dict.get('percentage', 0)
+                        
+                        if percentage > 0:
+                            # Format as "Label: 12.34%"
+                            mask_items.append(f"<li>{label}: {percentage:.2f}%</li>")
+                    
+                    if mask_items:
+                        mask_stats_text = "".join(mask_items)
+                        tooltip_text += f"<br><b>Mask Area Percentage:</b><ul>{mask_stats_text}</ul>"
+                
                 return tooltip_text
                 
         return None
