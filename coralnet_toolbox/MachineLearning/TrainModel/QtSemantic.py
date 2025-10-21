@@ -907,8 +907,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             QMessageBox.warning(self, "Deploy Model", f"Could not find 'best.pt' in {output_folder}.")
             return
 
-        # Load class mapping (color_map.json for SMP)
-        class_mapping_path = f"{output_folder}/color_map.json"
+        # Load class mapping
+        class_mapping_path = f"{output_folder}/class_mapping.json"
         class_mapping = {}
         if os.path.exists(class_mapping_path):
             try:
