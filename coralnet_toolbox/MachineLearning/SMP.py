@@ -325,7 +325,7 @@ def build_dataframe_from_yolo(base_path, train_dir, val_dir, test_dir):
     
     # Process each split
     process_split(train_dir, 'train')
-    process_split(val_dir, 'val')
+    process_split(val_dir, 'valid')
     process_split(test_dir, 'test')
     
     if not data_rows:
@@ -340,9 +340,11 @@ def build_dataframe_from_yolo(base_path, train_dir, val_dir, test_dir):
 
 
 class Epoch:
-    def __init__(self, model, loss, metrics, stage_name, device="cpu", verbose=True):
+    def __init__(self, model, loss, stage_name, device="cpu", verbose=True, metrics=None):
         self.model = model
         self.loss = loss
+        if metrics is None:
+            metrics = [TorchMetic(getattr(smp.metrics, m)) for m in get_segmentation_metrics()]
         self.metrics = metrics
         self.stage_name = stage_name
         self.verbose = verbose
@@ -420,11 +422,10 @@ class Epoch:
 
 
 class TrainEpoch(Epoch):
-    def __init__(self, model, loss, metrics, optimizer, device="cpu", verbose=True):
+    def __init__(self, model, loss, optimizer, device="cpu", verbose=True):
         super().__init__(
             model=model,
             loss=loss,
-            metrics=metrics,
             stage_name="train",
             device=device,
             verbose=verbose,
@@ -449,14 +450,14 @@ class TrainEpoch(Epoch):
         
 
 class ValidEpoch(Epoch):
-    def __init__(self, model, loss, metrics, device="cpu", verbose=True):
+    def __init__(self, model, loss, device="cpu", verbose=True, metrics=None):
         super().__init__(
             model=model,
             loss=loss,
-            metrics=metrics,
             stage_name="valid",
             device=device,
             verbose=verbose,
+            metrics=metrics,
         )
 
     def on_epoch_start(self):
@@ -562,9 +563,10 @@ class Dataset(BaseDataset):
 class DataConfig:
     """Handles loading and parsing of YOLO data.yaml configuration files."""
 
-    def __init__(self, data_yaml_path):
-        """Initialize DataConfig with path to data.yaml file."""
+    def __init__(self, data_yaml_path, class_mapping_path=None):
+        """Initialize DataConfig with path to data.yaml file and optional class_mapping.json."""
         self.data_yaml_path = data_yaml_path
+        self.class_mapping_path = class_mapping_path
         self._load_config()
         self._build_class_mappings()
         self._build_dataframe()
@@ -591,20 +593,47 @@ class DataConfig:
         self.class_names = [self.names[i] for i in range(self.nc)]  # Include all classes including background
         self.class_ids = list(range(self.nc))  # Include background (0)
 
-        # Generate default colors for classes
+        # Load colors from class_mapping.json if provided, otherwise generate random colors
+        if self.class_mapping_path and os.path.exists(self.class_mapping_path):
+            self._load_colors_from_mapping()
+        else:
+            self._generate_random_colors()
+
+        # Create class_mapping dict (replaces color_map)
+        self.class_mapping = {}
+        for i, name in enumerate(self.class_names):
+            self.class_mapping[name] = {
+                'id': self.class_ids[i],
+                'short_label_code': name,
+                'long_label_code': name,
+                'color': self.class_colors[i]
+            }
+
+    def _load_colors_from_mapping(self):
+        """Load colors from class_mapping.json file."""
+        with open(self.class_mapping_path, 'r') as f:
+            class_mapping_data = json.load(f)
+        
+        self.class_colors = []
+        for name in self.class_names:
+            if name in class_mapping_data:
+                # Extract RGB values (ignore alpha if present)
+                color = class_mapping_data[name]['color'][:3]
+                self.class_colors.append(color)
+            else:
+                # Generate random color for missing classes
+                np.random.seed(hash(name) % (2**32))
+                color = np.random.randint(0, 256, 3).tolist()
+                self.class_colors.append(color)
+                print(f"⚠️ Class '{name}' not found in class_mapping.json. Generated random color: {color}")
+
+    def _generate_random_colors(self):
+        """Generate random colors for all classes."""
         np.random.seed(42)  # For reproducible colors
         self.class_colors = []
         for i in range(len(self.class_names)):
             color = np.random.randint(0, 256, 3).tolist()
             self.class_colors.append(color)
-
-        # Create color_map dict for compatibility
-        self.color_map = {}
-        for i, name in enumerate(self.class_names):
-            self.color_map[name] = {
-                'id': self.class_ids[i],
-                'color': self.class_colors[i]
-            }
 
     def _build_dataframe(self):
         """Build dataframe from YOLO directory structure."""
@@ -615,7 +644,7 @@ class DataConfig:
     def get_split_dataframes(self):
         """Return train, validation, and test dataframes."""
         train_df = self.dataframe[self.dataframe['Split'] == 'train'].copy()
-        valid_df = self.dataframe[self.dataframe['Split'] == 'val'].copy()
+        valid_df = self.dataframe[self.dataframe['Split'] == 'valid'].copy()
         test_df = self.dataframe[self.dataframe['Split'] == 'test'].copy()
 
         # Reset indices
@@ -659,7 +688,7 @@ class SemanticModel:
         self.class_colors = []
         self.num_classes = 0
         self.imgsz = None
-        self.color_map = {}
+        self.class_mapping = {}
 
         # Prediction optimization settings
         self._optimized_model = None
@@ -685,7 +714,7 @@ class SemanticModel:
         self.class_names = getattr(self.model, 'class_names', [])
         self.class_colors = getattr(self.model, 'class_colors', [])
         self.num_classes = getattr(self.model, 'num_classes', 0)
-        self.color_map = getattr(self.model, 'color_map', {})
+        self.class_mapping = getattr(self.model, 'class_mapping', {})
         # Load class_ids, fallback to a range based on num_classes
         self.class_ids = getattr(self.model, 'class_ids', list(range(self.num_classes)))
 
@@ -775,7 +804,7 @@ class SemanticModel:
         print(f"🚀 Training parameters: { {k: v for k, v in locals().items() if k != 'self'} }")
         
         if kwargs.get('metrics') is None:
-            kwargs['metrics'] = ['iou_score', 'f1_score']
+            kwargs['metrics'] = get_segmentation_metrics()
 
         print("\n" + "=" * 60)
         print("🚀 STARTING SEMANTIC SEGMENTATION TRAINING")
@@ -828,12 +857,13 @@ class SemanticModel:
 
         # 1. Load Data Config
         print("📂 Loading dataset configuration...")
-        self.data_config = DataConfig(data_yaml)
+        class_mapping_path = kwargs.get('class_mapping')
+        self.data_config = DataConfig(data_yaml, class_mapping_path)
         train_df, valid_df, test_df = self.data_config.get_split_dataframes()
         self.class_names = self.data_config.class_names
         self.class_colors = self.data_config.class_colors
         self.num_classes = self.data_config.nc
-        self.color_map = self.data_config.color_map
+        self.class_mapping = self.data_config.class_mapping
 
         print("📊 Dataset Summary:")
         print(f"   • Training samples: {len(train_df)}")
@@ -870,7 +900,7 @@ class SemanticModel:
         self.model.class_names = self.class_names
         self.model.class_colors = self.class_colors
         self.model.num_classes = self.num_classes
-        self.model.color_map = self.color_map
+        self.model.class_mapping = self.class_mapping
 
         # 3. Setup Training Config
         training_config = TrainingConfig(
@@ -878,7 +908,6 @@ class SemanticModel:
             loss_function_name=kwargs.get('loss_function'),
             optimizer_name=kwargs.get('optimizer'),
             lr=kwargs.get('lr'),
-            metrics_list=kwargs.get('metrics'),
             class_ids=self.data_config.class_ids,
             device=self.device
         )
@@ -888,8 +917,7 @@ class SemanticModel:
             output_dir=base_output_dir,
             decoder_name=decoder_name,
             encoder_name=encoder_name,
-            color_map=self.data_config.color_map,
-            metrics=training_config.metrics,
+            class_mapping=self.data_config.class_mapping,
             exist_ok=kwargs.get('exist_ok'),
             user_provided_name=user_provided_name
         )
@@ -905,14 +933,13 @@ class SemanticModel:
             imgsz=self.imgsz  # Use the one from self
         )
         dataset_manager.visualize_training_samples(
-            experiment_manager.logs_dir, self.data_config.class_colors
+            experiment_manager.run_dir, self.data_config.class_colors
         )
 
         # 6. Run Trainer
         trainer = Trainer(
             model=self.model,
             loss_function=training_config.loss_function,
-            metrics=training_config.metrics,
             optimizer=training_config.optimizer,
             device=self.device,
             epochs=kwargs.get('epochs'),
@@ -927,6 +954,9 @@ class SemanticModel:
         )
         trainer.train()
 
+        # Plot training metrics
+        experiment_manager.plot_metrics()
+
         # 7. Evaluate
         print("\n📥 Loading best weights for evaluation...")
         best_weights = os.path.join(experiment_manager.weights_dir, "best.pt")
@@ -936,7 +966,7 @@ class SemanticModel:
         # Call eval method for evaluation (same as standalone)
         self.eval(
             data_yaml=data_yaml,
-            split='test',
+            split='valid',
             num_vis_samples=kwargs.get('num_vis_samples'),
             output_dir=experiment_manager.run_dir,  # Integrate into training dir
             loss_function=kwargs.get('loss_function'),
@@ -944,7 +974,7 @@ class SemanticModel:
             device=self.device
         )
 
-        print(f"\n✅ Training pipeline completed! Best model at {best_weights}")
+        print(f"✅ Training pipeline completed! Best model at {best_weights}")
         self.model.eval()
         # Clear any optimized model from previous runs
         self._optimized_model = None
@@ -960,7 +990,7 @@ class SemanticModel:
 
         Args:
             data_yaml (str): Path to the data.yaml file.
-            split (str): Data split to evaluate on ('train', 'val', or 'test').
+            split (str): Data split to evaluate on ('train', 'valid', or 'test').
             num_vis_samples (int): Number of result images to save.
             output_dir (str, optional): Directory to save results.
                 If None, creates a new dir next to the model's 'weights' dir.
@@ -979,7 +1009,7 @@ class SemanticModel:
             self.device = device
 
         if metrics is None:
-            metrics = ['iou_score', 'f1_score']
+            metrics = get_segmentation_metrics()
 
         print("\n" + "=" * 60)
         print(f"🚀 STARTING STANDALONE EVALUATION ON '{split}' SPLIT")
@@ -992,12 +1022,12 @@ class SemanticModel:
         
         if split == 'train':
             eval_df = all_dfs[0]
-        elif split == 'val':
+        elif split == 'valid':
             eval_df = all_dfs[1]
         elif split == 'test':
             eval_df = all_dfs[2]
         else:
-            raise ValueError(f"Invalid split '{split}'. Must be 'train', 'val', or 'test'.")
+            raise ValueError(f"Invalid split '{split}'. Must be 'train', 'valid', or 'test'.")
 
         if eval_df.empty:
             print(f"⚠️ No data found for split: {split}. Exiting.")
@@ -1020,18 +1050,16 @@ class SemanticModel:
         )
         
         # 3. Setup Metrics and Loss
-        print("⚙️ Configuring metrics...")
+        print("⚙️ Configuring loss...")
         try:
             loss_fn = getattr(smp.losses, loss_function)(mode='multiclass').to(self.device)
             loss_fn.__name__ = loss_fn._get_name()
             if 'ignore_index' in inspect.signature(loss_fn.__init__).parameters:
                 loss_fn.ignore_index = 0  # Ignore background
             
-            metric_fns = [TorchMetic(getattr(smp.metrics, m)) for m in metrics]
             print(f"   • Loss: {loss_function}")
-            print(f"   • Metrics: {metrics}")
         except Exception as e:
-            print(f"❌ Error setting up metrics/loss: {e}")
+            print(f"❌ Error setting up loss: {e}")
             return
 
         # 4. Setup Experiment Manager
@@ -1049,21 +1077,16 @@ class SemanticModel:
             output_dir=output_dir,
             decoder_name=decoder_name,
             encoder_name=encoder_name,
-            color_map=self.color_map,
-            metrics=metric_fns,
+            class_mapping=self.class_mapping,
             exist_ok=True,  # For eval, we typically want to allow overwriting
             is_eval=True,
             user_provided_name=split  # Use split name as user provided name for eval
         )
-        # Save the dataframe used for this eval
-        eval_df.to_csv(os.path.join(experiment_manager.logs_dir, f"{split}_data.csv"), index=False)
 
         # 5. Instantiate and Run Evaluator
-        print("🚀 Handing off to Evaluator...")
         evaluator = Evaluator(
             model=self.model,
             loss_function=loss_fn,
-            metrics=metric_fns,
             device=self.device,
             test_dataset=eval_dataset,
             test_dataset_vis=eval_dataset_vis,
@@ -1459,13 +1482,13 @@ class SemanticModel:
 class TrainingConfig:
     """Handles configuration of loss functions, optimizers, and metrics for training."""
 
-    def __init__(self, model, loss_function_name, optimizer_name, lr, metrics_list, class_ids, device):
+    def __init__(self, model, loss_function_name, optimizer_name, lr, class_ids, device):
         """Initialize TrainingConfig with training components."""
         self.model = model
         self.loss_function_name = loss_function_name
         self.optimizer_name = optimizer_name
         self.lr = lr
-        self.metrics_list = metrics_list
+        self.metrics_list = get_segmentation_metrics()
         self.class_ids = class_ids
         self.device = device
 
@@ -1499,7 +1522,6 @@ class TrainingConfig:
 
     def _setup_metrics(self):
         """Setup the evaluation metrics."""
-        assert any(m in get_segmentation_metrics() for m in self.metrics_list)
         self.metrics = [getattr(smp.metrics, m) for m in self.metrics_list]
 
         # Include at least one metric regardless
@@ -1514,13 +1536,14 @@ class TrainingConfig:
 class ExperimentManager:
     """Manages experiment directories, logging, and result tracking."""
 
-    def __init__(self, output_dir, decoder_name, encoder_name, color_map, metrics, exist_ok=False, is_eval=False, user_provided_name=None):
+    def __init__(self, output_dir, decoder_name, encoder_name, class_mapping, 
+                 exist_ok=False, is_eval=False, user_provided_name=None):
         """Initialize ExperimentManager with experiment configuration."""
         self.output_dir = output_dir
         self.decoder_name = decoder_name
         self.encoder_name = encoder_name
-        self.color_map = color_map
-        self.metrics = metrics
+        self.class_mapping = class_mapping
+        self.metrics = [TorchMetic(getattr(smp.metrics, m)) for m in get_segmentation_metrics()]
         self.exist_ok = exist_ok
         self.is_eval = is_eval
         self.user_provided_name = user_provided_name
@@ -1561,29 +1584,26 @@ class ExperimentManager:
         
         self.run_dir = base_run_dir
         self.weights_dir = os.path.join(self.run_dir, "weights") if not self.is_eval else None
-        self.logs_dir = os.path.join(self.run_dir, "logs")
 
         # Make the directories
         os.makedirs(self.run_dir, exist_ok=True)
         if self.weights_dir:
             os.makedirs(self.weights_dir, exist_ok=True)
-        os.makedirs(self.logs_dir, exist_ok=True)
 
         print(f"📁 Experiment: {self.run}")
         print(f"📁 Run Directory: {self.run_dir}")
         if self.weights_dir:
             print(f"📁 Weights Directory: {self.weights_dir}")
-        print(f"📁 Logs Directory: {self.logs_dir}")
 
     def _setup_logging(self):
         """Setup logging files and CSV results tracking."""
-        # Save the generated color_map to JSON
-        color_map_path = os.path.join(self.run_dir, "color_map.json")
-        with open(color_map_path, 'w') as f:
-            json.dump(self.color_map, f, indent=4)
+        # Save the class_mapping to JSON
+        class_mapping_path = os.path.join(self.run_dir, "class_mapping.json")
+        with open(class_mapping_path, 'w') as f:
+            json.dump(self.class_mapping, f, indent=4)
 
         # Create results CSV file
-        self.results_csv_path = os.path.join(self.logs_dir, "results.csv")
+        self.results_csv_path = os.path.join(self.run_dir, "results.csv")
         with open(self.results_csv_path, 'w') as f:
             f.write("epoch,phase,loss")
             for metric in self.metrics:
@@ -1592,9 +1612,9 @@ class ExperimentManager:
 
     def save_dataframes(self, train_df, valid_df, test_df):
         """Save dataframes to CSV files in logs directory."""
-        train_df.to_csv(os.path.join(self.logs_dir, "Training.csv"), index=False)
-        valid_df.to_csv(os.path.join(self.logs_dir, "Validation.csv"), index=False)
-        test_df.to_csv(os.path.join(self.logs_dir, "Testing.csv"), index=False)
+        train_df.to_csv(os.path.join(self.run_dir, "training_split.csv"), index=False)
+        valid_df.to_csv(os.path.join(self.run_dir, "validation_split.csv"), index=False)
+        test_df.to_csv(os.path.join(self.run_dir, "testing_split.csv"), index=False)
 
     def log_metrics(self, epoch, phase, logs):
         """Log metrics to CSV file."""
@@ -1632,21 +1652,11 @@ class ExperimentManager:
             train_data = data[data['phase'] == 'train']
             valid_data = data[data['phase'] == 'valid']
 
-            # 4. Create a dynamic subplot grid (2 rows, multiple columns)
-            num_metrics = len(all_metrics_to_plot)
+            # 4. Create a fixed 2x5 subplot grid for the 10 metrics
             num_rows = 2
-            num_cols = (num_metrics + num_rows - 1) // num_rows  # Ceiling division
-            
-            fig, axes = plt.subplots(num_rows, num_cols, figsize=(18, 6 * num_rows))
-            
-            # Flatten axes array for easy iteration, handling 1-row case
-            if num_rows == 1:
-                if num_cols == 1:
-                    axes = [axes]  # Make it iterable if 1x1
-                else:
-                    axes = axes.flatten()  # 1xN
-            else:
-                axes = axes.flatten()  # NxN
+            num_cols = 5
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(20, 15))
+            axes = axes.flatten()  # Flatten for easy iteration
 
             # 5. Iterate and plot each metric
             for i, metric in enumerate(all_metrics_to_plot):
@@ -1680,13 +1690,9 @@ class ExperimentManager:
                 ax.legend()
                 ax.grid(True, linestyle=':')
 
-            # 6. Clean up unused subplots
-            for j in range(i + 1, len(axes)):
-                fig.delaxes(axes[j])
-
-            # 7. Save the figure
+            # 6. Save the figure
             plt.tight_layout()
-            save_path = os.path.join(self.logs_dir, "metrics_plot.png")
+            save_path = os.path.join(self.run_dir, "results.png")
             plt.savefig(save_path)
             plt.close()  # Close the figure to free memory
             
@@ -1794,8 +1800,8 @@ class DatasetManager:
             pin_memory=torch.cuda.is_available()
         )
 
-    def visualize_training_samples(self, logs_dir, class_colors):
-        """Visualize training samples in a 3x3 grid and save to a single image."""
+    def visualize_training_samples(self, run_dir, class_colors):
+        """Visualize training samples in three 3x3 grids and save to separate images."""
         print("\n" + "=" * 60)
         print("👀 GENERATING TRAINING SAMPLE VISUALIZATIONS")
         print("=" * 60)
@@ -1805,97 +1811,99 @@ class DatasetManager:
                                  augmentation=get_training_augmentation(self.imgsz),
                                  classes=self.class_ids)
 
-        # Create a 3x3 grid figure
-        fig, axes = plt.subplots(3, 3, figsize=(15, 15))
-        axes = axes.flatten()  # Flatten to easily iterate
+        # Generate 3 grids
+        for grid_idx in range(3):
+            # Create a 3x3 grid figure
+            fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+            axes = axes.flatten()  # Flatten to easily iterate
 
-        # Loop through 9 samples
-        for i in range(9):
-            try:
-                # Get a random sample from dataset
-                image_tensor, mask_tensor = sample_dataset[np.random.randint(0, len(self.train_df))]
-                
-                # Convert tensors to numpy arrays with proper handling
-                if isinstance(image_tensor, torch.Tensor):
-                    image = image_tensor.numpy()
-                else:
-                    image = image_tensor
-                    
-                if isinstance(mask_tensor, torch.Tensor):
-                    mask = mask_tensor.numpy()
-                else:
-                    mask = mask_tensor
-                
-                # Handle different image tensor shapes
-                if image.ndim == 3:
-                    if image.shape[0] in [1, 3]:  # (C, H, W) format
-                        image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
-                        # If grayscale, convert to RGB
-                        if image.shape[2] == 1:
-                            image = np.concatenate([image] * 3, axis=2)
-                # else already in (H, W, C) format
-                elif image.ndim == 4:
-                    # Remove batch dimension if present
-                    image = image.squeeze(0)
-                    if image.shape[0] in [1, 3]:  # (C, H, W) format
-                        image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
-                        if image.shape[2] == 1:
-                            image = np.concatenate([image] * 3, axis=2)
-                
-                # Handle mask tensor shapes
-                if mask.ndim >= 2:
-                    mask = mask.squeeze()  # Remove any extra dimensions
-                
-                # Ensure image values are in proper range for display
-                if image.dtype != np.uint8:
-                    if np.max(image) <= 1.0:
-                        image = (image * 255).astype(np.uint8)
-                    else:
-                        image = np.clip(image, 0, 255).astype(np.uint8)
-                
-                # Ensure mask is in proper format
-                if mask.dtype != np.uint8:
-                    mask = mask.astype(np.uint8)
-
-                # Colorize the mask
-                colored_mask = colorize_mask(mask, self.class_ids, class_colors)
-                
-                # Plot in the subplot
-                axes[i].imshow(image)
-                axes[i].imshow(colored_mask, alpha=0.5)
-                axes[i].set_title(f'Sample {i+1}')
-                axes[i].axis('off')
-                
-            except Exception as e:
-                print(f"⚠️ Could not visualize sample {i+1}: {e}")
-                # Add debug information
+            # Loop through 9 samples
+            for i in range(9):
                 try:
-                    print(f"   Debug info - Image shape: {image.shape if 'image' in locals() else 'N/A'}")
-                    print(f"   Debug info - Mask shape: {mask.shape if 'mask' in locals() else 'N/A'}")
-                    print(f"   Debug info - Image dtype: {image.dtype if 'image' in locals() else 'N/A'}")
-                    print(f"   Debug info - Mask dtype: {mask.dtype if 'mask' in locals() else 'N/A'}")
-                except:
-                    pass
-                axes[i].axis('off')  # Hide empty subplots
+                    # Get a random sample from dataset
+                    image_tensor, mask_tensor = sample_dataset[np.random.randint(0, len(self.train_df))]
+                    
+                    # Convert tensors to numpy arrays with proper handling
+                    if isinstance(image_tensor, torch.Tensor):
+                        image = image_tensor.numpy()
+                    else:
+                        image = image_tensor
+                        
+                    if isinstance(mask_tensor, torch.Tensor):
+                        mask = mask_tensor.numpy()
+                    else:
+                        mask = mask_tensor
+                    
+                    # Handle different image tensor shapes
+                    if image.ndim == 3:
+                        if image.shape[0] in [1, 3]:  # (C, H, W) format
+                            image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
+                            # If grayscale, convert to RGB
+                            if image.shape[2] == 1:
+                                image = np.concatenate([image] * 3, axis=2)
+                    # else already in (H, W, C) format
+                    elif image.ndim == 4:
+                        # Remove batch dimension if present
+                        image = image.squeeze(0)
+                        if image.shape[0] in [1, 3]:  # (C, H, W) format
+                            image = image.transpose(1, 2, 0)  # Convert to (H, W, C)
+                            if image.shape[2] == 1:
+                                image = np.concatenate([image] * 3, axis=2)
+                    
+                    # Handle mask tensor shapes
+                    if mask.ndim >= 2:
+                        mask = mask.squeeze()  # Remove any extra dimensions
+                    
+                    # Ensure image values are in proper range for display
+                    if image.dtype != np.uint8:
+                        if np.max(image) <= 1.0:
+                            image = (image * 255).astype(np.uint8)
+                        else:
+                            image = np.clip(image, 0, 255).astype(np.uint8)
+                    
+                    # Ensure mask is in proper format
+                    if mask.dtype != np.uint8:
+                        mask = mask.astype(np.uint8)
 
-        # Save the grid to a single image
-        save_path = os.path.join(logs_dir, 'TrainingSamples_Grid.png')
-        plt.tight_layout()
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        print(f"🖼️ Training samples grid saved to {save_path}")
+                    # Colorize the mask
+                    colored_mask = colorize_mask(mask, self.class_ids, class_colors)
+                    
+                    # Plot in the subplot
+                    axes[i].imshow(image)
+                    axes[i].imshow(colored_mask, alpha=0.5)
+                    axes[i].set_title(f'Sample {i+1}')
+                    axes[i].axis('off')
+                    
+                except Exception as e:
+                    print(f"⚠️ Could not visualize sample {i+1} in grid {grid_idx+1}: {e}")
+                    # Add debug information
+                    try:
+                        print(f"   Debug info - Image shape: {image.shape if 'image' in locals() else 'N/A'}")
+                        print(f"   Debug info - Mask shape: {mask.shape if 'mask' in locals() else 'N/A'}")
+                        print(f"   Debug info - Image dtype: {image.dtype if 'image' in locals() else 'N/A'}")
+                        print(f"   Debug info - Mask dtype: {mask.dtype if 'mask' in locals() else 'N/A'}")
+                    except:
+                        pass
+                    axes[i].axis('off')  # Hide empty subplots
+
+            # Save the grid to a single image
+            save_path = os.path.join(run_dir, f'train_batch{grid_idx}.png')
+            plt.tight_layout()
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
+            print(f"🖼️ Training samples grid {grid_idx+1} saved to {save_path}")
             
             
 class Trainer:
     """Handles the training loop with early stopping and learning rate scheduling."""
 
-    def __init__(self, model, loss_function, metrics, optimizer, device, epochs,
+    def __init__(self, model, loss_function, optimizer, device, epochs,
                  train_loader, valid_loader, valid_dataset, valid_dataset_vis,
                  experiment_manager, class_ids, class_colors, patience=100):
         """Initialize Trainer with training components."""
         self.model = model
         self.loss_function = loss_function
-        self.metrics = metrics
+        self.metrics = [TorchMetic(getattr(smp.metrics, m)) for m in get_segmentation_metrics()]
         self.optimizer = optimizer
         self.device = device
         self.epochs = epochs
@@ -1916,10 +1924,10 @@ class Trainer:
 
         # Create training epochs
         self.train_epoch = TrainEpoch(
-            model, loss_function, metrics, optimizer, device, verbose=True
+            model, loss_function, optimizer, device, verbose=True
         )
         self.valid_epoch = ValidEpoch(
-            model, loss_function, metrics, device, verbose=True
+            model, loss_function, device, verbose=True
         )
 
     def train(self):
@@ -2015,7 +2023,7 @@ class Trainer:
                 axes[i, 1].axis('off')
             
             # Save the grid to a single image
-            save_path = os.path.join(self.experiment_manager.logs_dir, f'ValidResult_{epoch}.png')
+            save_path = os.path.join(self.experiment_manager.run_dir, f'val_batch{epoch}.png')
             plt.tight_layout()
             plt.savefig(save_path, bbox_inches='tight')
             plt.close()
@@ -2065,20 +2073,20 @@ class Trainer:
 
     def _log_error(self, error):
         """Log training error to file."""
-        print(f"📄 Error details saved to {self.experiment_manager.logs_dir}Error.txt")
-        with open(os.path.join(self.experiment_manager.logs_dir, "Error.txt"), 'a') as file:
+        print(f"📄 Error details saved to {self.experiment_manager.run_dir}Error.txt")
+        with open(os.path.join(self.experiment_manager.run_dir, "Error.txt"), 'a') as file:
             file.write(f"Caught exception: {str(error)}\n{traceback.format_exc()}\n")
 
 
 class Evaluator:
     """Handles model evaluation and result visualization."""
 
-    def __init__(self, model, loss_function, metrics, device, test_dataset, test_dataset_vis,
+    def __init__(self, model, loss_function, device, test_dataset, test_dataset_vis,
                  experiment_manager, class_ids, class_colors, num_vis_samples=10):
         """Initialize Evaluator with evaluation components."""
         self.model = model
         self.loss_function = loss_function
-        self.metrics = metrics
+        self.metrics = [TorchMetic(getattr(smp.metrics, m)) for m in get_segmentation_metrics()]
         self.device = device
         self.test_dataset = test_dataset
         self.test_dataset_vis = test_dataset_vis
@@ -2095,7 +2103,7 @@ class Evaluator:
     def evaluate(self):
         """Evaluate model on test set."""
         print("\n" + "=" * 60)
-        print("🧪 EVALUATING MODEL ON TEST SET")
+        print("🧪 EVALUATING MODEL")
         print("=" * 60)
 
         # Create test dataloader
@@ -2138,15 +2146,9 @@ class Evaluator:
     def visualize_results(self):
         """Visualize test results."""
         print("\n" + "=" * 60)
-        print(f"🎨 VISUALIZING {self.num_vis_samples} TEST RESULTS")
+        print(f"🎨 VISUALIZING {self.num_vis_samples} RESULTS")
         print("=" * 60)
         
-        try:
-            # Plot metrics after visualizations
-            self.experiment_manager.plot_metrics()
-        except Exception as e:
-            print(f"⚠️ Could not plot metrics: {e}")
-
         try:
             # Empty cache from testing
             torch.cuda.empty_cache()
@@ -2169,10 +2171,12 @@ class Evaluator:
                 pr_mask = np.argmax(pr_mask, axis=0)
                 # Colorize the predicted mask (no resize needed since image_vis is already at imgsz)
                 pr_mask = colorize_mask(pr_mask, self.class_ids, self.class_colors)
+                # Colorize the ground truth mask
+                gt_mask_vis = colorize_mask(gt_mask_vis, self.class_ids, self.class_colors)
 
                 try:
                     # Visualize the colorized results locally
-                    save_path = os.path.join(self.experiment_manager.logs_dir, f'TestResult_{i}.png')
+                    save_path = os.path.join(self.experiment_manager.run_dir, f'eval_batch{i}.png')
                     visualize(save_path=save_path,
                               save_figure=True,
                               image=image_vis,
@@ -2192,8 +2196,8 @@ class Evaluator:
 
     def _log_error(self, error):
         """Log evaluation error to file."""
-        print(f"📄 Error details saved to {self.experiment_manager.logs_dir}Error.txt")
-        with open(os.path.join(self.experiment_manager.logs_dir, "Error.txt"), 'a') as file:
+        print(f"📄 Error details saved to {self.experiment_manager.run_dir}Error.txt")
+        with open(os.path.join(self.experiment_manager.run_dir, "Error.txt"), 'a') as file:
             file.write(f"Caught exception: {str(error)}\n{traceback.format_exc()}\n")
 
 
@@ -2221,7 +2225,6 @@ def main():
     encoder_help = f"Name of the encoder backbone to use ({encoder_list})"
     decoder_help = f"Name of the decoder architecture to use ({decoder_list})"
     loss_help = f"Loss function to use during training ({loss_list})"
-    metrics_help = f"List of metrics to use during training ({metrics_list})"
     optimizer_help = f"Optimizer to use during training ({optimizer_list})"
     
     # Build epilog text
@@ -2243,6 +2246,10 @@ def main():
     parser.add_argument('--data_yaml', type=str, required=True,
                         help='Path to YOLO data.yaml file')
 
+    parser.add_argument('--class_mapping', type=str, default=None,
+                        help='Path to class_mapping.json file with class colors. '
+                             'If not provided, random colors will be generated.')
+
     parser.add_argument('--pre_trained_path', type=str, default=None,
                         help='Path to pre-trained model of the same architecture')
 
@@ -2251,9 +2258,6 @@ def main():
 
     parser.add_argument('--decoder_name', type=str, default='Unet',
                         help=decoder_help)
-
-    parser.add_argument('--metrics', type=str, nargs='+', default=get_segmentation_metrics(),
-                        help=metrics_help)
 
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
                         help=loss_help)
@@ -2342,6 +2346,7 @@ def main():
         # Start training
         model.train(
             data_yaml=args.data_yaml,
+            class_mapping=args.class_mapping,
             encoder_name=args.encoder_name,
             decoder_name=args.decoder_name,
             pre_trained_path=args.pre_trained_path,

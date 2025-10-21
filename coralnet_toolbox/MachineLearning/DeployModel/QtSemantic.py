@@ -171,11 +171,11 @@ class Semantic(Base):
         if not self.loaded_model:
             return
 
-        # ResultsProcessor is not instantiated here
-
         if not image_paths:
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
+            if not len(image_paths):
+                return
 
         # Get project labels for mask annotation creation
         project_labels = list(self.class_mapping.values())

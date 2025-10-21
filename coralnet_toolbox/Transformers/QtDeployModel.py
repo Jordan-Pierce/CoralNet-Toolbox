@@ -475,6 +475,12 @@ class DeployModelDialog(QDialog):
         """
         if not self.loaded_model:
             return
+        
+        if not image_paths:
+            # Predict only the current image
+            image_paths = [self.annotation_window.current_image_path]
+            if not len(image_paths):
+                return
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -485,10 +491,6 @@ class DeployModelDialog(QDialog):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-
-        if not image_paths:
-            # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)

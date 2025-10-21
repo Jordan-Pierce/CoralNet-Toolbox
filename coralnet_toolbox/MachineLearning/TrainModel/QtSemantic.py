@@ -384,7 +384,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.freeze_layers_spinbox.setMinimum(0.0)
         self.freeze_layers_spinbox.setMaximum(1.0)
         self.freeze_layers_spinbox.setSingleStep(0.01)
-        self.freeze_layers_spinbox.setValue(0.8)  # Default for SMP
+        self.freeze_layers_spinbox.setValue(0.50)  # Default for SMP
         form_layout.addRow("Freeze (Encoder %):", self.freeze_layers_spinbox)
         
         # Augmentation
@@ -396,7 +396,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
         self.dropout_spinbox.setMaximum(1.0)
-        self.dropout_spinbox.setValue(0.25)
+        self.dropout_spinbox.setValue(0.50)
         form_layout.addRow("Dropout:", self.dropout_spinbox)
 
         # Optimizer
@@ -802,7 +802,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'loss_function': self.loss_combo.currentText(),
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
-            'plots': True,
+            'num_vis_samples': 5,
         }
         
         # Handle model selection logic
@@ -933,12 +933,12 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         deploy_dialog.class_mapping = class_mapping
         deploy_dialog.load_model()
 
-        # Update labels and status
+        # Update label window and status bar
         if hasattr(deploy_dialog, "add_labels_to_label_window"):
             deploy_dialog.add_labels_to_label_window()
         if hasattr(deploy_dialog, "check_and_display_class_names"):
             deploy_dialog.check_and_display_class_names()
         if hasattr(deploy_dialog, "status_bar"):
-            deploy_dialog.status_bar.showMessage("Model deployed successfully.", 5000)
+            deploy_dialog.status_bar.setText(f"Model loaded: {os.path.basename(best_weights)}")
 
 
