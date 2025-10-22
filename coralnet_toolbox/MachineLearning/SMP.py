@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 import json
 import yaml
 import glob
@@ -589,51 +590,43 @@ class DataConfig:
 
     def _build_class_mappings(self):
         """Build class name and ID mappings with colors."""
-        # Build class mappings - Include background class (0)
-        self.class_names = [self.names[i] for i in range(self.nc)]  # Include all classes including background
-        self.class_ids = list(range(self.nc))  # Include background (0)
-
-        # Load colors from class_mapping.json if provided, otherwise generate random colors
-        if self.class_mapping_path and os.path.exists(self.class_mapping_path):
-            self._load_colors_from_mapping()
-        else:
-            self._generate_random_colors()
-
-        # Create class_mapping dict (replaces color_map)
-        self.class_mapping = {}
-        for i, name in enumerate(self.class_names):
-            self.class_mapping[name] = {
-                'id': self.class_ids[i],
-                'short_label_code': name,
-                'long_label_code': name,
-                'color': self.class_colors[i]
-            }
-
-    def _load_colors_from_mapping(self):
-        """Load colors from class_mapping.json file."""
-        with open(self.class_mapping_path, 'r') as f:
-            class_mapping_data = json.load(f)
+        self.class_names = [self.names[i] for i in range(self.nc)]
+        self.class_ids = list(range(self.nc))  # This is the *integer index* map (0, 1, 2...)
         
-        self.class_colors = []
-        for name in self.class_names:
-            if name in class_mapping_data:
-                # Extract RGB values (ignore alpha if present)
-                color = class_mapping_data[name]['color'][:3]
-                self.class_colors.append(color)
+        self.class_mapping = {}  # This will store the *application-level* map
+        self.class_colors = []  # This will be built in order
+        
+        existing_mapping_data = {}
+        if self.class_mapping_path and os.path.exists(self.class_mapping_path):
+            try:
+                with open(self.class_mapping_path, 'r') as f:
+                    existing_mapping_data = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load existing class_mapping.json: {e}")
+
+        for i, name in enumerate(self.class_names):
+            # Check if this class 'name' is in the provided mapping file
+            if name in existing_mapping_data:
+                # Use existing info
+                info = existing_mapping_data[name]
+                class_uuid = info.get('id', str(uuid.uuid4()))  # Get UUID, or generate if missing
+                color = info.get('color', [255, 0, 255])[:3]  # Get color, or default
             else:
-                # Generate random color for missing classes
+                # Generate new info
+                class_uuid = str(uuid.uuid4())
+                # Generate random color
                 np.random.seed(hash(name) % (2**32))
                 color = np.random.randint(0, 256, 3).tolist()
-                self.class_colors.append(color)
-                print(f"⚠️ Class '{name}' not found in class_mapping.json. Generated random color: {color}")
 
-    def _generate_random_colors(self):
-        """Generate random colors for all classes."""
-        np.random.seed(42)  # For reproducible colors
-        self.class_colors = []
-        for i in range(len(self.class_names)):
-            color = np.random.randint(0, 256, 3).tolist()
-            self.class_colors.append(color)
+            self.class_colors.append(color)  # Add to the ordered color list
+            
+            # Build the mapping with a proper UUID
+            self.class_mapping[name] = {
+                'id': class_uuid, 
+                'short_label_code': name,
+                'long_label_code': name,
+                'color': color
+            }
 
     def _build_dataframe(self):
         """Build dataframe from YOLO directory structure."""

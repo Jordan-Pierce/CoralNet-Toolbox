@@ -17,8 +17,8 @@ from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, Q
                              QLabel, QMessageBox, QScrollArea, QFrame, QDialog, QFileDialog)
 
 from coralnet_toolbox.MachineLearning.SMP import SemanticModel
-from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
-# from coralnet_toolbox.MachineLearning.EvaluateModel.QtSemantic import EvaluateModelWorker
+
+from coralnet_toolbox.MachineLearning.EvaluateModel.QtSemantic import EvaluateModelWorker
 
 from coralnet_toolbox.MachineLearning.SMP import get_segmentation_losses
 from coralnet_toolbox.MachineLearning.SMP import get_segmentation_encoders
