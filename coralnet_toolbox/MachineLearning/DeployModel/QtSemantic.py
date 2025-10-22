@@ -143,6 +143,8 @@ class Semantic(Base):
             
             # Remove 'background' from class mapping, not used
             self.class_names = [name for name in self.class_names if name.lower() != 'background']
+            # Remove 'background' from class mapping, not used
+            self.class_mapping = {k: v for k, v in self.class_mapping.items() if v.lower() != 'background'}
 
             if not self.class_mapping:
                 self.handle_missing_class_mapping()
