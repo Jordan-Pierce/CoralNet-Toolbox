@@ -63,37 +63,58 @@ class GlobalEventFilter(QObject):
                 
                 # Handle hotkey for image classification prediction
                 if event.key() == Qt.Key_1:
-                    self.classify_deploy_model_dialog.predict()
+                    if self.classify_deploy_model_dialog.loaded_model is not None:
+                        self.classify_deploy_model_dialog.predict()
+                    else:
+                        self.main_window.open_classify_deploy_model_dialog()
                     return True
 
                 # Handle hotkey for object detection prediction
                 if event.key() == Qt.Key_2:
-                    self.detect_deploy_model_dialog.predict()
+                    if self.detect_deploy_model_dialog.loaded_model is not None:
+                        self.detect_deploy_model_dialog.predict()
+                    else:
+                        self.main_window.open_detect_deploy_model_dialog()
                     return True
 
                 # Handle hotkey for instance segmentation prediction
                 if event.key() == Qt.Key_3:
-                    self.segment_deploy_model_dialog.predict()
+                    if self.segment_deploy_model_dialog.loaded_model is not None:
+                        self.segment_deploy_model_dialog.predict()
+                    else:
+                        self.main_window.open_segment_deploy_model_dialog()
                     return True
                 
                 # Handle hotkey for semantic segmentation prediction
                 if event.key() == Qt.Key_4:
-                    self.semantic_deploy_model_dialog.predict()
+                    if self.semantic_deploy_model_dialog.loaded_model is not None:
+                        self.semantic_deploy_model_dialog.predict()
+                    else:
+                        self.main_window.open_semantic_deploy_model_dialog()
                     return True
 
                 # Handle hotkey for segment everything prediction
                 if event.key() == Qt.Key_5:
-                    self.sam_deploy_generator_dialog.predict()
+                    if self.sam_deploy_generator_dialog.loaded_model is not None:
+                        self.sam_deploy_generator_dialog.predict()
+                    else:
+                        self.main_window.open_sam_deploy_generator_dialog()
                     return True
                 
                 # Handle hotkey for see anything (YOLOE) generator
                 if event.key() == Qt.Key_6:
-                    self.see_anything_deploy_generator_dialog.predict()
+                    if self.see_anything_deploy_generator_dialog.loaded_model is not None:
+                        self.see_anything_deploy_generator_dialog.predict()
+                    else:
+                        self.main_window.open_see_anything_deploy_generator_dialog()
                     return True
 
                 # Handle hotkey for transformers prediction
                 if event.key() == Qt.Key_7:
-                    self.transformers_deploy_model_dialog.predict()
+                    if self.transformers_deploy_model_dialog.loaded_model is not None:
+                        self.transformers_deploy_model_dialog.predict()
+                    else:
+                        self.main_window.open_transformers_deploy_model_dialog()
                     return True
 
                 # Handle annotation cycling hotkeys
