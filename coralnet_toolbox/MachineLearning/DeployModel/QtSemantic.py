@@ -52,6 +52,10 @@ def _reconstruct_semantic_mask(results, model_class_names, project_class_mapping
             continue
         model_class_name = model_class_names[model_class_index]
         
+        # Skip 'background' class by name
+        if model_class_name.lower() == 'background':
+            continue
+        
         # 2. Find the corresponding Label object from the project (e.g., 'coral-a')
         label = project_class_mapping.get(model_class_name)
         if not label:
@@ -138,14 +142,18 @@ class Semantic(Base):
 
             # Warm up the model
             self.loaded_model.predict(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
+            
             # Get class names from the loaded model
+            # We keep the original list from the model (including background)
+            # to preserve the model's output index mapping.
             self.class_names = self.loaded_model.class_names
             
-            # Remove 'background' from class mapping, not used
-            self.class_names = [name for name in self.class_names if name.lower() != 'background']
-            # Remove 'background' from class mapping, not used
-            self.class_mapping = {k: v for k, v in self.class_mapping.items() if v.lower() != 'background'}
+            # We can still filter the mapping dictionary, as the new 
+            # label methods will handle 'background' properly.
+            self.class_mapping = {k: v for k, v in self.class_mapping.items() if k.lower() != 'background'}
 
+            # These methods (now updated in QtBase.py) will
+            # intelligently synchronize with the project's labels.
             if not self.class_mapping:
                 self.handle_missing_class_mapping()
             else:
@@ -326,8 +334,8 @@ class Semantic(Base):
             # Reconstruct the (H, W) semantic mask from the Results object
             reconstructed_mask = _reconstruct_semantic_mask(
                 results,
-                self.loaded_model.class_names,  # Model's map {0: 'bg', 1: 'coral'}
-                self.class_mapping,            # Project's map {'coral': LabelObj}
+                self.class_names,              # List of model class names ['Coral-A']
+                self.class_mapping,            # Project's map {'Coral-A': LabelObj}
                 mask_annotation_map            # Mask's map {LabelObj.id: 2}
             )
     
