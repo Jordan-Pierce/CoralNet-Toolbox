@@ -479,8 +479,6 @@ class DeployModelDialog(QDialog):
         if not image_paths:
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
-            if not len(image_paths):
-                return
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -527,6 +525,9 @@ class DeployModelDialog(QDialog):
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
+        if raster is None:
+            return None, None
+        
         if self.annotation_window.get_selected_tool() != "work_area":
             # Use the image path
             work_areas_data = [raster.get_numpy()]

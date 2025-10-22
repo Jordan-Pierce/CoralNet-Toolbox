@@ -141,7 +141,7 @@ class Semantic(Base):
             # Get class names from the loaded model
             self.class_names = self.loaded_model.class_names
             
-            # TODO for now remove 'background' from class mapping
+            # Remove 'background' from class mapping, not used
             self.class_names = [name for name in self.class_names if name.lower() != 'background']
 
             if not self.class_mapping:
@@ -174,8 +174,6 @@ class Semantic(Base):
         if not image_paths:
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
-            if not len(image_paths):
-                return
 
         # Get project labels for mask annotation creation
         project_labels = list(self.class_mapping.values())
@@ -220,6 +218,9 @@ class Semantic(Base):
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
+        if raster is None:
+            return None, None
+        
         if self.annotation_window.get_selected_tool() != "work_area":
             # Use the image path
             work_areas_data = [raster.image_path]

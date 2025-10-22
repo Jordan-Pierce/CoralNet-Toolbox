@@ -1689,6 +1689,9 @@ class ExperimentManager:
                 ax.set_ylabel('Value')
                 ax.legend()
                 ax.grid(True, linestyle=':')
+                
+                # Set y-axis limits to 0-1 for all metrics
+                ax.set_ylim(0, 1)
 
             # 6. Save the figure
             plt.tight_layout()
