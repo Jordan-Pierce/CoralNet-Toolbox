@@ -59,7 +59,7 @@ The main window consists of several components:
   - **Export CoralNet Annotations**: Save annotation data to a CoralNet CSV file
   - **Export TagLab Annotations**: Save annotation data to a TagLab JSON file
   - **Export Viscore Annotations**: Save annotation data to a Viscore CSV file
-  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Instance Segmentation)
+  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Instance, Semantic)
 
 - **Explorer**:
   - **Annotation Settings**: Select images, annotation types, and labels to include / filter press apply
@@ -85,7 +85,7 @@ The main window consists of several components:
       - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Select multiple annotations within a draw rectangle
       - <kbd>Double Left Click</kbd>: Unselect all annotations, exit from Isolation View
       - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan around Embedding Viewer
-      - <kbd>Scroll-wheel</kbd>: Zoom in and out of Embedding Viewer
+      - <kbd>Mouse Wheel</kbd>: Zoom in and out of Embedding Viewer
     - **Toolbar**:
       - **Isolate Selection**: Subset view
       - **Find Potential Mislabels**: Select potentially incorrectly labeled annotations, based on location
@@ -130,13 +130,13 @@ The main window consists of several components:
       - Image Fetch Break Time: Pause duration between batches (seconds)
     - **Debug Mode**: Toggle headless browser mode for troubleshooting
 
-- **Ultralytics**:
+- **Machine Learning**:
   - **Merge Datasets**: Merge multiple Classification datasets
   - **Tune Model**: Identify ideal hyperparameter values before fully training a model
   - **Train Model**: Train a machine learning model
   - **Evaluate Model**: Evaluate a trained model
   - **Optimize Model**: Convert model format
-  - **Deploy Model**: Make predictions using a trained model (Classification, Detection, Instance Segmentation)
+  - **Deploy Model**: Make predictions using a trained model
   - **Batch Inference**: Perform batch inferences
   - **Video Inference**: Perform inferencing on videos in real-time, view analytics
 
@@ -207,20 +207,20 @@ The main window consists of several components:
   - <kbd>Backspace</kbd>: Cancel the current polygon annotation
 
 - **Brush Tool**: After selecting the tool
-  - Left-click and drag to paint brush strokes on the canvas.
-  - Hold Ctrl and use the mouse wheel to adjust brush size.
-  - Press Ctrl + Shift to switch between a circle and square brush shape.
+  - <kbd>Left-click</kbd> and drag to paint brush strokes on the canvas.
+  - Hold <kbd>Ctrl</kbd> and use the <kbd>Mouse Wheel</kbd> to adjust brush size.
+  - Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to switch between a circle and square brush shape.
   - A semi-transparent preview shows the brush stroke while drawing.
 
 - **Erase Tool**: After selecting the tool
-  - Left-click and drag to erase pixels.
-  - Hold Ctrl and use the mouse wheel to adjust eraser size.
-  - Press Ctrl + Shift to switch between a circle and square eraser shape.
-  - Press Ctrl + (Backspace or Delete) to clear the mask annotation on the current image.
+  - <kbd>Left-click</kbd> and drag to erase pixels.
+  - Hold <kbd>Ctrl</kbd> and use the <kbd>Mouse Wheel</kbd> to adjust eraser size.
+  - Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to switch between a circle and square eraser shape.
+  - Press <kbd>Ctrl</kbd> + (<kbd>Backspace</kbd> or <kbd>Delete</kbd>) to clear the mask annotation on the current image.
   - A semi-transparent preview shows the eraser while drawing.
 
 - **Fill Tool**: After selecting the tool
-  - Left-click to fill the region under the cursor with the selected label.
+  - <kbd>Left-click</kbd> to fill the region under the cursor with the selected label.
 
 - **SAM Tool**: After a model is loaded
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
@@ -265,7 +265,7 @@ The main window consists of several components:
 
 ## Annotation Window
 - **Zoom**: Use the <kbd>Mouse Wheel</kbd> to zoom in and out
-- **Pan**: <kbd>Right-Click</kbd> and hold the mouse button to pan the image
+- **Pan**: <kbd>Right-Click</kbd> and hold the <kbd>Mouse Button</kbd> to pan the image
 
 ## Label Window
 - **Move Label**: <kbd>Right-Click</kbd> and drag to move labels
@@ -331,19 +331,20 @@ The main window consists of several components:
 - <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images
 - <kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels
 - <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations
-- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd><</kbd>: Select all annotations
-- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>></kbd>: Unselect all annotations
-- <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation (example below)
+- <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations
+- <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch between tools within the existing tool group, example:
   - When a PatchAnnotation is selected, this switches back to the PatchTool
   - When the PatchTool is active, this switches back to the SelectTool
+  - When the BrushTool is active, this switches to the EraseTool, and vice versa
 
 - **Machine Learning, SAM, See Anything (YOLOE), and Transformers**: After a model is loaded
   - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label using Classification model
   - <kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model
   - <kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model
-  - <kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using FastSAM model
-  - <kbd>Ctrl</kbd> + <kbd>5</kbd>: Make predictions using YOLOE model
-  - <kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using Transformers model
+  - <kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using Semantic Segmentation model
+  - <kbd>Ctrl</kbd> + <kbd>5</kbd>: Make predictions using FastSAM model
+  - <kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using YOLOE model
+  - <kbd>Ctrl</kbd> + <kbd>7</kbd>: Make predictions using Transformers model
 
 - **Tooltips**: Hover over tool buttons, image / annotation rows for information about them
 

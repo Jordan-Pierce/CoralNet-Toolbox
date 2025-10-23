@@ -7,7 +7,6 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, Q
                              QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
                              QToolBox)
 
-from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
 from coralnet_toolbox.Explorer.yolo_models import YOLO_MODELS
 
@@ -446,7 +445,6 @@ class ModelSettingsWidget(QGroupBox):
         # --- Data for hierarchical selection ---
         # Convert YOLO_MODELS to a hierarchical structure for the UI
         self.standard_models_map = self._create_hierarchical_model_map()
-        self.community_configs = get_available_configs(task='classify')
         
         # --- Models for feature extraction ---
         self.transformer_models = TRANSFORMER_MODELS
@@ -504,7 +502,7 @@ class ModelSettingsWidget(QGroupBox):
 
         # 1. Main Category ComboBox
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["Color Features", "Standard Model", "Community Model", "Transformer Model"])
+        self.category_combo.addItems(["Color Features", "YOLO", "Transformer"])
         self.model_select_layout.addRow("Category:", self.category_combo)
 
         # 2. Standard Model Options (initially hidden)
@@ -518,13 +516,6 @@ class ModelSettingsWidget(QGroupBox):
         self.model_select_layout.addRow(self.standard_model_widgets[0], self.standard_model_widgets[1])
         self.model_select_layout.addRow(self.standard_model_widgets[2], self.standard_model_widgets[3])
 
-        # 3. Community Model Options (initially hidden)
-        self.community_combo = QComboBox()
-        if self.community_configs:
-            self.community_combo.addItems(list(self.community_configs.keys()))
-        self.community_model_widgets = [QLabel("Model:"), self.community_combo]
-        self.model_select_layout.addRow(self.community_model_widgets[0], self.community_model_widgets[1])
-        
         # 4. Transformer Model Options (initially hidden)
         self.transformer_combo = QComboBox()
         self.transformer_combo.addItems(list(self.transformer_models.keys()))
@@ -571,7 +562,7 @@ class ModelSettingsWidget(QGroupBox):
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.tabs.currentChanged.connect(self._on_selection_changed)
         for widget in [self.category_combo, self.family_combo, self.size_combo, 
-                       self.community_combo, self.transformer_combo, self.model_path_edit, self.feature_mode_combo]:
+                       self.transformer_combo, self.model_path_edit, self.feature_mode_combo]:
             if isinstance(widget, QComboBox):
                 widget.currentTextChanged.connect(self._on_selection_changed)
             elif isinstance(widget, QLineEdit):
@@ -591,14 +582,11 @@ class ModelSettingsWidget(QGroupBox):
     @pyqtSlot(str)
     def _on_category_changed(self, category):
         """Show or hide sub-option widgets based on the selected category."""
-        is_standard = (category == "Standard Model")
-        is_community = (category == "Community Model")
-        is_transformer = (category == "Transformer Model")
+        is_standard = (category == "YOLO")
+        is_transformer = (category == "Transformer")
         
         for widget in self.standard_model_widgets:
             widget.setVisible(is_standard)
-        for widget in self.community_model_widgets:
-            widget.setVisible(is_community)
         for widget in self.transformer_model_widgets:
             widget.setVisible(is_transformer)
         
@@ -622,28 +610,24 @@ class ModelSettingsWidget(QGroupBox):
         """Update the enabled state and tooltip of the feature mode field."""
         is_color_features = False
         is_transformer = False
-        is_community = False  # Add a new flag for community models
         current_tab_index = self.tabs.currentIndex()
         
         if current_tab_index == 0:
             category = self.category_combo.currentText()
             is_color_features = (category == "Color Features")
             is_transformer = (category == "Transformer Model")
-            is_community = (category == "Community Model")  # Check for Community Model
         
-        # Disable feature mode for Color Features, Transformer Models, and Community Models
-        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer or is_community))
+        # Disable feature mode for Color Features and Transformer Models
+        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
         
         # If disabled categories are selected, force the combo to "Embed Features"
-        if is_color_features or is_transformer or is_community:
+        if is_color_features or is_transformer:
             self.feature_mode_combo.setCurrentText("Embed Features")
         
         if is_color_features:
             self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
         elif is_transformer:
             self.feature_mode_combo.setToolTip("Transformer models always output embedding features.")
-        elif is_community:
-            self.feature_mode_combo.setToolTip("Community models always output embedding features.")
         else:
             self.feature_mode_combo.setToolTip(
                 "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
@@ -662,7 +646,7 @@ class ModelSettingsWidget(QGroupBox):
             if category == "Color Features":
                 model_name = "Color Features"
                 
-            elif category == "Standard Model":
+            elif category == "YOLO":
                 family_text = self.family_combo.currentText()
                 size_text = self.size_combo.currentText()
                 
@@ -680,15 +664,7 @@ class ModelSettingsWidget(QGroupBox):
                     size_key = self.standard_models_map[family_text][size_text]
                     model_name = f"{family_key}{size_key}-cls.pt"
 
-            elif category == "Community Model":
-                model_display_name = self.community_combo.currentText()
-                # Use the path (value) instead of the name (key) for community models
-                if self.community_configs and model_display_name in self.community_configs:
-                    model_name = self.community_configs[model_display_name]
-                else:
-                    model_name = model_display_name  # Fallback to using the display name
-                    
-            elif category == "Transformer Model":
+            elif category == "Transformer":
                 # Get the HuggingFace model ID from the transformer models map
                 selected_display_name = self.transformer_combo.currentText()
                 model_name = self.transformer_models.get(selected_display_name, selected_display_name)
