@@ -6,18 +6,16 @@ import datetime
 import gc
 from pathlib import Path
 
-import ultralytics.engine.validator as validator
+import torch
+from torch.cuda import empty_cache
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
                              QLineEdit, QDialog, QHBoxLayout, QPushButton,
                              QSpinBox, QFormLayout, QComboBox,
-                             QGroupBox, QLabel, QCheckBox, QDoubleSpinBox)
+                             QGroupBox, QLabel)
 
-from torch.cuda import empty_cache
-from ultralytics import YOLO
-
-from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
+from coralnet_toolbox.MachineLearning.SMP import SemanticModel
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -60,16 +58,14 @@ class EvaluateModelWorker(QThread):
             # Emit signal to indicate evaluation has started
             self.evaluation_started.emit()
 
-            # Modify the save directory
-            save_dir = self.params['save_dir']
-            validator.get_save_dir = lambda x: save_dir
-
             # Evaluate the model
-            results = self.model.val(**self.params)
-
-            # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results, self.model.names)
-            metrics.save_results(save_dir)
+            self.model.eval(
+                data_yaml=self.params['data'],
+                split=self.params['split'],
+                num_vis_samples=self.params['num_vis_samples'],
+                output_dir=self.params['save_dir'],
+                device=self.params['device']
+            )
 
             # Emit signal to indicate evaluation has completed
             self.evaluation_completed.emit()
@@ -179,35 +175,17 @@ class Semantic(QDialog):
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
         
-        # Image size
-        self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setMinimum(16)
-        self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(self.imgsz)
-        layout.addRow("Image Size:", self.imgsz_spinbox)
+        # Number of visualization samples
+        self.num_vis_samples_spinbox = QSpinBox()
+        self.num_vis_samples_spinbox.setMinimum(1)
+        self.num_vis_samples_spinbox.setMaximum(100)
+        self.num_vis_samples_spinbox.setValue(5)
+        layout.addRow("Num Vis Samples:", self.num_vis_samples_spinbox)
         
-        # Batch size
-        self.batch_spinbox = QSpinBox()
-        self.batch_spinbox.setMinimum(1)
-        self.batch_spinbox.setMaximum(1024)
-        self.batch_spinbox.setValue(16)
-        layout.addRow("Batch:", self.batch_spinbox)
-        
-        # Confidence threshold
-        self.conf_spinbox = QDoubleSpinBox()
-        self.conf_spinbox.setMinimum(0.0)
-        self.conf_spinbox.setMaximum(1.0)
-        self.conf_spinbox.setSingleStep(0.001)
-        self.conf_spinbox.setDecimals(3)
-        self.conf_spinbox.setValue(0.001)
-        layout.addRow("Confidence:", self.conf_spinbox)
-        
-        # Workers
-        self.workers_spinbox = QSpinBox()
-        self.workers_spinbox.setMinimum(0)
-        self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(8)
-        layout.addRow("Workers:", self.workers_spinbox)        
+        # Device
+        self.device_edit = QLineEdit()
+        self.device_edit.setText('cuda' if torch.cuda.is_available() else 'cpu')
+        layout.addRow("Device:", self.device_edit)
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -244,16 +222,13 @@ class Semantic(QDialog):
         params = {
             'exist_ok': True,
         }
-        params['task'] = self.task
         params['model'] = self.model_edit.text()
         params['data'] = self.dataset_edit.text()
         params['save_dir'] = self.save_dir_edit.text()
         params['name'] = self.name_edit.text()
         params['split'] = self.split_combo.currentText()
-        params['imgsz'] = int(self.imgsz_spinbox.value())
-        params['batch'] = int(self.batch_spinbox.value())
-        params['conf'] = float(self.conf_spinbox.value())
-        params['workers'] = int(self.workers_spinbox.value())
+        params['num_vis_samples'] = int(self.num_vis_samples_spinbox.value())
+        params['device'] = self.device_edit.text()
         
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -266,7 +241,7 @@ class Semantic(QDialog):
     def evaluate_model(self):
         self.params = self.get_evaluation_parameters()
         try:
-            self.model = YOLO(self.params['model'], task=self.params['task'])
+            self.model = SemanticModel(self.params['model'])
             self.worker = EvaluateModelWorker(self.model, self.params)
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
