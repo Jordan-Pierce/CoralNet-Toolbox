@@ -272,6 +272,17 @@ class AnnotationWindow(QGraphicsView):
 
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
+        # Handle Ctrl+A for select/unselect all annotations
+        if event.key() == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
+            current_annotations = self.get_image_annotations()
+            if len(self.selected_annotations) == len(current_annotations):
+                self.unselect_annotations()
+            else:
+                if not self.main_window.select_tool_action.isChecked():
+                    self.main_window.choose_specific_tool("select")
+                self.select_annotations()
+            return
+        
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)

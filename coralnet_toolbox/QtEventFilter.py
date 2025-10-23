@@ -136,17 +136,6 @@ class GlobalEventFilter(QObject):
                 if self.annotation_window.selected_tool:
                     self.annotation_window.action_stack.redo()
                     return True
-                
-            # Handle Ctrl+A for select/unselect all annotations
-            if event.key() == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
-                current_annotations = self.annotation_window.get_image_annotations()
-                if len(self.annotation_window.selected_annotations) == len(current_annotations):
-                    self.annotation_window.unselect_annotations()
-                else:
-                    if not self.main_window.select_tool_action.isChecked():
-                        self.main_window.choose_specific_tool("select")
-                    self.annotation_window.select_annotations()
-                return True
             
             # Delete (backspace or delete key) selected annotations when select tool is active
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
