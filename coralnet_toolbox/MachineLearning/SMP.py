@@ -229,9 +229,6 @@ def validate_augmentation(dataframe, class_ids, imgsz, save_path=None):
             print(f"   • Original mask shape: {mask.shape}")
             print(f"   • Mask unique values: {np.unique(mask)}")
         
-        # Apply no augmentation (just resize/pad)
-        no_aug_result = no_aug_transform(image=image, mask=mask)
-        
         # Apply training augmentation
         aug_result = aug_transform(image=image, mask=mask)
         
@@ -258,7 +255,7 @@ def validate_augmentation(dataframe, class_ids, imgsz, save_path=None):
             else:
                 save_file = f"{save_path}{run_idx + 1}.png"
             
-            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            fig, axes = plt.subplots(2, 2, figsize=(10, 10))
             
             # Create a custom colormap where background (0) is transparent
             from matplotlib.colors import ListedColormap
@@ -275,42 +272,29 @@ def validate_augmentation(dataframe, class_ids, imgsz, save_path=None):
             augmented_mask_display = np.ma.masked_where(aug_result['mask'] == 0, aug_result['mask'])
             
             # Original
-            axes[0,0].imshow(image)
-            axes[0,0].set_title('Original Image')
-            axes[0,0].axis('off')
-            axes[0,0].set_aspect('equal')
+            axes[0, 0].imshow(image)
+            axes[0, 0].set_title('Original Image')
+            axes[0, 0].axis('off')
+            axes[0, 0].set_aspect('equal')
             
-            axes[0,1].imshow(image)  # Show image as background
-            axes[0,1].imshow(original_mask_display, cmap=custom_cmap, alpha=0.7)
-            axes[0,1].set_title('Original Mask')
-            axes[0,1].axis('off')
-            axes[0,1].set_aspect('equal')
-            
-            # No augmentation - ensure proper sizing
-            axes[0,2].imshow(no_aug_result['image'])
-            axes[0,2].set_title('Resized Only')
-            axes[0,2].axis('off')
-            axes[0,2].set_aspect('equal')
+            axes[0, 1].imshow(image)  # Show image as background
+            axes[0, 1].imshow(original_mask_display, cmap=custom_cmap, alpha=0.7)
+            axes[0, 1].set_title('Original Mask')
+            axes[0, 1].axis('off')
+            axes[0, 1].set_aspect('equal')
             
             # Augmented
-            axes[1,0].imshow(aug_result['image'])
-            axes[1,0].set_title('Augmented Image')
-            axes[1,0].axis('off')
-            axes[1,0].set_aspect('equal')
+            axes[1, 0].imshow(aug_result['image'])
+            axes[1, 0].set_title('Augmented Image')
+            axes[1, 0].axis('off')
+            axes[1, 0].set_aspect('equal')
             
-            axes[1,1].imshow(aug_result['image'])  # Show image as background
-            axes[1,1].imshow(augmented_mask_display, cmap=custom_cmap, alpha=0.7)
-            axes[1,1].set_title('Augmented Mask')
-            axes[1,1].axis('off')
-            axes[1,1].set_aspect('equal')
-            
-            # Overlay
-            axes[1,2].imshow(aug_result['image'])
-            axes[1,2].imshow(augmented_mask_display, cmap=custom_cmap, alpha=0.5)
-            axes[1,2].set_title('Overlay Check')
-            axes[1,2].axis('off')
-            axes[1,2].set_aspect('equal')
-            
+            axes[1, 1].imshow(aug_result['image'])  # Show image as background
+            axes[1, 1].imshow(augmented_mask_display, cmap=custom_cmap, alpha=0.7)
+            axes[1, 1].set_title('Augmented Mask')
+            axes[1, 1].axis('off')
+            axes[1, 1].set_aspect('equal')
+
             plt.tight_layout()
             plt.savefig(save_file, dpi=150, bbox_inches='tight')
             plt.close()
