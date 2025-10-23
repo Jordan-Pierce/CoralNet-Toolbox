@@ -649,7 +649,7 @@ class DataConfig:
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# NEW: Main Model Class (Replaces ModelBuilder and integrates Predictor)
+# Main Model Class (Replaces ModelBuilder and integrates Predictor)
 # ----------------------------------------------------------------------------------------------------------------------
 
 class SemanticModel:
@@ -698,10 +698,17 @@ class SemanticModel:
         if device is not None:
             self.device = device
 
-        print(f"Loading model from {model_path}...")
-        self.model = torch.load(model_path, map_location=self.device, weights_only=False)
+        # Determine the correct map_location
+        if not torch.cuda.is_available():
+            map_location = 'cpu'
+        else:
+            map_location = self.device
         
-        # --- NEW: Retrieve stashed metadata directly from the model object ---
+        # Load the model
+        print(f"Loading model from {model_path}...")
+        self.model = torch.load(model_path, map_location=map_location, weights_only=False)
+        
+        # --- Retrieve stashed metadata directly from the model object ---
         self.name = getattr(self.model, 'name', None)
         self.imgsz = getattr(self.model, 'imgsz', None)
         self.class_names = getattr(self.model, 'class_names', [])
@@ -726,7 +733,7 @@ class SemanticModel:
         try:
             if not self.name:
                 raise Exception("Model name not stashed.")
-            encoder_name = self.name.split('-')[1]
+            encoder_name = self.name.split('-', 1)[1]
             self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, 'imagenet')
             print(f"Inferred preprocessing for encoder: {encoder_name}")
         except Exception as e:
@@ -805,6 +812,7 @@ class SemanticModel:
         
         # Store key info on self
         self.imgsz = kwargs.get('imgsz')
+        val = kwargs.get('val', True)
 
         # Set device
         if kwargs.get('device') is not None:
@@ -887,7 +895,7 @@ class SemanticModel:
                     device=self.device
                 )
     
-        # --- NEW: Automatically stamp metadata onto model ---
+        # --- Automatically stamp metadata onto model ---
         print("📝 Stamping metadata onto model object for saving...")
         self.model.imgsz = self.imgsz
         self.model.class_names = self.class_names
@@ -925,6 +933,13 @@ class SemanticModel:
             batch=kwargs.get('batch'),
             imgsz=self.imgsz  # Use the one from self
         )
+        
+        # If validation is disabled, set valid loaders to None
+        if not val:
+            dataset_manager.valid_loader = None
+            dataset_manager.valid_dataset = None
+            dataset_manager.valid_dataset_vis = None
+        
         dataset_manager.visualize_training_samples(
             experiment_manager.run_dir, self.data_config.class_colors
         )
@@ -1948,18 +1963,24 @@ class Trainer:
 
                 # Go through an epoch for train, valid
                 train_logs = self.train_epoch.run(self.train_loader)
-                valid_logs = self.valid_epoch.run(self.valid_loader)
+                if self.valid_loader is not None:
+                    valid_logs = self.valid_epoch.run(self.valid_loader)
+                else:
+                    valid_logs = {}
 
                 # Print training metrics
                 print(f"  📈 Train: {format_logs_pretty(train_logs)}")
-                print(f"  ✅ Valid: {format_logs_pretty(valid_logs)}")
+                if valid_logs:
+                    print(f"  ✅ Valid: {format_logs_pretty(valid_logs)}")
 
                 # Log training metrics to CSV
                 self.experiment_manager.log_metrics(e_idx, "train", train_logs)
-                self.experiment_manager.log_metrics(e_idx, "valid", valid_logs)
+                if valid_logs:
+                    self.experiment_manager.log_metrics(e_idx, "valid", valid_logs)
 
                 # Visualize a validation sample
-                self._visualize_validation_sample(e_idx)
+                if self.valid_dataset_vis is not None:
+                    self._visualize_validation_sample(e_idx)
 
                 # Check for best model and handle early stopping
                 should_continue = self._update_training_state(e_idx, train_logs, valid_logs)
@@ -2031,11 +2052,14 @@ class Trainer:
         """Update training state and handle early stopping."""
         # Get the loss values
         train_loss = [v for k, v in train_logs.items() if 'loss' in k.lower()][0]
-        valid_loss = [v for k, v in valid_logs.items() if 'loss' in k.lower()][0]
+        if valid_logs:
+            loss_value = [v for k, v in valid_logs.items() if 'loss' in k.lower()][0]
+        else:
+            loss_value = train_loss
 
-        if valid_loss < self.best_score:
+        if loss_value < self.best_score:
             # Update best
-            self.best_score = valid_loss
+            self.best_score = loss_value
             self.best_epoch = epoch
             self.since_best = 0
             print(f"🏆 New best epoch {epoch}")
@@ -2045,19 +2069,19 @@ class Trainer:
             self.since_drop += 1
             print(f"📉 Model did not improve after epoch {epoch}")
 
-        # Overfitting indication
-        if train_loss < valid_loss:
+        # Overfitting indication (only if validation is available)
+        if valid_logs and train_loss < loss_value:
             print(f"⚠️ Overfitting detected in epoch {epoch}")
 
         # Check if it's time to decrease the learning rate
-        if (self.since_best >= 5 or train_loss <= valid_loss) and self.since_drop >= 5:
+        if (self.since_best >= 5 or (valid_logs and train_loss <= loss_value)) and self.since_drop >= 5:
             self.since_drop = 0
             new_lr = self.optimizer.param_groups[0]['lr'] * 0.75
             self.optimizer.param_groups[0]['lr'] = new_lr
             print(f"🔄 Decreased learning rate to {new_lr:.6f} after epoch {epoch}")
 
-        # Exit early if progress stops
-        if self.since_best >= self.patience and train_loss < valid_loss and self.since_drop >= 5:
+        # Exit early if progress stops (only if validation is available)
+        if valid_logs and self.since_best >= self.patience and train_loss < loss_value and self.since_drop >= 5:
             print("🛑 Training plateaued; stopping early")
             return False
         
@@ -2302,6 +2326,9 @@ def main():
 
     parser.add_argument('--pretrained', type=str, default='True',
                         help='Determines whether to start training from a pretrained model. Can be a boolean value or a string path to a specific model from which to load weights')
+
+    parser.add_argument('--val', action='store_true',
+                        help='Enable validation during training if a validation set is provided')
     
     args = parser.parse_args()
     
@@ -2361,7 +2388,8 @@ def main():
             project=args.project,
             name=args.name,
             exist_ok=args.exist_ok,
-            pretrained=pretrained
+            pretrained=pretrained,
+            val=args.val
         )
 
     except Exception as e:

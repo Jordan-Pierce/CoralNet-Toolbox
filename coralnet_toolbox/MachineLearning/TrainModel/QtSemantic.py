@@ -427,7 +427,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.workers_spinbox.setValue(8)
         form_layout.addRow("Workers:", self.workers_spinbox)
         
-        # Val TODO
+        # Validation during training
         self.val_combo = create_bool_combo()
         form_layout.addRow("Validation:", self.val_combo)
         

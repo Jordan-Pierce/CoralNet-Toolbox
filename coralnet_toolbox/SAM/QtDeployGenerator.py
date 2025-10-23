@@ -477,7 +477,9 @@ class DeployGeneratorDialog(QDialog):
         
         if not image_paths:
             # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
+            if self.annotation_window.current_image_path is None:
+                QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
+                return
 
         # Create a results processor
         results_processor = ResultsProcessor(

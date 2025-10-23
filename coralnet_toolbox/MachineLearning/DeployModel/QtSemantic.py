@@ -184,6 +184,9 @@ class Semantic(Base):
 
         if not image_paths:
             # Predict only the current image
+            if self.annotation_window.current_image_path is None:
+                QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
+                return
             image_paths = [self.annotation_window.current_image_path]
 
         # Get project labels for mask annotation creation
