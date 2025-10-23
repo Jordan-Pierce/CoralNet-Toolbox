@@ -57,6 +57,14 @@ class TrainModelWorker(QThread):
         self.params = params
         self.device = device
         self.model = None
+        
+    def pre_run(self):
+        """
+        Pre-run setup before starting the training process.
+        """
+        # Check if the imgsz is divisible by 32
+        if self.params['imgsz'] % 32 != 0:
+            raise ValueError("Image size must be divisible by 32.")
 
     def run(self):
         """
@@ -65,6 +73,9 @@ class TrainModelWorker(QThread):
         try:
             # Emit signal to indicate training has started
             self.training_started.emit()
+
+            # Pre-run checks
+            self.pre_run()
 
             # Initialize SemanticModel
             self.model = SemanticModel()
@@ -85,15 +96,11 @@ class TrainModelWorker(QThread):
             print(f"Error during training: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.training_error.emit(f"Error during training: {e} (see console log)")
         
-    def evaluate_model(self):  # TODO remove eval from training, use it separately
+    def evaluate_model(self):
         """
         Evaluate the model after training.
         """
         try:
-            # Do not evaluate if the user specifies 
-            if not self.params.get('Validation', False):
-                return
-            
             # Check that there is a test folder
             test_folder = f"{self.params['data']}/test"
             print(f"Note: Looking for test folder: {test_folder}")
@@ -265,8 +272,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.encoder_combo = QComboBox()
         encoders = get_segmentation_encoders()
         self.encoder_combo.addItems(encoders)
-        if 'mobileone_s0' in encoders:
-            self.encoder_combo.setCurrentText('mobileone_s0')
+        if 'timm-tf_efficientnet_lite0' in encoders:
+            self.encoder_combo.setCurrentText('timm-tf_efficientnet_lite0')
         elif encoders:
             self.encoder_combo.setCurrentIndex(0)
         model_select_layout.addRow("Encoder:", self.encoder_combo)
@@ -635,17 +642,15 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                 'epochs': self.epochs_spinbox,
                 'patience': self.patience_spinbox,
                 'imgsz': self.imgsz_spinbox,
-                'multi_scale': self.multi_scale_combo,
                 'batch': self.batch_spinbox,
                 'workers': self.workers_spinbox,
-                'save_period': self.save_period_spinbox,
-                'freeze_layers': self.freeze_layers_spinbox,
+                'freeze': self.freeze_layers_spinbox,
                 'dropout': self.dropout_spinbox,
-                'save': self.save_combo,
-                'weighted': self.weighted_combo,
+                'lr': self.lr_spinbox,
+                'augment_data': self.augmentation_combo,
                 'val': self.val_combo,
-                'verbose': self.verbose_combo,
-                'optimizer': self.optimizer_combo
+                'optimizer': self.optimizer_combo,
+                'loss_function': self.loss_combo
             }
 
             # Update UI controls with imported values
@@ -662,22 +667,22 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                         if isinstance(converted_value, (int, float)):
                             widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
-                        if param_name in ['multi_scale', 'save', 'weighted', 'val', 'verbose']:
+                        if param_name in ['augment_data', 'val']:
                             widget.setCurrentText("True" if converted_value else "False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
+            else:
+                # Add as a custom parameter
+                self.add_parameter_pair()
+                param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
+                
+                param_name_widget.setText(param_name)
+                param_type_widget.setCurrentText(param_type)
+                
+                if param_type == "bool":
+                    param_value_widget.setText("True" if converted_value else "False")
                 else:
-                    # Add as a custom parameter
-                    self.add_parameter_pair()
-                    param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
-                    
-                    param_name_widget.setText(param_name)
-                    param_type_widget.setCurrentText(param_type)
-                    
-                    if param_type == "bool":
-                        param_value_widget.setText("True" if converted_value else "False")
-                    else:
-                        param_value_widget.setText(str(converted_value))
+                    param_value_widget.setText(str(converted_value))
 
             QMessageBox.information(self, 
                                     "Import Success", 
@@ -701,21 +706,19 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             # Use a single flat dictionary for export
             export_data = {}
 
-            # Standard parameters
+            # Standard parameters matching get_parameters()
             export_data['epochs'] = self.epochs_spinbox.value()
             export_data['patience'] = self.patience_spinbox.value()
             export_data['imgsz'] = self.imgsz_spinbox.value()
             export_data['batch'] = self.batch_spinbox.value()
             export_data['workers'] = self.workers_spinbox.value()
-            export_data['save_period'] = self.save_period_spinbox.value()
-            export_data['freeze_layers'] = self.freeze_layers_spinbox.value()
+            export_data['freeze'] = self.freeze_layers_spinbox.value()
             export_data['dropout'] = self.dropout_spinbox.value()
-            export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
-            export_data['save'] = self.save_combo.currentText() == "True"
-            export_data['weighted'] = self.weighted_combo.currentText() == "True"
+            export_data['lr'] = self.lr_spinbox.value()
+            export_data['augment_data'] = self.augmentation_combo.currentText() == "True"
             export_data['val'] = self.val_combo.currentText() == "True"
-            export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
+            export_data['loss_function'] = self.loss_combo.currentText()
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -797,11 +800,11 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'augment_data': self.augmentation_combo.currentText() == "True",
             'workers': self.workers_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
             'freeze': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
-            'augmentation': self.augmentation_combo.currentText() == "True",
             'lr': self.lr_spinbox.value(),
             'loss_function': self.loss_combo.currentText(),
             'val': self.val_combo.currentText() == "True",
@@ -897,6 +900,12 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
 
     def deploy_trained_model(self):
         """Load the trained SMP model and class mapping into a deployment dialog."""
+        if not self.main_window.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self, 
+                                "Deploy Model", 
+                                "No images found for deployment, you must import images first.")
+            return
+
         output_folder = os.path.join(self.params['project'], self.params['name'])
 
         # SemanticModel saves weights in a structure like:

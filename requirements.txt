@@ -2,6 +2,8 @@ PyQt5>=5.15.11
 pyqtdarktheme
 pyqtgraph
 ultralytics>=8.3.191
+segmentation-models-pytorch
+albumentations
 lap>=0.5.12
 open-clip-torch>=2.20.0
 supervision>=0.24.0

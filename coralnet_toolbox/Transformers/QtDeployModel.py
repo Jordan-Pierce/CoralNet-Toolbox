@@ -481,6 +481,7 @@ class DeployModelDialog(QDialog):
             if self.annotation_window.current_image_path is None:
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
+            image_paths = [self.annotation_window.current_image_path]
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -634,11 +635,16 @@ class DeployModelDialog(QDialog):
 
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Highlight the work area being processed
+                    work_areas[idx].highlight()
                     # Map results from work area to the full image
                     results = MapResults().map_results_from_work_area(results[0], 
                                                                       raster, 
                                                                       work_areas[idx],
                                                                       self.use_sam_dropdown.currentText() == "True")
+
+                    # Unhighlight the work area after processing
+                    work_areas[idx].unhighlight()
                 else:
                     results = results[0]
 

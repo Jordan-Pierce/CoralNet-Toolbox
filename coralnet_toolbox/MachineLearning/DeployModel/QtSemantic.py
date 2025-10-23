@@ -310,11 +310,15 @@ class Semantic(Base):
                 results[0].path = image_path
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Highlight the work area being processed
+                    work_areas[idx].highlight()
                     # Map results from work area to the full image
                     results_obj = map_results_util.map_results_from_work_area(results[0],
                                                                               raster,
                                                                               work_areas[idx],
                                                                               task=self.task)
+                    # Revert the work area highlight
+                    work_areas[idx].revert_highlight()
                 else:
                     results_obj = results[0]
 

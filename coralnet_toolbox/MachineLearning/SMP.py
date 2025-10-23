@@ -18,10 +18,10 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 import torch
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset as BaseDataset
 import torch.amp
 import torch.quantization
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset as BaseDataset
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
@@ -125,6 +125,37 @@ def get_segmentation_optimizers():
     return optimizer_options
 
 
+def parse_ignore_index(ignore_index_str):
+    """
+    Parse ignore_index parameter from string format.
+    
+    Args:
+        ignore_index_str (str or None): String containing indices to ignore, 
+                                       e.g., "1,2,3" or "1 2 3" or None
+    
+    Returns:
+        list or None: List of integers to ignore, or None if no indices to ignore
+    """
+    if ignore_index_str is None or ignore_index_str.strip() == "":
+        return None
+    
+    try:
+        # Handle both comma-separated and space-separated formats
+        if ',' in ignore_index_str:
+            indices = [int(x.strip()) for x in ignore_index_str.split(',') if x.strip()]
+        else:
+            indices = [int(x.strip()) for x in ignore_index_str.split() if x.strip()]
+        
+        # Remove duplicates and sort
+        indices = sorted(list(set(indices)))
+        
+        return indices if indices else None
+    
+    except (ValueError, AttributeError) as e:
+        print(f"⚠️ Warning: Failed to parse ignore_index '{ignore_index_str}': {e}")
+        return None
+
+
 def format_logs_pretty(logs, title="Results"):
     """Format logs into a pretty, readable string."""
     if not logs:
@@ -165,6 +196,127 @@ def visualize(save_path=None, save_figure=False, image=None, **masks):
 
     # Show the figure
     plt.close()
+    
+
+def validate_augmentation(dataframe, class_ids, imgsz, save_path=None):
+    """
+    Validate that augmentations are working correctly by checking a sample.
+    Shows original and augmented image/mask pairs to verify alignment.
+    Runs three times and saves separate files.
+    """
+    print("🔍 Validating augmentation pipeline...")
+    
+    # Create datasets with and without augmentation
+    aug_transform = get_training_augmentation(imgsz)
+    no_aug_transform = get_validation_augmentation(imgsz)
+    
+    # Run validation three times with different samples or random augmentations
+    for run_idx in range(3):
+        print(f"   🎯 Validation run {run_idx + 1}/3")
+        
+        # Use different samples for each run, cycling through available samples
+        sample_idx = run_idx % len(dataframe)
+        img_path = dataframe.iloc[sample_idx]['Image']
+        mask_path = dataframe.iloc[sample_idx]['Mask']
+        
+        # Load original
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        
+        if run_idx == 0:  # Only print details for first run to avoid spam
+            print(f"   • Original image shape: {image.shape}")
+            print(f"   • Original mask shape: {mask.shape}")
+            print(f"   • Mask unique values: {np.unique(mask)}")
+        
+        # Apply no augmentation (just resize/pad)
+        no_aug_result = no_aug_transform(image=image, mask=mask)
+        
+        # Apply training augmentation
+        aug_result = aug_transform(image=image, mask=mask)
+        
+        if run_idx == 0:  # Only print details for first run
+            print(f"   • Processed image shape: {aug_result['image'].shape}")
+            print(f"   • Processed mask shape: {aug_result['mask'].shape}")
+            print(f"   • Processed mask unique values: {np.unique(aug_result['mask'])}")
+        
+        # Check that mask values are preserved
+        original_classes = set(np.unique(mask))
+        processed_classes = set(np.unique(aug_result['mask']))
+        
+        if run_idx == 0:  # Only check for first run
+            if original_classes == processed_classes:
+                print("   ✅ Mask class values preserved correctly")
+            else:
+                print(f"   ⚠️ Mask classes changed! Original: {original_classes}, Processed: {processed_classes}")
+        
+        # Visualize if path provided
+        if save_path:
+            # Create filename with run number
+            if save_path.endswith('.png'):
+                save_file = save_path.replace('.png', f'{run_idx + 1}.png')
+            else:
+                save_file = f"{save_path}{run_idx + 1}.png"
+            
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            
+            # Create a custom colormap where background (0) is transparent
+            from matplotlib.colors import ListedColormap
+            import matplotlib.cm as cm
+            
+            # Get the tab10 colormap but make the first color (index 0) transparent
+            tab10 = cm.get_cmap('tab10', 10)
+            colors = tab10(np.linspace(0, 1, 10))
+            colors[0] = [0, 0, 0, 0]  # Make background transparent (RGBA)
+            custom_cmap = ListedColormap(colors)
+            
+            # For displaying masks without background, create masked arrays
+            original_mask_display = np.ma.masked_where(mask == 0, mask)
+            augmented_mask_display = np.ma.masked_where(aug_result['mask'] == 0, aug_result['mask'])
+            
+            # Original
+            axes[0,0].imshow(image)
+            axes[0,0].set_title('Original Image')
+            axes[0,0].axis('off')
+            axes[0,0].set_aspect('equal')
+            
+            axes[0,1].imshow(image)  # Show image as background
+            axes[0,1].imshow(original_mask_display, cmap=custom_cmap, alpha=0.7)
+            axes[0,1].set_title('Original Mask')
+            axes[0,1].axis('off')
+            axes[0,1].set_aspect('equal')
+            
+            # No augmentation - ensure proper sizing
+            axes[0,2].imshow(no_aug_result['image'])
+            axes[0,2].set_title('Resized Only')
+            axes[0,2].axis('off')
+            axes[0,2].set_aspect('equal')
+            
+            # Augmented
+            axes[1,0].imshow(aug_result['image'])
+            axes[1,0].set_title('Augmented Image')
+            axes[1,0].axis('off')
+            axes[1,0].set_aspect('equal')
+            
+            axes[1,1].imshow(aug_result['image'])  # Show image as background
+            axes[1,1].imshow(augmented_mask_display, cmap=custom_cmap, alpha=0.7)
+            axes[1,1].set_title('Augmented Mask')
+            axes[1,1].axis('off')
+            axes[1,1].set_aspect('equal')
+            
+            # Overlay
+            axes[1,2].imshow(aug_result['image'])
+            axes[1,2].imshow(augmented_mask_display, cmap=custom_cmap, alpha=0.5)
+            axes[1,2].set_title('Overlay Check')
+            axes[1,2].axis('off')
+            axes[1,2].set_aspect('equal')
+            
+            plt.tight_layout()
+            plt.savefig(save_file, dpi=150, bbox_inches='tight')
+            plt.close()
+            print(f"   📊 Validation plot {run_idx + 1} saved to: {save_file}")
+    
+    print("✅ Augmentation validation complete!")
 
 
 def colorize_mask(mask, class_ids, class_colors):
@@ -190,63 +342,115 @@ def colorize_mask(mask, class_ids, class_colors):
 def get_training_augmentation(imgsz):
     """Get data augmentation pipeline for training semantic segmentation."""
     train_transform = [
-        # Basic spatial transformations
+        # Basic spatial transformations - these work well with masks
         albu.HorizontalFlip(p=0.5),
         albu.VerticalFlip(p=0.2),
         
-        # Geometric transformations
+        # Geometric transformations with proper border handling
         albu.OneOf([
-            albu.Rotate(limit=45, p=1.0, border_mode=0, value=0),
-            albu.Affine(scale=(0.8, 1.2), rotate=(-45, 45), shear=(-10, 10), p=1.0, mode=0, cval=0),
+            albu.Rotate(
+                limit=45, 
+                p=1.0, 
+                border_mode=cv2.BORDER_CONSTANT, 
+                value=0,
+                mask_value=0
+            ),
+            albu.Affine(
+                scale=(0.8, 1.2), 
+                rotate=(-45, 45), 
+                shear=(-10, 10), 
+                p=1.0, 
+                mode=cv2.BORDER_CONSTANT, 
+                cval=0,
+                mask_mode=cv2.BORDER_CONSTANT,
+                cval_mask=0
+            ),
         ], p=0.5),
         
-        # Elastic deformation for robustness
-        albu.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.3),
+        # Elastic deformation - good for both image and mask
+        albu.ElasticTransform(
+            alpha=1, 
+            sigma=50, 
+            alpha_affine=50, 
+            p=0.3,
+            border_mode=cv2.BORDER_CONSTANT,
+            value=0,
+            mask_value=0
+        ),
         
-        # Grid distortion
-        albu.GridDistortion(num_steps=5, distort_limit=0.3, p=0.3),
+        # Grid distortion - works well for semantic segmentation
+        albu.GridDistortion(
+            num_steps=5, 
+            distort_limit=0.3, 
+            p=0.3,
+            border_mode=cv2.BORDER_CONSTANT,
+            value=0,
+            mask_value=0
+        ),
         
-        # Resize and padding
+        # Resize and padding - critical for maintaining aspect ratios
         albu.LongestMaxSize(max_size=imgsz),
-        albu.PadIfNeeded(min_height=imgsz, min_width=imgsz, always_apply=True, border_mode=0, value=0),
+        albu.PadIfNeeded(
+            min_height=imgsz, 
+            min_width=imgsz, 
+            always_apply=True, 
+            border_mode=cv2.BORDER_CONSTANT, 
+            value=0,
+            mask_value=0
+        ),
         
-        # Color and intensity augmentations
+        # Color and intensity augmentations - ONLY applied to image, not mask
         albu.OneOf([
-            albu.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-            albu.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=1.0),
-            albu.RandomGamma(gamma_limit=(80, 120), p=1.0),
+            albu.RandomBrightnessContrast(
+                brightness_limit=0.2, 
+                contrast_limit=0.2, 
+                p=1.0
+            ),
+            albu.CLAHE(
+                clip_limit=4.0, 
+                tile_grid_size=(8, 8), 
+                p=1.0
+            ),
+            albu.RandomGamma(
+                gamma_limit=(80, 120), 
+                p=1.0
+            ),
         ], p=0.8),
         
-        # Hue/Saturation/Value adjustments
-        albu.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
+        # Hue/Saturation/Value adjustments - image only
+        albu.HueSaturationValue(
+            hue_shift_limit=20, 
+            sat_shift_limit=30, 
+            val_shift_limit=20, 
+            p=0.5
+        ),
         
-        # Noise and artifacts
+        # Noise and artifacts - image only (masks should not be noisy)
         albu.OneOf([
             albu.GaussNoise(var_limit=(10, 50), p=1.0),
             albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
             albu.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5), p=1.0),
         ], p=0.3),
         
-        # Blur and sharpening
+        # Blur and sharpening - image only
         albu.OneOf([
             albu.Blur(blur_limit=3, p=1.0),
-            albu.MotionBlur(blur_limit=3, p=1.0),
+            albu.MotionBlur(blur_limit=3, p=1.0), 
             albu.GaussianBlur(blur_limit=3, p=1.0),
             albu.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1.0),
         ], p=0.4),
         
-        # Dropout and cutout
+        # Dropout and cutout - can be problematic for masks, reducing probability
         albu.OneOf([
-            albu.PixelDropout(dropout_prob=0.1, p=1.0),
-            albu.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=1.0),
-        ], p=0.3),
-        
-        # Weather effects (subtle)
-        albu.OneOf([
-            albu.RandomRain(brightness_coefficient=0.9, drop_width=1, blur_value=3, p=1.0),
-            albu.RandomSnow(brightness_coeff=2.5, snow_point_lower=0.3, snow_point_upper=0.5, p=1.0),
-            albu.RandomFog(fog_coef_lower=0.3, fog_coef_upper=0.8, p=1.0),
-        ], p=0.1),
+            albu.CoarseDropout(
+                max_holes=8, 
+                max_height=32, 
+                max_width=32, 
+                p=1.0,
+                fill_value=0,
+                mask_fill_value=0
+            ),
+        ], p=0.2),  # Reduced from 0.3
     ]
 
     return albu.Compose(train_transform)
@@ -256,7 +460,14 @@ def get_validation_augmentation(imgsz):
     """Get data augmentation pipeline for validation."""
     test_transform = [
         albu.LongestMaxSize(max_size=imgsz),
-        albu.PadIfNeeded(min_height=imgsz, min_width=imgsz, always_apply=True, border_mode=0, value=0),
+        albu.PadIfNeeded(
+            min_height=imgsz, 
+            min_width=imgsz, 
+            always_apply=True, 
+            border_mode=cv2.BORDER_CONSTANT, 
+            value=0,
+            mask_value=0
+        ),
     ]
     return albu.Compose(test_transform)
 
@@ -705,9 +916,16 @@ class SemanticModel:
             map_location = self.device
         
         # Load the model
-        print(f"Loading model from {model_path}...")
-        self.model = torch.load(model_path, map_location=map_location, weights_only=False)
-        
+        try:
+            print(f"Loading model from {model_path}...")
+            self.model = torch.load(model_path, map_location=map_location, weights_only=True)
+        except Exception as e:
+            print(f"Warning: Failed to load with weights_only=True, trying weights_only=False: {e}")
+            try:
+                self.model = torch.load(model_path, map_location=map_location, weights_only=False)
+            except Exception as e2:
+                raise Exception(f"Failed to load model from {model_path}: {e2}")
+
         # --- Retrieve stashed metadata directly from the model object ---
         self.name = getattr(self.model, 'name', None)
         self.imgsz = getattr(self.model, 'imgsz', None)
@@ -741,7 +959,8 @@ class SemanticModel:
                   f"Using no-op. Error: {e}")
             self.preprocessing_fn = lambda x: x  # No-op
 
-    def _build_model(self, encoder_name, decoder_name, num_classes, freeze, pre_trained_path, pretrained=True, device=None):
+    def _build_model(self, encoder_name, decoder_name, num_classes, freeze, 
+                     pre_trained_path, pretrained=True, device=None):
         """Internal method to build a new model. (Logic from original ModelBuilder)"""
         # Validate options
         if encoder_name not in get_segmentation_encoders():
@@ -797,7 +1016,7 @@ class SemanticModel:
         self.model.to(self.device)
 
     def train(self, data_yaml, encoder_name=None, decoder_name=None,
-              pre_trained_path=None, freeze=0.8, **kwargs):
+              pre_trained_path=None, freeze=0.8, ignore_index=None, **kwargs):
         """
         Train the semantic segmentation model.
         """
@@ -871,29 +1090,33 @@ class SemanticModel:
         print(f"   • Validation samples: {len(valid_df)}")
         print(f"   • Test samples: {len(test_df)}")
         print(f"   • Classes ({self.num_classes}): {self.class_names}")
-
+    
         # 2. Build Model (if not already loaded)
         if self.model is None:
             print("🔧 Building new model...")
             
-            if pre_trained_path:
-                # Load existing model completely
-                self.load(pre_trained_path)
-                print(f"Loaded pre-trained model from: {pre_trained_path}")
-            else:
-                # Build new model from encoder/decoder
-                if not encoder_name or not decoder_name:
-                    raise ValueError("Must provide either pre_trained_path OR both encoder_name and decoder_name")
-                
-                self._build_model(
-                    encoder_name=encoder_name,
-                    decoder_name=decoder_name,
-                    num_classes=self.num_classes,
-                    freeze=freeze,
-                    pre_trained_path=None,  # This is for encoder weights only
-                    pretrained=pretrained,
-                    device=self.device
-                )
+            try:
+                if pre_trained_path:
+                    # Load existing model completely
+                    self.load(pre_trained_path)
+                    print(f"Loaded pre-trained model from: {pre_trained_path}")
+                else:
+                    # Build new model from encoder/decoder
+                    if not encoder_name or not decoder_name:
+                        raise ValueError("Must provide either pre_trained_path OR both encoder_name and decoder_name")
+                    
+                    self._build_model(
+                        encoder_name=encoder_name,
+                        decoder_name=decoder_name,
+                        num_classes=self.num_classes,
+                        freeze=freeze,
+                        pre_trained_path=None,  # This is for encoder weights only
+                        pretrained=pretrained,
+                        device=self.device
+                    )
+            except Exception as e:
+                print(f"❌ Failed to load or build model: {e}")
+                raise
     
         # --- Automatically stamp metadata onto model ---
         print("📝 Stamping metadata onto model object for saving...")
@@ -910,7 +1133,8 @@ class SemanticModel:
             optimizer_name=kwargs.get('optimizer'),
             lr=kwargs.get('lr'),
             class_ids=self.data_config.class_ids,
-            device=self.device
+            device=self.device,
+            ignore_index=ignore_index
         )
 
         # 4. Setup Experiment Manager
@@ -933,6 +1157,15 @@ class SemanticModel:
             batch=kwargs.get('batch'),
             imgsz=self.imgsz  # Use the one from self
         )
+        
+        # Validate augmentations, if augmentation is enabled
+        if kwargs.get('augment_data'):
+            validate_augmentation(
+                train_df, 
+                self.data_config.class_ids, 
+                self.imgsz,
+                os.path.join(experiment_manager.run_dir, 'augmentations')
+            )
         
         # If validation is disabled, set valid loaders to None
         if not val:
@@ -979,7 +1212,8 @@ class SemanticModel:
             output_dir=experiment_manager.run_dir,  # Integrate into training dir
             loss_function=kwargs.get('loss_function'),
             metrics=[m.__name__ for m in training_config.metrics],
-            device=self.device
+            device=self.device,
+            ignore_index=ignore_index
         )
 
         print(f"✅ Training pipeline completed! Best model at {best_weights}")
@@ -992,7 +1226,7 @@ class SemanticModel:
     # --- Evalutation Methods ---
     
     def eval(self, data_yaml, split='test', num_vis_samples=10, output_dir=None,
-             loss_function='JaccardLoss', metrics=None, device=None):
+             loss_function='JaccardLoss', metrics=None, device=None, ignore_index=None):
         """
         Run standalone evaluation on a trained model.
 
@@ -1062,10 +1296,27 @@ class SemanticModel:
         try:
             loss_fn = getattr(smp.losses, loss_function)(mode='multiclass').to(self.device)
             loss_fn.__name__ = loss_fn._get_name()
-            if 'ignore_index' in inspect.signature(loss_fn.__init__).parameters:
-                loss_fn.ignore_index = 0  # Ignore background
             
-            print(f"   • Loss: {loss_function}")
+            # Set ignore_index if supported and provided by user
+            ignore_msg = "no indices ignored"
+            if 'ignore_index' in inspect.signature(loss_fn.__init__).parameters and ignore_index is not None:
+                try:
+                    if hasattr(loss_fn, 'ignore_index'):
+                        if len(ignore_index) == 1:
+                            loss_fn.ignore_index = ignore_index[0]
+                            ignore_msg = f"ignoring class {ignore_index[0]}"
+                        else:
+                            # Try setting as list first, fallback to first element
+                            try:
+                                loss_fn.ignore_index = ignore_index
+                                ignore_msg = f"ignoring classes {ignore_index}"
+                            except (TypeError, ValueError, AttributeError):
+                                loss_fn.ignore_index = ignore_index[0]
+                                ignore_msg = f"ignoring class {ignore_index[0]} (loss supports single index only)"
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not set ignore_index on loss function: {e}")
+            
+            print(f"   • Loss: {loss_function} ({ignore_msg})")
         except Exception as e:
             print(f"❌ Error setting up loss: {e}")
             return
@@ -1490,7 +1741,7 @@ class SemanticModel:
 class TrainingConfig:
     """Handles configuration of loss functions, optimizers, and metrics for training."""
 
-    def __init__(self, model, loss_function_name, optimizer_name, lr, class_ids, device):
+    def __init__(self, model, loss_function_name, optimizer_name, lr, class_ids, device, ignore_index=None):
         """Initialize TrainingConfig with training components."""
         self.model = model
         self.loss_function_name = loss_function_name
@@ -1499,6 +1750,7 @@ class TrainingConfig:
         self.metrics_list = get_segmentation_metrics()
         self.class_ids = class_ids
         self.device = device
+        self.ignore_index = ignore_index
 
         self._setup_loss_function()
         self._setup_optimizer()
@@ -1516,11 +1768,28 @@ class TrainingConfig:
         # Get the parameters of the loss function using inspect.signature
         params = inspect.signature(self.loss_function.__init__).parameters
 
-        # Set ignore_index to 0 (background) if supported
-        if 'ignore_index' in params:
-            self.loss_function.ignore_index = 0  # Ignore background class
+        # Set ignore_index if supported and provided by user
+        ignore_msg = "no indices ignored"
+        if 'ignore_index' in params and self.ignore_index is not None:
+            # For losses that support multiple ignore indices, use a list
+            # For losses that only support a single ignore index, use the first one
+            try:
+                if hasattr(self.loss_function, 'ignore_index'):
+                    if len(self.ignore_index) == 1:
+                        self.loss_function.ignore_index = self.ignore_index[0]
+                        ignore_msg = f"ignoring class {self.ignore_index[0]}"
+                    else:
+                        # Try setting as list first, fallback to first element
+                        try:
+                            self.loss_function.ignore_index = self.ignore_index
+                            ignore_msg = f"ignoring classes {self.ignore_index}"
+                        except (TypeError, ValueError, AttributeError):
+                            self.loss_function.ignore_index = self.ignore_index[0]
+                            ignore_msg = f"ignoring class {self.ignore_index[0]} (loss supports single index only)"
+            except Exception as e:
+                print(f"⚠️ Warning: Could not set ignore_index on loss function: {e}")
 
-        print(f"   • Loss: {self.loss_function_name} (background ignored)")
+        print(f"   • Loss: {self.loss_function_name} ({ignore_msg})")
 
     def _setup_optimizer(self):
         """Setup the optimizer."""
@@ -2325,10 +2594,14 @@ def main():
                         help='If True, allows overwriting of an existing project/name directory')
 
     parser.add_argument('--pretrained', type=str, default='True',
-                        help='Determines whether to start training from a pretrained model. Can be a boolean value or a string path to a specific model from which to load weights')
+                        help='Determines whether to start training from a pretrained model')
 
     parser.add_argument('--val', action='store_true',
                         help='Enable validation during training if a validation set is provided')
+
+    parser.add_argument('--ignore_index', type=str, default=None,
+                        help='Class indices to ignore during loss calculation. '
+                             'Specify as comma or space-separated string, e.g., "1,2,3" or "1 2 3"')
     
     args = parser.parse_args()
     
@@ -2362,6 +2635,11 @@ def main():
         print(f"⚠️ imgsz must be divisible by 32. Adjusting from {args.imgsz} to {new_size}.")
         args.imgsz = new_size
 
+    # Parse ignore_index
+    ignore_index = parse_ignore_index(args.ignore_index)
+    if ignore_index is not None:
+        print(f"📋 Parsed ignore_index: {ignore_index}")
+
     try:
         # Initialize the model (it will be built inside .train())
         model = SemanticModel()
@@ -2374,6 +2652,7 @@ def main():
             decoder_name=args.decoder_name,
             pre_trained_path=args.pre_trained_path,
             freeze=args.freeze,
+            ignore_index=ignore_index,
             metrics=args.metrics,
             loss_function=args.loss_function,
             optimizer=args.optimizer,

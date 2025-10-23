@@ -2956,13 +2956,13 @@ class CollapsibleSection(QWidget):
 
         # Create the action
         self.toggle_action = QAction(QIcon(get_icon('parameters.png')), title, self)
-        self.toggle_action.setCheckable(True)
+        self.toggle_action.setCheckable(False)
         self.toggle_action.triggered.connect(self.toggle_content)
 
         # Header button using the action
         self.toggle_button = QToolButton()
         self.toggle_button.setDefaultAction(self.toggle_action)
-        self.toggle_button.setCheckable(True)
+        self.toggle_button.setCheckable(False)
         self.toggle_button.setAutoRaise(True)  # Gives a flat appearance until clicked
 
         # Popup frame
@@ -2976,16 +2976,16 @@ class CollapsibleSection(QWidget):
         # Add button to layout
         self.layout().addWidget(self.toggle_button)
 
-    def toggle_content(self, checked):
-        if checked:
+    def toggle_content(self):
+        if self.popup.isVisible():
+            self.popup.hide()
+        else:
             # Position popup below and to the left of the button
             pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
             popup_width = self.popup.sizeHint().width()
             self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
                             pos.y() + self.toggle_button.height())
             self.popup.show()
-        else:
-            self.popup.hide()
 
     def add_widget(self, widget, title=None):
         group_box = QGroupBox()

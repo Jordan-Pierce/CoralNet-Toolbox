@@ -156,11 +156,7 @@ class TrainModelWorker(QThread):
         """
         Evaluate the model after training.
         """
-        try:
-            # Do not evaluate if the user specifies 
-            if not self.params.get('Validation', False):
-                return
-            
+        try:           
             # Check that there is a test folder
             test_folder = f"{self.params['data']}/test"
             print(f"Note: Looking for test folder: {test_folder}")
@@ -960,6 +956,12 @@ class Base(QDialog):
         Load the trained model and class mapping into the existing deployment dialog,
         update the status and labels, but do not show the dialog.
         """
+        if not self.main_window.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self, 
+                                "Deploy Model", 
+                                "No images found for deployment, you must import images first.")
+            return
+        
         output_folder = f"{self.params['project']}/{self.params['name']}"
         weights_folder = f"{output_folder}/weights"
         
