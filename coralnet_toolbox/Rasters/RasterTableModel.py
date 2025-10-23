@@ -120,7 +120,7 @@ class RasterTableModel(QAbstractTableModel):
 
                 return "<br>".join(tooltip_parts)
 
-            elif index.column() == self.ANNOTATION_COUNT_COL and raster.annotation_count > 0:
+            elif index.column() == self.ANNOTATION_COUNT_COL:  # and raster.annotation_count > 0:
                 tooltip_text = f"<b>Total annotations:</b> {raster.annotation_count}"
                 
                 # Add annotation counts per label using a for loop
@@ -140,11 +140,12 @@ class RasterTableModel(QAbstractTableModel):
                     tooltip_text += f"<br><b>Annotations by type:</b><ul>{type_counts_text}</ul>"
                 
                 # Add Mask Class Statistics (pixel percentage) if they are cached
-                # This now assumes the cache contains the 'percentage' key
-                if hasattr(raster, '_mask_stats_cache') and raster._mask_stats_cache:
+                # This now safely checks the MaskAnnotation's cache via a Raster property
+                mask_stats = raster.mask_statistics
+                if mask_stats:
                     mask_items = []
                     # Sort by label code for consistent order
-                    sorted_stats = sorted(raster._mask_stats_cache.items()) 
+                    sorted_stats = sorted(mask_stats.items()) 
                     
                     for label, stat_dict in sorted_stats:
                         # Get the percentage directly from the cached stats

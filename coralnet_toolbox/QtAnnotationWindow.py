@@ -686,10 +686,6 @@ class AnnotationWindow(QGraphicsView):
         
         if self.current_mask_annotation:
             self.current_mask_annotation.unrasterize_annotations()
-        
-        # Invalidate the raster's mask stats cache to force recalculation
-        raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
-        raster.invalidate_mask_stats_cache()
             
         # Restore cursor
         QApplication.restoreOverrideCursor()

@@ -102,6 +102,9 @@ class MaskAnnotation(Annotation):
         
         self.set_centroid()
         self.set_cropped_bbox()
+        
+        # Cache for class statistics, initialized to None
+        self._stats_cache = None
 
     def sync_label_map(self, current_labels_in_project: list):
         """Ensures the internal maps are synced with the project's labels,
@@ -272,6 +275,7 @@ class MaskAnnotation(Annotation):
         changed_rect_coords = (clipped_x_start, clipped_y_start, x_end, y_end)
         self.update_graphics_item(update_rect=changed_rect_coords)
         
+        self._invalidate_stats_cache()
         self.annotationUpdated.emit(self)
         
     def update_mask_with_mask(self, subset_mask: np.ndarray, top_left: tuple[int, int]):
@@ -311,6 +315,7 @@ class MaskAnnotation(Annotation):
         update_rect = (x_start, y_start, x_end, y_end)
         self.update_graphics_item(update_rect=update_rect)
         
+        self._invalidate_stats_cache()
         self.annotationUpdated.emit(self)
         
     def update_mask_with_prediction_mask(self, prediction_mask, top_left=(0, 0)):
@@ -363,6 +368,9 @@ class MaskAnnotation(Annotation):
         #    This re-uses all your existing logic for locked pixels and
         #    graphics updates, but now only on a small, efficient region.
         self.update_mask_with_mask(merged_tile, paste_top_left)
+        
+        # Proactively recalculate stats, as this signals the end of an edit session
+        self.recalculate_class_statistics()
         
     def get_current_transparency(self):
         """Get the current transparency value for rendering."""
@@ -450,6 +458,7 @@ class MaskAnnotation(Annotation):
         update_rect = (x_min, y_min, x_max + 1, y_max + 1)
         self.update_graphics_item(update_rect=update_rect)
 
+        self._invalidate_stats_cache()
         QApplication.restoreOverrideCursor()
         self.annotationUpdated.emit(self)
 
@@ -565,6 +574,10 @@ class MaskAnnotation(Annotation):
         to_lock = annotation_mask & (self.mask_data < self.LOCK_BIT)
         if np.any(to_lock):
             self.mask_data[to_lock] += self.LOCK_BIT
+            
+        # Invalidate the cache since we modified the mask data
+        if np.any(annotation_mask) or np.any(to_lock):
+            self._invalidate_stats_cache()
         
         if not update_canvas:
             QApplication.restoreOverrideCursor()
@@ -608,7 +621,11 @@ class MaskAnnotation(Annotation):
         locked_pixels = self.mask_data >= self.LOCK_BIT
         
         # Remove the lock bit from these pixels, keeping their original class
-        self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
+        if np.any(locked_pixels):
+            self.mask_data[locked_pixels] = self.mask_data[locked_pixels] - self.LOCK_BIT
+
+        # Proactively recalculate stats, as this signals the end of an edit session
+        self.recalculate_class_statistics()
 
     def clear_pixels_for_class(self, class_id: int):
         """Finds all pixels matching a class ID (both locked and unlocked) and resets them to 0."""
@@ -620,6 +637,7 @@ class MaskAnnotation(Annotation):
         
         # Set these pixels back to 0 (unclassified).
         self.mask_data[pixels_to_clear] = 0
+        self._invalidate_stats_cache()
         
     def clear_pixels_for_annotations(self, annotations_to_clear: list):
         """
@@ -655,29 +673,79 @@ class MaskAnnotation(Annotation):
 
         # 3. Apply the mask to the data, setting pixels to 0.
         self.mask_data[clear_mask] = 0
+        self._invalidate_stats_cache()
 
         # 4. Trigger a full repaint of the mask to show the changes.
         self.update_graphics_item()
 
     # --- Analysis & Information Retrieval Methods ---
 
-    def get_class_statistics(self) -> dict:
-        """Returns a dictionary with pixel counts and percentages for each class."""
-        stats = {}
-        total_pixels = self.get_area()
-        if total_pixels == 0:
-            return stats
+    def _invalidate_stats_cache(self):
+        """Invalidates the statistics cache.
+        This should be called by any method that modifies self.mask_data.
+        """
+        self._stats_cache = None
 
-        class_ids, counts = np.unique(self.mask_data[self.mask_data > 0], return_counts=True)
+    def recalculate_class_statistics(self) -> dict:
+        """
+        Performs the expensive calculation of class statistics and updates the cache.
+        This is called proactively when mask editing is finished.
+        """
+        stats = {}
         
-        for cid, count in zip(class_ids, counts):
-            label = self.class_id_to_label_map.get(int(cid))
-            if label:
+        # 1. Use modulus to get the "unlocked" class ID for every pixel.
+        # This is a single, fast, vectorized operation.
+        unlocked_mask_data = self.mask_data % self.LOCK_BIT
+
+        # 2. Get total pixels in the entire image.
+        total_image_pixels = self.mask_data.size
+
+        # 3. Handle division by zero for an empty/invalid image
+        if total_image_pixels == 0:
+            self._stats_cache = stats
+            return self._stats_cache
+
+        # 4. Determine the minimum length for the bincount array
+        # to ensure it's large enough for all known class IDs.
+        max_id = max(self.class_id_to_label_map.keys()) if self.class_id_to_label_map else 0
+        min_len = max_id + 1
+
+        # 5. Get counts for ALL class IDs in one O(N) pass.
+        bin_counts = np.bincount(unlocked_mask_data.ravel(), minlength=min_len)
+
+        # 6. Populate stats by iterating only through the labels we care about.
+        for class_id, label in self.class_id_to_label_map.items():
+            # class_id is already guaranteed to be < min_len from step 4
+            count = bin_counts[class_id]
+            if count > 0:
                 stats[label.short_label_code] = {
                     "pixel_count": int(count),
-                    "percentage": (count / total_pixels) * 100
+                    # FIXED: Percentage is (count / total_image_pixels)
+                    "percentage": (count / total_image_pixels) * 100
                 }
-        return stats
+        
+        self._stats_cache = stats
+        return self._stats_cache
+
+    def get_class_statistics(self) -> dict:
+        """
+        Gets class statistics from the cache.
+        If the cache is empty, it triggers a one-time recalculation.
+        """
+        # If cache is empty, calculate it
+        if self._stats_cache is None:
+            # This is the "lazy" part, acting as a safety net
+            self.recalculate_class_statistics()
+        
+        return self._stats_cache
+    
+    @property
+    def cached_statistics(self) -> dict | None:
+        """
+        Safely returns the cached statistics dictionary, or None if not cached.
+        This method will NOT trigger a recalculation.
+        """
+        return self._stats_cache
 
     def get_class_at_point(self, point: QPointF) -> int:
         """Returns the class ID at a specific point."""
@@ -868,4 +936,3 @@ class MaskAnnotation(Annotation):
     def __repr__(self):
         return (f"MaskAnnotation(id={self.id}, image_path={self.image_path}, "
                 f"shape={self.mask_data.shape})")
-

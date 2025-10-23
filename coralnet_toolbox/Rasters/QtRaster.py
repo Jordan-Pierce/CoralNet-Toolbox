@@ -77,9 +77,6 @@ class Raster(QObject):
         # Add a new attribute to hold the MaskAnnotation, initialized to None.
         self.mask_annotation: Optional[MaskAnnotation] = None
         
-        # Add a cache for the mask annotation's class statistics
-        self._mask_stats_cache: Optional[dict] = None
-        
         # Work Area state
         self.work_areas: List = []  # Store work area information
         
@@ -406,8 +403,7 @@ class Raster(QObject):
     
     def get_mask_class_statistics(self, project_labels: list) -> dict:
         """
-        Gets class statistics from the mask annotation, using a cache.
-        The cache is assumed valid until invalidated.
+        Gets class statistics from the mask annotation itself, which handles caching.
 
         Args:
             project_labels (list): The current project labels, needed by 
@@ -415,24 +411,26 @@ class Raster(QObject):
                                    to be created.
 
         Returns:
-            dict: The cached class statistics for the mask.
+            dict: The class statistics for the mask.
         """
-        # If cache is empty, calculate it
-        if self._mask_stats_cache is None:
-            # Ensure mask_annotation exists
-            mask = self.get_mask_annotation(project_labels) 
-            
-            if mask:
-                # This is the single, slow operation
-                self._mask_stats_cache = mask.get_class_statistics() 
-            else:
-                self._mask_stats_cache = {}  # Default to empty
+        # Ensure mask_annotation exists
+        mask = self.get_mask_annotation(project_labels) 
         
-        return self._mask_stats_cache
-    
-    def invalidate_mask_stats_cache(self):
-        """Clears the mask statistics cache, forcing a recalculation."""
-        self._mask_stats_cache = None
+        if mask:
+            # The mask now manages its own cache
+            return mask.get_class_statistics() 
+        else:
+            return {}  # Default to empty
+        
+    @property
+    def mask_statistics(self) -> dict | None:
+        """
+        Returns the cached mask statistics if they exist, without
+        triggering a recalculation.
+        """
+        if self.mask_annotation:
+            return self.mask_annotation.cached_statistics
+        return None
             
     def add_work_area(self, work_area):
         """
@@ -563,6 +561,6 @@ class Raster(QObject):
         # Force garbage collection
         gc.collect()
         
-    def __del__(self):
+    def __del__(selfcol):
         """Destructor to ensure resources are cleaned up."""
         self.cleanup()
