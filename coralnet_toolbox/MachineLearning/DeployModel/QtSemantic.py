@@ -147,6 +147,7 @@ class Semantic(Base):
             # We keep the original list from the model (including background)
             # to preserve the model's output index mapping.
             self.class_names = self.loaded_model.class_names
+            self.class_names = [name for name in self.class_names if name.lower() != 'background']
             
             # We can still filter the mapping dictionary, as the new 
             # label methods will handle 'background' properly.
@@ -324,7 +325,7 @@ class Semantic(Base):
         # --- Process the Results ---
         
         # Get the mapping from Label UUID -> internal mask class ID
-        mask_annotation_map = mask_annotation.label_id_to_class_id_map
+        mask_annotation_map = mask_annotation.label_id_to_class_id_map  # TODO if a label is deleted?
         
         # Process all results for this image.
         # If tiled, updated_results will have many items.
@@ -334,9 +335,9 @@ class Semantic(Base):
             # Reconstruct the (H, W) semantic mask from the Results object
             reconstructed_mask = _reconstruct_semantic_mask(
                 results,
-                self.class_names,              # List of model class names ['Coral-A']
-                self.class_mapping,            # Project's map {'Coral-A': LabelObj}
-                mask_annotation_map            # Mask's map {LabelObj.id: 2}
+                ['background'] + self.class_names,              # List of model class names ['Coral-A']
+                self.class_mapping,                             # Project's map {'Coral-A': LabelObj}
+                mask_annotation_map                             # Mask's map {LabelObj.id: 2}
             )
     
             # Update the main mask annotation with this tile's data

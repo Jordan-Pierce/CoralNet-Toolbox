@@ -293,12 +293,8 @@ class Base(QDialog):
         missing_labels = []
 
         for class_name in self.class_names:
-            # It skips 'background' before it's checked
-            if class_name.lower() == 'background':
-                continue
-
-            label = self.label_window.get_label_by_short_code(class_name)
-            if label:
+            label = self.label_window.get_label_by_short_code(class_name)  
+            if label.id:
                 class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
             else:
                 class_names_str += f"❌ {class_name}\n"
@@ -318,55 +314,12 @@ class Base(QDialog):
     def add_labels_to_label_window(self):
         """
         Add labels to the label window based on the class mapping.
-        It prioritizes matching existing labels in the project to
-        ensure UUIDs are consistent.
         """
-        if not self.class_mapping:
-            return
-
-        updated_class_mapping = {}
-
-        for label_name, label_info in self.class_mapping.items():
-            short_code = label_info.get('short_label_code')
-            long_code = label_info.get('long_label_code')
-            color = label_info.get('color', [255, 255, 255])
-            label_id_from_file = label_info.get('id')  # This is the UUID from the JSON
-            
-            if not short_code:
-                continue
-            if short_code.lower() == 'background':
-                continue
-
-            # --- Smart Matching Logic ---
-            # 1. Try to find by the ID from the file
-            label_obj = self.label_window.get_label_by_id(label_id_from_file)
-            
-            # 2. If not found by ID, try to find by short code
-            if not label_obj:
-                label_obj = self.label_window.get_label_by_short_code(short_code)
-
-            # 3. Now, decide what to do
-            if label_obj:
-                # We found an existing label. Update its info.
-                label_obj.long_label_code = long_code or label_obj.long_label_code
-                label_obj.color = QColor(*color)
-                # Use this existing label (with its correct project UUID)
-            else:
-                # No label found. Create a new one.
-                # We pass the ID from the file so it's created with that UUID.
-                label_obj = self.label_window.add_label_if_not_exists(
-                    short_code, 
-                    long_code or short_code,  # Use short_code as fallback
-                    QColor(*color),
-                    label_id_from_file  # Pass the UUID from the file
-                )
-            
-            # Store the *actual* label (new or existing) in our new map
-            if label_obj:
-                updated_class_mapping[label_name] = label_obj.to_dict()
-
-        # Overwrite the old map (from JSON) with the new, correct map
-        self.class_mapping = updated_class_mapping
+        if self.class_mapping:
+            for label in self.class_mapping.values():
+                self.label_window.add_label_if_not_exists(label['short_label_code'], 
+                                                          label['long_label_code'],
+                                                          QColor(*label.get('color', [255, 255, 255])))
 
     def handle_missing_class_mapping(self):
         """
@@ -381,30 +334,15 @@ class Base(QDialog):
 
     def create_generic_labels(self):
         """
-        Create generic labels for the given class names.
-        If a label with the same short code already exists in the project,
-        use that existing label.
+        Create generic labels for the given class names
         """
         for class_name in self.class_names:
-            if class_name.lower() == 'background':
-                continue  # Always skip background
-
-            # Check if this label *already exists* in the project
-            existing_label = self.label_window.get_label_by_short_code(class_name)
-            
-            if existing_label:
-                # Yes. Use this label.
-                label = existing_label
-            else:
-                # No. Create a new one.
-                label = self.label_window.add_label_if_not_exists(
-                    class_name,
-                    class_name,
-                )
-            
-            # Add the *correct* label (new or existing) to the class_mapping
-            if label:
-                self.class_mapping[class_name] = label.to_dict()
+            # Create the label in the label window
+            label = self.label_window.add_label_if_not_exists(
+                class_name,
+                class_name,
+            )
+            self.class_mapping[class_name] = label.to_dict()
 
     def predict(self, inputs):
         """
