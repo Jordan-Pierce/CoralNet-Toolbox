@@ -176,6 +176,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.custom_params = []
         self.model_path = None
         self.class_mapping = {}
+        self.class_mapping_path = ""
         self.imgsz = 640  # Task-specific default
         self.batch = 4    # Task-specific default
 
@@ -535,10 +536,12 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             if os.path.exists(class_mapping_path):
                 try:
                     self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                    self.mapping_edit.setText(class_mapping_path)
+                    self.class_mapping_path = class_mapping_path
+                    self.mapping_edit.setText(self.class_mapping_path)
                 except Exception as e:
                     print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
                     self.class_mapping = {}
+                    self.class_mapping_path = ""
 
             # Set the dataset and class mapping paths
             self.dataset_edit.setText(file_path)
@@ -553,6 +556,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                                                    "JSON Files (*.json)")
         if file_path:
             # Load the class mapping
+            self.class_mapping_path = file_path
             self.class_mapping = json.load(open(file_path, 'r'))
 
             # Set the class mapping path
@@ -803,6 +807,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'num_vis_samples': 5,
+            'class_mapping': self.class_mapping_path  # provide path to class mapping file
         }
         
         # Handle model selection logic
@@ -849,7 +854,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                         params[name] = value
                 else:  # string type
                     params[name] = value
-    
+                        
         return params
 
     def train_model(self):
@@ -928,9 +933,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             return
 
         # Set path and mapping, then load the model
-        # Assumes the semantic_deploy_model_dialog knows how to load an SMP model
         deploy_dialog.model_path = best_weights
-        deploy_dialog.class_mapping = class_mapping
+        deploy_dialog.class_mapping = class_mapping  # use the loaded class mapping
         deploy_dialog.load_model()
 
         # Update label window and status bar
