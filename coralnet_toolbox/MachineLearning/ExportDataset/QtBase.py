@@ -275,7 +275,7 @@ class Base(QDialog):
         button_layout = QHBoxLayout()
 
         # Add Refresh button
-        self.refresh_button = QPushButton("Refresh & Shuffle")
+        self.refresh_button = QPushButton("Refresh | Shuffle")
         self.refresh_button.setToolTip("Recalculate stats and re-shuffle train/val/test splits")
         self.refresh_button.clicked.connect(self.update_summary_statistics)
         button_layout.addWidget(self.refresh_button)

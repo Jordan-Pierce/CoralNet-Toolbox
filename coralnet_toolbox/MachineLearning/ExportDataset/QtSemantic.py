@@ -366,14 +366,13 @@ class Semantic(Base):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
             
-            # --- FIX: Read from the cache ---
+            # --- Read from the cache ---
             total_count = sum(1 for anno in self.selected_annotations if label in self._stats_cache.get(anno.id, {}))
             
             if include_checkbox.isChecked():
                 train_count = sum(1 for anno in self.train_annotations if label in self._stats_cache.get(anno.id, {}))
                 val_count = sum(1 for anno in self.val_annotations if label in self._stats_cache.get(anno.id, {}))
                 test_count = sum(1 for anno in self.test_annotations if label in self._stats_cache.get(anno.id, {}))
-            # --------------------------------
             else:
                 train_count = 0
                 val_count = 0
@@ -401,7 +400,17 @@ class Semantic(Base):
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
+        
+        # Get counts directly from the image split lists
+        train_count = len(self.train_images)
+        val_count = len(self.val_images)
+        test_count = len(self.test_images)
+        total_count = train_count + val_count + test_count
 
+        # Update the new labels
+        self.total_images_label.setText(f"Total Images: {total_count}")
+        self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
+        
         self.updating_summary_statistics = False
 
         # Restore the cursor to the default cursor
