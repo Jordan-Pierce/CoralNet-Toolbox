@@ -126,7 +126,6 @@ class AnnotationWindow(QGraphicsView):
         self.setScene(self.scene)
 
         self.annotation_size = 224
-        self.annotation_color = None
         self.transparency = 128
 
         self.zoom_factor = 1.0
@@ -364,16 +363,22 @@ class AnnotationWindow(QGraphicsView):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         self.selected_label = label
-        self.annotation_color = label.color
+        
+        # Handle both valid labels and None (no label selected)
+        if label is not None:
 
-        for annotation in self.selected_annotations:
-            if annotation.label.id != label.id:
-                annotation.update_user_confidence(self.selected_label)
-                annotation.create_cropped_image(self.rasterio_image)
-                self.main_window.confidence_window.display_cropped_image(annotation)
+            for annotation in self.selected_annotations:
+                if annotation.label.id != label.id:
+                    annotation.update_user_confidence(self.selected_label)
+                    annotation.create_cropped_image(self.rasterio_image)
+                    self.main_window.confidence_window.display_cropped_image(annotation)
 
-        if self.cursor_annotation:
-            if self.cursor_annotation.label.id != label.id:
+            if self.cursor_annotation:
+                if self.cursor_annotation.label.id != label.id:
+                    self.toggle_cursor_annotation()
+        else:
+            # Clear cursor annotation when no label is selected
+            if self.cursor_annotation:
                 self.toggle_cursor_annotation()
                 
         # Make cursor normal again
@@ -867,7 +872,6 @@ class AnnotationWindow(QGraphicsView):
             
             # Update UI state
             self.selected_label = annotation.label
-            self.annotation_color = annotation.label.color
             
             # Emit signal for annotation selection
             self.annotationSelected.emit(annotation.id)

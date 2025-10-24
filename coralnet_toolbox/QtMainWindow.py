@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         self.pid = os.getpid()
 
         # Define icons
+        self.coralnet_icon = get_icon("coralnet.png")
         self.coral_icon = get_icon("coral.png")
         self.select_icon = get_icon("select.png")
         self.patch_icon = get_icon("patch.png")
@@ -188,7 +189,7 @@ class MainWindow(QMainWindow):
         self.update_project_label()
 
         # Set icon
-        self.setWindowIcon(self.coral_icon)
+        self.setWindowIcon(self.coralnet_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -1148,6 +1149,9 @@ class MainWindow(QMainWindow):
         # Check for updates on opening
         # -----------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
+        
+        # Process events
+        QApplication.processEvents()
 
     def showEvent(self, event):
         """Show the main window maximized."""
