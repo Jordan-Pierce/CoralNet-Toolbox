@@ -250,8 +250,22 @@ class Base(QDialog):
         group_box = QGroupBox("Status")
         layout = QHBoxLayout()
 
-        self.ready_label = QLabel()
+        # Label for Ready Status
+        self.ready_label = QLabel("❌ Not Ready")
         layout.addWidget(self.ready_label)
+
+        # Add a spacer to push image counts to the right
+        layout.addStretch() 
+
+        # Label for Total Images
+        self.total_images_label = QLabel("Total Images: 0")
+        self.total_images_label.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.total_images_label)
+
+        # Label for Split Counts
+        self.split_summary_label = QLabel("(Train: 0, Val: 0, Test: 0)")
+        self.split_summary_label.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.split_summary_label)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -261,14 +275,10 @@ class Base(QDialog):
         button_layout = QHBoxLayout()
 
         # Add Refresh button
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton("Refresh & Shuffle")
+        self.refresh_button.setToolTip("Recalculate stats and re-shuffle train/val/test splits")
         self.refresh_button.clicked.connect(self.update_summary_statistics)
         button_layout.addWidget(self.refresh_button)
-
-        # Add Shuffle button
-        self.shuffle_button = QPushButton("Shuffle")
-        self.shuffle_button.clicked.connect(self.update_summary_statistics)
-        button_layout.addWidget(self.shuffle_button)
 
         # Add spacer to push OK/Cancel to right
         button_layout.addStretch()
@@ -637,6 +647,16 @@ class Base(QDialog):
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
+        # Get counts directly from the image split lists
+        train_count = len(self.train_images)
+        val_count = len(self.val_images)
+        test_count = len(self.test_images)
+        total_count = train_count + val_count + test_count
+
+        # Update the new labels
+        self.total_images_label.setText(f"Total Images: {total_count}")
+        self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
+        
         self.updating_summary_statistics = False
 
         # Restore the cursor to the default cursor

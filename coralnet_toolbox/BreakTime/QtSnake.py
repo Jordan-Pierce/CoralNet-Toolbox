@@ -49,75 +49,6 @@ FOOD = 3
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class DifficultyDialog(QDialog):
-    """
-    Dialog for selecting game difficulty level.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.selected_difficulty = "Easy"  # Default
-        self.init_ui()
-        
-    def init_ui(self):
-        """Initialize the difficulty selection UI."""
-        self.setWindowTitle("Select Difficulty")
-        self.setModal(True)
-        self.setFixedSize(400, 300)
-        
-        layout = QVBoxLayout()
-        
-        # Title
-        title = QLabel("Choose Your Difficulty Level")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(title.font())
-        title.font().setPointSize(16)
-        title.font().setBold(True)
-        layout.addWidget(title)
-        
-        # Difficulty descriptions
-        difficulties = {
-            "Easy": "🟢 Slower snake, smaller board, longer special food time\nPerfect for beginners!",
-            "Medium": "🟡 Balanced gameplay, standard board size\nThe classic experience",
-            "Hard": "🟠 Faster snake, larger board, shorter special food time\nFor experienced players",
-            "Insane": "🔴 Lightning fast, massive board, very short special food\nOnly for the brave!"
-        }
-        
-        self.button_group = QButtonGroup()
-        
-        for i, (difficulty, description) in enumerate(difficulties.items()):
-            btn = QPushButton(f"{difficulty}\n{description}")
-            btn.setFixedHeight(50)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, d=difficulty: self.set_difficulty(d))
-            self.button_group.addButton(btn, i)
-            layout.addWidget(btn)
-            
-            if difficulty == "Medium":  # Default selection
-                btn.setChecked(True)
-        
-        # OK/Cancel buttons
-        button_layout = QHBoxLayout()
-        ok_btn = QPushButton("Start Game")
-        cancel_btn = QPushButton("Cancel")
-        
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-        
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(ok_btn)
-        layout.addLayout(button_layout)
-        
-        self.setLayout(layout)
-        
-    def set_difficulty(self, difficulty):
-        """Set the selected difficulty."""
-        self.selected_difficulty = difficulty
-        
-    def get_difficulty(self):
-        """Return the selected difficulty."""
-        return self.selected_difficulty
-
-
 class Snake:
     """
     Class representing the snake in the game.
@@ -301,7 +232,7 @@ class SnakeGame(QMainWindow):
         # Set the window icon
         self.setWindowIcon(get_icon("snake.png"))
         # Set the window title
-        self.title = "Snake Game"
+        self.title = "Coral Snake Game"
 
         # Set the size used for each board cell
         self.size = 30
@@ -327,6 +258,8 @@ class SnakeGame(QMainWindow):
         self.difficulty = "Medium"
         # For title animation
         self.title_timer = 0
+        # Track timer connection state
+        self.timer_connected = False
 
     def setup_difficulty_parameters(self):
         """Set game parameters based on difficulty level."""
@@ -376,6 +309,19 @@ class SnakeGame(QMainWindow):
         """
         Start the game by initializing the game window and UI.
         """
+        # Stop and disconnect any existing timer before starting a new game
+        if self.update_timer.isActive():
+            self.update_timer.stop()
+        
+        # Safely disconnect all previous connections to prevent multiple connections
+        if self.timer_connected:
+            try:
+                self.update_timer.timeout.disconnect()
+                self.timer_connected = False
+            except TypeError:
+                # No connections to disconnect
+                pass
+        
         self.difficulty = "Hard"
         self.setup_difficulty_parameters()
         
@@ -392,28 +338,13 @@ class SnakeGame(QMainWindow):
             " - Eat purple special food for extra growth!\n\n"
             "Click 'OK' to start playing."
         )
-        if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
-            self.init_game()                   # Create snake and set board dimensions.
-            self.init_ui()                     # Use self.row and self.column for UI sizing.
+        if QMessageBox.information(self, "Welcome to Coral Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
+            self.init_game()                     # Create snake and set board dimensions.
+            self.init_ui()                       # Use self.row and self.column for UI sizing.
             self.update_timer.start(self.speed)  # Start the timer.
         else:
             self.close()
-
-    def end_game(self):
-        """
-        End the game by stopping the timer and closing the window.
-        """
-        self.snake = None
-        self.update_timer.stop()
-        self.close()
-
-    def closeEvent(self, event):
-        """
-        Handle the window close event.
-        """
-        self.end_game()
-        event.accept()
-
+            
     def init_ui(self):
         """
         Set up the user interface dimensions and appearance.
@@ -446,6 +377,25 @@ class SnakeGame(QMainWindow):
         self.column = self.snake.column
         self.title_timer = 10  # Show title for 0.5 seconds
         self.update_timer.timeout.connect(self.update_game)
+        self.timer_connected = True
+        
+    def keyPressEvent(self, event):
+        """
+        Process keyboard events for controlling the snake.
+        """
+        if self.snake is not None and self.snake.live:
+            if event.key() == Qt.Key_W:
+                self.snake.go(UP)
+            elif event.key() == Qt.Key_S:
+                self.snake.go(DOWN)
+            elif event.key() == Qt.Key_A:
+                self.snake.go(LEFT)
+            elif event.key() == Qt.Key_D:
+                self.snake.go(RIGHT)
+            elif event.key() == Qt.Key_P:
+                pass
+            # Redraw the game board after processing the key press
+            self.update()
 
     def paintEvent(self, event):
         """
@@ -453,23 +403,26 @@ class SnakeGame(QMainWindow):
         """
         painter = QPainter()
         painter.begin(self)
-        # Draw each cell based on the board data with centering offset
-        for x in range(self.column):
-            for y in range(self.row):
-                cell_type = self.snake.board[x][y]
-                if cell_type == BODY:
-                    # Dynamic coloring for snake body based on length
-                    brush = self.get_snake_body_brush(x, y)
-                else:
-                    brush = self.brush[cell_type]
-                painter.setBrush(brush)
-                # Draw the corresponding rectangle for the cell with offset for centering
-                painter.drawRect(
-                    x * self.size + self.board_offset_x, 
-                    y * self.size + self.board_offset_y, 
-                    self.size, 
-                    self.size
-                )
+        
+        # Check if snake exists before trying to render the board
+        if self.snake is not None:
+            # Draw each cell based on the board data with centering offset
+            for x in range(self.column):
+                for y in range(self.row):
+                    cell_type = self.snake.board[x][y]
+                    if cell_type == BODY:
+                        # Dynamic coloring for snake body based on length
+                        brush = self.get_snake_body_brush(x, y)
+                    else:
+                        brush = self.brush[cell_type]
+                    painter.setBrush(brush)
+                    # Draw the corresponding rectangle for the cell with offset for centering
+                    painter.drawRect(
+                        x * self.size + self.board_offset_x, 
+                        y * self.size + self.board_offset_y, 
+                        self.size, 
+                        self.size
+                    )
         painter.end()
 
         # Draw coral snake title animation
@@ -483,7 +436,7 @@ class SnakeGame(QMainWindow):
             color_index = (self.title_timer // 10) % len(colors)
             painter.setPen(colors[color_index])
 
-            title_text = "CORAL SNAKE"
+            title_text = "CORAL SNAKE GAME"
             text_rect = painter.fontMetrics().boundingRect(title_text)
             x = (self.width() - text_rect.width()) // 2
             y = self.height() // 2
@@ -533,6 +486,10 @@ class SnakeGame(QMainWindow):
         """
         Handle game updates on each timer tick.
         """
+        # Check if snake is None (game ended) - prevent NoneType errors
+        if self.snake is None:
+            return
+            
         if self.title_timer > 0:
             self.title_timer -= 1
             self.update()
@@ -572,6 +529,9 @@ class SnakeGame(QMainWindow):
         self.update()
 
     def win_game(self):
+        """
+        Handle winning the game and offer to play again.
+        """
         # Stop the timer and congratulate the user.
         self.update_timer.stop()
         win_message = (f"Congratulations! You've filled the entire board and won on {self.difficulty} mode!\n\n"
@@ -580,7 +540,7 @@ class SnakeGame(QMainWindow):
         if reply == QMessageBox.Yes:
             self.start_game()
         else:
-            self.end_game()
+            self.cleanup_and_close()
 
     def auto_play(self):
         """
@@ -616,6 +576,9 @@ class SnakeGame(QMainWindow):
         """
         Display a message box when the game is over and handle restarting or closing.
         """
+        # Stop the timer immediately when game is over
+        self.update_timer.stop()
+        
         # Show game-over dialog offering the choice to play again or get back to work.
         message = (f"Difficulty: {self.difficulty}\nTime: {self.time_count}\n"
                    f"Length: {self.snake.length}\n\nDo you want to play again?")
@@ -628,22 +591,45 @@ class SnakeGame(QMainWindow):
         if reply == QMessageBox.Yes:
             self.start_game()
         else:
-            self.end_game()
+            self.cleanup_and_close()
+            
+    def end_game(self):
+        """
+        End the game by stopping the timer and closing the window.
+        """
+        self.cleanup_and_close()
 
-    def keyPressEvent(self, event):
-        """
-        Process keyboard events for controlling the snake.
-        """
-        if self.snake.live:
-            if event.key() == Qt.Key_W:
-                self.snake.go(UP)
-            elif event.key() == Qt.Key_S:
-                self.snake.go(DOWN)
-            elif event.key() == Qt.Key_A:
-                self.snake.go(LEFT)
-            elif event.key() == Qt.Key_D:
-                self.snake.go(RIGHT)
-            elif event.key() == Qt.Key_P:
+    def cleanup_and_close(self):
+        """Completely clean up and close the game window."""
+        # Stop the timer and disconnect all connections
+        if self.update_timer.isActive():
+            self.update_timer.stop()
+        
+        # Disconnect all timer connections to prevent memory leaks
+        if self.timer_connected:
+            try:
+                self.update_timer.timeout.disconnect()
+                self.timer_connected = False
+            except TypeError:
+                # No connections to disconnect
                 pass
-            # Redraw the game board after processing the key press
-            self.update()
+        
+        # Clear references
+        self.snake = None
+        
+        # Close the window
+        self.close()
+        
+        # Clear any reference from main window
+        if hasattr(self, 'main_window') and self.main_window:
+            # If the main window has a reference to this game, clear it
+            if hasattr(self.main_window, 'current_game'):
+                self.main_window.current_game = None
+
+    def closeEvent(self, event):
+        """
+        Handle the window close event.
+        """
+        # Ensure proper cleanup when window is closed
+        self.cleanup_and_close()
+        event.accept()

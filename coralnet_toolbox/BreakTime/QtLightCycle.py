@@ -48,75 +48,6 @@ OPPONENT_CRASHED = 1
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class DifficultyDialog(QDialog):
-    """
-    Dialog for selecting game difficulty level.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.selected_difficulty = "Medium"  # Default
-        self.init_ui()
-
-    def init_ui(self):
-        """Initialize the difficulty selection UI."""
-        self.setWindowTitle("Select Difficulty")
-        self.setModal(True)
-        self.setFixedSize(400, 300)
-
-        layout = QVBoxLayout()
-
-        # Title
-        title = QLabel("Choose Difficulty Level")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(title.font())
-        title.font().setPointSize(16)
-        title.font().setBold(True)
-        layout.addWidget(title)
-
-        # Difficulty descriptions
-        difficulties = {
-            "Easy": "🟢 Slower opponent, larger board\nPerfect for beginners!",
-            "Medium": "🟡 Balanced gameplay\nThe classic experience",
-            "Hard": "🟠 Faster opponent, smaller board\nFor experienced players",
-            "Insane": "🔴 Lightning fast opponent\nOnly for the brave!"
-        }
-
-        self.button_group = QButtonGroup()
-
-        for i, (difficulty, description) in enumerate(difficulties.items()):
-            btn = QPushButton(f"{difficulty}\n{description}")
-            btn.setFixedHeight(50)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, d=difficulty: self.set_difficulty(d))
-            self.button_group.addButton(btn, i)
-            layout.addWidget(btn)
-
-            if difficulty == "Medium":  # Default selection
-                btn.setChecked(True)
-
-        # OK/Cancel buttons
-        button_layout = QHBoxLayout()
-        ok_btn = QPushButton("Start Game")
-        cancel_btn = QPushButton("Cancel")
-
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(ok_btn)
-        layout.addLayout(button_layout)
-
-        self.setLayout(layout)
-
-    def set_difficulty(self, difficulty):
-        """Set the selected difficulty."""
-        self.selected_difficulty = difficulty
-
-    def get_difficulty(self):
-        """Return the selected difficulty."""
-        return self.selected_difficulty
-
-
 class LightCycle:
     """
     Represents a light cycle in the game.
@@ -771,8 +702,10 @@ class LightCycleGame(QMainWindow):
         self.main_window = main_window
 
         # Remove minimize and maximize buttons
-        self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint |
-                            Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
+        self.setWindowFlags(Qt.Window | 
+                            Qt.CustomizeWindowHint |
+                            Qt.WindowTitleHint | 
+                            Qt.WindowCloseButtonHint)
 
         # Set the window icon
         self.setWindowIcon(get_icon("lightcycle.png"))
@@ -799,6 +732,17 @@ class LightCycleGame(QMainWindow):
 
     def start_game(self):
         """Start the game by initializing."""
+        # Stop and disconnect any existing timer before starting a new game
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+        
+        # Disconnect all previous connections to prevent multiple connections
+        try:
+            self.timer.timeout.disconnect()
+        except TypeError:
+            # No connections to disconnect
+            pass
+        
         self.difficulty = "Hard"
         
         # Always reset game speed to baseline for this difficulty
@@ -809,10 +753,6 @@ class LightCycleGame(QMainWindow):
             "Insane": 75
         }
         self.game_speed = speed_settings[self.difficulty]
-        
-        # Stop any existing timer to prevent multiple timers running
-        if hasattr(self, 'timer') and self.timer.isActive():
-            self.timer.stop()
 
         # Show welcome dialog
         welcome_msg = (
@@ -827,11 +767,6 @@ class LightCycleGame(QMainWindow):
         if QMessageBox.information(self, "Welcome to Light Cycle", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
             self.init_game()
             self.init_ui()
-            # Disconnect any existing connection to avoid multiple calls
-            try:
-                self.timer.timeout.disconnect(self.update_game)
-            except TypeError:
-                pass  # Signal was not connected, which is fine
             self.timer.timeout.connect(self.update_game)
             self.timer.start(self.game_speed)
         else:
@@ -886,6 +821,27 @@ class LightCycleGame(QMainWindow):
 
         self.game_started = True
         self.title_timer = 10  # Show title for 0.5 seconds (30 frames at ~60fps)
+        
+    def keyPressEvent(self, event):
+        """Handle key presses for player control."""
+        if not self.game_started or not self.player.alive:
+            return
+
+        key = event.key()
+        
+        # Handle movement
+        if key == Qt.Key_W:
+            self.player.turn(UP)
+        elif key == Qt.Key_S:
+            self.player.turn(DOWN)
+        elif key == Qt.Key_A:
+            self.player.turn(LEFT)
+        elif key == Qt.Key_D:
+            self.player.turn(RIGHT)
+
+    def keyReleaseEvent(self, event):
+        """Handle key releases (no longer needed for speed control)."""
+        pass
 
     def paintEvent(self, event):
         """Render the game board."""
@@ -953,7 +909,7 @@ class LightCycleGame(QMainWindow):
             color_index = (self.title_timer // 10) % len(colors)
             painter.setPen(colors[color_index])
 
-            title_text = "LIGHT CYCLES"
+            title_text = "LIGHT CYCLES GAME"
             text_rect = painter.fontMetrics().boundingRect(title_text)
             x = (self.width() - text_rect.width()) // 2
             y = self.height() // 2
@@ -1046,11 +1002,15 @@ class LightCycleGame(QMainWindow):
             # Check each opponent collision
             for opponent in self.opponents:
                 if opponent.alive:
-                    other_trails = (self.player.trail +
-                                    [pos for opp in self.opponents 
-                                     if opp != opponent for pos in opp.trail])
-                    opponent_crashed = opponent.check_collision(
-                        self.board_width, self.board_height, other_trails, self.obstacles)
+                    other_trails = (
+                        self.player.trail +
+                        [pos for opp in self.opponents 
+                         if opp != opponent for pos in opp.trail]
+                    )
+                    opponent_crashed = opponent.check_collision(self.board_width, 
+                                                                self.board_height,
+                                                                other_trails, 
+                                                                self.obstacles)
 
             # Check win conditions
             alive_opponents = sum(1 for opp in self.opponents if opp.alive)
@@ -1060,27 +1020,6 @@ class LightCycleGame(QMainWindow):
                 self.game_over("All opponents crashed! You win!")
 
             self.update()
-
-    def keyPressEvent(self, event):
-        """Handle key presses for player control."""
-        if not self.game_started or not self.player.alive:
-            return
-
-        key = event.key()
-        
-        # Handle movement
-        if key == Qt.Key_W:
-            self.player.turn(UP)
-        elif key == Qt.Key_S:
-            self.player.turn(DOWN)
-        elif key == Qt.Key_A:
-            self.player.turn(LEFT)
-        elif key == Qt.Key_D:
-            self.player.turn(RIGHT)
-
-    def keyReleaseEvent(self, event):
-        """Handle key releases (no longer needed for speed control)."""
-        pass
 
     def game_over(self, message):
         """Handle game over."""
@@ -1097,21 +1036,41 @@ class LightCycleGame(QMainWindow):
         if reply == QMessageBox.Yes:
             self.start_game()
         else:
-            # Close the window when user doesn't want to play again
-            self.close()
+            # Clean up completely and close
+            self.cleanup_and_close()
+
+    def cleanup_and_close(self):
+        """Completely clean up and close the game window."""
+        # Stop the timer and disconnect all connections
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+        
+        # Disconnect all timer connections to prevent memory leaks
+        try:
+            self.timer.timeout.disconnect()
+        except TypeError:
+            # No connections to disconnect
+            pass
+        
+        # Clear references
+        self.player = None
+        self.opponents = []
+        self.ais = []
+        
+        # Reset game state
+        self.game_started = False
+        
+        # Close the window
+        self.close()
+        
+        # Clear any reference from main window
+        if hasattr(self, 'main_window') and self.main_window:
+            # If the main window has a reference to this game, clear it
+            if hasattr(self.main_window, 'current_game'):
+                self.main_window.current_game = None
 
     def closeEvent(self, event):
         """Handle window close."""
-        # Ensure timer is stopped and game state is reset
-        if hasattr(self, 'timer') and self.timer.isActive():
-            self.timer.stop()
-        self.game_started = False
+        # Ensure proper cleanup when window is closed
+        self.cleanup_and_close()
         event.accept()
-
-        # Disconnect any existing connection to avoid multiple calls
-        try:
-            self.timer.timeout.disconnect(self.update_game)
-        except TypeError:
-            pass  # Signal was not connected, which is fine
-
-        self.timer.timeout.connect(self.update_game)

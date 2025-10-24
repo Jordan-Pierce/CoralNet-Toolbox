@@ -272,8 +272,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.encoder_combo = QComboBox()
         encoders = get_segmentation_encoders()
         self.encoder_combo.addItems(encoders)
-        if 'timm-tf_efficientnet_lite0' in encoders:
-            self.encoder_combo.setCurrentText('timm-tf_efficientnet_lite0')
+        if 'mit_b0' in encoders:
+            self.encoder_combo.setCurrentText('mit_b0')
         elif encoders:
             self.encoder_combo.setCurrentIndex(0)
         model_select_layout.addRow("Encoder:", self.encoder_combo)

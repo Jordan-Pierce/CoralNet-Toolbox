@@ -208,12 +208,9 @@ def validate_augmentation(dataframe, class_ids, imgsz, save_path=None):
     
     # Create datasets with and without augmentation
     aug_transform = get_training_augmentation(imgsz)
-    no_aug_transform = get_validation_augmentation(imgsz)
     
     # Run validation three times with different samples or random augmentations
     for run_idx in range(3):
-        print(f"   🎯 Validation run {run_idx + 1}/3")
-        
         # Use different samples for each run, cycling through available samples
         sample_idx = run_idx % len(dataframe)
         img_path = dataframe.iloc[sample_idx]['Image']
@@ -2258,11 +2255,19 @@ class Trainer:
     def _visualize_validation_sample(self, epoch):
         """Visualize validation samples for the current epoch in a 3x2 grid."""
         try:
-            # Select 3 random samples
-            sample_indices = np.random.choice(len(self.valid_dataset_vis), 3, replace=False)
+            # Select up to 3 random samples (or fewer if dataset is small)
+            num_samples = min(3, len(self.valid_dataset_vis))
+            if num_samples == 0:
+                print(f"⚠️ No validation samples available for visualization in epoch {epoch}")
+                return
+            sample_indices = np.random.choice(len(self.valid_dataset_vis), num_samples, replace=False)
             
-            # Create a 3x2 subplot grid
-            fig, axes = plt.subplots(3, 2, figsize=(12, 18))
+            # Create a grid with appropriate number of rows
+            fig, axes = plt.subplots(num_samples, 2, figsize=(12, 6 * num_samples))
+            
+            # Handle single sample case (axes is 1D)
+            if num_samples == 1:
+                axes = axes.reshape(1, -1)
             
             for i, n in enumerate(sample_indices):
                 # Get the original image without preprocessing
