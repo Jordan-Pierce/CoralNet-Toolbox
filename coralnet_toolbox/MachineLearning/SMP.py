@@ -1207,7 +1207,8 @@ class SemanticModel:
     # --- Evalutation Methods ---
     
     def eval(self, data_yaml, split='test', num_vis_samples=10, output_dir=None,
-             loss_function='JaccardLoss', metrics=None, device=None, ignore_index=None):
+             loss_function='JaccardLoss', metrics=None, device=None, ignore_index=None,
+             imgsz=None, batch=1, confidence=0.5):
         """
         Run standalone evaluation on a trained model.
 
@@ -1220,6 +1221,10 @@ class SemanticModel:
             loss_function (str): Name of the loss function to use for eval.
             metrics (list[str], optional): List of metric names to calculate.
             device (str, optional): Device to use for evaluation. If None, uses self.device.
+            ignore_index (list[int], optional): Class indices to ignore during loss calculation.
+            imgsz (int, optional): Image size for preprocessing. If None, uses model's training size.
+            batch (int): Batch size for evaluation DataLoader.
+            confidence (float): Confidence threshold for predictions in visualization.
         """
         if self.model is None:
             raise Exception("Model is not loaded. Load a model first.")
@@ -1258,17 +1263,20 @@ class SemanticModel:
 
         print(f"   • Evaluating on {len(eval_df)} samples from '{split}' split.")
 
+        # Use provided imgsz or default to self.imgsz
+        eval_imgsz = imgsz if imgsz is not None else self.imgsz
+
         # 2. Setup Datasets
         print("📦 Creating evaluation datasets...")
         eval_dataset = Dataset(
             eval_df,
-            augmentation=get_validation_augmentation(self.imgsz),
+            augmentation=get_validation_augmentation(eval_imgsz),
             preprocessing=get_preprocessing(self.preprocessing_fn),
             classes=self.class_ids,
         )
         eval_dataset_vis = Dataset(
             eval_df,
-            augmentation=get_validation_augmentation(self.imgsz),
+            augmentation=get_validation_augmentation(eval_imgsz),
             classes=self.class_ids,
         )
         
@@ -1333,7 +1341,9 @@ class SemanticModel:
             experiment_manager=experiment_manager,
             class_ids=self.class_ids,
             class_colors=self.class_colors,
-            num_vis_samples=num_vis_samples
+            num_vis_samples=num_vis_samples,
+            batch_size=batch,
+            confidence_threshold=confidence
         )
 
         evaluator.evaluate()
@@ -2276,10 +2286,19 @@ class Trainer:
                 image, gt_mask = self.valid_dataset[n]
                 gt_mask = gt_mask.squeeze().numpy()
                 x_tensor = image.to(self.device).unsqueeze(0)
-                # Make prediction
-                pr_mask = self.model.predict(x_tensor)
-                pr_mask = (pr_mask.squeeze().cpu().numpy().round())
-                pr_mask = np.argmax(pr_mask, axis=0)
+                # Perform inference
+                with torch.inference_mode():
+                    output_mask = self.model(x_tensor)
+                
+                # Apply confidence threshold (using default 0.5 for training visualization)
+                pred_probs = torch.softmax(output_mask, dim=1)
+                pred_confidence, pred_class = torch.max(pred_probs, dim=1)
+                pred_class = torch.where(
+                    pred_confidence >= 0.5,
+                    pred_class,
+                    torch.zeros_like(pred_class)
+                )
+                pr_mask = pred_class[0].cpu().numpy().astype(np.uint8)
                 
                 # Colorize masks
                 gt_colored = colorize_mask(gt_mask, self.class_ids, self.class_colors)
@@ -2360,7 +2379,8 @@ class Evaluator:
     """Handles model evaluation and result visualization."""
 
     def __init__(self, model, loss_function, device, test_dataset, test_dataset_vis,
-                 experiment_manager, class_ids, class_colors, num_vis_samples=10):
+                 experiment_manager, class_ids, class_colors, num_vis_samples=10,
+                 batch_size=1, confidence_threshold=0.5):
         """Initialize Evaluator with evaluation components."""
         self.model = model
         self.loss_function = loss_function
@@ -2372,6 +2392,8 @@ class Evaluator:
         self.class_ids = class_ids
         self.class_colors = class_colors
         self.num_vis_samples = num_vis_samples
+        self.batch_size = batch_size
+        self.confidence_threshold = confidence_threshold
 
         # Get original image dimensions
         self.original_width, self.original_height = Image.open(
@@ -2387,7 +2409,7 @@ class Evaluator:
         # Create test dataloader
         test_loader = DataLoader(
             self.test_dataset, 
-            batch_size=1, 
+            batch_size=self.batch_size, 
             shuffle=False, 
             pin_memory=torch.cuda.is_available()
         )
@@ -2443,10 +2465,19 @@ class Evaluator:
                 # Get the preprocessed input for model prediction
                 image, _ = self.test_dataset[n]
                 x_tensor = image.to(self.device).unsqueeze(0)
-                # Make prediction
-                pr_mask = self.model.predict(x_tensor)
-                pr_mask = (pr_mask.squeeze().cpu().numpy().round())
-                pr_mask = np.argmax(pr_mask, axis=0)
+                # Perform inference
+                with torch.inference_mode():
+                    output_mask = self.model(x_tensor)
+                
+                # Apply confidence threshold
+                pred_probs = torch.softmax(output_mask, dim=1)
+                pred_confidence, pred_class = torch.max(pred_probs, dim=1)
+                pred_class = torch.where(
+                    pred_confidence >= self.confidence_threshold,
+                    pred_class,
+                    torch.zeros_like(pred_class)
+                )
+                pr_mask = pred_class[0].cpu().numpy().astype(np.uint8)
                 # Colorize the predicted mask (no resize needed since image_vis is already at imgsz)
                 pr_mask = colorize_mask(pr_mask, self.class_ids, self.class_colors)
                 # Colorize the ground truth mask
@@ -2460,7 +2491,6 @@ class Evaluator:
                               image=image_vis,
                               ground_truth_mask=gt_mask_vis,
                               predicted_mask=pr_mask)
-                    
                 except:
                     pass
                 

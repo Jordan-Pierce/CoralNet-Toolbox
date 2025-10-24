@@ -13,7 +13,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
                              QLineEdit, QDialog, QHBoxLayout, QPushButton,
                              QSpinBox, QFormLayout, QComboBox,
-                             QGroupBox, QLabel)
+                             QGroupBox, QLabel, QDoubleSpinBox)
 
 from coralnet_toolbox.MachineLearning.SMP import SemanticModel
 
@@ -64,7 +64,10 @@ class EvaluateModelWorker(QThread):
                 split=self.params['split'],
                 num_vis_samples=self.params['num_vis_samples'],
                 output_dir=self.params['save_dir'],
-                device=self.params['device']
+                device=self.params['device'],
+                imgsz=self.params.get('imgsz'),
+                batch=self.params.get('batch', 1),
+                confidence=self.params.get('conf', 0.5)
             )
 
             # Emit signal to indicate evaluation has completed
@@ -175,17 +178,35 @@ class Semantic(QDialog):
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
         
+        # Image size
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(self.imgsz)
+        layout.addRow("Image Size:", self.imgsz_spinbox)
+        
+        # Batch size
+        self.batch_spinbox = QSpinBox()
+        self.batch_spinbox.setMinimum(1)
+        self.batch_spinbox.setMaximum(1024)
+        self.batch_spinbox.setValue(16)
+        layout.addRow("Batch:", self.batch_spinbox)
+        
+        # Confidence threshold
+        self.conf_spinbox = QDoubleSpinBox()
+        self.conf_spinbox.setMinimum(0.0)
+        self.conf_spinbox.setMaximum(1.0)
+        self.conf_spinbox.setSingleStep(0.001)
+        self.conf_spinbox.setDecimals(3)
+        self.conf_spinbox.setValue(0.001)
+        layout.addRow("Confidence:", self.conf_spinbox)
+        
         # Number of visualization samples
         self.num_vis_samples_spinbox = QSpinBox()
         self.num_vis_samples_spinbox.setMinimum(1)
         self.num_vis_samples_spinbox.setMaximum(100)
         self.num_vis_samples_spinbox.setValue(5)
         layout.addRow("Num Vis Samples:", self.num_vis_samples_spinbox)
-        
-        # Device
-        self.device_edit = QLineEdit()
-        self.device_edit.setText('cuda' if torch.cuda.is_available() else 'cpu')
-        layout.addRow("Device:", self.device_edit)
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -227,8 +248,11 @@ class Semantic(QDialog):
         params['save_dir'] = self.save_dir_edit.text()
         params['name'] = self.name_edit.text()
         params['split'] = self.split_combo.currentText()
+        params['imgsz'] = int(self.imgsz_spinbox.value())
+        params['batch'] = int(self.batch_spinbox.value())
+        params['conf'] = float(self.conf_spinbox.value())
         params['num_vis_samples'] = int(self.num_vis_samples_spinbox.value())
-        params['device'] = self.device_edit.text()
+        params['device'] = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
