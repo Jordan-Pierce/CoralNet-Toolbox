@@ -42,10 +42,10 @@ class WorkArea(QObject):
         self.shadow_area = None  # Reference to the shadow graphics item
         
         # Create a random color for the work area
-        self.work_area_pen = QPen(QColor(0, 120, 215), 2, Qt.DotLine)  # Changed to static dotted line
+        self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DotLine)  # Changed to static dotted line
         
         # Store the original color for reverting
-        self.original_color = QColor(0, 120, 215)
+        self.original_color = QColor(0, 168, 230)
         
         # Animation properties (updated for pulsing)
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
@@ -107,7 +107,7 @@ class WorkArea(QObject):
     
     def highlight(self):
         """Highlight the working area by turning its pen blood red."""
-        self.work_area_pen.setColor(QColor(139, 0, 0))  # Blood red color
+        self.work_area_pen.setColor(QColor(230, 62, 0))  # Blood red color
         self._update_pen_style()
         # Update immediately to reflect the change
         if self.graphics_item:

@@ -267,13 +267,13 @@ class SeeAnythingTool(Tool):
         )
         
         # Create a dashed blue pen for the working area preview
-        pen = QPen(QColor(0, 120, 215))
+        pen = QPen(QColor(0, 168, 230))
         pen.setStyle(Qt.DashLine)
         pen.setWidth(2)
         
         self.working_area_temp_graphics = QGraphicsRectItem(rect)
         self.working_area_temp_graphics.setPen(pen)
-        self.working_area_temp_graphics.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
+        self.working_area_temp_graphics.setBrush(QBrush(QColor(0, 168, 230, 30)))  # Light blue transparent fill
         self.annotation_window.scene.addItem(self.working_area_temp_graphics)
 
     def cancel_working_area_creation(self):

@@ -25,11 +25,11 @@ class SelectSubTool(SubTool):
         # Create and style the selection rectangle (dashed blue, light blue fill)
         self.selection_rectangle = QGraphicsRectItem()
         width = self.parent_tool.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-        pen = QPen(QColor(0, 120, 215))
+        pen = QPen(QColor(0, 168, 230))
         pen.setStyle(Qt.DashLine)
         pen.setWidth(width)
         self.selection_rectangle.setPen(pen)
-        self.selection_rectangle.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
+        self.selection_rectangle.setBrush(QBrush(QColor(0, 168, 230, 30)))  # Light blue transparent fill
         self.selection_rectangle.setRect(QRectF(self.selection_start_pos, self.selection_start_pos))
         self.annotation_window.scene.addItem(self.selection_rectangle)
         

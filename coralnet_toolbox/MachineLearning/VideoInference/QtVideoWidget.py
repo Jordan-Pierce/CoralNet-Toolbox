@@ -94,7 +94,7 @@ class VideoDisplayWidget(QWidget):
                     
         # Draw current rectangle being drawn
         if self.parent_widget.drawing and self.parent_widget.current_rect:
-            pen = QPen(Qt.white, 2, Qt.DashLine)
+            pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
             painter.setPen(pen)
             painter.drawRect(self.parent_widget.current_rect)
             
