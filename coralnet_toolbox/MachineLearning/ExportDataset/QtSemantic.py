@@ -250,28 +250,33 @@ class Semantic(Base):
         """
         Populate the class filter list from the cache.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
-        # --- FIX: Build the cache ONCE ---
+        # --- Build the cache ONCE ---
         self._update_annotation_stats_cache()
-        # ---------------------------------
 
         label_counts = {}  # Number of annotations/masks containing each label
         label_image_counts = {}  # Set of unique images containing each label
 
         # Get all annotations we have stats for
-        all_annotations = (list(self.annotation_window.annotations_dict.values()) + 
-                           self.get_mask_annotations())
+        all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
+        # Create a progress bar
+        progress_bar = ProgressBar(self, "Populating Class Lists")
+        progress_bar.show()
+        progress_bar.start_progress(len(unique_annotations))
+        
         for annotation in unique_annotations:
             image_path = annotation.image_path
             
-            # --- FIX: Read from the cache ---
+            # --- Read from the cache ---
             class_stats = self._stats_cache.get(annotation.id, {})
-            # --------------------------------
-
+            
             # Handle MaskAnnotation: iterate through its internal labels
             if annotation.__class__.__name__ == 'MaskAnnotation':
                 for label_code, stats in class_stats.items():
@@ -294,6 +299,9 @@ class Semantic(Base):
                         else:
                             label_counts[label_code] = 1
                             label_image_counts[label_code] = {image_path}
+                            
+            # Update progress
+            progress_bar.update_progress()
 
         # If no annotations are found, populate with all available project labels
         if not label_counts:
@@ -327,6 +335,12 @@ class Semantic(Base):
             self.label_counts_table.setItem(row, 5, QTableWidgetItem("0"))
             self.label_counts_table.setItem(row, 6, QTableWidgetItem(str(len(label_image_counts.get(label, set())))))
             row += 1
+            
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def update_summary_statistics(self):
         """
@@ -342,7 +356,6 @@ class Semantic(Base):
 
         # --- Build the cache ONCE at the start ---
         self._update_annotation_stats_cache()
-        # ---------------------------------------------
 
         # Selected labels based on user's selection
         self.selected_labels = []
@@ -463,7 +476,7 @@ class Semantic(Base):
         val_label_counts = {}
         test_label_counts = {}
     
-        # --- FIX: Read from the cache ---
+        # --- Read from the cache ---
         for annotation in self.train_annotations:
             class_stats = self._stats_cache.get(annotation.id, {})
             for label, stats in class_stats.items():
@@ -481,7 +494,7 @@ class Semantic(Base):
             for label, stats in class_stats.items():
                 if stats.get('pixel_count', 0) > 0:
                     test_label_counts[label] = test_label_counts.get(label, 0) + 1
-        # --------------------------------
+        
     
         # Check the conditions for each split
         for label in self.selected_labels:
