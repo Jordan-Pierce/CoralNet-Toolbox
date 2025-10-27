@@ -178,79 +178,6 @@ class HighScoreManager:
         return 0
 
 
-class DifficultyDialog(QDialog):
-    """
-    Dialog for selecting game difficulty level.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.selected_difficulty = "Easy"  # Default
-        self.high_score_manager = HighScoreManager()
-        self.init_ui()
-        
-    def init_ui(self):
-        """Initialize the difficulty selection UI."""
-        self.setWindowTitle("Select Difficulty")
-        self.setModal(True)
-        self.setFixedSize(450, 350)
-        
-        layout = QVBoxLayout()
-        
-        # Title
-        title = QLabel("Choose Your Difficulty Level")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(title.font())
-        title.font().setPointSize(16)
-        title.font().setBold(True)
-        layout.addWidget(title)
-        
-        # Difficulty descriptions with high scores
-        difficulties = {
-            "Easy": "🟢 Slow ball, large paddle, fewer bricks\nPerfect for beginners!",
-            "Medium": "🟡 Balanced gameplay\nThe classic experience",
-            "Hard": "🟠 Faster ball, smaller paddle, more bricks\nFor experienced players",
-            "Insane": "🔴 Lightning fast, tiny paddle, maximum bricks\nOnly for the brave!"
-        }
-        
-        self.button_group = QButtonGroup()
-        
-        for i, (difficulty, description) in enumerate(difficulties.items()):
-            high_score = self.high_score_manager.get_high_score(difficulty)
-            score_text = f"\nHigh Score: {high_score}" if high_score > 0 else "\nHigh Score: ---"
-            
-            btn = QPushButton(f"{difficulty}\n{description}{score_text}")
-            btn.setFixedHeight(60)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, d=difficulty: self.set_difficulty(d))
-            self.button_group.addButton(btn, i)
-            layout.addWidget(btn)
-            
-            if difficulty == "Hard":  # Default selection
-                btn.setChecked(True)
-        
-        # OK/Cancel buttons
-        button_layout = QHBoxLayout()
-        ok_btn = QPushButton("Start Game")
-        cancel_btn = QPushButton("Cancel")
-        
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-        
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(ok_btn)
-        layout.addLayout(button_layout)
-        
-        self.setLayout(layout)
-        
-    def set_difficulty(self, difficulty):
-        """Set the selected difficulty."""
-        self.selected_difficulty = difficulty
-        
-    def get_difficulty(self):
-        """Return the selected difficulty."""
-        return self.selected_difficulty
-
-
 class Board(QWidget):
     """
     The main game board where all the action happens.
@@ -628,7 +555,7 @@ class Board(QWidget):
             color_index = (self.parent_window.title_timer // 10) % len(colors)
             painter.setPen(colors[color_index])
 
-            title_text = "BREAKOUT"
+            title_text = "BREAKOUT GAME"
             text_rect = painter.fontMetrics().boundingRect(title_text)
             x = (self.width() - text_rect.width()) // 2
             y = self.height() // 2
@@ -891,10 +818,16 @@ class Board(QWidget):
     def startGame(self):
         """Starts the game loop."""
         if not self.isStarted:
-            # Ensure timer is stopped and disconnected before starting
+            # Stop and disconnect any existing timer before starting
             if self.timer.isActive():
                 self.timer.stop()
+            
+            # Disconnect all previous connections to prevent multiple connections
+            try:
                 self.timer.timeout.disconnect()
+            except TypeError:
+                # No connections to disconnect
+                pass
                 
             self.resetBall()
             self.isStarted = True
@@ -1337,9 +1270,46 @@ class BreakoutGame(QMainWindow):
         self.difficulty = "Medium"  # Default difficulty
         # For title animation
         self.title_timer = 0
+        
+
+    def init_ui(self):
+        """Set up the user interface dimensions and appearance."""
+        self.setFixedSize(self.board.WIDTH, self.board.HEIGHT)
+        self.setWindowTitle(self.title)
+        self.setWindowOpacity(self.opacity)
+        self.show()
+
+    def init_game(self):
+        """Initialize the game board with selected difficulty."""
+        self.board = Board(self, self.difficulty)
+        self.setCentralWidget(self.board)
+        self.title_timer = 10  # Show title for 0.5 seconds
 
     def start_game(self):
         """Start the game by initializing the game window and UI."""
+        # Stop and disconnect any existing timers before starting a new game
+        if hasattr(self, 'board') and self.board:
+            if hasattr(self.board, 'timer') and self.board.timer.isActive():
+                self.board.timer.stop()
+            
+            # Disconnect all previous timer connections
+            try:
+                if hasattr(self.board, 'timer'):
+                    self.board.timer.timeout.disconnect()
+            except TypeError:
+                # No connections to disconnect
+                pass
+                
+            if hasattr(self.board, 'effect_timer') and self.board.effect_timer.isActive():
+                self.board.effect_timer.stop()
+            
+            try:
+                if hasattr(self.board, 'effect_timer'):
+                    self.board.effect_timer.timeout.disconnect()
+            except TypeError:
+                # No connections to disconnect
+                pass
+        
         self.difficulty = "Hard"
         
         # Show welcome dialog with instructions
@@ -1367,37 +1337,17 @@ class BreakoutGame(QMainWindow):
         else:
             self.close()
 
-    def end_game(self):
-        """End the game by stopping the timer and closing the window."""
-        self.cleanup_and_close()
-
-    def closeEvent(self, event):
-        """Handle the window close event."""
-        self.end_game()
-        event.accept()
-
-    def init_ui(self):
-        """Set up the user interface dimensions and appearance."""
-        self.setFixedSize(self.board.WIDTH, self.board.HEIGHT)
-        self.setWindowTitle(self.title)
-        self.setWindowOpacity(self.opacity)
-        self.show()
-
-    def init_game(self):
-        """Initialize the game board with selected difficulty."""
-        self.board = Board(self, self.difficulty)
-        self.setCentralWidget(self.board)
-        self.title_timer = 10  # Show title for 0.5 seconds
-
     def game_over(self, won=False, score=0):
         """Display game over message and handle restart/close."""
         # Stop the game timer immediately to prevent multiple dialogs
-        if hasattr(self, 'board') and self.board and self.board.timer.isActive():
+        if hasattr(self, 'board') and self.board and \
+           hasattr(self.board, 'timer') and self.board.timer.isActive():
             self.board.timer.stop()
-            try:
-                self.board.timer.timeout.disconnect()
-            except:
-                pass
+        
+        # Stop effect timer as well
+        if hasattr(self, 'board') and self.board and \
+           hasattr(self.board, 'effect_timer') and self.board.effect_timer.isActive():
+            self.board.effect_timer.stop()
         
         # Check if it's a high score
         is_high_score = self.high_score_manager.add_score(self.difficulty, score)
@@ -1434,22 +1384,34 @@ class BreakoutGame(QMainWindow):
         else:
             # Clean up completely and close
             self.cleanup_and_close()
+            
+    def end_game(self):
+        """End the game by stopping the timer and closing the window."""
+        self.cleanup_and_close()
 
     def cleanup_and_close(self):
         """Completely clean up and close the game window."""
-        # Stop all timers and disconnect signals
-        if hasattr(self, 'timer') and self.timer.isActive():
-            self.timer.stop()
+        # Stop all board timers and disconnect signals
+        if hasattr(self, 'board') and self.board:
+            if hasattr(self.board, 'timer') and self.board.timer.isActive():
+                self.board.timer.stop()
+            
+            # Disconnect all timer connections to prevent memory leaks
             try:
-                self.timer.timeout.disconnect()
-            except:
+                if hasattr(self.board, 'timer'):
+                    self.board.timer.timeout.disconnect()
+            except TypeError:
+                # No connections to disconnect
                 pass
                 
-        if hasattr(self, 'effect_timer') and self.effect_timer.isActive():
-            self.effect_timer.stop()
+            if hasattr(self.board, 'effect_timer') and self.board.effect_timer.isActive():
+                self.board.effect_timer.stop()
+            
             try:
-                self.effect_timer.timeout.disconnect()
-            except:
+                if hasattr(self.board, 'effect_timer'):
+                    self.board.effect_timer.timeout.disconnect()
+            except TypeError:
+                # No connections to disconnect
                 pass
         
         # Clear references
@@ -1463,3 +1425,9 @@ class BreakoutGame(QMainWindow):
             # If the main window has a reference to this game, clear it
             if hasattr(self.main_window, 'current_game'):
                 self.main_window.current_game = None
+                
+    def closeEvent(self, event):
+        """Handle the window close event."""
+        # Ensure proper cleanup when window is closed
+        self.cleanup_and_close()
+        event.accept()

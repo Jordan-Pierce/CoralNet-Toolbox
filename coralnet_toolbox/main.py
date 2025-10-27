@@ -26,7 +26,16 @@ def run():
         # Install the exception hook (initial setup without main_window)
         sys.excepthook = except_hook
         app = QApplication(sys.argv)
-        qdarktheme.setup_theme("light")
+        
+        # Custom colors with command-line green accents
+        # 00BFFF (Deep Sky Blue) - bright and vibrant
+        # 0099CC (Medium cyan) - more professional
+        # 00A8E6 (Vivid cyan) - balanced brightness
+        custom_colors = {
+            "primary": "#00A8E6",  # primary elements
+        }
+        qdarktheme.setup_theme("light", custom_colors=custom_colors)
+        
         main_window = MainWindow(__version__)
         
         # Update excepthook with main_window reference using a lambda

@@ -29,10 +29,18 @@ class NoArrowKeyTableView(QTableView):
     # Custom signal to be emitted only on a left-click
     leftClicked = pyqtSignal(QModelIndex)
 
+    def __init__(self, image_window, parent=None):
+        super().__init__(parent)
+        self.image_window = image_window
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Up, Qt.Key_Down):
             event.ignore()
             return
+        elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
+            # Handle Ctrl+A to highlight all rows in addition to selecting all
+            self.image_window.highlight_all_rows()
+            # Fall through to let the default selection behavior happen
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event):

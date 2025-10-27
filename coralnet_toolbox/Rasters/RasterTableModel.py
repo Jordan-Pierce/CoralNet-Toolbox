@@ -120,27 +120,50 @@ class RasterTableModel(QAbstractTableModel):
 
                 return "<br>".join(tooltip_parts)
 
-            elif index.column() == self.ANNOTATION_COUNT_COL and raster.annotation_count > 0:
-                tooltip_text = f"<b>Total annotations:</b> {raster.annotation_count}"
+            elif index.column() == self.ANNOTATION_COUNT_COL:
+                tooltip_text = ""
                 
-                # Add annotation counts per label using a for loop
-                if hasattr(raster, 'label_counts') and raster.label_counts:
-                    label_items = []
-                    for label, count in raster.label_counts.items():
-                        label_items.append(f"<li>{label}: {count}</li>")
-                    label_counts_text = "".join(label_items)
-                    tooltip_text += f"<br><br><b>Annotations by label:</b><ul>{label_counts_text}</ul>"
+                if raster.annotation_count > 0:
+                    tooltip_text += f"<b>Total annotations:</b> {raster.annotation_count}"
+                    
+                    # Add annotation counts per label using a for loop
+                    if hasattr(raster, 'label_counts') and raster.label_counts:
+                        label_items = []
+                        for label, count in raster.label_counts.items():
+                            label_items.append(f"<li>{label}: {count}</li>")
+                        label_counts_text = "".join(label_items)
+                        tooltip_text += f"<br><br><b>Annotations by label:</b><ul>{label_counts_text}</ul>"
+                    
+                    # Add annotation counts per type using a for loop
+                    if hasattr(raster, 'annotation_types') and raster.annotation_types:
+                        type_items = []
+                        for type_name, count in raster.annotation_types.items():
+                            type_items.append(f"<li>{type_name}: {count}</li>")
+                        type_counts_text = "".join(type_items)
+                        tooltip_text += f"<br><b>Annotations by type:</b><ul>{type_counts_text}</ul>"
                 
-                # Add annotation counts per type using a for loop
-                if hasattr(raster, 'annotation_types') and raster.annotation_types:
-                    type_items = []
-                    for type_name, count in raster.annotation_types.items():
-                        type_items.append(f"<li>{type_name}: {count}</li>")
-                    type_counts_text = "".join(type_items)
-                    tooltip_text += f"<br><b>Annotations by type:</b><ul>{type_counts_text}</ul>"
-                
+                # Add Mask Class Statistics (pixel percentage) if they are cached
+                # This now safely checks the MaskAnnotation's cache via a Raster property
+                mask_stats = raster.mask_statistics
+                if mask_stats:
+                    mask_items = []
+                    # Sort by label code for consistent order
+                    sorted_stats = sorted(mask_stats.items()) 
+                    
+                    for label, stat_dict in sorted_stats:
+                        # Get the percentage directly from the cached stats
+                        percentage = stat_dict.get('percentage', 0)
+                        
+                        if percentage > 0:
+                            # Format as "Label: 12.34%"
+                            mask_items.append(f"<li>{label}: {percentage:.2f}%</li>")
+                    
+                    if mask_items:
+                        mask_stats_text = "".join(mask_items)
+                        tooltip_text += f"<br><b>Mask Area Percentage:</b><ul>{mask_stats_text}</ul>"
+                        
                 return tooltip_text
-                
+
         return None
         
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:

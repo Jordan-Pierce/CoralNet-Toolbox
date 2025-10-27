@@ -1,11 +1,9 @@
 import warnings
 
-import json
-import random
-
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, QTimer, pyqtProperty
-from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
+                             QApplication)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -44,7 +42,10 @@ class WorkArea(QObject):
         self.shadow_area = None  # Reference to the shadow graphics item
         
         # Create a random color for the work area
-        self.work_area_pen = QPen(QColor(0, 120, 215), 2, Qt.DotLine)  # Changed to static dotted line
+        self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DotLine)  # Changed to static dotted line
+        
+        # Store the original color for reverting
+        self.original_color = QColor(0, 168, 230)
         
         # Animation properties (updated for pulsing)
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
@@ -103,12 +104,29 @@ class WorkArea(QObject):
         self.animation_timer.stop()
         self._pulse_alpha = 128  # Reset to default
         self._update_pen_style()
+    
+    def highlight(self):
+        """Highlight the working area by turning its pen blood red."""
+        self.work_area_pen.setColor(QColor(230, 62, 0))  # Blood red color
+        self._update_pen_style()
+        # Update immediately to reflect the change
+        if self.graphics_item:
+            self.graphics_item.update()
+    
+    def unhighlight(self):
+        """Revert the working area pen back to the original color."""
+        self.work_area_pen.setColor(self.original_color)
+        self._update_pen_style()
+        # Update immediately to reflect the change
+        if self.graphics_item:
+            self.graphics_item.update()
 
     def _update_pen_style(self):
         """Update the pen style of the graphics item with the current pulse alpha."""
         if self.graphics_item:
             self.graphics_item.setPen(self._create_pen())
             self.graphics_item.update()
+            QApplication.processEvents()
 
     @classmethod
     def from_rect(cls, rect, image_path=None):

@@ -2,7 +2,6 @@ import warnings
 
 import os
 import gc
-import random 
 import shutil
 import yaml
 
@@ -10,7 +9,7 @@ import numpy as np
 from PIL import Image
 
 from rasterio.features import rasterize
-from shapely.geometry import Polygon, box
+from shapely.geometry import Polygon
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, QTableWidgetItem)
@@ -42,6 +41,10 @@ class Semantic(Base):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")
         self.setWindowIcon(get_icon("mask.png"))
+        
+        # This will store {annotation_id: stats_dict}
+        self._stats_cache = {} 
+        self._project_labels = []  # Cache for project labels
 
     def setup_info_layout(self):
         """Setup the info layout"""
@@ -136,9 +139,49 @@ class Semantic(Base):
                     
         return mask_annotations
 
+    def _update_annotation_stats_cache(self):
+        """
+        Iterates through ALL annotations (mask and vector) ONCE 
+        to populate the internal statistics cache.
+        This is the main fix for the performance bottleneck.
+        """
+        self._stats_cache.clear()
+        
+        # Get all possible annotations
+        all_annotations = list(self.annotation_window.annotations_dict.values())
+        all_annotations.extend(self.get_mask_annotations())
+        
+        # Get project labels once, needed for the raster's caching method
+        self._project_labels = self.main_window.label_window.labels
+        raster_manager = self.image_window.raster_manager
+
+        # Use a set to process unique annotations
+        unique_annotations = {anno.id: anno for anno in all_annotations}.values()
+
+        for anno in unique_annotations:
+            try:
+                if anno.__class__.__name__ == 'MaskAnnotation':
+                    # Use the new caching method from Raster
+                    raster = raster_manager.get_raster(anno.image_path)
+                    if raster:
+                        # This call uses the Raster's *own* cache
+                        # (Assumes Raster.get_mask_class_statistics is implemented)
+                        self._stats_cache[anno.id] = raster.get_mask_class_statistics(self._project_labels)
+                
+                # Handle Vector Annotations (which are fast)
+                else:
+                    self._stats_cache[anno.id] = anno.get_class_statistics()
+            
+            except Exception as e:
+                # Ensure we have an empty dict on failure
+                if anno.id not in self._stats_cache:
+                    self._stats_cache[anno.id] = {}
+                print(f"Error caching stats for annotation {anno.id}: {e}")
+
     def mask_contains_selected_labels(self, mask_annotation):
         """
-        Check if a mask annotation contains any of the selected labels.
+        Check if a mask annotation contains any of the selected labels
+        BY READING FROM THE CACHE.
         
         Args:
             mask_annotation (MaskAnnotation): The mask annotation to check
@@ -149,12 +192,12 @@ class Semantic(Base):
         if not self.selected_labels:
             return False
             
-        # Get class statistics for this mask
-        class_stats = mask_annotation.get_class_statistics()
+        # Get class statistics FOR THIS MASK FROM THE CACHE
+        class_stats = self._stats_cache.get(mask_annotation.id, {})
         
         # Check if any selected label is present in the mask
         for label_code in self.selected_labels:
-            if label_code in class_stats and class_stats[label_code]['pixel_count'] > 0:
+            if label_code in class_stats and class_stats[label_code].get('pixel_count', 0) > 0:
                 return True
                 
         return False
@@ -162,7 +205,7 @@ class Semantic(Base):
     def filter_annotations(self):
         """
         Filter both mask and vector annotations based on the selected types and labels.
-        Override base class method to work with both mask and vector annotations.
+        This version now calls the MODIFIED mask_contains_selected_labels.
 
         Returns:
             list: List of filtered annotations (both mask and vector types).
@@ -172,7 +215,7 @@ class Semantic(Base):
         # Get and filter MASK annotations if selected
         if self.include_masks_checkbox.isChecked():
             mask_annotations = self.get_mask_annotations()  # Gets ALL masks
-            # FIX: This is the correct place to filter masks by selected labels
+            # This call now uses the FAST, cached version
             for mask in mask_annotations:
                 if self.mask_contains_selected_labels(mask):
                     annotations.append(mask)
@@ -205,28 +248,32 @@ class Semantic(Base):
 
     def populate_class_filter_list(self):
         """
-        Populate the class filter list with labels from both mask and vector annotations.
-        Override base class method to work with both mask and vector annotations for semantic segmentation.
+        Populate the class filter list from the cache.
         """
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
+        # --- FIX: Build the cache ONCE ---
+        self._update_annotation_stats_cache()
+        # ---------------------------------
+
         label_counts = {}  # Number of annotations/masks containing each label
         label_image_counts = {}  # Set of unique images containing each label
 
-        # Get all possible annotations (vector and mask)
-        all_annotations = list(self.annotation_window.annotations_dict.values())
-        all_annotations.extend(self.get_mask_annotations())
-        
-        # Create a set of unique annotations to avoid double counting if a mask is in both lists
+        # Get all annotations we have stats for
+        all_annotations = (list(self.annotation_window.annotations_dict.values()) + 
+                           self.get_mask_annotations())
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
         for annotation in unique_annotations:
             image_path = annotation.image_path
             
+            # --- FIX: Read from the cache ---
+            class_stats = self._stats_cache.get(annotation.id, {})
+            # --------------------------------
+
             # Handle MaskAnnotation: iterate through its internal labels
             if annotation.__class__.__name__ == 'MaskAnnotation':
-                class_stats = annotation.get_class_statistics()
                 for label_code, stats in class_stats.items():
                     if stats.get('pixel_count', 0) > 0:
                         if label_code in label_counts:
@@ -238,14 +285,15 @@ class Semantic(Base):
             
             # Handle Vector Annotations
             else:
-                label_code = annotation.label.short_label_code
-                if label_code != 'Review':
-                    if label_code in label_counts:
-                        label_counts[label_code] += 1
-                        label_image_counts[label_code].add(image_path)
-                    else:
-                        label_counts[label_code] = 1
-                        label_image_counts[label_code] = {image_path}
+                # The stats dict for a vector just has one key
+                for label_code in class_stats.keys():
+                    if label_code != 'Review':
+                        if label_code in label_counts:
+                            label_counts[label_code] += 1
+                            label_image_counts[label_code].add(image_path)
+                        else:
+                            label_counts[label_code] = 1
+                            label_image_counts[label_code] = {image_path}
 
         # If no annotations are found, populate with all available project labels
         if not label_counts:
@@ -282,19 +330,19 @@ class Semantic(Base):
 
     def update_summary_statistics(self):
         """
-        Update the summary statistics for the semantic segmentation dataset.
-        This version uses the polymorphic get_class_statistics() method.
+        Update the summary statistics using the pre-built cache.
         """
         if self.updating_summary_statistics:
             return
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, "Updating Summary Statistics")
-        progress_bar.show()
-        progress_bar.start_progress(100)
 
         self.updating_summary_statistics = True
+
+        # --- Build the cache ONCE at the start ---
+        self._update_annotation_stats_cache()
+        # ---------------------------------------------
 
         # Selected labels based on user's selection
         self.selected_labels = []
@@ -304,7 +352,7 @@ class Semantic(Base):
                 label = self.label_counts_table.item(row, 1).text()
                 self.selected_labels.append(label)
 
-        # Filter annotations based on the selected labels and image options
+        # This call will NOW BE FAST, as it uses the cache
         self.selected_annotations = self.filter_annotations()
         
         # Split the data by images
@@ -318,13 +366,13 @@ class Semantic(Base):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
             
-            # Use the new polymorphic method directly
-            total_count = sum(1 for anno in self.selected_annotations if label in anno.get_class_statistics())
+            # --- Read from the cache ---
+            total_count = sum(1 for anno in self.selected_annotations if label in self._stats_cache.get(anno.id, {}))
             
             if include_checkbox.isChecked():
-                train_count = sum(1 for anno in self.train_annotations if label in anno.get_class_statistics())
-                val_count = sum(1 for anno in self.val_annotations if label in anno.get_class_statistics())
-                test_count = sum(1 for anno in self.test_annotations if label in anno.get_class_statistics())
+                train_count = sum(1 for anno in self.train_annotations if label in self._stats_cache.get(anno.id, {}))
+                val_count = sum(1 for anno in self.val_annotations if label in self._stats_cache.get(anno.id, {}))
+                test_count = sum(1 for anno in self.test_annotations if label in self._stats_cache.get(anno.id, {}))
             else:
                 train_count = 0
                 val_count = 0
@@ -348,21 +396,29 @@ class Semantic(Base):
                 self.set_cell_color(row, 4, green)
                 self.set_cell_color(row, 5, green)
 
+        # This call will NOW BE FAST, as it uses the cache
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
+        
+        # Get counts directly from the image split lists
+        train_count = len(self.train_images)
+        val_count = len(self.val_images)
+        test_count = len(self.test_images)
+        total_count = train_count + val_count + test_count
 
+        # Update the new labels
+        self.total_images_label.setText(f"Total Images: {total_count}")
+        self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
+        
         self.updating_summary_statistics = False
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.close()
-        progress_bar = None
 
     def check_label_distribution(self):
         """
-        Check the label distribution in the splits for mask annotations.
+        Check the label distribution in the splits using the cache.
         Override base class method to work with mask annotations.
         
         Returns:
@@ -407,24 +463,25 @@ class Semantic(Base):
         val_label_counts = {}
         test_label_counts = {}
     
-        # Count mask annotations containing each label in each split
+        # --- FIX: Read from the cache ---
         for annotation in self.train_annotations:
-            class_stats = annotation.get_class_statistics()
+            class_stats = self._stats_cache.get(annotation.id, {})
             for label, stats in class_stats.items():
-                if stats['pixel_count'] > 0:
+                if stats.get('pixel_count', 0) > 0:
                     train_label_counts[label] = train_label_counts.get(label, 0) + 1
     
         for annotation in self.val_annotations:
-            class_stats = annotation.get_class_statistics()
+            class_stats = self._stats_cache.get(annotation.id, {})
             for label, stats in class_stats.items():
-                if stats['pixel_count'] > 0:
+                if stats.get('pixel_count', 0) > 0:
                     val_label_counts[label] = val_label_counts.get(label, 0) + 1
     
         for annotation in self.test_annotations:
-            class_stats = annotation.get_class_statistics()
+            class_stats = self._stats_cache.get(annotation.id, {})
             for label, stats in class_stats.items():
-                if stats['pixel_count'] > 0:
+                if stats.get('pixel_count', 0) > 0:
                     test_label_counts[label] = test_label_counts.get(label, 0) + 1
+        # --------------------------------
     
         # Check the conditions for each split
         for label in self.selected_labels:

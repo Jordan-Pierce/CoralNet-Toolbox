@@ -91,7 +91,6 @@ class PatchTool(Tool):
             self.update_cursor_annotation(scene_pos)
             
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-
         annotation = PatchAnnotation(scene_pos,
                                      self.annotation_window.annotation_size,
                                      self.annotation_window.selected_label.short_label_code,

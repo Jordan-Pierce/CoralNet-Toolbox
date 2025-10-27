@@ -9,11 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QGroupBox,
                              QFormLayout, QApplication, QComboBox, QTextEdit,
-                             QFileDialog, QSpinBox)
+                             QFileDialog, QSpinBox, QToolButton)
 
 import requests
 from bs4 import BeautifulSoup
@@ -196,23 +195,22 @@ class DownloadDialog(QDialog):
         button_layout = QHBoxLayout()
 
         # Add debug toggle button with bug icon
-        self.debug_button = QPushButton()
+        self.debug_button = QToolButton()
         self.debug_button.setIcon(get_icon("www.png"))
         self.debug_button.setToolTip("Toggle Headless Mode")
         self.debug_button.setCheckable(True)
         self.debug_button.setMaximumWidth(30)
         
-        # Initialize button state based on headless property
-        self.debug_button.setChecked(not self.headless)
-        
-        # Improved toggle handler that ensures button state matches headless state
+        # 2. Define the handler
         def toggle_headless(checked):
             self.headless = not checked
-            # Ensure button state matches headless value
-            if self.debug_button.isChecked() != (not self.headless):
-                self.debug_button.setChecked(not self.headless)
         
+        # 3. Connect the signal
         self.debug_button.toggled.connect(toggle_headless)
+        
+        # 4. Set the initial state (this will call toggle_headless once)
+        self.debug_button.setChecked(not self.headless)
+
         button_layout.addWidget(self.debug_button)
 
         self.download_button = QPushButton("Download")
@@ -237,66 +235,6 @@ class DownloadDialog(QDialog):
             )
             return False
         return True
-
-    # def initialize_driver(self):
-    #     """
-    #     Check if Chrome browser is installed.
-    #     """
-    #     success = False
-
-    #     options = Options()
-    #     # Silence, please.
-    #     options.add_argument("--log-level=3")
-
-    #     if self.headless:
-    #         # Add headless argument
-    #         options.add_argument('headless')
-    #         # Needed to avoid timeouts when running in headless mode
-    #         options.add_experimental_option('extensionLoadTimeout', 3600000)
-
-    #     # Modify where the downloads go
-    #     prefs = {
-    #         "download.default_directory": self.source_dir,
-    #         "download.prompt_for_download": False,
-    #         "download.directory_upgrade": True,
-    #         "safebrowsing.enabled": False,
-    #         "profile.managed_default_content_settings.images": 2,
-    #         "profile.managed_default_content_settings.stylesheet": 2,
-    #         "profile.managed_default_content_settings.fonts": 2,
-    #     }
-    #     options.add_experimental_option("prefs", prefs)
-
-    #     # Initialize progress bar
-    #     self.progress_bar.set_title("Checking for Google Chrome")
-    #     self.progress_bar.start_progress(100)
-
-    #     try:
-    #         # Check if ChromeDriver path is already in PATH
-    #         chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
-    #         if not any(
-    #             os.path.exists(os.path.join(directory, chrome_driver_path))
-    #             for directory in os.environ["PATH"].split(os.pathsep)
-    #         ):
-    #             # If it's not in PATH, attempt to install it
-    #             chrome_driver_path = ChromeDriverManager().install()
-
-    #             if not chrome_driver_path:
-    #                 raise Exception("ERROR: ChromeDriver installation failed.")
-    #             else:
-    #                 # Add the ChromeDriver directory to the PATH environment variable
-    #                 os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
-
-    #         # Attempt to open a browser
-    #         self.driver = webdriver.Chrome(options=options)
-    #         success = True
-
-    #     except Exception as e:
-    #         print(f"WARNING: Google Chrome could not be used\n{str(e)}")
-
-    #     finally:
-    #         self.progress_bar.finish_progress()
-
-    #     return success
                     
     def initialize_driver(self):
         """

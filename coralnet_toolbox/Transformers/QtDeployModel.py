@@ -53,7 +53,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Transformers Deploy Model (Ctrl + 6)")
+        self.setWindowTitle("Transformers Deploy Model (Ctrl + 7)")
         self.resize(400, 325)
 
         # Initialize variables
@@ -475,6 +475,13 @@ class DeployModelDialog(QDialog):
         """
         if not self.loaded_model:
             return
+        
+        if not image_paths:
+            # Predict only the current image
+            if self.annotation_window.current_image_path is None:
+                QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
+                return
+            image_paths = [self.annotation_window.current_image_path]
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -485,10 +492,6 @@ class DeployModelDialog(QDialog):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-
-        if not image_paths:
-            # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -525,6 +528,9 @@ class DeployModelDialog(QDialog):
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
+        if raster is None:
+            return None, None
+        
         if self.annotation_window.get_selected_tool() != "work_area":
             # Use the image path
             work_areas_data = [raster.get_numpy()]
@@ -629,11 +635,16 @@ class DeployModelDialog(QDialog):
 
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Highlight the work area being processed
+                    work_areas[idx].highlight()
                     # Map results from work area to the full image
                     results = MapResults().map_results_from_work_area(results[0], 
                                                                       raster, 
                                                                       work_areas[idx],
                                                                       self.use_sam_dropdown.currentText() == "True")
+
+                    # Unhighlight the work area after processing
+                    work_areas[idx].unhighlight()
                 else:
                     results = results[0]
 

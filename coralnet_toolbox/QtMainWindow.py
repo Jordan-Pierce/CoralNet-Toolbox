@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         self.pid = os.getpid()
 
         # Define icons
+        self.coralnet_icon = get_icon("coralnet.png")
         self.coral_icon = get_icon("coral.png")
         self.select_icon = get_icon("select.png")
         self.patch_icon = get_icon("patch.png")
@@ -188,7 +189,7 @@ class MainWindow(QMainWindow):
         self.update_project_label()
 
         # Set icon
-        self.setWindowIcon(self.coral_icon)
+        self.setWindowIcon(self.coralnet_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -523,8 +524,8 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # Ultralytics menu
-        self.ml_menu = self.menu_bar.addMenu("Ultralytics")
+        # Machine Learning menu
+        self.ml_menu = self.menu_bar.addMenu("Machine Learning")
 
         # Merge Datasets submenu
         self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
@@ -569,7 +570,7 @@ class MainWindow(QMainWindow):
         # Train Semantic Segmentation Model
         self.ml_semantic_train_model_action = QAction("Semantic", self)
         self.ml_semantic_train_model_action.triggered.connect(self.open_semantic_train_model_dialog)
-        # self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
+        self.ml_train_model_menu.addAction(self.ml_semantic_train_model_action)
 
         # Evaluate Model submenu
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
@@ -588,7 +589,7 @@ class MainWindow(QMainWindow):
         # Evaluate Semantic Segmentation Model
         self.ml_semantic_evaluate_model_action = QAction("Semantic", self)
         self.ml_semantic_evaluate_model_action.triggered.connect(self.open_semantic_evaluate_model_dialog)
-        # self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
+        self.ml_evaluate_model_menu.addAction(self.ml_semantic_evaluate_model_action)
 
         # Optimize Model
         self.ml_optimize_model_action = QAction("Optimize Model", self)
@@ -612,7 +613,7 @@ class MainWindow(QMainWindow):
         # Deploy Semantic Segmentation Model
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
-        # self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
+        self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
@@ -631,7 +632,7 @@ class MainWindow(QMainWindow):
         # Batch Inference Semantic Segmentation
         self.ml_semantic_batch_inference_action = QAction("Semantic", self)
         self.ml_semantic_batch_inference_action.triggered.connect(self.open_semantic_batch_inference_dialog)
-        # self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
+        self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
 
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
@@ -1148,6 +1149,9 @@ class MainWindow(QMainWindow):
         # Check for updates on opening
         # -----------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
+        
+        # Process events
+        QApplication.processEvents()
 
     def showEvent(self, event):
         """Show the main window maximized."""
@@ -2956,13 +2960,13 @@ class CollapsibleSection(QWidget):
 
         # Create the action
         self.toggle_action = QAction(QIcon(get_icon('parameters.png')), title, self)
-        self.toggle_action.setCheckable(True)
+        self.toggle_action.setCheckable(False)
         self.toggle_action.triggered.connect(self.toggle_content)
 
         # Header button using the action
         self.toggle_button = QToolButton()
         self.toggle_button.setDefaultAction(self.toggle_action)
-        self.toggle_button.setCheckable(True)
+        self.toggle_button.setCheckable(False)
         self.toggle_button.setAutoRaise(True)  # Gives a flat appearance until clicked
 
         # Popup frame
@@ -2976,16 +2980,16 @@ class CollapsibleSection(QWidget):
         # Add button to layout
         self.layout().addWidget(self.toggle_button)
 
-    def toggle_content(self, checked):
-        if checked:
+    def toggle_content(self):
+        if self.popup.isVisible():
+            self.popup.hide()
+        else:
             # Position popup below and to the left of the button
             pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
             popup_width = self.popup.sizeHint().width()
             self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
                             pos.y() + self.toggle_button.height())
             self.popup.show()
-        else:
-            self.popup.hide()
 
     def add_widget(self, widget, title=None):
         group_box = QGroupBox()

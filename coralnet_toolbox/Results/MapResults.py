@@ -19,7 +19,7 @@ class MapResults:
     def __init__(self):
         pass
         
-    def map_results_from_work_area(self, results, raster, work_area, map_masks=True):
+    def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='instance'):
         """
         Maps coordinates in Results objects from work area to original image coordinates.
         
@@ -60,7 +60,7 @@ class MapResults:
         mapped_results = self._map_boxes(results, mapped_results, working_area_top_left, wa_w, wa_h)
         
         if map_masks:
-            mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h)
+            mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task=task)
             
         mapped_results = self._map_probs(results, mapped_results)
         
@@ -117,7 +117,7 @@ class MapResults:
             
         return mapped_results
     
-    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h):
+    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h, task='instance'):
         """
         Maps masks from work area to original image coordinates.
         
@@ -127,6 +127,7 @@ class MapResults:
             raster: Raster object containing the original image dimensions
             wa_x, wa_y: Top-left coordinates of the work area
             wa_w, wa_h: Width and height of the work area
+            task: The type of task ('instance' or 'semantic')
             
         Returns:
             Results: Updated Results object with mapped masks
@@ -136,7 +137,7 @@ class MapResults:
             device = results.masks.data.device
             
             # If the input masks already have polygon representations, use them directly
-            if hasattr(results.masks, 'xy') and results.masks.xy:
+            if task == 'instance' and hasattr(results.masks, 'xy') and results.masks.xy:
                 segments_xy = []
                 segments_xyn = []
                 for points in results.masks.xy:
@@ -163,6 +164,8 @@ class MapResults:
                         segments_xyn.append(np.zeros((0, 2), dtype=np.float32))
                 
                 # Create a new Masks object directly using our updated Masks class
+                # Note: results.masks.data is still the small tile data here,
+                # but for polygon models, the ._xy attribute is what matters.
                 mapped_masks = Masks(results.masks.data, orig_shape=(orig_h, orig_w))
                 
                 # Just set the xy coordinates directly without a special update method
@@ -170,6 +173,40 @@ class MapResults:
                 mapped_masks._xyn = segments_xyn
                 
                 # Assign the new masks object to mapped_results
+                mapped_results.masks = mapped_masks
+            
+            # ELSE: This is raster data (from SemanticModel), not polygons.
+            # We must create a new full-size tensor and paste the tile into it.
+            else:
+                # Get the original tile mask data
+                tile_masks = results.masks.data  # (N, tile_h, tile_w) e.g., (N, 640, 640)
+                n, tile_h, tile_w = tile_masks.shape
+
+                # 1. Create a new, empty, full-size tensor for the mapped masks
+                full_masks = torch.zeros((n, orig_h, orig_w), device=device, dtype=tile_masks.dtype)
+
+                # 2. Get destination coordinates
+                y_start_dest, x_start_dest = wa_y, wa_x
+                y_end_dest, x_end_dest = wa_y + tile_h, wa_x + tile_w
+                
+                # 3. Clip destination coordinates to full image bounds
+                y_start_dest_clip = max(0, y_start_dest)
+                x_start_dest_clip = max(0, x_start_dest)
+                y_end_dest_clip = min(orig_h, y_end_dest)
+                x_end_dest_clip = min(orig_w, x_end_dest)
+
+                # 4. Calculate source coordinates from the tile based on clipping
+                y_start_src = y_start_dest_clip - y_start_dest
+                x_start_src = x_start_dest_clip - x_start_dest
+                y_end_src = y_start_src + (y_end_dest_clip - y_start_dest_clip)
+                x_end_src = x_start_src + (x_end_dest_clip - x_start_dest_clip)
+                
+                # 5. Paste the tile mask data into the full mask tensor
+                full_masks[:, y_start_dest_clip:y_end_dest_clip, x_start_dest_clip:x_end_dest_clip] = \
+                    tile_masks[:, y_start_src:y_end_src, x_start_src:x_end_src]
+                
+                # 6. Create the new Masks object using the NEWLY created full_masks data
+                mapped_masks = Masks(full_masks, orig_shape=(orig_h, orig_w))
                 mapped_results.masks = mapped_masks
         
         return mapped_results

@@ -340,16 +340,14 @@ class LabelWindow(QWidget):
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
         self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
         self.delete_label_button.clicked.connect(self.delete_active_label)
+        self.labelSelected.connect(self.annotation_window.set_selected_label)
 
         # Initialize labels
         self.labels = []
         self.active_label = None
 
-        # Add default label
+        # Add default label (unselected)
         self.add_review_label()
-
-        # Deselect at first
-        self.active_label.deselect()
 
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
@@ -676,12 +674,13 @@ class LabelWindow(QWidget):
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
-        # Insert at the beginning of the labels list instead of appending
         self.labels.insert(0, label)
+        # Do not set active by default
         # Update in LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
-        self.set_active_label(label)
+        self.update_label_count()
+        self.main_window.image_window.update_search_bars()
 
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
         """Add a new label to the window."""
@@ -691,11 +690,10 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         self.labels.append(label)
+        self.set_active_label(label)
         # Update in LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
-        self.set_active_label(label)
-        # Update filter bars and label count
         self.update_label_count()
         self.main_window.image_window.update_search_bars()
         self.sync_all_masks_with_labels()
@@ -709,8 +707,11 @@ class LabelWindow(QWidget):
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
-        # Skip if already active
+        # Handle deselection when clicking the same label again
         if self.active_label == selected_label:
+            # If the label is no longer selected (user clicked to deselect), handle deselection
+            if not selected_label.is_selected:
+                self.deselect_active_label()
             return
             
         if self.active_label and self.active_label != selected_label:
@@ -725,7 +726,7 @@ class LabelWindow(QWidget):
         # Transparency changes are now instant - emit freely!
         self.transparencyChanged.emit(self.active_label.transparency)
         
-        # OPTIMIZED: Skip expensive annotation updates in mask editing mode
+        # Skip expensive annotation updates in mask editing mode
         # Vector annotations don't need updates when switching labels in mask mode
         if not self.annotation_window._is_in_mask_editing_mode():
             self.update_annotations_with_label(selected_label)
@@ -766,6 +767,10 @@ class LabelWindow(QWidget):
         """Deselect the currently active label."""
         if self.active_label:
             self.active_label.deselect()
+            # Clear the active label reference
+            self.active_label = None
+            # Emit signal to clear the selected label in annotation window
+            self.labelSelected.emit(None)
 
     def delete_active_label(self):
         """Delete the currently active label."""
@@ -774,7 +779,7 @@ class LabelWindow(QWidget):
 
     def update_annotations_with_label(self, label):
         """Update selected annotations based on the properties of the given label."""
-        # OPTIMIZED: Skip this expensive operation in mask editing mode
+        # Skip this expensive operation in mask editing mode
         if self.annotation_window._is_in_mask_editing_mode():
             return
             

@@ -57,7 +57,7 @@ class DeployGeneratorDialog(QDialog):
         self.sam_dialog = None
 
         self.setWindowIcon(get_icon("eye.png"))
-        self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 5)")
+        self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 6)")
         self.resize(800, 800)  # Increased size to accommodate the horizontal layout
 
         self.deploy_model_dialog = None
@@ -997,6 +997,13 @@ class DeployGeneratorDialog(QDialog):
         """
         if not self.loaded_model or not self.reference_label:
             return
+
+        if not image_paths:
+            # Predict only the current image
+            if self.annotation_window.current_image_path is None:
+                QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
+                return
+            image_paths = [self.annotation_window.current_image_path]
         
         # Update class mapping with the selected reference label
         self.class_mapping = {0: self.reference_label}
@@ -1010,10 +1017,6 @@ class DeployGeneratorDialog(QDialog):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-
-        if not image_paths:
-            # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1475,11 +1478,15 @@ class DeployGeneratorDialog(QDialog):
 
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Highlight the work area being processed
+                    work_areas[idx].highlight()
                     # Map results from work area to the full image
                     results = MapResults().map_results_from_work_area(results[0], 
                                                                       raster, 
                                                                       work_areas[idx],
                                                                       self.task == "segment")
+                    # Unhighlight the work area after processing
+                    work_areas[idx].unhighlight()
                 else:
                     results = results[0]
 

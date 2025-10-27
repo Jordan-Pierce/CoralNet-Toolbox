@@ -150,7 +150,7 @@ class ImportCoralNetAnnotations:
             
             # 2. Add all created annotations in a single, efficient batch operation
             if annotations_to_add:
-                self.annotation_window.add_annotations_batch(annotations_to_add)
+                self.annotation_window.add_annotations(annotations_to_add)
             
             # 3. Update UI counts for each affected image only ONCE
             for image_path in images_to_update:

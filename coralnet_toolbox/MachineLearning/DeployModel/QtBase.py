@@ -293,8 +293,8 @@ class Base(QDialog):
         missing_labels = []
 
         for class_name in self.class_names:
-            label = self.label_window.get_label_by_short_code(class_name)
-            if label:
+            label = self.label_window.get_label_by_short_code(class_name)  
+            if label.id:
                 class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
             else:
                 class_names_str += f"❌ {class_name}\n"
@@ -317,9 +317,9 @@ class Base(QDialog):
         """
         if self.class_mapping:
             for label in self.class_mapping.values():
-                self.label_window.add_label_if_not_exists(label['short_label_code'],
+                self.label_window.add_label_if_not_exists(label['short_label_code'], 
                                                           label['long_label_code'],
-                                                          QColor(*label['color']))
+                                                          QColor(*label.get('color', [255, 255, 255])))
 
     def handle_missing_class_mapping(self):
         """

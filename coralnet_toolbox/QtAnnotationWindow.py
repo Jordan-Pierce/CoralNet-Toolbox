@@ -126,7 +126,6 @@ class AnnotationWindow(QGraphicsView):
         self.setScene(self.scene)
 
         self.annotation_size = 224
-        self.annotation_color = None
         self.transparency = 128
 
         self.zoom_factor = 1.0
@@ -272,6 +271,17 @@ class AnnotationWindow(QGraphicsView):
 
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
+        # Handle Ctrl+A for select/unselect all annotations
+        if event.key() == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
+            current_annotations = self.get_image_annotations()
+            if len(self.selected_annotations) == len(current_annotations):
+                self.unselect_annotations()
+            else:
+                if not self.main_window.select_tool_action.isChecked():
+                    self.main_window.choose_specific_tool("select")
+                self.select_annotations()
+            return
+        
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
@@ -353,16 +363,22 @@ class AnnotationWindow(QGraphicsView):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         self.selected_label = label
-        self.annotation_color = label.color
+        
+        # Handle both valid labels and None (no label selected)
+        if label is not None:
 
-        for annotation in self.selected_annotations:
-            if annotation.label.id != label.id:
-                annotation.update_user_confidence(self.selected_label)
-                annotation.create_cropped_image(self.rasterio_image)
-                self.main_window.confidence_window.display_cropped_image(annotation)
+            for annotation in self.selected_annotations:
+                if annotation.label.id != label.id:
+                    annotation.update_user_confidence(self.selected_label)
+                    annotation.create_cropped_image(self.rasterio_image)
+                    self.main_window.confidence_window.display_cropped_image(annotation)
 
-        if self.cursor_annotation:
-            if self.cursor_annotation.label.id != label.id:
+            if self.cursor_annotation:
+                if self.cursor_annotation.label.id != label.id:
+                    self.toggle_cursor_annotation()
+        else:
+            # Clear cursor annotation when no label is selected
+            if self.cursor_annotation:
                 self.toggle_cursor_annotation()
                 
         # Make cursor normal again
@@ -856,7 +872,6 @@ class AnnotationWindow(QGraphicsView):
             
             # Update UI state
             self.selected_label = annotation.label
-            self.annotation_color = annotation.label.color
             
             # Emit signal for annotation selection
             self.annotationSelected.emit(annotation.id)

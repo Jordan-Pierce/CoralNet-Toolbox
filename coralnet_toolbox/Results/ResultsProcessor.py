@@ -212,6 +212,9 @@ class ResultsProcessor:
             try:
                 # Use the annotation's built-in NMS conversion method
                 nms_detection = annotation.to_nms_detection()
+                # Override confidence to 0.90 to ensure existing annotations
+                # always win NMS against new predictions (which are <= 0.90).
+                nms_detection['confidence'] = 0.90
                 nms_detections.append(nms_detection)
             except Exception as e:
                 print(f"Warning: Failed to convert annotation {annotation.id} to NMS format: {e}")

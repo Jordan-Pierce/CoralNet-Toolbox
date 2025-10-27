@@ -156,11 +156,7 @@ class TrainModelWorker(QThread):
         """
         Evaluate the model after training.
         """
-        try:
-            # Do not evaluate if the user specifies 
-            if not self.params.get('Validation', False):
-                return
-            
+        try:           
             # Check that there is a test folder
             test_folder = f"{self.params['data']}/test"
             print(f"Note: Looking for test folder: {test_folder}")
@@ -261,10 +257,10 @@ class Base(QDialog):
         self.setup_info_layout()
         # Create the dataset layout
         self.setup_dataset_layout()
-        # Create the model layout (new)
-        self.setup_model_layout()
         # Create the output layout
         self.setup_output_layout()
+        # Create the model layout (new)
+        self.setup_model_layout()
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
@@ -428,7 +424,32 @@ class Base(QDialog):
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
+        
+        # Weighted Dataset
+        self.weighted_combo = create_bool_combo()
+        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
+        # Freeze Layers
+        self.freeze_layers_spinbox = QDoubleSpinBox()
+        self.freeze_layers_spinbox.setMinimum(0.0)
+        self.freeze_layers_spinbox.setMaximum(1.0)
+        self.freeze_layers_spinbox.setSingleStep(0.01)
+        self.freeze_layers_spinbox.setValue(0.0)
+        form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
+
+        # Dropout
+        self.dropout_spinbox = QDoubleSpinBox()
+        self.dropout_spinbox.setMinimum(0.0)
+        self.dropout_spinbox.setMaximum(1.0)
+        self.dropout_spinbox.setValue(0.0)
+        form_layout.addRow("Dropout:", self.dropout_spinbox)
+
+        # Optimizer
+        self.optimizer_combo = QComboBox()
+        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
+        self.optimizer_combo.setCurrentText("auto")
+        form_layout.addRow("Optimizer:", self.optimizer_combo)
+        
         # Workers
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(1)
@@ -446,36 +467,11 @@ class Base(QDialog):
         self.save_period_spinbox.setMaximum(1000)
         self.save_period_spinbox.setValue(-1)
         form_layout.addRow("Save Period:", self.save_period_spinbox)
-
-        # Freeze Layers
-        self.freeze_layers_spinbox = QDoubleSpinBox()
-        self.freeze_layers_spinbox.setMinimum(0.0)
-        self.freeze_layers_spinbox.setMaximum(1.0)
-        self.freeze_layers_spinbox.setSingleStep(0.01)
-        self.freeze_layers_spinbox.setValue(0.0)
-        form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
-
-        # Weighted Dataset
-        self.weighted_combo = create_bool_combo()
-        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
-
-        # Dropout
-        self.dropout_spinbox = QDoubleSpinBox()
-        self.dropout_spinbox.setMinimum(0.0)
-        self.dropout_spinbox.setMaximum(1.0)
-        self.dropout_spinbox.setValue(0.0)
-        form_layout.addRow("Dropout:", self.dropout_spinbox)
-
-        # Optimizer
-        self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("auto")
-        form_layout.addRow("Optimizer:", self.optimizer_combo)
-
+        
         # Val
         self.val_combo = create_bool_combo()
         form_layout.addRow("Validation:", self.val_combo)
-
+        
         # Verbose
         self.verbose_combo = create_bool_combo()
         form_layout.addRow("Verbose:", self.verbose_combo)
@@ -585,8 +581,12 @@ class Base(QDialog):
             # Load the class mapping if it exists
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
+                try:
+                    self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                    self.mapping_edit.setText(class_mapping_path)
+                except Exception as e:
+                    print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
+                    self.class_mapping = {}
 
             # Set the dataset path
             self.dataset_edit.setText(dir_path)
@@ -604,8 +604,12 @@ class Base(QDialog):
             dir_path = os.path.dirname(file_path)
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
+                try:
+                    self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                    self.mapping_edit.setText(class_mapping_path)
+                except Exception as e:
+                    print(f"Warning: Failed to load class mapping from {class_mapping_path}: {e}")
+                    self.class_mapping = {}
 
             # Set the dataset and class mapping paths
             self.dataset_edit.setText(file_path)
@@ -952,6 +956,12 @@ class Base(QDialog):
         Load the trained model and class mapping into the existing deployment dialog,
         update the status and labels, but do not show the dialog.
         """
+        if not self.main_window.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self, 
+                                "Deploy Model", 
+                                "No images found for deployment, you must import images first.")
+            return
+        
         output_folder = f"{self.params['project']}/{self.params['name']}"
         weights_folder = f"{output_folder}/weights"
         

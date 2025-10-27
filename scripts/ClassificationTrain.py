@@ -38,14 +38,14 @@ warnings.filterwarnings('ignore')
 
 
 def get_now():
-    """Get current date and time as a formatted string."""
+    """Return current date and time as a formatted string."""
     from datetime import datetime
     now = datetime.now()
     return now.strftime("%Y%m%d_%H%M%S")
 
 
 def format_logs_pretty(logs, title="Results"):
-    """Format logs into a pretty, readable string."""
+    """Return logs as a pretty, readable string."""
     if not logs:
         return ""
     
@@ -65,9 +65,7 @@ def format_logs_pretty(logs, title="Results"):
 
 
 def get_classifier_encoders():
-    """
-    Lists all the models available
-    """
+    """Return a list of available encoder model names."""
     encoder_options = []
 
     try:
@@ -82,9 +80,7 @@ def get_classifier_encoders():
 
 
 def get_classifier_losses():
-    """
-    Lists all the losses available
-    """
+    """Return a list of available loss function names."""
     loss_options = []
     try:
         import torch.nn as nn
@@ -100,9 +96,7 @@ def get_classifier_losses():
 
 
 def get_classifier_metrics():
-    """
-    Lists all the metrics available
-    """
+    """Return a list of available metric names."""
     metric_options = ['binary_accuracy',
                       'binary_f1_score',
                       'binary_precision',
@@ -116,9 +110,7 @@ def get_classifier_metrics():
 
 
 def get_classifier_optimizers():
-    """
-    Lists all the optimizers available
-    """
+    """Return a list of available optimizer names."""
     optimizer_options = []
 
     try:
@@ -133,20 +125,21 @@ def get_classifier_optimizers():
 
 
 def get_training_augmentation(height=224, width=224):
-    """
-    Training augmentation techniques; very light, if any.
-    """
+    """Return training augmentation pipeline."""
     train_transform = []
 
     train_transform.extend([
 
+        # This ensures all images are at least 112x112 before any cropping.
+        albu.PadIfNeeded(min_height=112, min_width=112, always_apply=True, border_mode=0, value=0),
+
         # Center crop 112x112 1/4 the time, otherwise full patch,
         albu.OneOf([
-            albu.CenterCrop(height=112, width=112, p=0.5),
+            albu.RandomCrop(height=112, width=112, p=0.5),
             albu.NoOp(p=1.0)
         ], p=0.5),
 
-        # Always resize to 224x224
+        # Always resize to the final model input size
         albu.Resize(height=height, width=width),
         albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
 
@@ -161,7 +154,7 @@ def get_training_augmentation(height=224, width=224):
         albu.OneOf(
             [
                 albu.CLAHE(p=0.1),
-                albu.RandomBrightness(p=0.1),
+                albu.RandomBrightnessContrast(p=0.1),
                 albu.RandomGamma(p=0.1),
             ],
             p=0.9,
@@ -178,7 +171,7 @@ def get_training_augmentation(height=224, width=224):
         # Small amounts of contrast / hue
         albu.OneOf(
             [
-                albu.RandomContrast(p=0.1),
+                albu.RandomBrightnessContrast(p=0.1),
                 albu.HueSaturationValue(p=0.1),
             ],
             p=0.9,
@@ -189,9 +182,7 @@ def get_training_augmentation(height=224, width=224):
 
 
 def get_validation_augmentation(height=224, width=224):
-    """
-    Validation augmentation techniques
-    """
+    """Return validation augmentation pipeline."""
     test_transform = []
 
     test_transform.extend([
@@ -203,18 +194,14 @@ def get_validation_augmentation(height=224, width=224):
 
 
 def to_tensor(x, **kwargs):
-    """
-    Convert image to tensor
-    """
+    """Convert image to tensor format."""
     if len(x.shape) == 2:
         return x
     return x.transpose(2, 0, 1).astype('float32')
 
 
 def get_preprocessing(preprocessing_fn):
-    """
-    Preprocessing
-    """
+    """Return preprocessing pipeline."""
     _transform = [
         albu.Lambda(image=preprocessing_fn),
         albu.Lambda(image=to_tensor, mask=to_tensor),
@@ -223,13 +210,7 @@ def get_preprocessing(preprocessing_fn):
 
 
 def downsample_majority_classes(df, about=0.1):
-    """
-    Function to downsample majority classes
-
-    :param df:
-    :param about:
-    :return:
-    """
+    """Downsample majority classes in dataframe."""
     label_counts = df['Label'].value_counts()
     minority_count = label_counts.min()
     target_range = (minority_count * (1 - about), minority_count * (1 + about))
@@ -248,9 +229,7 @@ def downsample_majority_classes(df, about=0.1):
 
 
 def compute_class_weights(df, mu=0.15):
-    """
-    Compute class weights for the given dataframe.
-    """
+    """Compute class weights for imbalanced datasets."""
     # Compute the value counts for each class
     class_categories = sorted(df['Label'].unique())
     class_values = [df['Label'].value_counts()[c] for c in class_categories]
@@ -271,12 +250,10 @@ def compute_class_weights(df, mu=0.15):
 
 
 def plot_confusion_matrix(matrix, writer, epoch, class_names, mode='Train', save_dir=None):
-    """
-    Plots the confusion matrix, saves it locally (if save_dir is provided), and uploads it to TensorBoard.
-    """
+    """Plot and save confusion matrix, optionally log to TensorBoard."""
     # Calculate the figure size dynamically based on the number of classes
     num_classes = len(class_names)
-    figsize = (int(num_classes * 0.5), int(num_classes * 0.5))
+    figsize = (int(num_classes * 3), int(num_classes * 3))
 
     # Create a figure and axis
     fig, ax = plt.subplots(figsize=figsize)
@@ -302,31 +279,28 @@ def plot_confusion_matrix(matrix, writer, epoch, class_names, mode='Train', save
 
 
 def plot_matrix(ax, matrix, class_names, title):
-    """
-    Plots a confusion matrix on a given axis.
-    """
+    """Plot confusion matrix on axis with normalized values."""
     im = ax.imshow(matrix, cmap='Blues')
     ax.set_xticks(np.arange(len(class_names)))
     ax.set_yticks(np.arange(len(class_names)))
     ax.set_xticklabels(class_names)
     ax.set_yticklabels(class_names)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-             rotation_mode="anchor")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_title(title)
     ax.figure.colorbar(im, ax=ax)
     plt.subplots_adjust(bottom=0.2)
 
+    # Show normalized values in each cell
+    num_rows, num_cols = matrix.shape
+    for i in range(num_rows):
+        for j in range(num_cols):
+            value = matrix[i, j]
+            ax.text(j, i, f"{value:.2f}", ha="center", va="center",
+                    color="white" if value > matrix.max() * 0.5 else "black", fontsize=8)
+
 
 def plot_gridded_predictions(model, data_loader, num_rows=5):
-    """
-    Plots a grid of images with their actual and predicted labels.
-    Adds a green border for correct predictions and a red border for incorrect predictions.
-
-    Args:
-        model (torch.nn.Module): The model to use for predictions.
-        data_loader (torch.utils.data.DataLoader): The data loader containing the images and labels.
-        num_rows (int): The number of rows in the grid.
-    """
+    """Plot grid of images with actual and predicted labels."""
     model.eval()
 
     # Get validation samples
@@ -352,7 +326,9 @@ def plot_gridded_predictions(model, data_loader, num_rows=5):
     preds = torch.argmax(preds, dim=1)
     labels = torch.argmax(labels, dim=1)
 
-    class_names = list(data_loader.dataset.class_map.keys())
+    # Create index-to-name mapping from class_map
+    class_map = data_loader.dataset.class_map
+    idx_to_name = {v: k for k, v in class_map.items()}
 
     # Create a grid for plotting the images
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(2 * num_cols, 2 * num_rows))
@@ -360,8 +336,8 @@ def plot_gridded_predictions(model, data_loader, num_rows=5):
     for i in range(num_samples):
         ax = axes[i // num_cols, i % num_cols]
 
-        actual_label = class_names[labels[i]]
-        predicted_label = class_names[preds[i]]
+        actual_label = idx_to_name[labels[i].item()]
+        predicted_label = idx_to_name[preds[i].item()]
 
         # Set title color based on prediction correctness
         title_color = 'green' if labels[i] == preds[i] else 'red'
@@ -390,15 +366,7 @@ def plot_gridded_predictions(model, data_loader, num_rows=5):
 
 
 def build_dataframe_from_yolo_classification(data_dir):
-    """
-    Build a dataframe from YOLO image classification directory structure.
-    
-    Args:
-        data_dir (str): Root directory containing train/, val/, test/ folders
-        
-    Returns:
-        pd.DataFrame: Dataframe with columns 'Image Path', 'Label', 'Split'
-    """
+    """Build dataframe from YOLO classification directory structure."""
     data_rows = []
     
     splits = ['train', 'val', 'test']
@@ -439,11 +407,13 @@ def build_dataframe_from_yolo_classification(data_dir):
 # Classes
 # ------------------------------------------------------------------------------------------------------------------
 class Epoch:
-    def __init__(self, model, loss, metrics, stage_name, log_dir, device="cpu", verbose=True):
+    """Base class for training/validation epoch."""
 
+    def __init__(self, model, loss, metrics, stage_name, log_dir, device="cpu", verbose=True):
+        """Initialize Epoch object."""
         self.model = model
         self.loss = loss
-        self.metrics = metrics
+        self.metrics = metrics  # These are now stateful metric objects
         self.stage_name = stage_name
         self.log_dir = log_dir
         self.verbose = verbose
@@ -451,45 +421,42 @@ class Epoch:
 
         self.class_names = self.model.class_names
         self.num_classes = self.model.num_classes
-
-        self.all_preds = torch.tensor([]).to(self.device)
-        self.all_labels = torch.tensor([]).to(self.device)
-
+        
+        # We only need the loss meter now
         self.loss_meter = AverageValueMeter()
-        self.micro_metrics_meters = {f"micro_{m.__name__}": AverageValueMeter() for m in self.metrics}
-        self.macro_metrics_meters = {f"macro_{m.__name__}": AverageValueMeter() for m in self.metrics}
 
+        # These are still used for the final classification report
+        self.all_preds = None
+        self.all_labels = None
         self.matrix = None
         self.report = None
 
         self._to_device()
+        # Move metrics to the correct device
+        for m in self.metrics:
+            m.to(self.device)
 
     def batch_update(self, x, y):
+        """Update model for a batch (to be implemented in subclasses)."""
         raise NotImplementedError
 
     def _to_device(self):
-        """
-
-        :return:
-        """
+        """Move model and loss to device."""
         self.model.to(self.device)
         self.loss.to(self.device)
 
     def _format_logs(self, logs):
-        """
-
-        :param logs:
-        :return:
-        """
+        """Format logs for display."""
         str_logs = ["{} - {:.4}".format(k, v) for k, v in logs.items()]
         s = ", ".join(str_logs)
         return s
 
     def on_epoch_start(self):
-        """
-
-        :return:
-        """
+        """Reset metrics and prepare model for epoch."""
+        # --- MODIFIED: Reset all metrics at the start of the epoch ---
+        for metric in self.metrics:
+            metric.reset()
+            
         self.all_preds = torch.tensor([]).to(self.device)
         self.all_labels = torch.tensor([]).to(self.device)
 
@@ -500,34 +467,8 @@ class Epoch:
         else:
             raise NotImplementedError
 
-    def calculate_metrics(self):
-        """
-
-        :return:
-        """
-        # Calculate each of the metrics
-        for metric_fn in self.metrics:
-            # Micro averaged (classes are weighted based on frequency)
-            micro_value = metric_fn(self.all_preds,
-                                    self.all_labels,
-                                    average='micro',
-                                    num_classes=self.num_classes)
-
-            self.micro_metrics_meters[f'micro_{metric_fn.__name__}'].add(micro_value.item())
-
-            # Macro averaged (classes are treated equally, regardless of frequency)
-            macro_value = metric_fn(self.all_preds,
-                                    self.all_labels,
-                                    average='macro',
-                                    num_classes=self.num_classes)
-
-            self.macro_metrics_meters[f'macro_{metric_fn.__name__}'].add(macro_value.item())
-
     def calculate_classification_report(self):
-        """
-
-        :return:
-        """
+        """Calculate classification report for predictions."""
         # Convert to numpy
         all_preds = self.all_preds.cpu().numpy().astype(int)
         all_labels = self.all_labels.cpu().numpy().astype(int)
@@ -539,28 +480,30 @@ class Epoch:
                                             digits=4)
 
     def calculate_confusion_matrix(self):
-        """
+        """Calculate confusion matrix for predictions."""
+        # --- FIX: Ensure tensors are of type torch.long before calculation ---
+        preds = self.all_preds.long()
+        labels = self.all_labels.long()
 
-        :return:
-        """
         if self.num_classes == 2:
-            matrix = torch_metrics.binary_confusion_matrix(self.all_preds,
-                                                           self.all_labels,
-                                                           normalize='all')
+            matrix = torch_metrics.binary_confusion_matrix(
+                preds,
+                labels,
+                normalize='all'
+            )
         else:
-            matrix = torch_metrics.multiclass_confusion_matrix(self.all_preds,
-                                                               self.all_labels,
-                                                               num_classes=self.num_classes,
-                                                               normalize='all')
+            matrix = torch_metrics.multiclass_confusion_matrix(
+                preds,
+                labels,
+                num_classes=self.num_classes,
+                normalize='all'
+            )
+        
         # Return as np for plotting
         self.matrix = matrix.cpu().numpy()
 
     def plot_gridded_results(self, dataloader, epoch_num):
-        """
-
-        :param dataloader:
-        :return:
-        """
+        """Plot grid of prediction results for epoch."""
         # Plot gridded predictions samples
         save_path = f'{self.log_dir}/{self.stage_name}_Result_{epoch_num}.jpg'
         figure = plot_gridded_predictions(self.model, dataloader)
@@ -568,20 +511,7 @@ class Epoch:
         plt.close(figure)
 
     def log_results(self, logs, epoch_num):
-        """
-
-        :param logs:
-        :param epoch_num:
-        :return:
-        """
-        # Format the metrics
-        micro_metrics_logs = {k: v.mean for k, v in self.micro_metrics_meters.items()}
-        macro_metrics_logs = {k: v.mean for k, v in self.macro_metrics_meters.items()}
-
-        # Update metrics in log
-        logs.update(micro_metrics_logs)
-        logs.update(macro_metrics_logs)
-
+        """Log results and save metrics/reports."""
         # Plot and log the confusion matrix
         plot_confusion_matrix(self.matrix,
                               None,  # No writer
@@ -597,61 +527,68 @@ class Epoch:
         return logs
 
     def run(self, dataloader, epoch_num):
-        """
-
-        :param dataloader:
-        :param epoch_num:
-        :return:
-        """
+        """Run a training or validation epoch."""
         self.on_epoch_start()
-
         logs = {}
 
-        with tqdm(enumerate(dataloader), total=len(dataloader), desc="Epoch", file=sys.stdout) as iterator:
+        with tqdm(enumerate(dataloader), total=len(dataloader), desc=self.stage_name, file=sys.stdout) as iterator:
             for idx, (x, y, _) in iterator:
-                # Pass forward
                 x, y = x.to(self.device), y.to(self.device)
                 loss, y_pred = self.batch_update(x, y)
 
-                # Update loss logs
-                loss_value = loss.cpu().detach().numpy()
-                self.loss_meter.add(loss_value)
-                loss_logs = {'loss': self.loss_meter.mean}
-                logs.update(loss_logs)
-                # Output to console
+                # Update loss (no change here)
+                self.loss_meter.add(loss.cpu().detach().numpy())
+                logs['loss'] = self.loss_meter.mean
+
+                y_pred_labels = torch.argmax(y_pred, axis=1)
+                y_true_labels = torch.argmax(y, axis=1)
+
+                # --- MODIFIED: Update stateful metrics with batch data ---
+                for metric in self.metrics:
+                    metric.update(y_pred_labels, y_true_labels)
+
+                # --- Store predictions for final report (no change here) ---
+                self.all_preds = torch.cat([self.all_preds, y_pred_labels])
+                self.all_labels = torch.cat([self.all_labels, y_true_labels])
+
+                # --- Update TQDM with current loss and accuracy ---
+                # Compute running accuracy for display
+                correct = (y_pred_labels == y_true_labels).sum().item()
+                total = y_true_labels.size(0)
+                batch_acc = correct / total if total > 0 else 0.0
+                logs['accuracy'] = batch_acc
+
                 s = self._format_logs(logs)
                 iterator.set_postfix_str(s)
 
-                # Reshape the prediction and ground-truth
-                y_pred = torch.argmax(y_pred, axis=1)
-                y = torch.argmax(y, axis=1)
+        # --- END OF EPOCH ---
+        # Now compute the final metrics from all the accumulated data
+        for metric in self.metrics:
+            logs[metric.__name__] = metric.compute().item()
 
-                # Store predictions and ground-truths
-                self.all_preds = torch.cat([self.all_preds, y_pred], dim=0).long()
-                self.all_labels = torch.cat([self.all_labels, y], dim=0).long()
+        # Also compute overall accuracy for the epoch
+        all_correct = (self.all_preds == self.all_labels).sum().item()
+        all_total = self.all_labels.size(0)
+        logs['accuracy'] = all_correct / all_total if all_total > 0 else 0.0
 
-                # Check if this is the last step of the epoch
-                if idx == len(dataloader) - 1:
-                    # Calculate metrics
-                    self.calculate_metrics()
-                    # Calculate confusion matrix
-                    self.calculate_confusion_matrix()
-                    # Calculate report
-                    self.calculate_classification_report()
-                    # Plot gridded results
-                    self.plot_gridded_results(dataloader, epoch_num)
-                    # Log all the results
-                    logs = self.log_results(logs, epoch_num)
-
-                    # Print to console
-                    s = self._format_logs(logs)
-                    iterator.set_postfix_str(s)
+        # Generate reports and visualizations (no change here)
+        self.calculate_confusion_matrix()
+        self.calculate_classification_report()
+        self.plot_gridded_results(dataloader, epoch_num)
+        
+        # Log results and update TQDM with final scores
+        logs = self.log_results(logs, epoch_num)
+        s = self._format_logs(logs)
+        iterator.set_postfix_str(s)
 
         return logs
 
 
 class TrainEpoch(Epoch):
-    def __init__(self, model, loss, metrics, optimizer, log_dir, device="cpu", verbose=True):
+    """Training epoch implementation."""
+
+    def __init__(self, model, loss, metrics, optimizer, log_dir, device="cpu", verbose=True, use_amp=False):
+        """Initialize TrainEpoch object."""
         super().__init__(
             model=model,
             loss=loss,
@@ -662,18 +599,36 @@ class TrainEpoch(Epoch):
             verbose=verbose,
         )
         self.optimizer = optimizer
+        self.use_amp = use_amp and torch.cuda.is_available()
+        if self.use_amp:
+            self.scaler = torch.cuda.amp.GradScaler()
 
     def batch_update(self, x, y):
+        """Update model for a training batch."""
         self.optimizer.zero_grad()
-        prediction = self.model.forward(x)
-        loss = self.loss(prediction, y)
-        loss.backward()
-        self.optimizer.step()
+        
+        if self.use_amp:
+            with torch.cuda.amp.autocast():
+                prediction = self.model.forward(x)
+                loss = self.loss(prediction, y)
+            
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            prediction = self.model.forward(x)
+            loss = self.loss(prediction, y)
+            loss.backward()
+            self.optimizer.step()
+        
         return loss, prediction
 
 
 class ValidEpoch(Epoch):
+    """Validation epoch implementation."""
+
     def __init__(self, model, loss, metrics, log_dir, device="cpu", verbose=True):
+        """Initialize ValidEpoch object."""
         super().__init__(
             model=model,
             loss=loss,
@@ -685,6 +640,7 @@ class ValidEpoch(Epoch):
         )
 
     def batch_update(self, x, y):
+        """Update model for a validation batch."""
         with torch.no_grad():
             prediction = self.model.forward(x)
             loss = self.loss(prediction, y)
@@ -692,9 +648,7 @@ class ValidEpoch(Epoch):
 
 
 class Dataset(BaseDataset):
-    """
-
-    """
+    """Custom dataset for image classification."""
 
     def __init__(
             self,
@@ -704,6 +658,7 @@ class Dataset(BaseDataset):
             preprocessing=None,
             log_dir=None,
     ):
+        """Initialize Dataset object."""
         assert 'Name' in dataframe.columns, "ERROR: 'Name' not found in Patches file"
         assert 'Path' in dataframe.columns, "ERROR: 'Path' not found in Patches file"
         assert 'Label' in dataframe.columns, "ERROR: 'Label' not found in Patches file"
@@ -718,17 +673,15 @@ class Dataset(BaseDataset):
         self.log_dir = log_dir
 
     def __len__(self):
+        """Return number of samples in dataset."""
         return len(self.ids)
 
     def __getitem__(self, i):
-        """
-
-        :param i:
-        :return:
-        """
+        """Return image, label, and path for index i."""
         # read data
-        image = cv2.imread(self.patches[i])
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        from PIL import Image
+        image = Image.open(self.patches[i]).convert('RGB')
+        image = np.array(image)  # Convert to numpy after loading
 
         label = self.labels[i]
 
@@ -750,11 +703,7 @@ class Dataset(BaseDataset):
         return image, label, self.patches[i]
 
     def plot_samples(self, n=1):
-        """
-
-        :param n:
-        :return:
-        """
+        """Plot and save n random samples from dataset."""
         save_paths = []
 
         for idx in range(n):
@@ -777,7 +726,10 @@ class Dataset(BaseDataset):
 
 
 class CustomModel(torch.nn.Module):
+    """Custom image classification model."""
+
     def __init__(self, encoder_name, weights, class_names, dropout_rate):
+        """Initialize CustomModel."""
         super(CustomModel, self).__init__()
 
         # Classes
@@ -801,9 +753,11 @@ class CustomModel(torch.nn.Module):
 
     # Add a method to get the name attribute
     def get_name(self):
+        """Return encoder name."""
         return self.name
 
     def forward(self, x):
+        """Forward pass through model."""
         # Forward pass through the encoder
         x = self.encoder(x)
         x = x[-1]
@@ -852,10 +806,12 @@ class DataConfig:
 class ModelBuilder:
     """Handles construction and configuration of classification models."""
 
-    def __init__(self, encoder_name, num_classes, freeze_encoder=0.0, dropout_rate=0.5, pre_trained_path=None):
+    def __init__(self, encoder_name, num_classes, class_names=None, freeze_encoder=0.0, 
+                 dropout_rate=0.5, pre_trained_path=None):
         """Initialize ModelBuilder with model configuration."""
         self.encoder_name = encoder_name
         self.num_classes = num_classes
+        self.class_names = class_names if class_names is not None else [str(i) for i in range(num_classes)]
         self.freeze_encoder = freeze_encoder
         self.dropout_rate = dropout_rate
         self.pre_trained_path = pre_trained_path
@@ -875,7 +831,7 @@ class ModelBuilder:
         self.model = CustomModel(
             encoder_name=self.encoder_name,
             weights='imagenet',
-            class_names=list(range(self.num_classes)),  # Placeholder
+            class_names=self.class_names,
             dropout_rate=self.dropout_rate
         )
         self.preprocessing_fn = smp.encoders.get_preprocessing_fn(self.encoder_name, 'imagenet')
@@ -925,27 +881,60 @@ class TrainingConfig:
             self.loss_function = loss_class(weight=self.class_weights)
         else:
             self.loss_function = loss_class()
-        print(f"   • Loss: {self.loss_function_name}")
 
     def _setup_optimizer(self):
         """Setup the optimizer."""
         if self.optimizer_name not in get_classifier_optimizers():
             raise ValueError(f"❌ Optimizer {self.optimizer_name} not available")
         self.optimizer = getattr(torch.optim, self.optimizer_name)(self.model.parameters(), self.learning_rate)
-        print(f"   • Optimizer: {self.optimizer_name} (lr={self.learning_rate})")
 
     def _setup_metrics(self):
         """Setup the evaluation metrics."""
-        available_metrics = get_classifier_metrics()
+        # Import the stateful metric classes from the top-level module
+        from torcheval import metrics
+
+        # A dictionary mapping the string names to the actual metric CLASSES
+        available_metrics = {
+            'binary_accuracy': metrics.BinaryAccuracy,
+            'binary_f1_score': metrics.BinaryF1Score,
+            'binary_precision': metrics.BinaryPrecision,
+            'binary_recall': metrics.BinaryRecall,
+            'multiclass_accuracy': metrics.MulticlassAccuracy,
+            'multiclass_f1_score': metrics.MulticlassF1Score,
+            'multiclass_precision': metrics.MulticlassPrecision,
+            'multiclass_recall': metrics.MulticlassRecall,
+        }
+
         self.metrics = []
-        for m in self.metrics_list:
-            if m in available_metrics:
-                if 'accuracy' in m:
-                    self.metrics.append(getattr(torch_metrics, m))
-                else:
-                    self.metrics.append(getattr(torch_metrics, m))
+        num_classes = self.model.num_classes
+
+        for m_name in self.metrics_list:
+            if m_name in available_metrics:
+                metric_class = available_metrics[m_name]
+                
+                # Instantiate multiclass metrics with necessary parameters
+                if 'multiclass' in m_name:
+                    # Create separate objects for micro and macro averaging
+                    self.metrics.append(metric_class(num_classes=num_classes, average='micro'))
+                    self.metrics.append(metric_class(num_classes=num_classes, average='macro'))
+                
+                # Instantiate binary metrics (only if the problem is binary)
+                elif 'binary' in m_name and num_classes == 2:
+                    self.metrics.append(metric_class())
+
+        # Fallback to a default metric if the list is empty
         if not self.metrics:
-            self.metrics = [torch_metrics.multiclass_accuracy]
+            self.metrics = [metrics.MulticlassAccuracy(num_classes=num_classes)]
+
+        # Give each metric object a useful __name__ attribute for logging
+        for m in self.metrics:
+            avg = getattr(m, 'average', None)
+            name = type(m).__name__
+            if avg:
+                m.__name__ = f"{avg}_{name.replace('Multiclass', '').lower()}"
+            else:
+                m.__name__ = name.lower()
+
         print(f"   • Metrics: {[m.__name__ for m in self.metrics]}")
 
 
@@ -953,17 +942,19 @@ class ExperimentManager:
     """Manages experiment directories, logging, and result tracking."""
 
     def __init__(self, output_dir, encoder_name, class_map):
+        """Initialize ExperimentManager."""
         self.output_dir = output_dir
         self.encoder_name = encoder_name
         self.class_map = class_map
-        self.run = f"{get_now()}_{encoder_name}"
         self._setup_directories()
 
     def _setup_directories(self):
         """Setup experiment directories."""
-        self.run_dir = f"{self.output_dir}/classification/{self.run}/"
-        self.weights_dir = self.run_dir + "weights/"
-        self.logs_dir = self.run_dir + "logs/"
+        self.run = f"{get_now()}_{self.encoder_name}"
+
+        self.run_dir = f"{self.output_dir}/{self.run}/"
+        self.weights_dir = f"{self.run_dir}weights/"
+        self.logs_dir = f"{self.run_dir}logs/"
 
         os.makedirs(self.run_dir, exist_ok=True)
         os.makedirs(self.weights_dir, exist_ok=True)
@@ -987,11 +978,32 @@ class ExperimentManager:
         torch.save(model.state_dict(), last_model_path)
         print(f"💾 Last model saved to {last_model_path}")
 
+    def log_metrics(self, epoch, stage, metrics):
+        """Log metrics to CSV file."""
+        csv_path = os.path.join(self.logs_dir, f"{stage}_metrics.csv")
+        
+        # Prepare the row data
+        row_data = {"epoch": epoch}
+        row_data.update(metrics)
+        
+        # Convert to DataFrame
+        df_new = pd.DataFrame([row_data])
+        
+        # Append to existing CSV or create new one
+        if os.path.exists(csv_path):
+            df_existing = pd.read_csv(csv_path)
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        
+        df_combined.to_csv(csv_path, index=False)
+
 
 class DatasetManager:
     """Manages creation and configuration of training datasets."""
 
     def __init__(self, patches_df, class_map, preprocessing_fn, augment_data=False, batch_size=128):
+        """Initialize DatasetManager."""
         self.patches_df = patches_df
         self.class_map = class_map
         self.preprocessing_fn = preprocessing_fn
@@ -1045,16 +1057,97 @@ class DatasetManager:
 
     def _create_dataloaders(self):
         """Create data loaders."""
-        self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0)
-        self.valid_loader = DataLoader(self.valid_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
-        self.test_loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
+        self.train_loader = DataLoader(
+            self.train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,
+            num_workers=4,  # Increase this
+            pin_memory=True if torch.cuda.is_available() else False
+        )
+        self.valid_loader = DataLoader(
+            self.valid_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True if torch.cuda.is_available() else False
+        )
+        self.test_loader = DataLoader(
+            self.test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True if torch.cuda.is_available() else False
+        )
+
+    def visualize_samples(self, logs_dir, num_samples=9):
+        """Visualize samples with augmentations applied."""
+        print(f"🖼️ Generating {num_samples} augmented training samples...")
+
+        # --- FIX: Create a temporary dataset for visualization ---
+        # This dataset applies augmentations but NOT the model-specific preprocessing.
+        vis_dataset = Dataset(
+            self.train_df,
+            class_map=self.class_map,
+            augmentation=get_training_augmentation() if self.augment_data else get_validation_augmentation(),
+            preprocessing=None  # <-- The crucial change is here
+        )
+
+        # Create a figure for the samples
+        rows = int(np.ceil(np.sqrt(num_samples)))
+        cols = int(np.ceil(num_samples / rows))
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows))
+        if num_samples == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+        
+        # Get random samples from the visualization dataset
+        dataset_size = len(vis_dataset)
+        sample_size = min(num_samples, dataset_size)
+        sample_indices = np.random.choice(dataset_size, size=sample_size, replace=False)
+        
+        for i, idx in enumerate(sample_indices):
+            if i >= num_samples:
+                break
+                
+            # Get sample (this will apply augmentations but not normalization)
+            image, label, path = vis_dataset[idx]
+            
+            # The image is now a numpy array with pixel values in the 0-255 range.
+            # No need to convert or clip, imshow can handle it directly.
+            image_np = image.numpy()
+            
+            # Get class name from label
+            class_idx = torch.argmax(label).item()
+            class_name = list(self.class_map.keys())[class_idx]
+            
+            # Plot the image
+            ax = axes[i]
+            ax.imshow(image_np)
+            ax.set_title(f"Class: {class_name}", fontsize=10)
+            ax.axis('off')
+        
+        # Hide any unused subplots
+        for i in range(num_samples, len(axes)):
+            axes[i].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save the figure
+        save_path = os.path.join(logs_dir, "augmented_samples.jpg")
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"💾 Augmented samples saved to {save_path}")
 
 
 class Trainer:
     """Handles the training loop with early stopping and learning rate scheduling."""
 
     def __init__(self, model, loss_function, metrics, optimizer, train_loader, valid_loader, 
-                 num_epochs, logs_dir, experiment_manager, loss_function_name):
+                 num_epochs, logs_dir, experiment_manager, loss_function_name, use_amp=False):
+        """Initialize Trainer."""
         self.model = model
         self.loss_function = loss_function
         self.metrics = metrics
@@ -1065,8 +1158,10 @@ class Trainer:
         self.logs_dir = logs_dir
         self.experiment_manager = experiment_manager
         self.loss_function_name = loss_function_name
+        self.use_amp = use_amp
 
-        self.train_epoch = TrainEpoch(self.model, self.loss_function, self.metrics, self.optimizer, self.logs_dir)
+        self.train_epoch = TrainEpoch(self.model, self.loss_function, self.metrics, 
+                                      self.optimizer, self.logs_dir, use_amp=use_amp)
         self.valid_epoch = ValidEpoch(self.model, self.loss_function, self.metrics, self.logs_dir)
 
         # Training state
@@ -1086,12 +1181,13 @@ class Trainer:
         print(f"   • Model: {type(self.model).__name__}")
         print(f"   • Loss: {self.loss_function_name}")
         print(f"   • Metrics: {[m.__name__ for m in self.metrics]}")
+        print(f"   • AMP: {'Enabled' if self.use_amp else 'Disabled'}")
         print()
 
         try:
             # Training loop
             for e_idx in range(1, self.num_epochs + 1):
-                print(f"\n� Epoch {e_idx}/{self.num_epochs}")
+                print(f"\n🦖 Epoch {e_idx}/{self.num_epochs}")
                 print("-" * 40)
 
                 # Go through an epoch for train, valid
@@ -1106,11 +1202,13 @@ class Trainer:
                 self.experiment_manager.log_metrics(e_idx, "train", train_logs)
                 self.experiment_manager.log_metrics(e_idx, "valid", valid_logs)
 
-                # Save the model for the current epoch
-                self.experiment_manager.save_last_model(self.model)
-
                 # Check for best model and handle early stopping
                 should_continue = self._update_training_state(e_idx, train_logs, valid_logs)
+                
+                # Save the model for the current epoch
+                self.experiment_manager.save_last_model(self.model)
+                
+                # Early stopping check
                 if not should_continue:
                     break
 
@@ -1174,6 +1272,7 @@ class Evaluator:
     """Handles model evaluation and result visualization."""
 
     def __init__(self, model, loss_function, metrics, test_loader, logs_dir):
+        """Initialize Evaluator."""
         self.model = model
         self.loss_function = loss_function
         self.metrics = metrics
@@ -1186,7 +1285,18 @@ class Evaluator:
         """Evaluate the model on test set."""
         print("\n📈 Evaluating on test set")
         test_logs = self.test_epoch.run(self.test_loader, 0)
-        print(f"📊 Test Results: {test_logs}")
+        # Print test loss and accuracy in a readable way
+        test_loss = test_logs.get('loss', None)
+        test_acc = test_logs.get('accuracy', None)
+        print("📊 Test Results:")
+        if test_loss is not None:
+            print(f"   • Loss: {test_loss:.4f}")
+        if test_acc is not None:
+            print(f"   • Accuracy: {test_acc:.4f}")
+        # Print other metrics if present
+        for k, v in test_logs.items():
+            if k not in ['loss', 'accuracy']:
+                print(f"   • {k}: {v:.4f}")
 
 
 # -----------------------------------------------------------------------------
@@ -1195,7 +1305,36 @@ class Evaluator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train an Image Classifier')
+    """Main entry point for training script."""
+    # Get available options for help text
+    available_encoders = get_classifier_encoders()
+    available_losses = get_classifier_losses()
+    available_metrics = get_classifier_metrics()
+    available_optimizers = get_classifier_optimizers()
+    
+    # Build help strings safely
+    encoder_list = ', '.join(available_encoders)
+    optimizer_list = ', '.join(available_optimizers)
+    loss_list = ', '.join(available_losses)
+    metrics_list = ', '.join(available_metrics)
+    
+    encoder_help = f"Name of the encoder architecture to use. Available: {encoder_list}"
+    loss_help = f"Loss function to use. Available: {loss_list}"
+    metrics_help = f"List of metrics to evaluate during training. Available: {metrics_list}"
+    optimizer_help = f"Optimizer to use for training. Available: {optimizer_list}"
+    
+    epilog_text = f"""
+    Available Encoders: {encoder_list}
+    Available Loss Functions: {loss_list}
+    Available Metrics: {metrics_list}
+    Available Optimizers: {optimizer_list}
+    """
+    
+    parser = argparse.ArgumentParser(
+        description='Train an Image Classifier',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog_text
+    )
 
     parser.add_argument('--data_dir', required=True,
                         help='Path to YOLO classification dataset directory (with train/val/test subdirs)')
@@ -1204,22 +1343,22 @@ def main():
                         help='Path to pre-trained model of the same architecture')
 
     parser.add_argument('--encoder_name', type=str, default='resnet34',
-                        help='The convolutional encoder to fine-tune; pretrained on Imagenet')
+                        help=encoder_help)
 
-    parser.add_argument('--freeze_encoder', type=float, default=0.0,
-                        help='Freeze N% of the encoder [0 - 1]')
+    parser.add_argument('--freeze_encoder', type=float, default=0.80,
+                        help='Freeze N percent of the encoder [0 - 1]')
 
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
-                        help='The loss function to use to train the model')
+                        help=loss_help)
 
     parser.add_argument('--weighted_loss', action='store_true',
                         help='Use a weighted loss function; good for imbalanced datasets')
 
-    parser.add_argument('--metrics', nargs="+", default=[],
-                        help='The metrics used to evaluate the model (default is all applicable)')
+    parser.add_argument('--metrics', nargs="+", default=get_classifier_metrics(),
+                        help=metrics_help)
 
     parser.add_argument('--optimizer', default="Adam",
-                        help='Optimizer for training the model')
+                        help=optimizer_help)
 
     parser.add_argument('--learning_rate', type=float, default=0.0001,
                         help='Initial learning rate')
@@ -1245,8 +1384,11 @@ def main():
     parser.add_argument('--int8', action='store_true',
                         help='Enable INT8 quantization for maximum inference speed (applied to saved models)')
 
-    parser.add_argument('--num_vis_samples', type=int, default=10,
-                        help='Number of test samples to visualize during evaluation')
+    parser.add_argument('--num_vis_samples', type=int, default=16,
+                        help='Number of samples to visualize ')
+
+    parser.add_argument('--num_workers', type=int, default=1,
+                        help='Number of worker processes for data loading (auto-detect if None)')
 
     args = parser.parse_args()
 
@@ -1292,6 +1434,7 @@ def main():
         model_builder = ModelBuilder(
             encoder_name=args.encoder_name,
             num_classes=len(class_map),
+            class_names=list(class_map.keys()),
             freeze_encoder=args.freeze_encoder,
             dropout_rate=args.dropout_rate,
             pre_trained_path=args.pre_trained_path
@@ -1317,6 +1460,10 @@ def main():
             augment_data=args.augment_data,
             batch_size=args.batch_size
         )
+
+        # Visualize training samples with augmentations
+        if args.augment_data:
+            dataset_manager.visualize_samples(experiment_manager.logs_dir, args.num_vis_samples)
 
         # Compute class weights if needed
         class_weights = None
@@ -1345,7 +1492,8 @@ def main():
             num_epochs=args.num_epochs,
             logs_dir=experiment_manager.logs_dir,
             experiment_manager=experiment_manager,
-            loss_function_name=args.loss_function
+            loss_function_name=args.loss_function,
+            use_amp=args.amp
         )
 
         best_epoch = trainer.train()

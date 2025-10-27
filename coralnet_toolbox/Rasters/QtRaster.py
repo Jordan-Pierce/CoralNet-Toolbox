@@ -401,6 +401,37 @@ class Raster(QObject):
             self.mask_annotation.sync_label_map(project_labels)
         return self.mask_annotation
     
+    def get_mask_class_statistics(self, project_labels: list) -> dict:
+        """
+        Gets class statistics from the mask annotation itself, which handles caching.
+
+        Args:
+            project_labels (list): The current project labels, needed by 
+                                   get_mask_annotation if the mask needs
+                                   to be created.
+
+        Returns:
+            dict: The class statistics for the mask.
+        """
+        # Ensure mask_annotation exists
+        mask = self.get_mask_annotation(project_labels) 
+        
+        if mask:
+            # The mask now manages its own cache
+            return mask.get_class_statistics() 
+        else:
+            return {}  # Default to empty
+        
+    @property
+    def mask_statistics(self) -> dict | None:
+        """
+        Returns the cached mask statistics if they exist, without
+        triggering a recalculation.
+        """
+        if self.mask_annotation:
+            return self.mask_annotation.cached_statistics
+        return None
+            
     def add_work_area(self, work_area):
         """
         Add a work area to the raster.
@@ -459,7 +490,7 @@ class Raster(QObject):
         # Convert work area to numpy array
         work_area_data = work_area_to_numpy(self._rasterio_src, work_area) 
         
-        if as_format == 'BRG':
+        if as_format == 'BGR':
             # Convert to RGB to BGR format for OpenCV
             work_area_data = cv2.cvtColor(work_area_data, cv2.COLOR_RGB2BGR)
             

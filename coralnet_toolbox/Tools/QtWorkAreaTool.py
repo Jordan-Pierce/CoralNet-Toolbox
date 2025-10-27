@@ -31,7 +31,7 @@ class WorkAreaTool(Tool):
         self.work_areas = []  # List to store WorkArea objects for the current image
         
         # Style settings for drawing the work area rectangle - update to use blue dashed line
-        self.work_area_pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
+        self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
         
         # Track if Ctrl key is pressed
         self.ctrl_pressed = False
@@ -225,12 +225,12 @@ class WorkAreaTool(Tool):
         self.current_rect = QGraphicsRectItem(QRectF(pos.x(), pos.y(), 0, 0))
         
         # Create a dashed blue pen for the working area preview
-        pen = QPen(QColor(0, 120, 215))
+        pen = QPen(QColor(0, 168, 230))
         pen.setStyle(Qt.DashLine)
         pen.setWidth(2)
         
         self.current_rect.setPen(pen)
-        self.current_rect.setBrush(QBrush(QColor(0, 120, 215, 30)))  # Light blue transparent fill
+        self.current_rect.setBrush(QBrush(QColor(0, 168, 230, 30)))  # Light blue transparent fill
         self.annotation_window.scene.addItem(self.current_rect)
         
     def update_drawing(self, pos):
