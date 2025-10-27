@@ -113,7 +113,7 @@ class WorkArea(QObject):
         if self.graphics_item:
             self.graphics_item.update()
     
-    def revert_highlight(self):
+    def unhighlight(self):
         """Revert the working area pen back to the original color."""
         self.work_area_pen.setColor(self.original_color)
         self._update_pen_style()

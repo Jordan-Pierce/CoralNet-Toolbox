@@ -301,7 +301,6 @@ class Semantic(Base):
         progress_bar.start_progress(total)
 
         updated_results = []
-        map_results_util = MapResults()
 
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
@@ -313,12 +312,12 @@ class Semantic(Base):
                     # Highlight the work area being processed
                     work_areas[idx].highlight()
                     # Map results from work area to the full image
-                    results_obj = map_results_util.map_results_from_work_area(results[0],
-                                                                              raster,
-                                                                              work_areas[idx],
-                                                                              task=self.task)
+                    results_obj = MapResults().map_results_from_work_area(results[0],
+                                                                          raster,
+                                                                          work_areas[idx],
+                                                                          task=self.task)
                     # Revert the work area highlight
-                    work_areas[idx].revert_highlight()
+                    work_areas[idx].unhighlight()
                 else:
                     results_obj = results[0]
 

@@ -561,6 +561,6 @@ class Raster(QObject):
         # Force garbage collection
         gc.collect()
         
-    def __del__(selfcol):
+    def __del__(self):
         """Destructor to ensure resources are cleaned up."""
         self.cleanup()

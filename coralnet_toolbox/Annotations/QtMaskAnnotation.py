@@ -365,7 +365,7 @@ class MaskAnnotation(Annotation):
         )
         
         # 7. Call the existing update method with the *small merged tile*
-        #    This re-uses all your existing logic for locked pixels and
+        #    This reuses all your existing logic for locked pixels and
         #    graphics updates, but now only on a small, efficient region.
         self.update_mask_with_mask(merged_tile, paste_top_left)
         

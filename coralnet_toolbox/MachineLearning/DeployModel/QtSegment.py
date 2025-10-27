@@ -368,7 +368,7 @@ class Segment(Base):
                                                                       work_areas[idx],
                                                                       self.task == 'segment')
                     # Revert the work area highlight
-                    work_areas[idx].revert_highlight()
+                    work_areas[idx].unhighlight()
                 else:
                     results = results[0]
 

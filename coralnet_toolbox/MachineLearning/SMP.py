@@ -1204,7 +1204,7 @@ class SemanticModel:
         
         return best_weights
     
-    # --- Evalutation Methods ---
+    # --- Evaluation Methods ---
     
     def eval(self, data_yaml, split='test', num_vis_samples=10, output_dir=None,
              loss_function='JaccardLoss', metrics=None, device=None, ignore_index=None,
