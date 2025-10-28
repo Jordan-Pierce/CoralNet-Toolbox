@@ -157,9 +157,108 @@ class TrainModelWorker(QThread):
         empty_cache()
 
 
+class DebugTrainModelWorker:
+    """
+    Synchronous version of TrainModelWorker for debugging purposes.
+    Does not run in a separate thread, allowing for easier debugging.
+    """
+    def __init__(self, params, device):
+        """
+        Initialize the DebugTrainModelWorker.
+
+        Args:
+            params: A dictionary of parameters for training.
+            device: The device to use for training (e.g., 'cpu' or 'cuda').
+        """
+        self.params = params
+        self.device = device
+        self.model = None
+        
+    def pre_run(self):
+        """
+        Pre-run setup before starting the training process.
+        """
+        # Check if the imgsz is divisible by 32
+        if self.params['imgsz'] % 32 != 0:
+            raise ValueError("Image size must be divisible by 32.")
+
+    def train(self):
+        """
+        Run the training process synchronously.
+        """
+        try:
+            print("Training started...")
+
+            # Pre-run checks
+            self.pre_run()
+
+            # Initialize SemanticModel
+            self.model = SemanticModel()
+            
+            # Pop 'task' as .train() doesn't accept it
+            self.params.pop('task', None)
+            
+            # Pass device separately
+            self.params['device'] = self.device
+            
+            # Run training
+            self.model.train(**self.params)
+
+            print("Training completed.")
+
+            # Evaluate the model
+            self.evaluate_model()
+
+        except Exception as e:
+            print(f"Error during training: {e}\n\nTraceback:\n{traceback.format_exc()}")
+        
+        finally:
+            self._cleanup()
+        
+    def evaluate_model(self):
+        """
+        Evaluate the model after training.
+        """
+        try:
+            # Check that there is a test folder
+            test_folder = f"{self.params['data']}/test"
+            print(f"Note: Looking for test folder: {test_folder}")
+            if not os.path.exists(test_folder):
+                print("Warning: No test folder found in that location. Skipping evaluation.")
+                return
+            
+            # Create an instance of EvaluateModelWorker and run it synchronously
+            eval_params = {
+                'data': self.params['data'],
+                'imgsz': self.params['imgsz'],
+                'split': 'test',  # Evaluate on the test set only
+                'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
+            }
+
+            # Create and run the worker synchronously
+            eval_worker = EvaluateModelWorker(model=self.model,
+                                              params=eval_params)
+            eval_worker.run()  # Run synchronously
+            
+            print("Evaluation completed.")
+            
+        except Exception as e:
+            print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
+
+    def _cleanup(self):
+        """
+        Clean up resources after training.
+        """
+        if self.model:
+            del self.model
+        gc.collect()
+        empty_cache()
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Main UI Class
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class Semantic(QDialog):  # Does not inherit from Base due to major differences
     def __init__(self, main_window, parent=None):
@@ -262,35 +361,47 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
     def setup_model_layout(self):
         group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
-        tab_widget = QTabWidget()
+        self.tab_widget = QTabWidget()
 
         # Tab 1: Select encoder and decoder from dropdowns
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
         
-        # Encoder selection
+        # Encoder selection - Add empty option at start
         self.encoder_combo = QComboBox()
-        encoders = get_segmentation_encoders()
+        encoders = [""] + get_segmentation_encoders()  # Add empty option
         self.encoder_combo.addItems(encoders)
-        if 'mit_b0' in encoders:
-            self.encoder_combo.setCurrentText('mit_b0')
-        elif encoders:
-            self.encoder_combo.setCurrentIndex(0)
+        self.encoder_combo.setCurrentIndex(0)  # Start with empty selection
         model_select_layout.addRow("Encoder:", self.encoder_combo)
         
-        # Decoder selection
+        # Decoder selection - Add empty option at start
         self.decoder_combo = QComboBox()
-        decoders = get_segmentation_decoders()
+        decoders = [""] + get_segmentation_decoders()  # Add empty option
         self.decoder_combo.addItems(decoders)
-        if 'Segformer' in decoders:
-            self.decoder_combo.setCurrentText('Segformer')
-        elif decoders:
-            self.decoder_combo.setCurrentIndex(0)
+        self.decoder_combo.setCurrentIndex(0)  # Start with empty selection
         model_select_layout.addRow("Decoder:", self.decoder_combo)
         
-        tab_widget.addTab(model_select_tab, "Select Encoder and Decoder")
+        self.tab_widget.addTab(model_select_tab, "Select Encoder and Decoder")
 
-        # Tab 2: Use existing model (pre_trained_path)
+        # Tab 2: HuggingFace Checkpoints
+        model_hf_tab = QWidget()
+        model_hf_layout = QFormLayout(model_hf_tab)
+        
+        self.hf_combo = QComboBox()
+        self.hf_combo.setEditable(True)  # Make it editable
+        self.hf_combo.addItems([
+            "",  # Add an empty option at the start
+            "EPFL-ECEO/segformer-b2-finetuned-coralscapes-1024-1024",
+            "EPFL-ECEO/segformer-b5-finetuned-coralscapes-1024-1024"
+        ])
+        # Set policy to NoInsert to prevent adding duplicates when editing
+        self.hf_combo.setInsertPolicy(QComboBox.NoInsert) 
+        self.hf_combo.setCurrentIndex(0)  # Default to empty
+        model_hf_layout.addRow("HF Checkpoint:", self.hf_combo)
+        
+        self.tab_widget.addTab(model_hf_tab, "HuggingFace Checkpoints")
+
+        # Tab 3: Use existing model (pre_trained_path)
         model_existing_tab = QWidget()
         model_existing_layout = QFormLayout(model_existing_tab)
         self.model_edit = QLineEdit()
@@ -300,36 +411,16 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         model_existing_layout.addRow("Existing Model:", model_layout)
-        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+        self.tab_widget.addTab(model_existing_tab, "Use Existing Model")
+        
+        # Enable all tabs
+        self.tab_widget.setTabEnabled(0, True)
+        self.tab_widget.setTabEnabled(1, True)
+        self.tab_widget.setTabEnabled(2, True)
 
-        # Disable the pre-trained model tab
-        tab_widget.setTabEnabled(1, False)
-
-        layout.addWidget(tab_widget)
+        layout.addWidget(self.tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-
-        # Connect signals to provide user feedback
-        self.model_edit.textChanged.connect(self.on_model_path_changed)
-        self.encoder_combo.currentTextChanged.connect(self.on_encoder_decoder_changed)
-        self.decoder_combo.currentTextChanged.connect(self.on_encoder_decoder_changed)
-        
-    def on_model_path_changed(self, text):
-        """Provide feedback when model path changes."""
-        if text.strip():
-            # Disable encoder/decoder selection when model path is set
-            self.encoder_combo.setEnabled(False)
-            self.decoder_combo.setEnabled(False)
-        else:
-            # Re-enable encoder/decoder selection
-            self.encoder_combo.setEnabled(True)
-            self.decoder_combo.setEnabled(True)
-
-    def on_encoder_decoder_changed(self):
-        """Provide feedback when encoder/decoder selection changes."""
-        if self.encoder_combo.currentText() and self.decoder_combo.currentText():
-            # Could optionally disable model path input here
-            pass
 
     def setup_parameters_layout(self):
         """Set up the layout and widgets for the generic layout."""
@@ -768,35 +859,104 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                                  f"Failed to export parameters: {str(e)}")
 
     def accept(self):
-        """Handle the OK button click event with validation."""
-        # Validate model selection
-        pre_trained_path = self.model_edit.text().strip()
-        encoder_selected = bool(self.encoder_combo.currentText())
-        decoder_selected = bool(self.decoder_combo.currentText())
+        """Handle the OK button click event with validation and conflict resolution."""
+        # Collect all model selection options
+        model_options = []
         
-        if pre_trained_path and (encoder_selected or decoder_selected):
-            reply = QMessageBox.question(
-                self, 
-                "Model Selection", 
-                "You have selected both a pre-trained model and encoder/decoder. "
-                "The pre-trained model will be used. Continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if reply == QMessageBox.No:
-                return
-        
-        if not pre_trained_path and not (encoder_selected and decoder_selected):
+        # Check encoder/decoder selection
+        encoder_text = self.encoder_combo.currentText().strip()
+        decoder_text = self.decoder_combo.currentText().strip()
+        if encoder_text and decoder_text:
+            model_options.append(("Encoder/Decoder", f"{decoder_text} with {encoder_text}"))
+        elif encoder_text or decoder_text:
+            # Incomplete encoder/decoder selection
             QMessageBox.warning(
                 self, 
                 "Model Selection", 
-                "Please either select a pre-trained model OR choose both encoder and decoder."
+                "Please select *both* an encoder and a decoder, or clear both selections."
             )
             return
         
-        self.train_model()
-        super().accept()
+        # Check HuggingFace checkpoint
+        hf_checkpoint = self.hf_combo.currentText().strip()
+        if hf_checkpoint:
+            model_options.append(("HuggingFace Checkpoint", hf_checkpoint))
+        
+        # Check existing model path
+        pre_trained_path = self.model_edit.text().strip()
+        if pre_trained_path:
+            model_options.append(("Existing Model", pre_trained_path))
+        
+        # Handle different scenarios
+        if len(model_options) == 0:
+            QMessageBox.warning(
+                self, 
+                "Model Selection", 
+                "Please select a model source from one of the tabs."
+            )
+            return
+        elif len(model_options) == 1:
+            # Only one option selected, proceed directly
+            self.selected_model_option = model_options[0]
+            self.train_model()
+            super().accept()
+        else:
+            # Multiple options selected, show confirmation dialog
+            self.show_model_selection_dialog(model_options)
 
+    def show_model_selection_dialog(self, model_options):
+        """Show a dialog to let the user choose between multiple model options."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QButtonGroup, QPushButton, QHBoxLayout
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Multiple Model Options Detected")
+        dialog.setModal(True)
+        dialog.resize(500, 300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Add explanation
+        explanation = QLabel(
+            "You have selected multiple model options. Please choose which one you want to use for training:"
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        
+        # Create radio buttons for each option
+        self.model_button_group = QButtonGroup(dialog)
+        for i, (option_type, option_description) in enumerate(model_options):
+            radio_button = QRadioButton(f"{option_type}: {option_description}")
+            radio_button.setWordWrap(True)
+            self.model_button_group.addButton(radio_button, i)
+            layout.addWidget(radio_button)
+            if i == 0:  # Select first option by default
+                radio_button.setChecked(True)
+        
+        # Add buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        
+        ok_button.clicked.connect(lambda: self.on_model_selection_confirmed(dialog, model_options))
+        cancel_button.clicked.connect(dialog.reject)
+        
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+
+    def on_model_selection_confirmed(self, dialog, model_options):
+        """Handle the confirmed model selection."""
+        selected_id = self.model_button_group.checkedId()
+        if selected_id >= 0:
+            self.selected_model_option = model_options[selected_id]
+            dialog.accept()
+            self.train_model()
+            super().accept()
+        else:
+            QMessageBox.warning(dialog, "Selection Required", "Please select an option.")
+            
     def get_parameters(self):
         """Get parameters, customized for SemanticModel."""
         # Extract values from dialog widgets
@@ -823,18 +983,35 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'class_mapping': self.class_mapping_path,  # provide path to class mapping file
         }
         
-        # Handle model selection logic
-        pre_trained_path = self.model_edit.text().strip()
-        
-        if pre_trained_path:
-            # Use existing model - don't pass encoder/decoder names
-            params['pre_trained_path'] = pre_trained_path
-            print(f"Using pre-trained model: {pre_trained_path}")
+        # Handle model selection based on confirmed choice
+        if hasattr(self, 'selected_model_option'):
+            option_type, option_description = self.selected_model_option
+            
+            if option_type == "HuggingFace Checkpoint":
+                params['hf_checkpoint'] = self.hf_combo.currentText().strip()
+                print(f"Using Hugging Face checkpoint: {params['hf_checkpoint']}")
+            elif option_type == "Existing Model":
+                params['pre_trained_path'] = self.model_edit.text().strip()
+                print(f"Using pre-trained model: {params['pre_trained_path']}")
+            elif option_type == "Encoder/Decoder":
+                params['encoder_name'] = self.encoder_combo.currentText().strip()
+                params['decoder_name'] = self.decoder_combo.currentText().strip()
+                print(f"Building new model: {params['decoder_name']}-{params['encoder_name']}")
         else:
-            # Use encoder/decoder selection - don't pass pre_trained_path
-            params['encoder_name'] = self.encoder_combo.currentText()
-            params['decoder_name'] = self.decoder_combo.currentText()
-            print(f"Building new model: {params['decoder_name']}-{params['encoder_name']}")
+            # Fallback to single option logic (shouldn't happen with new flow)
+            pre_trained_path = self.model_edit.text().strip()
+            hf_checkpoint = self.hf_combo.currentText().strip()
+            
+            if hf_checkpoint:
+                params['hf_checkpoint'] = hf_checkpoint
+                print(f"Using Hugging Face checkpoint: {hf_checkpoint}")
+            elif pre_trained_path:
+                params['pre_trained_path'] = pre_trained_path
+                print(f"Using pre-trained model: {pre_trained_path}")
+            else:
+                params['encoder_name'] = self.encoder_combo.currentText().strip()
+                params['decoder_name'] = self.decoder_combo.currentText().strip()
+                print(f"Building new model: {params['decoder_name']}-{params['encoder_name']}")
         
         # Default project folder
         project = 'Data/Training'
@@ -867,7 +1044,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                         params[name] = value
                 else:  # string type
                     params[name] = value
-                        
+                    
         return params
 
     def train_model(self):
@@ -881,6 +1058,17 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
         self.worker.start()
+        
+        # # Create the debug training worker
+        # self.worker = DebugTrainModelWorker(self.params, self.main_window.device)
+        
+        # # Call handlers directly since it's synchronous
+        # self.on_training_started()
+        # try:
+        #     self.worker.train()
+        #     self.on_training_completed()
+        # except Exception as e:
+        #     self.on_training_error(str(e))
 
     def on_training_started(self):
         """Handle the event when training starts."""

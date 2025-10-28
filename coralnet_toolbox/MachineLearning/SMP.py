@@ -696,6 +696,12 @@ class TrainEpoch(Epoch):
         
         # Standard training without AMP
         prediction = self.model.forward(x)
+        
+        # Squeeze the channel dimension from the mask if it exists
+        # y shape should be [B, H, W] for multiclass loss, not [B, 1, H, W]
+        if y.ndim == 4 and y.shape[1] == 1:
+            y = y.squeeze(1)
+            
         loss = self.loss(prediction, y)
         loss.backward()
         self.optimizer.step()
@@ -722,6 +728,11 @@ class ValidEpoch(Epoch):
         """Perform validation batch update with loss computation."""
         with torch.no_grad():
             prediction = self.model.forward(x)
+            
+            # Squeeze the channel dimension from the mask if it exists
+            if y.ndim == 4 and y.shape[1] == 1:
+                y = y.squeeze(1)
+                
             loss = self.loss(prediction, y)
         return loss, prediction
 
@@ -1137,15 +1148,68 @@ class SemanticModel:
         if self.model is None:
             print("🔧 Building new model...")
             
+            hf_checkpoint = kwargs.get('hf_checkpoint')
+            
             try:
-                if pre_trained_path:
+                if hf_checkpoint:
+                    print(f"🧬 Loading model from Hugging Face for fine-tuning: {hf_checkpoint}")
+                    # Load the pre-trained model from HF
+                    self.model = smp.from_pretrained(hf_checkpoint).to(self.device)
+                    
+                    # Get the encoder's name for preprocessing
+                    encoder_name = self.model.config['encoder_name']
+                    decoder_name = self.model.config['_model_class']
+                    upsampling = self.model.config['upsampling']
+                    
+                    # --- Replace the segmentation head ---
+                    # Get the number of input channels for the head from the decoder
+                    in_channels = self.model.config['decoder_segmentation_channels']
+                    
+                    # Create a *new* segmentation head with the correct number of classes
+                    # from your data.yaml (self.num_classes)
+                    new_head = smp.base.SegmentationHead(
+                        in_channels=in_channels,
+                        out_channels=self.num_classes,  # From data.yaml
+                        activation='softmax2d',  # Matches script's default
+                        kernel_size=1,
+                        upsampling=upsampling,
+                    ).to(self.device)
+                    
+                    # Replace the old head
+                    self.model.segmentation_head = new_head
+                    print(f"   • Replaced segmentation head with new head for {self.num_classes} classes.")
+                    
+                    # Get the preprocessing function
+                    try:
+                        self.preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, 'imagenet')
+                    except Exception as e:
+                        print(f"Warning: could not get preprocessing_fn for {encoder_name}. Defaulting to no-op. {e}")
+                        self.preprocessing_fn = lambda x: x
+                    
+                    self.name = self.model.name  # Stash the name
+                    print(f"   • Model name: {self.name}")
+                    print(f"   • Encoder: {encoder_name}")
+                    
+                    # --- APPLY FREEZING (logic from _build_model) ---
+                    num_params = len(list(self.model.encoder.parameters()))
+                    freeze_params = int(num_params * freeze)
+                    print(f"🧊 Freezing {freeze * 100}% of encoder weights ({freeze_params}/{num_params})")
+                    for idx, param in enumerate(self.model.encoder.parameters()):
+                        if idx < freeze_params:
+                            param.requires_grad = False
+                    
+                    self.model.to(self.device)
+
+                elif pre_trained_path:
                     # Load existing model completely
                     self.load(pre_trained_path)
                     print(f"Loaded pre-trained model from: {pre_trained_path}")
+                
                 else:
                     # Build new model from encoder/decoder
                     if not encoder_name or not decoder_name:
-                        raise ValueError("Must provide either pre_trained_path OR both encoder_name and decoder_name")
+                        raise ValueError("Must provide either hf_checkpoint, "
+                                         "pre_trained_path, OR both encoder_name and decoder_name")
                     
                     self._build_model(
                         encoder_name=encoder_name,
@@ -2625,6 +2689,10 @@ def main():
     parser.add_argument('--pre_trained_path', type=str, default=None,
                         help='Path to pre-trained model of the same architecture')
 
+    parser.add_argument('--hf_checkpoint', type=str, default=None,
+                        help='Hugging Face (smp-hub) checkpoint ID for fine-tuning, '
+                             'e.g., "EPFL-ECEO/segformer-b5-finetuned-coralscapes-1024-1024"')
+
     parser.add_argument('--encoder_name', type=str, default='mit_b0',
                         help=encoder_help)
 
@@ -2734,6 +2802,7 @@ def main():
             encoder_name=args.encoder_name,
             decoder_name=args.decoder_name,
             pre_trained_path=args.pre_trained_path,
+            hf_checkpoint=args.hf_checkpoint,
             freeze=args.freeze,
             ignore_index=ignore_index,
             metrics=args.metrics,
