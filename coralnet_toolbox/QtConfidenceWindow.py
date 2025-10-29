@@ -491,5 +491,7 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setStyleSheet("")
         # Clear the dimensions label
         self.dimensions_label.setText("")
+        # Clear the tooltip
+        self.graphics_view.setToolTip("")
         # Set the toggle button to user mode
         self.set_user_icon(False)
