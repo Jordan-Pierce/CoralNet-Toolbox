@@ -145,3 +145,11 @@ pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main -U
 
 # replace @main with a different branch if you want to test out experimental code
 ```
+
+## Docker
+
+```bash
+docker build -t coralnet-vnc .
+
+docker run -d -p 6901:6901 -p 5901:5901 --name coralnet-app coralnet-vnc
+```
