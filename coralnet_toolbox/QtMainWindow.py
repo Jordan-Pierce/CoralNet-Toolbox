@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
-                             QGroupBox)
+                             QGroupBox, QSpacerItem)
 
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 
@@ -2105,6 +2105,10 @@ class MainWindow(QMainWindow):
             self.label_layout.removeWidget(self.label_window)
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
             self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            
+            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
+            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
+            self.label_layout.insertItem(0, self.explorer_spacer)
                 
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
@@ -2133,9 +2137,15 @@ class MainWindow(QMainWindow):
     def explorer_closed(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
+            # Remove the spacer that was added when explorer opened
+            if hasattr(self, 'explorer_spacer'):
+                self.label_layout.removeItem(self.explorer_spacer)
+                del self.explorer_spacer
+            
             # Move the label_window back to the main window's layout
             self.label_window.setParent(self.central_widget)  # Re-parent back
-            self.label_layout.addWidget(self.label_window, 15)  # Add it back to the layout
+            # Insert at index 0 to maintain original order: label_window first, timer_group second
+            self.label_layout.insertWidget(0, self.label_window)
             self.label_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
