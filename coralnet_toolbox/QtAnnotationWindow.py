@@ -539,12 +539,21 @@ class AnnotationWindow(QGraphicsView):
         # Clean up
         self.unselect_annotations()
 
+        if self.current_image_path:
+            # Release vector annotations
+            current_annotations = self.get_image_annotations(self.current_image_path)
+            for annotation in current_annotations:
+                # Tell annotation to release its graphics and cached QImage
+                annotation.release_graphics_and_cache()
+            
+            # Release mask annotation's graphics
+            raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+            if raster:
+                raster.release_mask_graphics()
+        
         # Clear the previous scene and delete its items
         if self.scene:
-            for item in self.scene.items():
-                if item.scene() == self.scene:
-                    self.scene.removeItem(item)
-                    del item
+            self.scene.clear()  # This is now safe as all items are released
             self.scene.deleteLater()
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
@@ -1021,8 +1030,10 @@ class AnnotationWindow(QGraphicsView):
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
-        # Then crop annotations (if image_path and annotations are provided, they are used)
-        annotations = self.crop_annotations(image_path, annotations)
+        if annotations is None:
+            if not image_path:
+                image_path = self.current_image_path
+            annotations = self.get_image_annotations(image_path)
 
         if not len(annotations):
             return

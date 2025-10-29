@@ -194,6 +194,28 @@ class Annotation(QObject):
         self.graphics_item = None
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
+        
+    def release_graphics_and_cache(self):
+        """Removes graphics items and cached QImages to free GDI resources."""
+        self.deanimate()  # Stop animation timer
+        
+        # Remove the top-level group from the scene
+        if self.graphics_item_group and self.graphics_item_group.scene():
+            self.graphics_item_group.scene().removeItem(self.graphics_item_group)
+        
+        # Clear references to all graphics items
+        self.graphics_item_group = None
+        self.center_graphics_item = None
+        self.bounding_box_graphics_item = None
+        
+        # Delete the cached QImage which holds a GDI handle
+        if self.cropped_image:
+            del self.cropped_image
+            self.cropped_image = None
+        
+        if self._cached_cropped_image_graphic:
+            del self._cached_cropped_image_graphic
+            self._cached_cropped_image_graphic = None
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the annotation and add them to the scene as a group."""

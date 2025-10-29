@@ -532,6 +532,20 @@ class Raster(QObject):
         """Clear all work areas."""
         self.work_areas.clear()
         
+    def release_mask_graphics(self):
+        """
+        Explicitly removes the mask's graphics item from any scene
+        and clears the reference to it, preventing C++ object deletion errors.
+        """
+        if self.mask_annotation and self.mask_annotation.graphics_item:
+            if self.mask_annotation.graphics_item.scene():
+                # Safely remove from the scene
+                self.mask_annotation.graphics_item.scene().removeItem(self.mask_annotation.graphics_item)
+            
+            # Set the graphics_item to None so create_graphics_item will
+            # know to recreate it next time.
+            self.mask_annotation.graphics_item = None
+        
     def delete_mask_annotation(self):
         """Removes the mask annotation and its graphics item, then resets the attribute."""
         if self.mask_annotation:
