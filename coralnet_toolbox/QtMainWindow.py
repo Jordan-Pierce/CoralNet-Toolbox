@@ -1169,6 +1169,11 @@ class MainWindow(QMainWindow):
         # Close the system monitor if it exists
         if self.system_monitor:
             self.system_monitor.close()
+        
+        # Stop timer threads properly
+        if hasattr(self, 'timer_group') and self.timer_group:
+            if hasattr(self.timer_group, 'timer_widget') and self.timer_group.timer_widget:
+                self.timer_group.timer_widget.stop_threads()
             
         super().closeEvent(event)
 
@@ -1948,10 +1953,15 @@ class MainWindow(QMainWindow):
                                      QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            # Close current instance and create a new window instance
-            self.close()
+            
+            app = QApplication.instance()
+            app.setQuitOnLastWindowClosed(False)
+            
+            self.close()  # This cleans up the current window
             new_window = MainWindow(self.version)
             new_window.show()
+
+            app.setQuitOnLastWindowClosed(True)
 
     def open_open_project_dialog(self):
         """Open the Open Project dialog to select a project directory"""
