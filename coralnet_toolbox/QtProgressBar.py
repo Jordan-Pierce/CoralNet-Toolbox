@@ -1,5 +1,6 @@
 import warnings
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
 from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication
 
@@ -32,6 +33,9 @@ class ProgressBar(QDialog):
         self.setWindowTitle(title)
         self.setModal(True)
         self.resize(350, 100)
+        
+        # This tells Qt to delete the widget when it receives a close event.
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
 
         # Create progress bar widget
         self.progress_bar = QProgressBar(self)

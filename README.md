@@ -2,8 +2,7 @@
 
 <div align="center">
 <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/coralnet_toolbox.png" alt="CoralNet-Toolbox" width="300">
-<p><strong>AI-Powered Annotation for Coral Reef Analysis</strong></p>
-<p>An unofficial toolkit to supercharge your <a href="https://coralnet.ucsd.edu/">CoralNet</a> workflows.</p>
+<p><strong>AI-Powered Annotation for Coral Reef Analysis</strong>. An unofficial toolkit to supercharge your <a href="https://coralnet.ucsd.edu/">CoralNet</a> workflows.</p>
 </div>
 
 <div align="center">
@@ -22,9 +21,10 @@
 
 ## ⚡ Get Started
 
-**1. Create Environment (Recommended)**
+**1. Create Conda Environment (Recommended)**
 
 ```bash
+# Create and activate custom environment
 conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
 ```
@@ -35,9 +35,6 @@ conda activate coralnet10
 # Use UV for the fastest installation
 pip install uv
 uv pip install coralnet-toolbox
-
-# Or use standard pip
-pip install coralnet-toolbox
 ```
 
 **3. Launch**
@@ -50,7 +47,7 @@ coralnet-toolbox
 For full acceleration, install PyTorch with CUDA support.
 
 ```bash
-# Example for CUDA 12.9
+# Example for CUDA 12.9; use your version of CUDA
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 ```
 

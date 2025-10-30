@@ -282,8 +282,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.decoder_combo = QComboBox()
         decoders = get_segmentation_decoders()
         self.decoder_combo.addItems(decoders)
-        if 'Unet' in decoders:
-            self.decoder_combo.setCurrentText('Unet')
+        if 'Segformer' in decoders:
+            self.decoder_combo.setCurrentText('Segformer')
         elif decoders:
             self.decoder_combo.setCurrentIndex(0)
         model_select_layout.addRow("Decoder:", self.decoder_combo)
@@ -424,9 +424,17 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         # Loss function
         self.loss_combo = QComboBox()
         self.loss_combo.addItems(get_segmentation_losses())
-        self.loss_combo.setCurrentText("JaccardLoss")  # Default for SMP
+        self.loss_combo.setCurrentText("DiceLoss")  # Default for SMP
         form_layout.addRow("Loss Function:", self.loss_combo)
 
+        # Ignore Index
+        self.ignore_index_spinbox = QSpinBox()
+        self.ignore_index_spinbox.setMinimum(-1)  # -1 means no ignore_index
+        self.ignore_index_spinbox.setMaximum(255)  # Common max for class indices
+        self.ignore_index_spinbox.setValue(-1)  # Default: no ignore_index
+        self.ignore_index_spinbox.setSpecialValueText("None")  # Display "None" for -1
+        form_layout.addRow("Ignore Index:", self.ignore_index_spinbox)
+        
         # Workers
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(1)
@@ -650,7 +658,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                 'augment_data': self.augmentation_combo,
                 'val': self.val_combo,
                 'optimizer': self.optimizer_combo,
-                'loss_function': self.loss_combo
+                'loss_function': self.loss_combo,
+                'ignore_index': self.ignore_index_spinbox
             }
 
             # Update UI controls with imported values
@@ -661,7 +670,13 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                     widget = param_mapping[param_name]
                     
                     if isinstance(widget, QSpinBox):
-                        if isinstance(converted_value, (int, float)):
+                        if param_name == 'ignore_index':
+                            # Special handling for ignore_index: None maps to -1
+                            if converted_value is None:
+                                widget.setValue(-1)
+                            elif isinstance(converted_value, (int, float)):
+                                widget.setValue(int(converted_value))
+                        elif isinstance(converted_value, (int, float)):
                             widget.setValue(int(converted_value))
                     elif isinstance(widget, QDoubleSpinBox):
                         if isinstance(converted_value, (int, float)):
@@ -671,6 +686,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                             widget.setCurrentText("True" if converted_value else "False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
+                    elif isinstance(widget, QLineEdit):
+                        widget.setText(str(converted_value))
             else:
                 # Add as a custom parameter
                 self.add_parameter_pair()
@@ -719,6 +736,8 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             export_data['val'] = self.val_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
             export_data['loss_function'] = self.loss_combo.currentText()
+            ignore_val = self.ignore_index_spinbox.value()
+            export_data['ignore_index'] = ignore_val if ignore_val >= 0 else None
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -807,10 +826,11 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'dropout': self.dropout_spinbox.value(),
             'lr': self.lr_spinbox.value(),
             'loss_function': self.loss_combo.currentText(),
+            'ignore_index': self.ignore_index_spinbox.value() if self.ignore_index_spinbox.value() >= 0 else None,
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'num_vis_samples': 5,
-            'class_mapping': self.class_mapping_path  # provide path to class mapping file
+            'class_mapping': self.class_mapping_path,  # provide path to class mapping file
         }
         
         # Handle model selection logic

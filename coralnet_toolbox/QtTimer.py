@@ -218,22 +218,23 @@ class TimerGroupBox(QGroupBox):
     @classmethod
     def from_dict(cls, data):
         """Deserialize the timer group box data from a dictionary."""
+        # Create a new instance normally to ensure proper Qt initialization
         instance = cls()
-        # Stop the old threads first
-        if hasattr(instance, 'timer_widget'):
+        
+        # Stop and replace the timer widget with the deserialized one
+        if hasattr(instance.timer_widget, 'stop_threads'):
             instance.timer_widget.stop_threads()
         
-        # Create new timer widget with deserialized data
-        instance.timer_widget = TimerWidget.from_dict(data)
-        
-        # Update the layout with the new timer widget
+        # Remove the old timer widget from layout
         layout = instance.layout()
-        if layout:
-            # Remove the old timer widget
-            old_widget = layout.itemAt(0).widget() if layout.count() > 0 else None
+        if layout and layout.count() > 0:
+            old_widget = layout.itemAt(0).widget()
             if old_widget:
                 layout.removeWidget(old_widget)
                 old_widget.setParent(None)
-            # Add the new timer widget
-            layout.addWidget(instance.timer_widget)
+        
+        # Create new timer widget with deserialized data
+        instance.timer_widget = TimerWidget.from_dict(data)
+        layout.addWidget(instance.timer_widget)
+        
         return instance

@@ -349,6 +349,8 @@ class LabelWindow(QWidget):
         # Add default label (unselected)
         self.add_review_label()
 
+        self.label_lock_button.setEnabled(False)
+
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
 
@@ -736,6 +738,8 @@ class LabelWindow(QWidget):
             self.delete_label_button.setEnabled(self.active_label is not None)
             self.edit_label_button.setEnabled(self.active_label is not None)
 
+        self.label_lock_button.setEnabled(self.active_label is not None)
+
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
     def sync_all_masks_with_labels(self):
@@ -771,6 +775,7 @@ class LabelWindow(QWidget):
             self.active_label = None
             # Emit signal to clear the selected label in annotation window
             self.labelSelected.emit(None)
+            self.label_lock_button.setEnabled(False)
 
     def delete_active_label(self):
         """Delete the currently active label."""
@@ -1084,6 +1089,8 @@ class LabelWindow(QWidget):
             self.active_label = None
             if self.labels:
                 self.set_active_label(self.labels[0])
+            else:
+                self.label_lock_button.setEnabled(False)
 
         # Update the LabelWindow
         self.update_labels_per_row()
@@ -1129,6 +1136,11 @@ class LabelWindow(QWidget):
         # Check if select tool is active, if not, revert the button state and return
         if self.main_window.annotation_window.selected_tool != "select":
             self.label_lock_button.setChecked(False)  # Revert the toggle
+            return
+
+        # Prevent locking if no label is selected
+        if checked and self.active_label is None:
+            self.label_lock_button.setChecked(False)
             return
 
         if checked:

@@ -125,35 +125,40 @@ def get_segmentation_optimizers():
     return optimizer_options
 
 
-def parse_ignore_index(ignore_index_str):
+def parse_ignore_index(ignore_index_input):
     """
-    Parse ignore_index parameter from string format.
+    Parse ignore_index parameter from various input formats.
     
     Args:
-        ignore_index_str (str or None): String containing indices to ignore, 
-                                       e.g., "1,2,3" or "1 2 3" or None
+        ignore_index_input (str, int, or None): Index to ignore, can be string, int, or None
     
     Returns:
-        list or None: List of integers to ignore, or None if no indices to ignore
+        int or None: Single integer to ignore, or None if no index to ignore
     """
-    if ignore_index_str is None or ignore_index_str.strip() == "":
+    if ignore_index_input is None:
         return None
     
-    try:
-        # Handle both comma-separated and space-separated formats
-        if ',' in ignore_index_str:
-            indices = [int(x.strip()) for x in ignore_index_str.split(',') if x.strip()]
-        else:
-            indices = [int(x.strip()) for x in ignore_index_str.split() if x.strip()]
-        
-        # Remove duplicates and sort
-        indices = sorted(list(set(indices)))
-        
-        return indices if indices else None
+    # If already an integer, return it directly
+    if isinstance(ignore_index_input, int):
+        return ignore_index_input if ignore_index_input >= 0 else None
     
-    except (ValueError, AttributeError) as e:
-        print(f"⚠️ Warning: Failed to parse ignore_index '{ignore_index_str}': {e}")
-        return None
+    # If it's a string, try to parse it
+    if isinstance(ignore_index_input, str):
+        ignore_index_str = ignore_index_input.strip()
+        if ignore_index_str == "":
+            return None
+            
+        try:
+            # Convert to integer
+            ignore_index = int(ignore_index_str)
+            return ignore_index if ignore_index >= 0 else None
+        except ValueError as e:
+            print(f"⚠️ Warning: Failed to parse ignore_index '{ignore_index_str}': {e}")
+            return None
+    
+    # For any other type, return None
+    print(f"⚠️ Warning: Unsupported ignore_index type: {type(ignore_index_input)}")
+    return None
 
 
 def format_logs_pretty(logs, title="Results"):
@@ -572,7 +577,17 @@ class Epoch:
 
         logs = {}
         loss_meter = AverageValueMeter()
-        metrics_meters = {metric.__name__: AverageValueMeter() for metric in self.metrics}
+
+        # Get ignore_index from loss function
+        # smp.metrics.functional._get_stats_multiclass supports a single int or None
+        ignore_index = getattr(self.loss, 'ignore_index', None)
+
+        # Initialize tensors for epoch-wide statistics
+        epoch_tp = None
+        epoch_fp = None
+        epoch_fn = None
+        epoch_tn = None
+        num_classes = None
 
         with tqdm(
                 dataloader,
@@ -590,26 +605,73 @@ class Epoch:
                 loss_logs = {self.loss.__name__: loss_meter.mean}
                 logs.update(loss_logs)
 
-                # Convert y_pred
-                num_classes = y_pred.shape[1]
-                y_pred = torch.argmax(y_pred, axis=1)
+                # --- Stat calculation and aggregation ---
+                
+                # Get num_classes from the first batch output
+                if num_classes is None:
+                    num_classes = y_pred.shape[1]
+                    # Initialize epoch stats tensors on the correct device
+                    epoch_tp = torch.zeros(num_classes, dtype=torch.long, device=self.device)
+                    epoch_fp = torch.zeros(num_classes, dtype=torch.long, device=self.device)
+                    epoch_fn = torch.zeros(num_classes, dtype=torch.long, device=self.device)
+                    epoch_tn = torch.zeros(num_classes, dtype=torch.long, device=self.device)
 
-                # Calculate the stats
-                tp, fp, fn, tn = smp.metrics.functional._get_stats_multiclass(output=y_pred,
-                                                                              target=y,
-                                                                              num_classes=num_classes,
-                                                                              ignore_index=0)
+                # Convert y_pred logits/probs to class indices
+                y_pred_classes = torch.argmax(y_pred, axis=1)
 
-                # update metrics logs
-                for metric_fn in self.metrics:
-                    metric_values = smp.metrics.functional._compute_metric(metric_fn, tp, fp, fn, tn)
-                    metrics_meters[metric_fn.__name__].add(torch.mean(metric_values))
-                metrics_logs = {k: v.mean.item() for k, v in metrics_meters.items()}
-                logs.update(metrics_logs)
+                # Calculate the stats for this batch
+                tp, fp, fn, tn = smp.metrics.functional._get_stats_multiclass(
+                    output=y_pred_classes,
+                    target=y,
+                    num_classes=num_classes,
+                    ignore_index=ignore_index  # <-- Use derived ignore_index
+                )
+                
+                # If stats are (B, C), sum over batch dim (0) to get (C,)
+                if tp.ndim > 1:
+                    tp = torch.sum(tp, dim=0)
+                    fp = torch.sum(fp, dim=0)
+                    fn = torch.sum(fn, dim=0)
+                    tn = torch.sum(tn, dim=0)
+                    
+                tp = tp.to(self.device)
+                fp = fp.to(self.device)
+                fn = fn.to(self.device)
+                tn = tn.to(self.device)
 
+                # Sum stats for the epoch
+                epoch_tp += tp
+                epoch_fp += fp
+                epoch_fn += fn
+                epoch_tn += tn
+        
                 if self.verbose:
+                    # Only log the running loss, as metrics are calculated at the end
                     s = self._format_logs(logs)
                     iterator.set_postfix_str(s)
+
+        # --- Compute metrics *after* the epoch loop ---
+        metrics_logs = {}
+        
+        # Ensure stats were initialized (i.e., dataloader wasn't empty)
+        if num_classes is not None:
+            for metric_fn in self.metrics:
+                # Compute the metric from the *total* epoch stats
+                metric_values_per_class = smp.metrics.functional._compute_metric(
+                    metric_fn, epoch_tp, epoch_fp, epoch_fn, epoch_tn
+                )
+                
+                # Average the metric across classes, ignoring NaNs
+                # (e.g., if a class was ignored or had 0/0)
+                final_metric_value = torch.nanmean(metric_values_per_class)
+                
+                # Handle case where all values were NaN
+                if torch.isnan(final_metric_value):
+                    final_metric_value = 0.0
+                
+                metrics_logs[metric_fn.__name__] = final_metric_value.item()
+
+        logs.update(metrics_logs)
 
         return logs
 
@@ -1106,6 +1168,9 @@ class SemanticModel:
         self.model.class_colors = self.class_colors
         self.model.num_classes = self.num_classes
         self.model.class_mapping = self.class_mapping
+        
+        # Parse ignore_index
+        parsed_ignore_index = parse_ignore_index(ignore_index)
 
         # 3. Setup Training Config
         training_config = TrainingConfig(
@@ -1115,7 +1180,7 @@ class SemanticModel:
             lr=kwargs.get('lr'),
             class_ids=self.data_config.class_ids,
             device=self.device,
-            ignore_index=ignore_index
+            ignore_index=parsed_ignore_index
         )
 
         # 4. Setup Experiment Manager
@@ -1762,21 +1827,10 @@ class TrainingConfig:
         # Set ignore_index if supported and provided by user
         ignore_msg = "no indices ignored"
         if 'ignore_index' in params and self.ignore_index is not None:
-            # For losses that support multiple ignore indices, use a list
-            # For losses that only support a single ignore index, use the first one
             try:
                 if hasattr(self.loss_function, 'ignore_index'):
-                    if len(self.ignore_index) == 1:
-                        self.loss_function.ignore_index = self.ignore_index[0]
-                        ignore_msg = f"ignoring class {self.ignore_index[0]}"
-                    else:
-                        # Try setting as list first, fallback to first element
-                        try:
-                            self.loss_function.ignore_index = self.ignore_index
-                            ignore_msg = f"ignoring classes {self.ignore_index}"
-                        except (TypeError, ValueError, AttributeError):
-                            self.loss_function.ignore_index = self.ignore_index[0]
-                            ignore_msg = f"ignoring class {self.ignore_index[0]} (loss supports single index only)"
+                    self.loss_function.ignore_index = self.ignore_index
+                    ignore_msg = f"ignoring class {self.ignore_index}"
             except Exception as e:
                 print(f"⚠️ Warning: Could not set ignore_index on loss function: {e}")
 
@@ -2618,9 +2672,9 @@ def main():
     parser.add_argument('--val', action='store_true',
                         help='Enable validation during training if a validation set is provided')
 
-    parser.add_argument('--ignore_index', type=str, default=None,
-                        help='Class indices to ignore during loss calculation. '
-                             'Specify as comma or space-separated string, e.g., "1,2,3" or "1 2 3"')
+    parser.add_argument('--ignore_index', type=int, default=None,
+                        help='Class index to ignore during loss calculation. '
+                             'Specify as a single integer, e.g., 0 or 255')
     
     args = parser.parse_args()
     

@@ -397,8 +397,16 @@ class Base(QDialog):
         """
         Populate the class filter list with labels and their counts.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
+
+        # Create a progress bar
+        progress_bar = ProgressBar(self, "Populating Class Lists")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.annotation_window.annotations_dict))
 
         label_counts = {}
         label_image_counts = {}
@@ -414,7 +422,10 @@ class Base(QDialog):
                 else:
                     label_counts[label] = 1
                     label_image_counts[label] = {image_path}
-
+            
+            # Update progress
+            progress_bar.update_progress()
+            
         # Sort the labels by their counts in descending order
         sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
 
@@ -450,6 +461,12 @@ class Base(QDialog):
             self.label_counts_table.setItem(row, 6, images_item)
 
             row += 1
+            
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def split_data(self):
         """
