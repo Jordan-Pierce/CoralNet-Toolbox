@@ -86,8 +86,11 @@ class TrainModelWorker(QThread):
             # Pass device separately
             self.params['device'] = self.device
             
-            # Run training
+            # Run training, validate on validation set if applicable
             self.model.train(**self.params)
+            
+            # Evaluate model on test set, if applicable
+            self.evaluate_model()
 
             # Emit signal to indicate training has completed
             self.training_completed.emit()
