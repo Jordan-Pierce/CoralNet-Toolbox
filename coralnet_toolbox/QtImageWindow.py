@@ -1067,6 +1067,9 @@ class ImageWindow(QWidget):
         )
         
         if reply == QMessageBox.Yes:
+            # Untoggle tools
+            self.main_window.untoggle_all_tools()
+            # Delete images
             self.delete_images(highlighted_paths)
             
     def delete_highlighted_images_annotations(self):
@@ -1086,6 +1089,8 @@ class ImageWindow(QWidget):
         )
         
         if reply == QMessageBox.Yes:
+            # Untoggle tools
+            self.main_window.untoggle_all_tools()
             # Temporarily disconnect annotation signals
             self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
             self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)
