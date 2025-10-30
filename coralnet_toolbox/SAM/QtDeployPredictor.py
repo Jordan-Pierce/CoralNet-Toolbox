@@ -390,10 +390,8 @@ class DeployPredictorDialog(QDialog):
         """
         Set the image in the predictor.
         """
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
-        progress_bar.show()
-        progress_bar.start_progress(1)
 
         try:
             if self.loaded_model is not None:
@@ -415,8 +413,6 @@ class DeployPredictorDialog(QDialog):
                     self.loaded_model.set_image(image)
                     # Save the resized image
                     self.resized_image = image
-                    # Update the progress bar
-                    progress_bar.update_progress()
                 except Exception as e:
                     raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
 
@@ -431,9 +427,6 @@ class DeployPredictorDialog(QDialog):
         finally:
             # Ensure cleanup happens even if an error occurs
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
 
     def scale_points(self, points):
         """
