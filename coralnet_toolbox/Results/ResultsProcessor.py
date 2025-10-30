@@ -141,68 +141,172 @@ class ResultsProcessor:
 
         return list(indices)
     
-    def _apply_nms_with_existing_annotations(self, results, filtered_indices):
+    def _process_results_with_global_nms(self, results_list, model_type):
         """
-        Apply NMS considering both filtered new results and existing annotations.
-        Returns indices of new results that survive NMS.
-        
-        :param results: YOLO results object
-        :param filtered_indices: List of indices that already passed standard filters
-        :return: List of indices for new results that survived NMS
+        Internal method to process detection or segmentation results from a list 
+        (e.g., from multiple work areas) using global NMS.
         """
-        # Get image path from results
-        image_path = results.path.replace("\\", "/")
-        
-        # Get existing annotations for this image
-        existing_annotations = self.annotation_window.get_image_annotations(image_path)
-        # Filter out specific annotation types (PatchAnnotation)
-        existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
-                                                                    isinstance(a, PolygonAnnotation))]
-        
-        # Convert existing annotations to NMS format
-        existing_detections = self._convert_annotations_to_nms_format(existing_annotations)
-        
-        # Convert filtered new results to NMS format
-        new_detections = []
-        for idx in filtered_indices:
-            if idx < len(results.boxes):
+        if not results_list:
+            return
+
+        if model_type == 'detection':
+            progress_title = "Making Detection Predictions"
+        else:
+            progress_title = "Making Segmentation Predictions"
+            
+        progress_bar = ProgressBar(self.annotation_window, title=progress_title)
+        progress_bar.show()
+        progress_bar.start_progress(len(results_list))
+
+        all_new_detections = []
+        image_path = None
+
+        # --- 1. Collect all potential detections from all work areas ---
+        for results in results_list:
+            # Both types have .boxes for cls, conf, etc.
+            if not results or not results.boxes: 
+                progress_bar.update_progress()
+                continue
+            
+            if image_path is None:
+                image_path = results.path.replace("\\", "/")
+            
+            # Get indices passing area and uncertainty filters
+            # We explicitly DO NOT run the IOU (NMS) filter here.
+            indices_uncertainty = set(self.indices_pass_uncertainty(results))
+            indices_area = set(self.indices_pass_area(results))
+            filtered_indices = list(indices_uncertainty.intersection(indices_area))
+            
+            for idx in filtered_indices:
                 try:
                     box = results.boxes[idx]
-                    xyxy = box.xyxy[0].cpu().numpy()  # Fix: Add [0] to get single box
-                    conf = box.conf[0].cpu().numpy()  # Fix: Add [0] to get single confidence
-                    cls = box.cls[0].cpu().numpy()    # Fix: Add [0] to get single class
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    conf = float(box.conf[0].cpu().numpy())
+                    cls = int(box.cls[0].cpu().numpy())
+                    cls_name = results.names[cls]
                     
-                    cls_name = results.names[int(cls)]
-                    
-                    new_detections.append({
+                    # Create a standardized detection dictionary
+                    detection_data = {
                         'bbox': [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])],
-                        'confidence': float(conf),
+                        'confidence': conf,
                         'class_name': cls_name,
-                        'class_id': int(cls),
-                        'result_index': idx,
-                        'is_existing': False,
-                        'area': float((xyxy[2] - xyxy[0]) * (xyxy[3] - xyxy[1]))
-                    })
+                        'class_id': cls,
+                        'is_existing': False,  # Flag as new detection
+                        'area': float((xyxy[2] - xyxy[0]) * (xyxy[3] - xyxy[1])),
+                        'polygon_points': None,  # Placeholder for segmentation
+                        'model_type': model_type
+                    }
+                    
+                    if model_type == 'segmentation':
+                        if results.masks and idx < len(results.masks.xy):
+                            xy = results.masks.xy[idx]
+                            points = [(float(x), float(y)) for x, y in xy]
+                            points = simplify_polygon(points, 0.1)
+                            detection_data['polygon_points'] = points
+                        else:
+                            continue  # Skip if segmentation has no mask data
+
+                    all_new_detections.append(detection_data)
                 except Exception as e:
-                    print(f"Warning: Failed to convert result to NMS format: {e}")
+                    print(f"Warning: Failed to extract result in first pass: {e}")
+            
+            progress_bar.update_progress()
         
-        # Combine all detections
-        all_detections = existing_detections + new_detections
+        # If no detections found, or no image path, stop.
+        if not all_new_detections or not image_path:
+            progress_bar.stop_progress()
+            progress_bar.close()
+            return
+            
+        progress_bar.set_title(f"Running Global NMS ({len(all_new_detections)} candidates)")
+        progress_bar.start_progress(3) # 3 steps: NMS1, NMS2, Create
+
+        # --- 2. Run Stage 1 NMS (Global NMS on all new detections) ---
+        import torch
+        stage1_bboxes = torch.tensor([det['bbox'] for det in all_new_detections], dtype=torch.float32)
+        stage1_scores = torch.tensor([det['confidence'] for det in all_new_detections], dtype=torch.float32)
         
-        if not all_detections:
-            return []
+        try:
+            # Run NMS on all new detections against each other
+            surviving_stage1_indices = TorchNMS.fast_nms(stage1_bboxes, stage1_scores, self.iou_thresh).tolist()
+            surviving_stage1_detections = [all_new_detections[i] for i in surviving_stage1_indices]
+        except Exception as e:
+            print(f"Warning: Stage 1 NMS failed: {e}")
+            surviving_stage1_detections = all_new_detections  # Fallback: use all
+            
+        progress_bar.update_progress()
+
+        # --- 3. Run Stage 2 NMS (vs. Existing Annotations) ---
         
-        # Apply NMS to combined detections
-        surviving_indices = self._apply_nms_to_combined_detections(all_detections)
+        # Get existing annotations
+        existing_annotations = self.annotation_window.get_image_annotations(image_path)
+        existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
+                                                                    isinstance(a, PolygonAnnotation))]
+        existing_detections = self._convert_annotations_to_nms_format(existing_annotations)
         
-        # Return only indices of new detections that survived NMS
-        surviving_new_indices = []
-        for idx in surviving_indices:
-            if idx >= len(existing_detections):  # This is a new detection
-                detection = all_detections[idx]
-                surviving_new_indices.append(detection['result_index'])
+        # Combine existing (with 0.9 conf) and new survivors
+        all_detections_combined = existing_detections + surviving_stage1_detections
         
-        return surviving_new_indices
+        if not all_detections_combined:
+            progress_bar.stop_progress()
+            progress_bar.close()
+            return
+        
+        # Apply NMS to the combined list
+        surviving_final_indices = self._apply_nms_to_combined_detections(all_detections_combined)
+        progress_bar.update_progress()
+
+        # --- 4. Create Annotations for final survivors ---
+        annotations_to_add = []
+        num_existing = len(existing_detections)
+        
+        final_survivors = []
+        # Filter out to get only the NEW detections that survived
+        for idx in surviving_final_indices:
+            if idx >= num_existing:  # This is a new detection
+                detection = all_detections_combined[idx]
+                final_survivors.append(detection)
+
+        progress_bar.set_title(f"Creating {len(final_survivors)} Annotations")
+        progress_bar.start_progress(len(final_survivors))
+
+        for detection in final_survivors:
+            try:
+                conf = detection['confidence']
+                cls_name = detection['class_name']
+                
+                short_label = self.get_mapped_short_label(cls_name, conf)
+                label = self.label_window.get_label_by_short_code(short_label)
+                
+                annotation = None
+                if detection['model_type'] == 'detection':
+                    xmin, ymin, xmax, ymax = detection['bbox']
+                    annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
+                
+                elif detection['model_type'] == 'segmentation' and detection['polygon_points']:
+                    points = detection['polygon_points']
+                    annotation = self.create_polygon_annotation(points, label, image_path)
+
+                if annotation:
+                    # Apply final confidence/label processing
+                    processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
+                    annotations_to_add.append(processed_annotation)
+            
+            except Exception as e:
+                print(f"Warning: Failed to create annotation: {e}")
+            
+            progress_bar.update_progress()
+
+        # --- 5. Add to window ---
+        if annotations_to_add:
+            self.annotation_window.add_annotations(annotations_to_add)
+        
+        # Refresh the current view if we added annotations to it
+        if self.annotation_window.current_image_path == image_path:
+            self.annotation_window.load_annotations()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def _convert_annotations_to_nms_format(self, annotations):
         """Convert existing annotations to NMS format using their built-in method."""
@@ -396,64 +500,13 @@ class ResultsProcessor:
         xmin, ymin, xmax, ymax = map(float, result.boxes.xyxy.cpu().numpy()[0])
 
         return image_path, cls, cls_name, conf, xmin, ymin, xmax, ymax
-
-    def process_detection_results(self, results_list):
+    
+    def process_segmentation_results(self, results_list):
         """
-        Process the detection results from the list of Results with NMS considering existing annotations.
+        Process the segmentation results from the list of Results with global NMS
+        across all results (e.g., from work areas) and vs. existing annotations.
         """
-        progress_bar = ProgressBar(self.annotation_window, title="Making Detection Predictions with NMS")
-        progress_bar.show()
-
-        annotations_to_add = []
-
-        for results in results_list:
-            if not results or not results.boxes:
-                continue
-                
-            # First apply standard filters to get initial surviving indices
-            filtered_indices = self.indices_pass_filters(results)
-            
-            # Then apply NMS with existing annotations on the filtered results
-            surviving_indices = self._apply_nms_with_existing_annotations(results, filtered_indices)
-            
-            progress_bar.start_progress(len(surviving_indices))
-            
-            for idx in surviving_indices:
-                try:
-                    # Extract detection data - Fix array indexing
-                    box = results.boxes[idx]
-                    xyxy = box.xyxy[0].cpu().numpy()  # Fix: Add [0] to get single box
-                    conf = box.conf[0].cpu().numpy()  # Fix: Add [0] to get single confidence
-                    cls = box.cls[0].cpu().numpy()    # Fix: Add [0] to get single class
-                    
-                    cls_name = results.names[int(cls)]
-                    xmin, ymin, xmax, ymax = map(float, xyxy)
-                    image_path = results.path.replace("\\", "/")
-                    
-                    # Create annotation
-                    short_label = self.get_mapped_short_label(cls_name, float(conf))
-                    label = self.label_window.get_label_by_short_code(short_label)
-                    annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
-                    
-                    if annotation:
-                        processed_annotation = self._post_process_new_annotation(annotation, cls_name, float(conf))
-                        annotations_to_add.append(processed_annotation)
-                        
-                except Exception as e:
-                    print(f"Warning: Failed to process detection result\n{e}")
-                
-                progress_bar.update_progress()
-        
-        # Add surviving annotations
-        if annotations_to_add:
-            self.annotation_window.add_annotations(annotations_to_add)
-        # After adding new annotations, check if any added belong to current image; refresh view
-        affected_paths = {ann.image_path for ann in annotations_to_add}
-        if self.annotation_window.current_image_path in affected_paths:
-            self.annotation_window.load_annotations()  # Reloads graphics for the current image
-
-        progress_bar.stop_progress()
-        progress_bar.close()
+        self._process_results_with_global_nms(results_list, 'segmentation')
 
     def extract_segmentation_result(self, result):
         """
@@ -470,65 +523,12 @@ class ResultsProcessor:
 
         return image_path, cls, cls_name, conf
 
-    def process_segmentation_results(self, results_list):
+    def process_detection_results(self, results_list):
         """
-        Process the segmentation results from the list of Results with NMS considering existing annotations.
+        Process the detection results from the list of Results with global NMS
+        across all results (e.g., from work areas) and vs. existing annotations.
         """
-        progress_bar = ProgressBar(self.annotation_window, title="Making Segmentation Predictions with NMS")
-        progress_bar.show()
-
-        annotations_to_add = []
-
-        for results in results_list:
-            if not results or not results.masks:
-                continue
-                
-            # First apply standard filters to get initial surviving indices
-            filtered_indices = self.indices_pass_filters(results)
-            
-            # Then apply NMS with existing annotations on the filtered results
-            surviving_indices = self._apply_nms_with_existing_annotations(results, filtered_indices)
-            
-            progress_bar.start_progress(len(surviving_indices))
-            
-            for idx in surviving_indices:
-                try:
-                    # Extract segmentation data
-                    xy = results.masks.xy[idx]
-                    points = [(float(x), float(y)) for x, y in xy]
-                    points = simplify_polygon(points, 0.1)
-                    
-                    # Fix array indexing for segmentation results
-                    box = results.boxes[idx]
-                    conf = box.conf[0].cpu().numpy()  # Fix: Add [0] to get single confidence
-                    cls = box.cls[0].cpu().numpy()    # Fix: Add [0] to get single class
-                    cls_name = results.names[int(cls)]
-                    image_path = results.path.replace("\\", "/")
-                    
-                    # Create polygon annotation
-                    short_label = self.get_mapped_short_label(cls_name, float(conf))
-                    label = self.label_window.get_label_by_short_code(short_label)
-                    annotation = self.create_polygon_annotation(points, label, image_path)
-                    
-                    if annotation:
-                        processed_annotation = self._post_process_new_annotation(annotation, cls_name, float(conf))
-                        annotations_to_add.append(processed_annotation)
-                        
-                except Exception as e:
-                    print(f"Warning: Failed to process segmentation result\n{e}")
-                
-                progress_bar.update_progress()
-        
-        # Add surviving annotations
-        if annotations_to_add:
-            self.annotation_window.add_annotations(annotations_to_add)
-        # After adding new annotations, check if any added belong to current image; refresh view
-        affected_paths = {ann.image_path for ann in annotations_to_add}
-        if self.annotation_window.current_image_path in affected_paths:
-            self.annotation_window.load_annotations()  # Reloads graphics for the current image
-
-        progress_bar.stop_progress()
-        progress_bar.close()
+        self._process_results_with_global_nms(results_list, 'detection')
         
     def _post_process_new_annotation(self, annotation, cls_name, conf):
         """
