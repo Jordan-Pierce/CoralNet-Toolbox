@@ -125,35 +125,40 @@ def get_segmentation_optimizers():
     return optimizer_options
 
 
-def parse_ignore_index(ignore_index_str):
+def parse_ignore_index(ignore_index_input):
     """
-    Parse ignore_index parameter from string format.
+    Parse ignore_index parameter from various input formats.
     
     Args:
-        ignore_index_str (str or None): String containing indices to ignore, 
-                                       e.g., "1,2,3" or "1 2 3" or None
+        ignore_index_input (str, int, or None): Index to ignore, can be string, int, or None
     
     Returns:
-        list or None: List of integers to ignore, or None if no indices to ignore
+        int or None: Single integer to ignore, or None if no index to ignore
     """
-    if ignore_index_str is None or ignore_index_str.strip() == "":
+    if ignore_index_input is None:
         return None
     
-    try:
-        # Handle both comma-separated and space-separated formats
-        if ',' in ignore_index_str:
-            indices = [int(x.strip()) for x in ignore_index_str.split(',') if x.strip()]
-        else:
-            indices = [int(x.strip()) for x in ignore_index_str.split() if x.strip()]
-        
-        # Remove duplicates and sort
-        indices = sorted(list(set(indices)))
-        
-        return indices if indices else None
+    # If already an integer, return it directly
+    if isinstance(ignore_index_input, int):
+        return ignore_index_input if ignore_index_input >= 0 else None
     
-    except (ValueError, AttributeError) as e:
-        print(f"⚠️ Warning: Failed to parse ignore_index '{ignore_index_str}': {e}")
-        return None
+    # If it's a string, try to parse it
+    if isinstance(ignore_index_input, str):
+        ignore_index_str = ignore_index_input.strip()
+        if ignore_index_str == "":
+            return None
+            
+        try:
+            # Convert to integer
+            ignore_index = int(ignore_index_str)
+            return ignore_index if ignore_index >= 0 else None
+        except ValueError as e:
+            print(f"⚠️ Warning: Failed to parse ignore_index '{ignore_index_str}': {e}")
+            return None
+    
+    # For any other type, return None
+    print(f"⚠️ Warning: Unsupported ignore_index type: {type(ignore_index_input)}")
+    return None
 
 
 def format_logs_pretty(logs, title="Results"):
@@ -574,12 +579,8 @@ class Epoch:
         loss_meter = AverageValueMeter()
 
         # Get ignore_index from loss function
-        # smp.metrics.functional._get_stats_multiclass only supports a single int or None
-        ignore_idx_val = getattr(self.loss, 'ignore_index', None)
-        if isinstance(ignore_idx_val, (list, tuple)):
-            ignore_index = ignore_idx_val[0] if ignore_idx_val else None
-        else:
-            ignore_index = ignore_idx_val
+        # smp.metrics.functional._get_stats_multiclass supports a single int or None
+        ignore_index = getattr(self.loss, 'ignore_index', None)
 
         # Initialize tensors for epoch-wide statistics
         epoch_tp = None
@@ -1826,21 +1827,10 @@ class TrainingConfig:
         # Set ignore_index if supported and provided by user
         ignore_msg = "no indices ignored"
         if 'ignore_index' in params and self.ignore_index is not None:
-            # For losses that support multiple ignore indices, use a list
-            # For losses that only support a single ignore index, use the first one
             try:
                 if hasattr(self.loss_function, 'ignore_index'):
-                    if len(self.ignore_index) == 1:
-                        self.loss_function.ignore_index = self.ignore_index[0]
-                        ignore_msg = f"ignoring class {self.ignore_index[0]}"
-                    else:
-                        # Try setting as list first, fallback to first element
-                        try:
-                            self.loss_function.ignore_index = self.ignore_index
-                            ignore_msg = f"ignoring classes {self.ignore_index}"
-                        except (TypeError, ValueError, AttributeError):
-                            self.loss_function.ignore_index = self.ignore_index[0]
-                            ignore_msg = f"ignoring class {self.ignore_index[0]} (loss supports single index only)"
+                    self.loss_function.ignore_index = self.ignore_index
+                    ignore_msg = f"ignoring class {self.ignore_index}"
             except Exception as e:
                 print(f"⚠️ Warning: Could not set ignore_index on loss function: {e}")
 
@@ -2682,9 +2672,9 @@ def main():
     parser.add_argument('--val', action='store_true',
                         help='Enable validation during training if a validation set is provided')
 
-    parser.add_argument('--ignore_index', type=str, default=None,
-                        help='Class indices to ignore during loss calculation. '
-                             'Specify as comma or space-separated string, e.g., "1,2,3" or "1 2 3"')
+    parser.add_argument('--ignore_index', type=int, default=None,
+                        help='Class index to ignore during loss calculation. '
+                             'Specify as a single integer, e.g., 0 or 255')
     
     args = parser.parse_args()
     
