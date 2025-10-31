@@ -148,21 +148,14 @@ class Base(QDialog):
         self.dataset_config_group.setTitle("Dataset Configuration Parameters")
         layout = QFormLayout()
 
-        # Image Extensions 
-        ext_group = QGroupBox("Image Extensions")
-        ext_form = QFormLayout(ext_group)
-        
-        self.input_ext_combo = QComboBox()
-        self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
-        self.input_ext_combo.setEditable(True)
-        self.input_ext_combo.setCurrentText("")  # Start empty
+        # Output Parameters
+        output_group = QGroupBox("Output Parameters")
+        ext_form = QFormLayout(output_group)
         
         self.output_ext_combo = QComboBox()
-        self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
+        self.output_ext_combo.addItems(["None", ".png", ".tif", ".jpeg", ".jpg"])
         self.output_ext_combo.setEditable(True)
-        
-        # Connect input ext change to update output ext
-        self.input_ext_combo.currentTextChanged.connect(self.update_output_ext)
+        self.output_ext_combo.setCurrentText("None")
         
         # Add compression spinbox
         self.compression_spinbox = QSpinBox()
@@ -170,11 +163,10 @@ class Base(QDialog):
         self.compression_spinbox.setValue(90)
         self.compression_spinbox.setSingleStep(5)
         
-        ext_form.addRow("Input Extension:", self.input_ext_combo)
         ext_form.addRow("Output Extension:", self.output_ext_combo)
         ext_form.addRow("Compression (0-100):", self.compression_spinbox)
         
-        layout.addRow(ext_group)
+        layout.addRow(output_group)
 
         # Train, Validation, and Test Ratios 
         ratios_group = QGroupBox("Dataset Split Ratios")
@@ -247,10 +239,6 @@ class Base(QDialog):
         layout.addRow(misc_group)
 
         self.dataset_config_group.setLayout(layout)
-
-    def update_output_ext(self, text):
-        """Update the output extension to match the input extension."""
-        self.output_ext_combo.setCurrentText(text)
 
     def setup_buttons_layout(self, layout):
         """Set up buttons layout."""
@@ -397,8 +385,8 @@ class Base(QDialog):
         slice_wh = self.tile_size_input.get_sizes(validate=False)
         overlap_wh = self.overlap_input.get_overlap(validate=False)
 
-        input_ext = self.input_ext_combo.currentText()
         output_ext = self.output_ext_combo.currentText()
+        output_ext = None if output_ext == "None" else output_ext
         compression = self.compression_spinbox.value()
         densify_factor = self.densify_factor_spinbox.value()
         smoothing_tolerance = self.smoothing_tolerance_spinbox.value()
@@ -414,8 +402,7 @@ class Base(QDialog):
         # Perform all validation checks
         validation_checks = [
             (self.validate_source_directory(src), "Source directory validation failed"),
-            (self.validate_ext(input_ext), "Input extension validation failed"),
-            (self.validate_ext(output_ext), "Output extension validation failed"),
+            (True if output_ext is None else self.validate_ext(output_ext), "Output extension validation failed"),
             (self.validate_densify_factor(densify_factor), "Densify factor validation failed"),
             (self.validate_smoothing_tolerance(smoothing_tolerance), "Smoothing tolerance validation failed"),
             (self.validate_ratios(train_ratio, valid_ratio, test_ratio), "Dataset split ratios validation failed"),
@@ -452,7 +439,6 @@ class Base(QDialog):
         config = TileConfig(
             slice_wh=slice_wh,
             overlap_wh=overlap_wh,
-            input_ext=input_ext,
             output_ext=output_ext,
             annotation_type=self.annotation_type,
             densify_factor=densify_factor,
