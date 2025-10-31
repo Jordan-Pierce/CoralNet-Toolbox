@@ -105,7 +105,7 @@ class TrainModelWorker(QThread):
         """
         try:
             # Check that there is a test folder
-            test_folder = f"{os.path.dirname(self.params['data'])}/test"
+            test_folder = f"{os.path.dirname(self.params['data_yaml'])}/test"
             print(f"Note: Looking for test folder: {test_folder}")
             if not os.path.exists(test_folder):
                 print("Warning: No test folder found in that location. Skipping evaluation.")
@@ -113,7 +113,7 @@ class TrainModelWorker(QThread):
             
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
-                'data': self.params['data'],
+                'data_yaml': self.params['data_yaml'],
                 'imgsz': self.params['imgsz'],
                 'split': 'test',  # Evaluate on the test set only
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
