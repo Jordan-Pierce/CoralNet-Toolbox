@@ -21,6 +21,9 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QGroupBox, QSpacerItem)
 
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
+from coralnet_toolbox.QtAnimationManager import AnimationManager
+from coralnet_toolbox.QtSystemMonitor import SystemMonitor
+from coralnet_toolbox.QtTimer import TimerGroupBox
 
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
@@ -125,11 +128,7 @@ from coralnet_toolbox.BreakTime import (
     LightCycleGame
 )
 
-from coralnet_toolbox.QtSystemMonitor import SystemMonitor
-
 from coralnet_toolbox.Icons import get_icon
-
-from coralnet_toolbox.QtTimer import TimerGroupBox
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -145,6 +144,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self, __version__):
         super().__init__()
+        
+        # Create the animation manager
+        self.animation_manager = AnimationManager(self)
+        self.animation_manager.start_timer(interval=50)  # 50ms interval
         
         # Get the process ID
         self.pid = os.getpid()
