@@ -1789,8 +1789,12 @@ class MainWindow(QMainWindow):
 
         if not linked_label_ids:
             return  # Do nothing if no labels are linked
-
+        
+        # Make cursory busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Block signals to prevent recursive updates
         self.annotation_window.blockSignals(True)
+        
         try:
             # 1. Toggle visibility for all VECTOR annotations associated with the linked labels
             for annotation in self.annotation_window.annotations_dict.values():
@@ -1814,6 +1818,9 @@ class MainWindow(QMainWindow):
                 mask.update_visible_labels(new_mask_visible_ids)
 
         finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Unblock signals
             self.annotation_window.blockSignals(False)
 
         # Update the button's tooltip
