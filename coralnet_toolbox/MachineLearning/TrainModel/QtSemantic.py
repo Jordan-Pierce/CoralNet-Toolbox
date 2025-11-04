@@ -430,13 +430,11 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         self.loss_combo.setCurrentText("DiceLoss")  # Default for SMP
         form_layout.addRow("Loss Function:", self.loss_combo)
 
-        # Ignore Index
-        self.ignore_index_spinbox = QSpinBox()
-        self.ignore_index_spinbox.setMinimum(-1)  # -1 means no ignore_index
-        self.ignore_index_spinbox.setMaximum(255)  # Common max for class indices
-        self.ignore_index_spinbox.setValue(-1)  # Default: no ignore_index
-        self.ignore_index_spinbox.setSpecialValueText("None")  # Display "None" for -1
-        form_layout.addRow("Ignore Index:", self.ignore_index_spinbox)
+        # Ignore background
+        self.ignore_index_combo = QComboBox()
+        self.ignore_index_combo.addItems(["False", "True"])
+        self.ignore_index_combo.setCurrentText("False")  # Default False
+        form_layout.addRow("Ignore background:", self.ignore_index_combo)
         
         # Workers
         self.workers_spinbox = QSpinBox()
@@ -662,7 +660,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                 'val': self.val_combo,
                 'optimizer': self.optimizer_combo,
                 'loss_function': self.loss_combo,
-                'ignore_index': self.ignore_index_spinbox
+                'ignore_index': self.ignore_index_combo
             }
 
             # Update UI controls with imported values
@@ -673,13 +671,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                     widget = param_mapping[param_name]
                     
                     if isinstance(widget, QSpinBox):
-                        if param_name == 'ignore_index':
-                            # Special handling for ignore_index: None maps to -1
-                            if converted_value is None:
-                                widget.setValue(-1)
-                            elif isinstance(converted_value, (int, float)):
-                                widget.setValue(int(converted_value))
-                        elif isinstance(converted_value, (int, float)):
+                        if isinstance(converted_value, (int, float)):
                             widget.setValue(int(converted_value))
                     elif isinstance(widget, QDoubleSpinBox):
                         if isinstance(converted_value, (int, float)):
@@ -687,6 +679,11 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
                     elif isinstance(widget, QComboBox):
                         if param_name in ['augment_data', 'val']:
                             widget.setCurrentText("True" if converted_value else "False")
+                        elif param_name == 'ignore_index':
+                            if converted_value == 0:
+                                widget.setCurrentText("True")
+                            else:
+                                widget.setCurrentText("False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
                     elif isinstance(widget, QLineEdit):
@@ -739,8 +736,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             export_data['val'] = self.val_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
             export_data['loss_function'] = self.loss_combo.currentText()
-            ignore_val = self.ignore_index_spinbox.value()
-            export_data['ignore_index'] = ignore_val if ignore_val >= 0 else None
+            export_data['ignore_index'] = 0 if self.ignore_index_combo.currentText() == "True" else None
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -829,7 +825,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
             'dropout': self.dropout_spinbox.value(),
             'lr': self.lr_spinbox.value(),
             'loss_function': self.loss_combo.currentText(),
-            'ignore_index': self.ignore_index_spinbox.value() if self.ignore_index_spinbox.value() >= 0 else None,
+            'ignore_index': 0 if self.ignore_index_combo.currentText() == "True" else None,
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'num_vis_samples': 5,
