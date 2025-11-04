@@ -54,6 +54,9 @@ class EmbeddingViewer(QWidget):
 
         self.graphics_scene = QGraphicsScene()
         self.graphics_scene.setSceneRect(-5000, -5000, 10000, 10000)
+        
+        self.animation_manager = None 
+        self.set_animation_manager(self.explorer_window.animation_manager)  
 
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
@@ -87,23 +90,28 @@ class EmbeddingViewer(QWidget):
         
         self.is_uncertainty_analysis_available = False
 
-        self.animation_offset = 0
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self.animate_selection)
-        self.animation_timer.setInterval(100)
-
         # New timer for virtualization
         self.view_update_timer = QTimer(self)
         self.view_update_timer.setSingleShot(True)
         self.view_update_timer.timeout.connect(self._update_visible_points)
 
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
+        
         self.setup_ui()
         self.graphics_view.mousePressEvent = self.mousePressEvent
         self.graphics_view.mouseDoubleClickEvent = self.mouseDoubleClickEvent
         self.graphics_view.mouseReleaseEvent = self.mouseReleaseEvent
         self.graphics_view.mouseMoveEvent = self.mouseMoveEvent
         self.graphics_view.wheelEvent = self.wheelEvent
+        
+    def set_animation_manager(self, manager):
+        """
+        Receives the central AnimationManager from the parent window.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
 
     def setup_ui(self):
         """Set up the UI with toolbar layout and graphics view."""
@@ -633,9 +641,10 @@ class EmbeddingViewer(QWidget):
     def update_embeddings(self, data_items, n_dims):
         """Update the embedding visualization and track if it's 3D."""
         self.clear_points()
-        self.is_3d_data = (n_dims == 3) # Set our new flag here
+        self.is_3d_data = (n_dims == 3)  # Set our new flag here
         for item in data_items:
             point = EmbeddingPointItem(item, self)
+            point.set_animation_manager(self.animation_manager)
             self.graphics_scene.addItem(point)
             self.points_by_id[item.annotation.id] = point
         
@@ -679,32 +688,11 @@ class EmbeddingViewer(QWidget):
             self.selection_changed.emit(list(current_selection_ids))
             self.previous_selection_ids = current_selection_ids
 
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
-
-        if selected_items and hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.start()
-
         # Update button states based on new selection
         self._update_toolbar_state()
         
         # A selection change can affect visibility (e.g., deselecting an off-screen point)
         self._schedule_view_update()
-
-    def animate_selection(self):
-        """Animate selected points by triggering their repaint."""
-        if not self.graphics_scene:
-            return
-        try:
-            selected_items = self.graphics_scene.selectedItems()
-        except RuntimeError:
-            return
-
-        # Update the offset that the items will use when they repaint
-        self.animation_offset = (self.animation_offset + 1) % 20
-        
-        for item in selected_items:
-            item.update()
 
     def render_selection_from_ids(self, selected_ids):
         """
@@ -822,6 +810,9 @@ class AnnotationViewer(QWidget):
         """Initialize the AnnotationViewer widget."""
         super(AnnotationViewer, self).__init__(parent)
         self.explorer_window = parent
+        
+        self.animation_manager = None
+        self.set_animation_manager(self.explorer_window.animation_manager)
 
         self.annotation_widgets_by_id = {}
         self.selected_widgets = []
@@ -854,6 +845,15 @@ class AnnotationViewer(QWidget):
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._schedule_update)
         # Install an event filter on the viewport to handle mouse events for rubber band selection
         self.scroll_area.viewport().installEventFilter(self)
+        
+    def set_animation_manager(self, manager):
+        """
+        Receives the central AnimationManager from the parent window.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
 
     def setup_ui(self):
         """Set up the UI with a toolbar and a scrollable content area."""
@@ -1316,6 +1316,7 @@ class AnnotationViewer(QWidget):
                     widget.update_height(self.current_widget_size)
                 else:
                     widget = AnnotationImageWidget(data_item, self.current_widget_size, self, self.content_widget)
+                    widget.set_animation_manager(self.animation_manager)
                     # Ensure aspect ratio is calculated on creation:
                     widget.recalculate_aspect_ratio() 
                     self.annotation_widgets_by_id[ann_id] = widget

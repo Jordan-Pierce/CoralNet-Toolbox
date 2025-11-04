@@ -66,6 +66,8 @@ class ExplorerWindow(QMainWindow):
         self.image_window = main_window.image_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
+        
+        self.animation_manager = main_window.animation_manager
 
         self.device = main_window.device
         self.loaded_model = None
