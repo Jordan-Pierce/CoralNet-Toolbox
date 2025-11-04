@@ -4,10 +4,10 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPolygonF, QPen, QBrush
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
+from PyQt5.QtGui import QColor, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
-                             QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
+                             QGraphicsScene, QGraphicsItemGroup)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -62,12 +62,13 @@ class Annotation(QObject):
         # Group for all graphics items
         self.graphics_item_group = None
         
+        # Animation attributes
+        self.animation_manager = None
+        self.is_animating = False
+        
         # Animation properties
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
         self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
 
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
@@ -227,10 +228,41 @@ class Annotation(QObject):
         # Add the final group to the scene
         scene.addItem(self.graphics_item_group)
         
+    def is_graphics_item_valid(self):
+        """
+        Checks if the graphics item group is still valid and added to a scene.
+        
+        Returns:
+            bool: True if the item exists and has a scene, False otherwise.
+        """
+        try:
+            # Check the group, as it's the parent of all other items
+            return self.graphics_item_group and self.graphics_item_group.scene()
+        except RuntimeError:
+            # This can happen if the C++ part of the item is deleted
+            return False
+        
     def set_visibility(self, visible):
         """Set the visibility of this annotation's graphics item."""
         if self.graphics_item_group:
             self.graphics_item_group.setVisible(visible)
+            
+    def set_animation_manager(self, manager):
+        """
+        Binds this object to the central AnimationManager.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
+        
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        # This just calls the existing private method that holds the logic
+        self._update_pulse_alpha()
         
     @pyqtProperty(int)  # Changed to int for QColor compatibility
     def pulse_alpha(self):
@@ -263,24 +295,29 @@ class Annotation(QObject):
         self._update_pen_styles()
     
     def animate(self, force=False):
-        """Start the pulsing animation for selected annotations.
+        """
+        Start the pulsing animation by registering with the global timer.
         
         Args:
             force (bool): If True, force animation even if annotation is not selected
         """
         if force or self.is_selected:
-            if not self.animation_timer.isActive():
-                self.animation_timer.start()
+            self.is_animating = True
+            if self.animation_manager:
+                self.animation_manager.register_animating_object(self)
     
     def deanimate(self):
-        """Stop the pulsing animation for deselected annotations."""
-        self.animation_timer.stop()
+        """Stop the pulsing animation by de-registering from the global timer."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+            
         self._pulse_alpha = 128  # Reset to default
-        self.update_graphics_item()
+        self.update_graphics_item()  # Apply the default style
     
     def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""
-        if self.is_selected or self.animation_timer.isActive():
+        if self.is_selected or self.is_animating:
             # Use same color if verified, black if not verified
             if self.verified:
                 pen_color = QColor(base_color)  # Create a copy
