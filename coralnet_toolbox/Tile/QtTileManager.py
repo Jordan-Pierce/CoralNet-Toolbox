@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class TileCreation(QDialog):
+class TileManager(QDialog):
     """
     Base class for performing tiled creation on images using object detection, and instance segmentation.
 
@@ -42,7 +42,7 @@ class TileCreation(QDialog):
         self.graphics_utility = main_window.annotation_window.graphics_utility
 
         self.setWindowIcon(get_icon("tile.png"))
-        self.setWindowTitle("Tile Creation")
+        self.setWindowTitle("Tile Manager")
         self.resize(400, 600)
         
         # Initialize graphics tracking lists and objects

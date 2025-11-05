@@ -39,7 +39,7 @@ from coralnet_toolbox.Tile import (
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
     TileSemanticDataset as SemanticTileDatasetDialog,
-    TileCreation as TileCreationDialog,
+    TileManager as TileManagerDialog,
     TileBatchInference as TileBatchInferenceDialog
 )
 
@@ -293,12 +293,12 @@ class MainWindow(QMainWindow):
         self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
 
         # Create dialogs (Tile)
+        self.tile_manager_dialog = TileManagerDialog(self)
+        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.semantic_tile_dataset_dialog = SemanticTileDatasetDialog(self)
-        self.tile_creation_dialog = TileCreationDialog(self)
-        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
 
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -489,9 +489,9 @@ class MainWindow(QMainWindow):
         self.tile_menu = self.menu_bar.addMenu("Tile")
         
         # Tile Creation
-        self.tile_creation_action = QAction("Tile Creation", self)
-        self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
-        self.tile_menu.addAction(self.tile_creation_action)
+        self.tile_manager_action = QAction("Tile Manager", self)
+        self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
+        self.tile_menu.addAction(self.tile_manager_action)
         # Tile Batch Inference
         self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
         self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
@@ -2351,8 +2351,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_tile_creation_dialog(self):
-        """Open the Tile Creation dialog to create work areas on images."""
+    def open_tile_manager_dialog(self):
+        """Open the Tile Manager dialog to create work areas on images."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -2362,7 +2362,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.tile_creation_dialog.exec_()
+            self.tile_manager_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
