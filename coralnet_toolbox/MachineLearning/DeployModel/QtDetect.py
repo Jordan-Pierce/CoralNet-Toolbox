@@ -191,7 +191,8 @@ class Detect(Base):
     def predict(self, image_paths=None, progress_bar=None):
         """
         Make predictions on the given image paths using the loaded model.
-        Processes one tile at a time to conserve memory and improve speed.
+        Processes tiles in mini-batches for speed, but post-processes
+        one-by-one to provide UI feedback.
 
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
@@ -205,6 +206,9 @@ class Detect(Base):
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
             image_paths = [self.annotation_window.current_image_path]
+
+        # --- Define a batch size for prediction ---
+        BATCH_SIZE = 16  # TODO make 
 
         # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(
@@ -240,8 +244,8 @@ class Detect(Base):
                     work_areas = [None]  # Dummy list to make loops match
                 else:
                     # Get both parallel lists: coordinate objects and data arrays
-                    work_areas = raster.get_work_areas() # List of WorkArea objects
-                    work_items_data = raster.get_work_areas_data(as_format='BGR') # List of np.ndarray
+                    work_areas = raster.get_work_areas()  # List of WorkArea objects
+                    work_items_data = raster.get_work_areas_data(as_format='BGR')  # List of np.ndarray
 
                 if not work_items_data or not work_areas:
                     print(f"Warning: No work items found for {image_path}. Skipping.")
@@ -257,65 +261,82 @@ class Detect(Base):
                     progress_bar = ProgressBar(self.annotation_window)
                     progress_bar.show()
                 progress_bar.set_title(title)
-                progress_bar.start_progress(len(work_items_data))
+                progress_bar.start_progress(len(work_items_data))  # Total is still number of tiles
 
-                # --- 3. Process One Item at a Time ---
+                # --- 3. Process Tiles and Collect Results ---
+                
                 # Create a list to hold all results for THIS image
                 results_for_this_image = []
                 is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
                 
                 try:
-                    # Loop by index to keep parallel lists in sync
-                    for idx in range(len(work_items_data)):
+                    # --- Loop over the data in mini-batches ---
+                    for i in range(0, len(work_items_data), BATCH_SIZE):
                         
-                        input_data = [work_items_data[idx]]
-                        work_area = work_areas[idx]  # This is the WorkArea object or None
+                        # Get the mini-batch chunks
+                        data_chunk = work_items_data[i: i + BATCH_SIZE]
+                        area_chunk = work_areas[i: i + BATCH_SIZE]
                         
-                        # --- Highlight at the START of the loop ---
-                        if work_area:
-                            work_area.highlight()
+                        # --- 3a. Apply Model (Batched) ---
+                        # Returns a flat list: [res1, res2, ...]
+                        batch_results_list = self._apply_model(data_chunk)
+                        
+                        # --- 3b. Apply SAM (Batched) ---
+                        # Takes a flat list, returns a flat list: [sam_res1, sam_res2, ...]
+                        sam_results_list = self._apply_sam(batch_results_list, image_path)
 
-                        # --- 3a. Apply Model ---
-                        results_list = self._apply_model(input_data)
-                        
-                        # --- 3b. Apply SAM ---
-                        sam_results_list = self._apply_sam(results_list, image_path)
-
-                        if not sam_results_list or not sam_results_list[0]:
-                            if work_area: 
-                                work_area.unhighlight()  # Unhighlight on early exit
-                            progress_bar.update_progress()
+                        # Safety check
+                        if len(sam_results_list) != len(area_chunk):
+                            print(f"Warning: Mismatch in batch results (Got {len(sam_results_list)}, "
+                                  f"expected {len(area_chunk)}). Skipping batch.")
+                            
+                            # Update progress bar for the skipped items
+                            for _ in area_chunk:
+                                progress_bar.update_progress()
                             continue
+                            
+                        # --- 3c. Post-process (Streaming w/ Highlight) ---
+                        # Loop through the flat lists
+                        for results_obj, work_area in zip(sam_results_list, area_chunk):
+                            
+                            # --- Highlight at the START of post-processing ---
+                            if work_area:
+                                work_area.highlight()
 
-                        # Get the single result object
-                        results_obj = sam_results_list[0][0]
-                        results_obj.path = image_path
-                        
-                        # --- 3c. Map Result (logic from _process_results) ---
-                        if work_area:
-                            # Highlight is already active
-                            mapped_result = MapResults().map_results_from_work_area(
-                                results_obj,
-                                raster,
-                                work_area,
-                                is_segmentation
-                            )
-                        else:
-                            mapped_result = results_obj
+                            if not results_obj:  # Handle potential empty result from SAM
+                                if work_area: 
+                                    work_area.unhighlight()
+                                progress_bar.update_progress()
+                                continue
 
-                        # --- 3d. Append to list, DO NOT process yet ---
-                        results_for_this_image.append(mapped_result)
+                            # Get the single result object
+                            results_obj.path = image_path
+                            
+                            # --- 3d. Map Result (logic from _process_results) ---
+                            if work_area:
+                                # Highlight is already active
+                                mapped_result = MapResults().map_results_from_work_area(
+                                    results_obj,
+                                    raster,
+                                    work_area,
+                                    is_segmentation
+                                )
+                            else:
+                                mapped_result = results_obj
 
-                        # Update the progress bar
-                        progress_bar.update_progress()
-                        
-                        # Clean up GPU memory *after each tile*
+                            # --- 3e. Append to list, DO NOT process yet ---
+                            results_for_this_image.append(mapped_result)
+
+                            # --- 3f. Update progress bar for this tile ---
+                            progress_bar.update_progress()
+                            
+                            # --- 3g. Unhighlight at the END of post-processing ---
+                            if work_area:
+                                work_area.unhighlight()
+
+                        # --- Clean up GPU memory *after* the mini-batch ---
                         gc.collect()
                         empty_cache()
-                        
-                        # --- Unhighlight at the END of the loop ---
-                        if work_area:
-                            work_area.unhighlight()
 
                 except Exception as e:
                     print(f"An error occurred during prediction on {image_path}: {e}")
@@ -326,9 +347,10 @@ class Detect(Base):
                         progress_bar.finish_progress()
                         progress_bar.stop_progress()
                         progress_bar.close()
-                    
+                
                 # --- 4. Process All Results for This Image at Once ---
                 if results_for_this_image:
+                    # This processing is now batched for the UI
                     if is_segmentation:
                         results_processor.process_segmentation_results(results_for_this_image)
                     else:
@@ -362,16 +384,17 @@ class Detect(Base):
 
         results_list = []
         for results in results_generator:
-            results_list.append([results])
-            # Clean up GPU memory after each prediction
-            gc.collect()
-            empty_cache()
+            # --- Append the object directly, not a list ---
+            results_list.append(results) 
 
+        # Returns a flat list: [res1, res2, ...]
         return results_list
 
     def _apply_sam(self, results_list, image_path):
         """
         Apply SAM to the results if needed.
+        Accepts a flat list of Results objects [res1, res2, ...]
+        Returns a flat list of SAM-processed Results objects [sam_res1, sam_res2, ...]
         """
         # Check if SAM model is deployed and loaded
         self.update_sam_task_state()
@@ -389,11 +412,19 @@ class Detect(Base):
             return results_list
 
         updated_results = []
-        for idx, results in enumerate(results_list):
-            # Each Results is a list (within the results_list, [[], ]
-            if results:
-                # Run it rough the SAM model
-                results = self.sam_dialog.predict_from_results(results, image_path)
-                updated_results.append(results)
+        for results_obj in results_list:
+            # 'results_obj' is a single Results object (e.g., res1)
+            if results_obj:
+                # --- Pass [results_obj] to SAM, as it expects a list ---
+                sam_result_list = self.sam_dialog.predict_from_results([results_obj], image_path)
+                
+                # --- Unpack the list returned by SAM ---
+                if sam_result_list:
+                    updated_results.append(sam_result_list[0])
+                else:
+                    updated_results.append(None)  # Keep list length consistent
+            else:
+                updated_results.append(None)  # Keep list length consistent
 
+        # Returns a flat list: [sam_res1, sam_res2, ...]
         return updated_results
