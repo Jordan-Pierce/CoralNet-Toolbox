@@ -60,6 +60,11 @@ class TileCreation(QDialog):
         self.setup_tile_config_layout()
         # Set up apply to options layout
         self.setup_apply_options_layout()
+        
+        # Status bar
+        self.status_label = QLabel("No tiles previewed")
+        self.layout.addWidget(self.status_label)
+        
         # Buttons at bottom
         self.setup_buttons_layout()
         
@@ -69,6 +74,7 @@ class TileCreation(QDialog):
         self.update_tile_size_limits()
         self.clear_tiles()
         self.clear_checkboxes()
+        self.preview_tiles()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
@@ -139,12 +145,12 @@ class TileCreation(QDialog):
         buttons_layout = QHBoxLayout()
         
         # Preview button
-        self.preview_button = QPushButton("Preview Tiles")
+        self.preview_button = QPushButton("Update Preview")
         self.preview_button.clicked.connect(self.preview_tiles)
         buttons_layout.addWidget(self.preview_button)
         
         # Clear button
-        self.clear_button = QPushButton("Clear Tiles")
+        self.clear_button = QPushButton("Clear Preview")
         self.clear_button.clicked.connect(self.clear_tiles)
         buttons_layout.addWidget(self.clear_button)
         
@@ -572,15 +578,11 @@ class TileCreation(QDialog):
         # Count tiles
         total_tiles = len(self.tile_work_areas)
         
-        # Show tile count in a message
+        # Update status bar
         coverage_status = "with full coverage" if ensure_coverage else "with standard grid"
-        QMessageBox.information(
-            self, 
-            "Tile Preview", 
-            f"Created {total_tiles} tiles {coverage_status}:\n"
-            f"• Tile size: {tile_width}×{tile_height} pixels\n"
-            f"• Overlap: {overlap_width}×{overlap_height} pixels\n"
-            f"• Effective step: {effective_width}×{effective_height} pixels"
+        self.status_label.setText(
+            f"Tiles: {total_tiles} ({num_tiles_x}×{num_tiles_y} grid, {coverage_status}) | "
+            f"Size: {tile_width}×{tile_height} | Overlap: {overlap_width}×{overlap_height}"
         )
 
     def clear_tiles(self):
@@ -607,6 +609,9 @@ class TileCreation(QDialog):
         
         # Update the view
         self.annotation_window.viewport().update()
+        
+        # Reset status
+        self.status_label.setText("No tiles previewed")
 
     def generate_tile_work_areas(self, params, image_path):
         """
