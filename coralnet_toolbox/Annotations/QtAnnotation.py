@@ -338,7 +338,7 @@ class Annotation(QObject):
     def _update_pen_styles(self):
         """Update pen styles with current pulse alpha."""
         # Only update if selected OR if animation is running (for forced animation)
-        if not self.is_selected and not self.animation_timer.isActive():
+        if not self.is_selected and not self.is_animating:
             return
             
         color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  

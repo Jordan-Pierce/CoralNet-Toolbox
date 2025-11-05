@@ -1,18 +1,13 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import copy
 
-import cv2
 import numpy as np
 
-import torch
-import supervision as sv
-
-from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
+from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QGraphicsPathItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -29,6 +24,8 @@ from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import simplify_polygon
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -38,21 +35,21 @@ from coralnet_toolbox.utilities import simplify_polygon
 class SeeAnythingTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
-
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
-
         self.see_anything_dialog = None
+        
+        self.animation_manager = self.annotation_window.animation_manager
 
         self.top_left = None
 
         self.cursor = Qt.CrossCursor
-        self.default_cursor = Qt.ArrowCursor  # Add this for clarity
+        self.default_cursor = Qt.ArrowCursor  
         self.annotation_graphics = None
 
         self.work_area_image = None
-        self.rectangles = []       # Store rectangle coordinates for SeeAnything processing
-        self.rectangle_items = []  # Store QGraphicsRectItem objects
+        self.rectangles = []       
+        self.rectangle_items = []  
 
         self.working_area = None
         self.shadow_area = None
@@ -68,8 +65,8 @@ class SeeAnythingTool(Tool):
         self.top_left = None
         self.bottom_right = None
         self.drawing_rectangle = False
-        self.current_rect_graphics = None  # For the rectangle currently being drawn
-        self.rectangles_processed = False  # Track if rectangles have been processed
+        self.current_rect_graphics = None  
+        self.rectangles_processed = False  
 
         # Add state variables for custom working area creation
         self.creating_working_area = False
@@ -143,7 +140,9 @@ class SeeAnythingTool(Tool):
 
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-
+        # Set animation manager
+        self.working_area.set_animation_manager(self.animation_manager)
+        
         # Get the thickness for the working area graphics
         pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
 
@@ -213,7 +212,9 @@ class SeeAnythingTool(Tool):
             
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-        
+        # Set animation manager
+        self.working_area.set_animation_manager(self.animation_manager)
+
         # Get the thickness for the working area graphics
         pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
         
@@ -677,10 +678,10 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-            
+            # Set the animation manager
+            annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             annotation.create_graphics_item(self.annotation_window.scene)
-            
             # Animate the annotation
             annotation.animate(force=True)
             
@@ -716,10 +717,10 @@ class SeeAnythingTool(Tool):
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-            
+            # Set the animation manager
+            annotation.set_animation_manager(self.animation_manager)
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             annotation.create_graphics_item(self.annotation_window.scene)
-            
             # Animate the annotation
             annotation.animate(force=True)
             
@@ -736,8 +737,10 @@ class SeeAnythingTool(Tool):
         progress_bar.start_progress(len(self.annotations))
             
         for annotation in self.annotations:
-            # Deanimate the annotation
+            # The add_annotation_from_tool will re-bind it
+            # and it will animate normally if selected.
             annotation.deanimate()
+            
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
