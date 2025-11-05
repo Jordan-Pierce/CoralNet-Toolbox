@@ -36,6 +36,7 @@ class TileBatchInference(QDialog):
         # Initialize dialogs for various tasks
         self.detect_dialog = main_window.detect_deploy_model_dialog
         self.segment_dialog = main_window.segment_deploy_model_dialog
+        self.semantic_dialog = main_window.semantic_deploy_model_dialog
         self.sam_dialog = main_window.sam_deploy_generator_dialog
         self.transformers_dialog = main_window.transformers_deploy_model_dialog
 
@@ -165,6 +166,8 @@ class TileBatchInference(QDialog):
             self.model_dialogs["Detect"] = self.detect_dialog
         if self.segment_dialog and getattr(self.segment_dialog, "loaded_model", None):
             self.model_dialogs["Segment"] = self.segment_dialog
+        if self.semantic_dialog and getattr(self.semantic_dialog, "loaded_model", None):
+            self.model_dialogs["Semantic"] = self.semantic_dialog
         if self.sam_dialog and getattr(self.sam_dialog, "loaded_model", None):
             self.model_dialogs["SAM Generator"] = self.sam_dialog
         if self.transformers_dialog and getattr(self.transformers_dialog, "loaded_model", None):

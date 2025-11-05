@@ -170,10 +170,10 @@ class Semantic(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, image_paths=None):
+    def predict(self, image_paths=None, progress_bar=None):
         """
         Make predictions on the given image paths using the loaded model.
-        Processes one tile at a time to conserve memory and improve speed.
+        Processes tiles one-by-one to conserve memory and update the UI in real-time.
 
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
@@ -196,9 +196,12 @@ class Semantic(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
+        # Track if we created the progress bar ourselves
+        progress_bar_created_here = progress_bar is None
+        
         try:
             # --- We process one image at a time ---
-            for image_path in image_paths:
+            for idx, image_path in enumerate(image_paths):
                 
                 # --- 1. Get Raster and Work Items ---
                 raster = self.image_window.raster_manager.get_raster(image_path)
@@ -234,19 +237,22 @@ class Semantic(Base):
                     print(f"Error: Mismatch in work items. Data: {len(work_items_data)}, Areas: {len(work_areas)}")
                     continue
 
-                # --- 2. Setup Progress Bar ---
-                progress_bar = ProgressBar(self.annotation_window, title=f"Predicting: {os.path.basename(image_path)}")
-                progress_bar.show()
-                progress_bar.start_progress(len(work_items_data))
+                # --- 2. Setup Progress Bar (New Style) ---
+                title = f"Predicting: {idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
+                if progress_bar is None:
+                    progress_bar = ProgressBar(self.annotation_window)
+                    progress_bar.show()
+                progress_bar.set_title(title)
+                progress_bar.start_progress(len(work_items_data))  # Total is number of tiles
                 
+                # --- 3. Process One Item at a Time (Streaming) ---
                 try:
-                    # --- 3. Process One Item at a Time ---
                     # Loop by index to keep parallel lists in sync
-                    for idx in range(len(work_items_data)):
+                    for idx_tile in range(len(work_items_data)):
                         
                         # Get the data and the corresponding coordinate object
-                        input_data = [work_items_data[idx]]
-                        item = work_areas[idx]  # This is the WorkArea object or None
+                        input_data = [work_items_data[idx_tile]]
+                        item = work_areas[idx_tile]  # This is the WorkArea object or None
                         
                         # --- 3a. Get Input Data and Offset ---
                         if is_full_image:
@@ -257,10 +263,9 @@ class Semantic(Base):
                             item.highlight()  # Highlight current tile
                             # Get (x, y) coords from the rect
                             offset = (int(item.rect.x()), int(item.rect.y()))
+                            QApplication.processEvents()
 
                         # --- 3b. Apply Model ---
-                        # _apply_model expects a list, returns a list of results
-                        # This call now only processes ONE tile
                         results_list = self._apply_model(input_data)
                         
                         if not results_list or not results_list[0]:
@@ -270,21 +275,19 @@ class Semantic(Base):
                             continue
                             
                         # Get the single Results object. 
-                        # Its .orig_shape will be the tile's shape, not the full raster's.
                         results_obj = results_list[0][0] 
                         results_obj.path = image_path  # Fix path
 
                         # --- 3c. Reconstruct Small Mask ---
-                        # This is now FAST, as it creates a small (e.g., 640x640) mask
                         reconstructed_mask = _reconstruct_semantic_mask(
                             results_obj,
-                            model_class_names,          # List of model class names
+                            model_class_names,      # List of model class names
                             self.class_mapping,         # Project's map {'Coral-A': LabelObj}
                             mask_annotation_map         # Mask's map {LabelObj.id: 2}
                         )
                         
-                        # --- 3d. Update Main Annotation ---
-                        # Use the efficient update_mask_with_mask, which respects locks
+                        # --- 3d. Update Main Annotation (Streaming) ---
+                        # This updates the UI *immediately* for each tile
                         mask_annotation.update_mask_with_mask(
                             reconstructed_mask, 
                             top_left=offset
@@ -293,21 +296,31 @@ class Semantic(Base):
                         if not is_full_image: 
                             item.unhighlight()
                         progress_bar.update_progress()
+                        
+                        # Break if this was a full image
+                        if is_full_image:
+                            break
 
                 except Exception as e:
                     print(f"An error occurred during prediction on {image_path}: {e}")
-                finally:
-                    progress_bar.finish_progress()
-                    progress_bar.stop_progress()
-                    progress_bar.close()
-
-            # Proactively recalculate stats for the last-processed mask
-            if 'mask_annotation' in locals() and mask_annotation:
+                    # Let the outer finally block handle cleanup
+                
+                # --- 4. Recalculate Stats ---
+                # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
 
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
+            # --- 5. Final Cleanup ---
+            # This block now runs ONCE at the end of the entire function
+            if progress_bar_created_here and progress_bar is not None:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+                
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
@@ -315,16 +328,11 @@ class Semantic(Base):
     def _apply_model(self, inputs):
         """
         Apply the SemanticModel to the inputs.
-        (This method is unchanged, but is now called with one input at a time)
+        (This method no longer shows its own progress bar)
         """
         
         # Get prediction parameters
         confidence = self.main_window.get_uncertainty_thresh()
-        
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(inputs))
         
         # Run prediction on the batch of inputs
         # Our SemanticModel returns a list of Results objects
@@ -334,15 +342,6 @@ class Semantic(Base):
             # Add other inference params here if needed
         )
         
-        # Manually update the progress bar to 100%
-        # (predict is blocking, so we can't update per-item)
-        for _ in inputs:
-            progress_bar.update_progress()
-
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-
         # Clean up GPU memory
         gc.collect()
         empty_cache()
