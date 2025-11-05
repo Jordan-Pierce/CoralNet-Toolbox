@@ -358,26 +358,43 @@ class ResultsProcessor:
 
         return image_path, top1cls, top1conf, predictions
 
-    def process_classification_results(self, results_generator, annotations):
+    def process_classification_results(self, results_generator, annotations, progress_bar=None):
         """
         Process the classification results from the results generator.
+        
+        Args:
+            results_generator: Generator of classification results
+            annotations: List of annotations to update
+            progress_bar: Optional external progress bar. If None, creates its own.
         """
-        progress_bar = ProgressBar(self.annotation_window, title="Making Classification Predictions")
-        progress_bar.show()
+        # Track if we created the progress bar ourselves
+        progress_bar_created_here = progress_bar is None
+        
+        if progress_bar is None:
+            progress_bar = ProgressBar(self.annotation_window, title="Making Classification Predictions")
+            progress_bar.show()
+        
         progress_bar.start_progress(len(annotations))
 
-        for result, annotation in zip(results_generator, annotations):
-            if result:
-                try:
-                    # Extract results and pass them to the dedicated update/display method
-                    _, cls_name, conf, predictions = self.extract_classification_result(result)
-                    self._update_and_display_classification(annotation, cls_name, conf, predictions)
-                except Exception as e:
-                    print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
-            progress_bar.update_progress()
+        try:
+            for result, annotation in zip(results_generator, annotations):
+                if result:
+                    try:
+                        # Extract results and pass them to the dedicated update/display method
+                        _, cls_name, conf, predictions = self.extract_classification_result(result)
+                        self._update_and_display_classification(annotation, cls_name, conf, predictions)
+                    except Exception as e:
+                        print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
+                
+                # Only update progress if we have a progress bar (external or internal)
+                if progress_bar:
+                    progress_bar.update_progress()
 
-        progress_bar.stop_progress()
-        progress_bar.close()
+        finally:
+            # Only close progress bar if we created it ourselves
+            if progress_bar_created_here and progress_bar:
+                progress_bar.stop_progress()
+                progress_bar.close()
         
     def _update_and_display_classification(self, annotation, cls_name, conf, predictions):
         """
