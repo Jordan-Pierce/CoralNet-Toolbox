@@ -3,15 +3,16 @@ import warnings
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogButtonBox, 
-                             QGroupBox, QFormLayout, QComboBox, QPushButton, QSpinBox,
-                             QHBoxLayout, QWidget, QGraphicsRectItem, QDoubleSpinBox, QCheckBox,
-                             QButtonGroup, QListWidget, QTableWidget, QTableWidgetItem, QHeaderView)
+                             QGroupBox, QFormLayout, QPushButton, QHBoxLayout, QCheckBox,
+                             QButtonGroup, QTableWidget, QTableWidgetItem, QApplication)
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -795,8 +796,17 @@ class TileCreation(QDialog):
                 left_pct, top_pct, right_pct, bottom_pct = margins
             else:
                 left_pct = top_pct = right_pct = bottom_pct = margins[0]
+                
+        # Create a progress bar
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Applying Tile Work Areas")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
     
         for image_path in image_paths:
+            # Update progress bar first
+            progress_bar.update_progress()
+            
             # For the current image, use the annotation window for validation
             if image_path == self.annotation_window.current_image_path:
                 is_valid, error_message, params = self.validate_parameters(image_path)
@@ -874,6 +884,12 @@ class TileCreation(QDialog):
             for work_area in tile_work_areas:
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
+            
+        # Restor cursor
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
     
         # Show dialog if any images were skipped due to errors
         if errors:
