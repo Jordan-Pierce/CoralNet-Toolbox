@@ -155,6 +155,28 @@ class TileManager(QDialog):
         self.clear_button.clicked.connect(self.clear_tiles)
         buttons_layout.addWidget(self.clear_button)
         
+        # Add button layout first
+        self.layout.addLayout(buttons_layout)
+        
+        # Create a second row for delete buttons
+        delete_buttons_layout = QHBoxLayout()
+        
+        # Delete tiles for current image button
+        self.delete_current_button = QPushButton("Delete Tiles (Current Image)")
+        self.delete_current_button.clicked.connect(self.delete_tiles_current_image)
+        # Red text to indicate destructive action
+        self.delete_current_button.setStyleSheet("QPushButton { color: #d32f2f; }")
+        delete_buttons_layout.addWidget(self.delete_current_button)
+        
+        # Delete tiles for all images button
+        self.delete_all_button = QPushButton("Delete Tiles (All Images)")
+        self.delete_all_button.clicked.connect(self.delete_tiles_all_images)
+        # Red text to indicate destructive action
+        self.delete_all_button.setStyleSheet("QPushButton { color: #d32f2f; }")
+        delete_buttons_layout.addWidget(self.delete_all_button)
+        
+        self.layout.addLayout(delete_buttons_layout)
+        
         # Create a button box with custom buttons
         button_box = QDialogButtonBox()
         apply_button = QPushButton("Apply")
@@ -166,8 +188,7 @@ class TileManager(QDialog):
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
 
-        # Add button layout first, then the standard button box
-        self.layout.addLayout(buttons_layout)
+        # Add the standard button box
         self.layout.addWidget(button_box)
         
     def setup_apply_options_layout(self):
@@ -613,6 +634,95 @@ class TileManager(QDialog):
         
         # Reset status
         self.status_label.setText("No tiles previewed")
+
+    def delete_tiles_current_image(self):
+        """Delete all existing tile work areas for the current image."""
+        # Get the current image path
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            QMessageBox.warning(self, "No Image", "No image is currently loaded.")
+            return
+        
+        # Get the raster for the current image
+        raster = self.main_window.image_window.raster_manager.get_raster(current_image_path)
+        if not raster:
+            QMessageBox.warning(self, "Error", "Could not access image data.")
+            return
+        
+        # Check if there are any work areas to delete
+        if not raster.has_work_areas():
+            QMessageBox.information(self, 
+                                    "No Tiles", 
+                                    "There are no tiles to delete for the current image.")
+            return
+        
+        # Confirm deletion
+        tile_count = len(raster.get_work_areas())
+        reply = QMessageBox.question(
+            self, "Confirm Deletion", 
+            f"Are you sure you want to delete {tile_count} tile(s) from the current image?\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear all work areas from the raster
+            raster.clear_work_areas()
+            
+            # Clear any preview tiles from the scene as well
+            self.clear_tiles()
+            
+            QMessageBox.information(self, 
+                                    "Tiles Deleted", 
+                                    f"Successfully deleted {tile_count} tile(s) from the current image.")
+    
+    def delete_tiles_all_images(self):
+        """Delete all existing tile work areas for all images in the project."""
+        # Get all rasters from the raster manager
+        raster_manager = self.main_window.image_window.raster_manager
+        all_rasters = [raster_manager.get_raster(path) for path in raster_manager.image_paths]
+        
+        # Count total tiles across all images
+        total_tiles = 0
+        images_with_tiles = 0
+        for raster in all_rasters:
+            if raster and raster.has_work_areas():
+                total_tiles += len(raster.get_work_areas())
+                images_with_tiles += 1
+        
+        # Check if there are any tiles to delete
+        if total_tiles == 0:
+            QMessageBox.information(self, 
+                                    "No Tiles", 
+                                    "There are no tiles to delete in any images.")
+            return
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion", 
+            f"Are you sure you want to delete {total_tiles} tile(s) from "
+            f"{images_with_tiles} image(s)?\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear work areas from all rasters
+            deleted_count = 0
+            for raster in all_rasters:
+                if raster and raster.has_work_areas():
+                    deleted_count += len(raster.get_work_areas())
+                    raster.clear_work_areas()
+            
+            # Clear any preview tiles from the scene as well
+            self.clear_tiles()
+            
+            QMessageBox.information(self, 
+                                    "Tiles Deleted", 
+                                    f"Successfully deleted {deleted_count} tile(s) from "
+                                    f"{images_with_tiles} image(s).")
 
     def generate_tile_work_areas(self, params, image_path):
         """
