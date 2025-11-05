@@ -487,7 +487,17 @@ class MainWindow(QMainWindow):
         
         # Tile menu
         self.tile_menu = self.menu_bar.addMenu("Tile")
-
+        
+        # Tile Creation
+        self.tile_creation_action = QAction("Tile Creation", self)
+        self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
+        self.tile_menu.addAction(self.tile_creation_action)
+        # Tile Batch Inference
+        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
+        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
+        self.tile_menu.addAction(self.tile_batch_inference_action)
+        # Add a separator
+        self.tile_menu.addSeparator()
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
@@ -506,14 +516,6 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action = QAction("Semantic", self)
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
-        # Tile Inference
-        self.tile_creation_action = QAction("Tile Creation", self)
-        self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
-        self.tile_menu.addAction(self.tile_creation_action)
-        # Tile Batch Inference
-        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
-        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
-        self.tile_menu.addAction(self.tile_batch_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")

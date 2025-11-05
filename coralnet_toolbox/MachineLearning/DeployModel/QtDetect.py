@@ -188,9 +188,10 @@ class Detect(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, image_paths=None):
+    def predict(self, image_paths=None, progress_bar=None):
         """
         Make predictions on the given image paths using the loaded model.
+        Processes one tile at a time to conserve memory and improve speed.
 
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
@@ -205,7 +206,7 @@ class Detect(Base):
                 return
             image_paths = [self.annotation_window.current_image_path]
 
-        # Create a results processor
+        # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(
             self.main_window,
             self.class_mapping,
@@ -218,52 +219,137 @@ class Detect(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
+        # Track if we created the progress bar ourselves
+        progress_bar_created_here = progress_bar is None
+        
         try:
-            for image_path in image_paths:
-                inputs = self._get_inputs(image_path)
-                if inputs is None:
+            # --- We process one image at a time ---
+            for idx, image_path in enumerate(image_paths):
+                
+                # --- 1. Get Raster and Work Items ---
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster is None:
+                    print(f"Warning: Could not get raster for {image_path}. Skipping.")
                     continue
+                
+                # Get the list of items to process
+                is_full_image = self.annotation_window.get_selected_tool() != "work_area"
+                
+                if is_full_image:
+                    work_items_data = [raster.image_path]  # List with one string
+                    work_areas = [None]  # Dummy list to make loops match
+                else:
+                    # Get both parallel lists: coordinate objects and data arrays
+                    work_areas = raster.get_work_areas() # List of WorkArea objects
+                    work_items_data = raster.get_work_areas_data(as_format='BGR') # List of np.ndarray
 
-                results = self._apply_model(inputs)
-                results = self._apply_sam(results, image_path)
-                self._process_results(results_processor, results, image_path)
+                if not work_items_data or not work_areas:
+                    print(f"Warning: No work items found for {image_path}. Skipping.")
+                    continue
+                    
+                if len(work_items_data) != len(work_areas):
+                    print(f"Error: Mismatch in work items. Data: {len(work_items_data)}, Areas: {len(work_areas)}")
+                    continue
+                
+                # --- 2. Setup Progress Bar ---
+                title = f"Predicting: {idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
+                if progress_bar is None:
+                    progress_bar = ProgressBar(self.annotation_window)
+                    progress_bar.show()
+                progress_bar.set_title(title)
+                progress_bar.start_progress(len(work_items_data))
 
-                # Update the progress bar
-                progress_bar.update_progress()
+                # --- 3. Process One Item at a Time ---
+                # Create a list to hold all results for THIS image
+                results_for_this_image = []
+                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+                
+                try:
+                    # Loop by index to keep parallel lists in sync
+                    for idx in range(len(work_items_data)):
+                        
+                        input_data = [work_items_data[idx]]
+                        work_area = work_areas[idx]  # This is the WorkArea object or None
+                        
+                        # --- Highlight at the START of the loop ---
+                        if work_area:
+                            work_area.highlight()
+
+                        # --- 3a. Apply Model ---
+                        results_list = self._apply_model(input_data)
+                        
+                        # --- 3b. Apply SAM ---
+                        sam_results_list = self._apply_sam(results_list, image_path)
+
+                        if not sam_results_list or not sam_results_list[0]:
+                            if work_area: 
+                                work_area.unhighlight()  # Unhighlight on early exit
+                            progress_bar.update_progress()
+                            continue
+
+                        # Get the single result object
+                        results_obj = sam_results_list[0][0]
+                        results_obj.path = image_path
+                        
+                        # --- 3c. Map Result (logic from _process_results) ---
+                        if work_area:
+                            # Highlight is already active
+                            mapped_result = MapResults().map_results_from_work_area(
+                                results_obj,
+                                raster,
+                                work_area,
+                                is_segmentation
+                            )
+                        else:
+                            mapped_result = results_obj
+
+                        # --- 3d. Append to list, DO NOT process yet ---
+                        results_for_this_image.append(mapped_result)
+
+                        # Update the progress bar
+                        progress_bar.update_progress()
+                        
+                        # Clean up GPU memory *after each tile*
+                        gc.collect()
+                        empty_cache()
+                        
+                        # --- Unhighlight at the END of the loop ---
+                        if work_area:
+                            work_area.unhighlight()
+
+                except Exception as e:
+                    print(f"An error occurred during prediction on {image_path}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    if progress_bar_created_here:
+                        progress_bar.finish_progress()
+                        progress_bar.stop_progress()
+                        progress_bar.close()
+                    
+                # --- 4. Process All Results for This Image at Once ---
+                if results_for_this_image:
+                    if is_segmentation:
+                        results_processor.process_segmentation_results(results_for_this_image)
+                    else:
+                        results_processor.process_detection_results(results_for_this_image)
 
         except Exception as e:
-            print("An error occurred during prediction:", e)
+            print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
+            # Only close the progress bar if we created it here
+            if progress_bar_created_here:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-        gc.collect()
-        empty_cache()
-
-    def _get_inputs(self, image_path):
-        """Get the inputs for the model prediction."""
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        if raster is None:
-            return None, None
-        
-        if self.annotation_window.get_selected_tool() != "work_area":
-            # Use the image path
-            work_areas_data = [raster.image_path]
-        else:
-            # Get the work areas
-            work_areas_data = raster.get_work_areas_data(as_format='BGR')
-
-        return work_areas_data
+            gc.collect()
+            empty_cache()
 
     def _apply_model(self, inputs):
-        """Apply the model to the inputs."""
+        """
+        Apply the model to the inputs.
+        """
         results_generator = self.loaded_model(inputs,
                                               agnostic_nms=True,
                                               conf=self.main_window.get_uncertainty_thresh(),
@@ -274,29 +360,19 @@ class Detect(Base):
                                               half=True,
                                               stream=True)  # memory efficient inference
 
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(inputs))
-
         results_list = []
-
         for results in results_generator:
             results_list.append([results])
-            # Update the progress bar
-            progress_bar.update_progress()
             # Clean up GPU memory after each prediction
             gc.collect()
             empty_cache()
 
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-
         return results_list
 
     def _apply_sam(self, results_list, image_path):
-        """Apply SAM to the results if needed."""
+        """
+        Apply SAM to the results if needed.
+        """
         # Check if SAM model is deployed and loaded
         self.update_sam_task_state()
         if self.task != 'segment':
@@ -312,14 +388,7 @@ class Detect(Base):
             self.use_sam_dropdown.setCurrentText("False")
             return results_list
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
-        progress_bar.show()
-        progress_bar.start_progress(len(results_list))
-
         updated_results = []
-
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
             if results:
@@ -327,66 +396,4 @@ class Detect(Base):
                 results = self.sam_dialog.predict_from_results(results, image_path)
                 updated_results.append(results)
 
-            # Update the progress bar
-            progress_bar.update_progress()
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-
         return updated_results
-
-    def _process_results(self, results_processor, results_list, image_path):
-        """Process the results using the result processor."""
-        # Get the raster object and number of work items
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        total = raster.count_work_items()
-
-        # Get the work areas (if any)
-        work_areas = raster.get_work_areas()
-
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
-        progress_bar.show()
-        progress_bar.start_progress(total)
-
-        updated_results = []
-
-        for idx, results in enumerate(results_list):
-            # Each Results is a list (within the results_list, [[], ]
-            if results:
-                # Update path
-                results[0].path = image_path
-                # Check if the work area is valid, or the image path is being used
-                if work_areas and self.annotation_window.get_selected_tool() == "work_area":
-                    # Highlight the work area being processed
-                    work_areas[idx].highlight()
-                    # Map results from work area to the full image
-                    results = MapResults().map_results_from_work_area(results[0],
-                                                                      raster,
-                                                                      work_areas[idx],
-                                                                      self.task == 'segment')
-                    # Revert the work area highlight
-                    work_areas[idx].unhighlight()
-                else:
-                    results = results[0]
-
-                # Append the result object (not a list) to the updated results list
-                updated_results.append(results)
-
-                # Update the index for the next work area
-                idx += 1
-                progress_bar.update_progress()
-
-        # Process the Results
-        if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(updated_results)
-        else:
-            results_processor.process_detection_results(updated_results)
-
-        # Close the progress bar
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()

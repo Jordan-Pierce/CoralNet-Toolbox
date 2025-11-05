@@ -272,10 +272,12 @@ class TileBatchInference(QDialog):
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title="Tile Batch Inference")
         progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.loaded_model.predict(image_paths=self.image_paths)
+            try:
+                self.loaded_model.predict(image_paths=self.image_paths, progress_bar=progress_bar)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
 
         progress_bar.stop_progress()
         progress_bar.close()

@@ -1,10 +1,7 @@
 from PyQt5.QtCore import QPointF
 
 import torch
-import numpy as np
-
 from ultralytics.utils.nms import TorchNMS
-from ensemble_boxes import weighted_boxes_fusion as wbf
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -27,7 +24,6 @@ class ResultsProcessor:
                  iou_thresh=None,
                  min_area_thresh=None,
                  max_area_thresh=None):
-        # Initialize the ResultsProcessor with the main window
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
@@ -51,7 +47,7 @@ class ResultsProcessor:
         self.iou_thresh = iou_thresh
         self.min_area_thresh = min_area_thresh
         self.max_area_thresh = max_area_thresh
-
+    
     def filter_by_uncertainty(self, results):
         """
         Filter the results based on the uncertainty threshold.
@@ -145,279 +141,116 @@ class ResultsProcessor:
 
         return list(indices)
     
-    def _process_results_with_global_nms(self, results_list, model_type):
+    def _process_single_result_set(self, results, model_type):
         """
-        Internal method to process detection or segmentation results from a list 
-        (e.g., from multiple work areas) using global NMS/WBF.
+        Processes a *single* Results object from a single work area.
         
-        - Detections:
-            Stage 1: Merge (WBF) new detections.
-            Stage 2: Suppress (NMS) vs. existing.
-        - Segmentations:
-            Stage 1: Skip (pass all).
-            Stage 2: Suppress (NMS) vs. existing.
+        This function filters the results, runs NMS against existing annotations,
+        and creates a list of new annotation objects to be added.
         """
-        if not results_list:
-            return
-
-        # --- 1. Configure Progress Bar and Collect All Detections ---
+        annotations_to_add = []
+        new_detections = []
         
-        if model_type == 'detection':
-            progress_title = "Detections: Merging Duplicates (WBF)"
-        else:
-            progress_title = "Segmentations: Finding Duplicates"
+        if not results or not results.boxes: 
+            return annotations_to_add
             
-        progress_bar = ProgressBar(self.annotation_window, title=progress_title)
-        progress_bar.show()
-        progress_bar.start_progress(len(results_list))
-
-        # --- OPTIMIZATION: Collect into flat lists, not dict ---
-        all_new_detections = []  # Stores the dict data for segmentations
-        all_boxes = []     # For WBF
-        all_scores = []    # For WBF
-        all_labels = []    # For WBF
-        class_id_to_name = {}  # To map WBF label results back to names
-
-        image_path = None
-        img_h, img_w = None, None 
-
-        for results in results_list:
-            if not results or not results.boxes: 
-                progress_bar.update_progress()
-                continue
-            
-            if image_path is None:
-                image_path = results.path.replace("\\", "/")
-                if results.orig_shape is not None:
-                    img_h, img_w = results.orig_shape[:2] # Fixed unpack error
-            
-            indices_uncertainty = set(self.indices_pass_uncertainty(results))
-            indices_area = set(self.indices_pass_area(results))
-            filtered_indices = list(indices_uncertainty.intersection(indices_area))
-            
-            for idx in filtered_indices:
-                try:
-                    box = results.boxes[idx]
-                    xyxy = box.xyxy[0].cpu().numpy()
-                    conf = float(box.conf[0].cpu().numpy())
-                    cls_id = int(box.cls[0].cpu().numpy())
-                    cls_name = results.names[cls_id]
-                    
-                    if cls_id not in class_id_to_name:
-                        class_id_to_name[cls_id] = cls_name
-                    
-                    bbox_coords = [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])]
-
-                    if model_type == 'detection':
-                        # For WBF, append to lists
-                        all_boxes.append(bbox_coords)
-                        all_scores.append(conf)
-                        all_labels.append(cls_id)
-                    
-                    elif model_type == 'segmentation':
-                        # For Segmentation, build the dict as before
-                        detection_data = {
-                            'bbox': bbox_coords,
-                            'confidence': conf,
-                            'class_name': cls_name,
-                            'class_id': cls_id,
-                            'is_existing': False,
-                            'polygon_points': None,
-                            'model_type': 'segmentation'
-                        }
-                        if results.masks and idx < len(results.masks.xy):
-                            xy = results.masks.xy[idx]
-                            # --- OPTIMIZATION: Store raw points, simplify later ---
-                            points = [(float(x), float(y)) for x, y in xy]
-                            detection_data['polygon_points'] = points
-                            all_new_detections.append(detection_data)
-                        else:
-                            continue 
-                    
-                except Exception as e:
-                    print(f"Warning: Failed to extract result in first pass: {e}")
-            
-            progress_bar.update_progress()
+        image_path = results.path.replace("\\", "/")
         
-        if (model_type == 'detection' and not all_boxes) or \
-           (model_type == 'segmentation' and not all_new_detections) or \
-           not image_path:
-            progress_bar.stop_progress()
-            progress_bar.close()
-            return
+        # --- 1. Filter new results by uncertainty and area ---
+        indices_uncertainty = set(self.indices_pass_uncertainty(results))
+        indices_area = set(self.indices_pass_area(results))
+        filtered_indices = list(indices_uncertainty.intersection(indices_area))
+        
+        for idx in filtered_indices:
+            try:
+                box = results.boxes[idx]
+                xyxy = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
+                cls_id = int(box.cls[0].cpu().numpy())
+                cls_name = results.names[cls_id]
+                
+                bbox_coords = [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])]
+
+                detection_data = {
+                    'bbox': bbox_coords,
+                    'confidence': conf,
+                    'class_name': cls_name,
+                    'class_id': cls_id,
+                    'is_existing': False,
+                    'polygon_points': None,
+                    'model_type': model_type
+                }
+                
+                if model_type == 'segmentation':
+                    if results.masks and idx < len(results.masks.xy):
+                        xy = results.masks.xy[idx]
+                        points = [(float(x), float(y)) for x, y in xy]
+                        detection_data['polygon_points'] = points
+                        new_detections.append(detection_data)
+                else:  # 'detection'
+                    new_detections.append(detection_data)
+                    
+            except Exception as e:
+                print(f"Warning: Failed to extract result in first pass: {e}")
+        
+        if not new_detections:
+            return annotations_to_add
             
-        progress_bar.set_title(f"Running Stage 1...")
-        progress_bar.start_progress(1)
-
-        # --- 2. Run Stage 1: Class-Aware WBF (Merge) or Skip ---
-        
-        surviving_stage1_detections = []  # This list will be fed to Stage 3
-        
-        if model_type == 'segmentation':
-            # Segmentation skips Stage 1 (WBF)
-            surviving_stage1_detections = all_new_detections
-            
-        elif model_type == 'detection':
-            # --- OPTIMIZATION: Run WBF in a single, class-aware call ---
-            if img_h is None or img_w is None:
-                print(f"Error: Cannot run WBF merge. Image dimensions not found.")
-                # Fallback: Just use class-aware NMS
-                try:
-                    boxes_tensor = torch.tensor(all_boxes, dtype=torch.float32)
-                    scores_tensor = torch.tensor(all_scores, dtype=torch.float32)
-                    labels_tensor = torch.tensor(all_labels)
-                    
-                    # Find a fast_nms_per_class implementation if available in TorchNMS
-                    # This is a placeholder, as ultralytics.utils.nms.TorchNMS may not
-                    # have fast_nms_per_class. You may need to loop here.
-                    # For simplicity, we'll just run class-agnostic NMS as a fallback.
-                    print("Warning: WBF fallback using class-agnostic NMS.")
-                    keep_indices = TorchNMS.fast_nms(boxes_tensor, scores_tensor, self.iou_thresh).tolist()
-                    
-                    for i in keep_indices:
-                        cls_id = all_labels[i]
-                        surviving_stage1_detections.append({
-                            'bbox': all_boxes[i],
-                            'confidence': all_scores[i],
-                            'class_name': class_id_to_name[cls_id],
-                            'class_id': cls_id,
-                            'is_existing': False,
-                            'model_type': 'detection',
-                            'polygon_points': None
-                        })
-                except Exception as e:
-                    print(f"Warning: WBF fallback to NMS failed: {e}")
-            else:
-                # --- Main WBF Path ---
-                try:
-                    # Vectorized normalization
-                    boxes_arr = np.array(all_boxes)
-                    norm_boxes = boxes_arr.copy()
-                    norm_boxes[:, [0, 2]] /= img_w
-                    norm_boxes[:, [1, 3]] /= img_h
-                    norm_boxes_list = norm_boxes.tolist()
-
-                    # Run WBF *once*. It handles classes internally via all_labels.
-                    merged_boxes, merged_scores, merged_labels = wbf(
-                        [norm_boxes_list], # Needs to be a list of lists
-                        [all_scores],      # Needs to be a list of lists
-                        [all_labels],      # Needs to be a list of lists
-                        iou_thr=self.iou_thresh, 
-                        skip_box_thr=self.uncertainty_thresh
-                    )
-                    
-                    # Vectorized de-normalization
-                    merged_boxes_arr = np.array(merged_boxes)
-                    merged_boxes_arr[:, [0, 2]] *= img_w
-                    merged_boxes_arr[:, [1, 3]] *= img_h
-
-                    # Create new detection dicts from merged results
-                    for b, s, l in zip(merged_boxes_arr, merged_scores, merged_labels):
-                        cls_id = int(l)
-                        bbox_list = b.tolist()
-                        merged_detection = {
-                            'bbox': bbox_list,
-                            'confidence': float(s),
-                            'class_name': class_id_to_name[cls_id],
-                            'class_id': cls_id,
-                            'is_existing': False,
-                            'polygon_points': None,
-                            'model_type': 'detection'
-                        }
-                        surviving_stage1_detections.append(merged_detection)
-                except Exception as e:
-                    print(f"Warning: Stage 1 WBF merge failed: {e}")
-
-        progress_bar.update_progress()
-        
-        # --- 3. Run Stage 2: NMS vs. Existing Annotations (Class-Agnostic) ---
-        
-        progress_bar.set_title(f"Running Stage 2 (NMS vs. Existing)")
-        progress_bar.start_progress(3) 
+        # --- 2. Run NMS vs. Existing Annotations (Class-Agnostic) ---
         
         existing_annotations = self.annotation_window.get_image_annotations(image_path)
         existing_annotations = [a for a in existing_annotations if (isinstance(a, RectangleAnnotation) or 
                                                                     isinstance(a, PolygonAnnotation))]
         existing_detections = self._convert_annotations_to_nms_format(existing_annotations)
-        progress_bar.update_progress()
         
         # Combine existing (with 1.0 conf) and new survivors
-        all_detections_combined = existing_detections + surviving_stage1_detections
+        all_detections_combined = existing_detections + new_detections
         
         if not all_detections_combined:
-            progress_bar.stop_progress()
-            progress_bar.close()
-            return
+            return annotations_to_add
             
-        # --- Use TorchNMS for Stage 2 ---
-        
         # Convert to tensors for NMS
         bboxes = torch.tensor([det['bbox'] for det in all_detections_combined], dtype=torch.float32)
         scores = torch.tensor([det['confidence'] for det in all_detections_combined], dtype=torch.float32)
         
         try:
             # Apply NMS using TorchNMS. This is class-agnostic.
-            # It correctly returns a 1D tensor of *indices* to keep.
             keep_indices_tensor = TorchNMS.fast_nms(bboxes, scores, self.iou_thresh)
-            keep_indices = keep_indices_tensor.tolist() # Convert tensor to standard list of ints
+            keep_indices = keep_indices_tensor.tolist()  # Convert tensor to standard list of ints
         except Exception as e:
             print(f"Warning: Stage 2 NMS (TorchNMS) failed: {e}")
-            # Fallback: keep all indices
             keep_indices = list(range(len(all_detections_combined)))
             
-        progress_bar.update_progress()
-
-        # --- 4. Create Annotations for final survivors ---
-        annotations_to_add = []
+        # --- 3. Create Annotations for final survivors ---
         
-        final_survivors = []
-        # This loop will now work correctly, as 'idx' will be an integer
         for idx in keep_indices:
             # Check if the kept index is a NEW detection
             original_detection = all_detections_combined[idx]
             if not original_detection['is_existing']:
-                final_survivors.append(original_detection)
+                try:
+                    conf = original_detection['confidence']
+                    cls_name = original_detection['class_name']
+                    
+                    short_label = self.get_mapped_short_label(cls_name, conf)
+                    label = self.label_window.get_label_by_short_code(short_label)
+                    
+                    annotation = None
+                    if original_detection['model_type'] == 'detection':
+                        xmin, ymin, xmax, ymax = original_detection['bbox']
+                        annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
+                    
+                    elif original_detection['model_type'] == 'segmentation' and original_detection['polygon_points']:
+                        points = simplify_polygon(original_detection['polygon_points'], 0.1) 
+                        annotation = self.create_polygon_annotation(points, label, image_path)
+
+                    if annotation:
+                        processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
+                        annotations_to_add.append(processed_annotation)
+                
+                except Exception as e:
+                    print(f"Warning: Failed to create annotation: {e}")
         
-        progress_bar.update_progress()
-        progress_bar.set_title(f"Creating {len(final_survivors)} Annotations")
-        progress_bar.start_progress(len(final_survivors))
-
-        for detection in final_survivors:
-            try:
-                conf = detection['confidence']
-                cls_name = detection['class_name']
-                
-                short_label = self.get_mapped_short_label(cls_name, conf)
-                label = self.label_window.get_label_by_short_code(short_label)
-                
-                annotation = None
-                if detection['model_type'] == 'detection':
-                    xmin, ymin, xmax, ymax = detection['bbox']
-                    annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
-                
-                elif detection['model_type'] == 'segmentation' and detection['polygon_points']:
-                    # --- OPTIMIZATION: Simplify polygon only for survivors ---
-                    points = simplify_polygon(detection['polygon_points'], 0.1) 
-                    annotation = self.create_polygon_annotation(points, label, image_path)
-
-                if annotation:
-                    processed_annotation = self._post_process_new_annotation(annotation, cls_name, conf)
-                    annotations_to_add.append(processed_annotation)
-            
-            except Exception as e:
-                print(f"Warning: Failed to create annotation: {e}")
-            
-            progress_bar.update_progress()
-
-        # --- 5. Add to window ---
-        if annotations_to_add:
-            self.annotation_window.add_annotations(annotations_to_add)
-        
-        if self.annotation_window.current_image_path == image_path:
-            self.annotation_window.load_annotations()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
+        return annotations_to_add
 
     def _convert_annotations_to_nms_format(self, annotations):
         """Convert existing annotations to NMS format using their built-in method."""
@@ -593,13 +426,6 @@ class ResultsProcessor:
 
         return image_path, cls, cls_name, conf, xmin, ymin, xmax, ymax
     
-    def process_segmentation_results(self, results_list):
-        """
-        Process the segmentation results from the list of Results with global NMS
-        across all results (e.g., from work areas) and vs. existing annotations.
-        """
-        self._process_results_with_global_nms(results_list, 'segmentation')
-
     def extract_segmentation_result(self, result):
         """
         Extract relevant information from a segmentation result.
@@ -615,12 +441,49 @@ class ResultsProcessor:
 
         return image_path, cls, cls_name, conf
 
+    def process_segmentation_results(self, results_list):
+        """
+        Process segmentation results. Loops through the list and processes
+        one Results object at a time.
+        """
+        all_new_annos = []
+        image_path = None
+        
+        for results in results_list:
+            if not results or not results.boxes:
+                continue
+            if image_path is None:
+                image_path = results.path.replace("\\", "/")
+                
+            new_annos = self._process_single_result_set(results, 'segmentation')
+            all_new_annos.extend(new_annos)
+            
+        if all_new_annos:
+            self.annotation_window.add_annotations(all_new_annos)
+            if self.annotation_window.current_image_path == image_path:
+                self.annotation_window.load_annotations()
+
     def process_detection_results(self, results_list):
         """
-        Process the detection results from the list of Results with global NMS
-        across all results (e.g., from work areas) and vs. existing annotations.
+        Process detection results. Loops through the list and processes
+        one Results object at a time.
         """
-        self._process_results_with_global_nms(results_list, 'detection')
+        all_new_annos = []
+        image_path = None
+        
+        for results in results_list:
+            if not results or not results.boxes:
+                continue
+            if image_path is None:
+                image_path = results.path.replace("\\", "/")
+                
+            new_annos = self._process_single_result_set(results, 'detection')
+            all_new_annos.extend(new_annos)
+            
+        if all_new_annos:
+            self.annotation_window.add_annotations(all_new_annos)
+            if self.annotation_window.current_image_path == image_path:
+                self.annotation_window.load_annotations()
         
     def _post_process_new_annotation(self, annotation, cls_name, conf):
         """

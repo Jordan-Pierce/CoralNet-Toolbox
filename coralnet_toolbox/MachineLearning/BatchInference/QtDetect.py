@@ -36,11 +36,10 @@ class Detect(Base):
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
             try:
-                self.deploy_model_dialog.predict(self.image_paths)
+                self.deploy_model_dialog.predict(self.image_paths, progress_bar)
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
                 
