@@ -208,7 +208,7 @@ class Detect(Base):
             image_paths = [self.annotation_window.current_image_path]
 
         # --- Define a batch size for prediction ---
-        BATCH_SIZE = 16  # TODO make 
+        BATCH_SIZE = 16
 
         # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(
