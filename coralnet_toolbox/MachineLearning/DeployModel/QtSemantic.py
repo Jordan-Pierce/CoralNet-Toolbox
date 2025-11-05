@@ -2,7 +2,6 @@ import warnings
 
 import gc
 import os
-import traceback
 
 import numpy as np
 
@@ -15,8 +14,6 @@ from torch.cuda import empty_cache
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.MachineLearning.SMP import SemanticModel 
-
-from coralnet_toolbox.Results.MapResults import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -299,7 +296,6 @@ class Semantic(Base):
 
                 except Exception as e:
                     print(f"An error occurred during prediction on {image_path}: {e}")
-                    traceback.print_exc()
                 finally:
                     progress_bar.finish_progress()
                     progress_bar.stop_progress()
