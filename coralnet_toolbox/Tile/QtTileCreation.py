@@ -875,9 +875,6 @@ class TileCreation(QDialog):
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
     
-        # Show summary message
-        QMessageBox.information(self, "Tiles Added", f"Added {total_tiles} tiles to selected images.")
-    
         # Show dialog if any images were skipped due to errors
         if errors:
             self.show_skipped_images_dialog(errors)
