@@ -995,7 +995,7 @@ class TileManager(QDialog):
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
             
-        # Restor cursor
+        # Restore cursor
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()
         progress_bar.stop_progress()
