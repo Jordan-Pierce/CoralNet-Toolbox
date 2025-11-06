@@ -6,8 +6,11 @@ from collections import defaultdict
 from typing import Optional, Set, List
 
 import cv2
-import rasterio
 import numpy as np
+
+import rasterio
+from rasterio.crs import CRS
+from rasterio.warp import calculate_default_transform
 
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
@@ -86,6 +89,11 @@ class Raster(QObject):
         self.channels = 0
         self.shape = (0, 0, 0)  # Shape of the image (height, width, channels)
         
+        # Scale information (if available)
+        self.scale_x: Optional[float] = None
+        self.scale_y: Optional[float] = None
+        self.scale_units: Optional[str] = None
+        
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
@@ -134,8 +142,54 @@ class Raster(QObject):
             # Update metadata
             self.metadata['dimensions'] = f"{self.width}x{self.height}"
             self.metadata['bands'] = self.channels
-            if hasattr(self._rasterio_src, 'crs') and self._rasterio_src.crs:
+
+            if self._rasterio_src.crs:
+                # Store the CRS string in metadata
                 self.metadata['crs'] = str(self._rasterio_src.crs)
+                
+                if self._rasterio_src.crs.is_projected:
+                    # Case 1: Already projected. Just read the scale.
+                    transform = self._rasterio_src.transform
+                    
+                    self.scale_x = abs(transform.a) 
+                    self.scale_y = abs(transform.e)
+                    self.scale_units = self._rasterio_src.crs.linear_units 
+                    
+                    self.metadata['scale_x'] = f"{self.scale_x:.4f} {self.scale_units}"
+                    self.metadata['scale_y'] = f"{self.scale_y:.4f} {self.scale_units}"
+                
+                elif self._rasterio_src.crs.is_geographic:
+                    # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
+                    try:
+                        # Define the destination CRS (Web Mercator)
+                        dst_crs = CRS.from_epsg(3857)
+                        
+                        # Calculate the transform, new width, and new height for the reprojected image
+                        transform, width, height = calculate_default_transform(
+                            self._rasterio_src.crs,     # Source CRS
+                            dst_crs,                    # Destination CRS
+                            self._rasterio_src.width,   # Source width
+                            self._rasterio_src.height,  # Source height
+                            *self._rasterio_src.bounds  # Source bounds
+                        )
+                        
+                        # Now, the transform's components are in meters
+                        self.scale_x = abs(transform.a)
+                        self.scale_y = abs(transform.e)
+                        self.scale_units = 'metre'  # EPSG:3857 units are meters
+                        
+                        # Update metadata to show the *derived* scale
+                        self.metadata['scale_x'] = f"~{self.scale_x:.4f} {self.scale_units} (from EPSG:3857)"
+                        self.metadata['scale_y'] = f"~{self.scale_y:.4f} {self.scale_units} (from EPSG:3857)"
+                        self.metadata['original_crs'] = str(self._rasterio_src.crs)
+
+                    except Exception as e:
+                        # Fallback if reprojection calculation fails
+                        print(f"Could not calculate default transform for {self.image_path}: {e}")
+                        self.metadata['units'] = "degrees (reprojection failed)"
+                        # scale attributes remain None
+                
+                # Case 3: No CRS. self.scale_x, self.scale_y, and self.scale_units correctly remain None
             
             return True
             

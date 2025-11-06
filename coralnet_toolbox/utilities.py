@@ -600,6 +600,48 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+def convert_scale_units(value, from_unit, to_unit):
+    """
+    Convert a value from one metric unit to another.
+
+    Args:
+        value (float): The value to convert.
+        from_unit (str): The unit to convert from (e.g., 'metre', 'm', 'cm').
+        to_unit (str): The unit to convert to (e.g., 'mm', 'cm', 'm', 'km').
+
+    Returns:
+        float: The converted value.
+    """
+    from_unit = from_unit.lower()
+    to_unit = to_unit.lower()
+
+    # Standardize from_unit to meters first
+    if from_unit in ['metre', 'm']:
+        value_in_meters = value
+    elif from_unit == 'mm':
+        value_in_meters = value / 1000.0
+    elif from_unit == 'cm':
+        value_in_meters = value / 100.0
+    elif from_unit == 'km':
+        value_in_meters = value * 1000.0
+    else:
+        # If unit is unknown, return original value
+        return value
+
+    # Now convert from meters to the target unit
+    if to_unit == 'mm':
+        return value_in_meters * 1000.0
+    elif to_unit == 'cm':
+        return value_in_meters * 100.0
+    elif to_unit in ['metre', 'm']:
+        return value_in_meters
+    elif to_unit == 'km':
+        return value_in_meters / 1000.0
+    else:
+        # If unit is unknown, return value in meters
+        return value_in_meters
+    
+
 def simplify_polygon(xy_points, simplify_tolerance=0.1):
     """
     Filter a list of points to keep only the largest polygon and simplify it.
