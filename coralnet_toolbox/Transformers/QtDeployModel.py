@@ -662,25 +662,32 @@ class DeployModelDialog(QDialog):
 
     def _apply_model(self, inputs):
         """
-        Apply the model to the inputs (batched).
-        Removes internal progress bar and loop.
+        Apply the model to the inputs (one-by-one).
+        NOTE: This is NOT batched, as the QtBaseModel.predict
+        function combines all results into one.
         """
         results_list = []
-        try:
-            # Run the model on the entire batch of inputs
-            results_list = self.loaded_model.predict(inputs)
-        except Exception as e:
-            print(f"Error during batched model prediction: {e}")
-            # If batch fails, try one-by-one as a fallback
-            results_list = []
-            for img in inputs:
-                try:
-                    results_list.append(self.loaded_model.predict(img))
-                except Exception as e_inner:
-                    print(f"Error during single-item fallback prediction: {e_inner}")
-                    results_list.append(None)  # Add None to keep list length consistent
         
-        # Clean up GPU memory after each prediction
+        # We must loop and predict one by one
+        for input_image in inputs:
+            try:
+                # Run the model on the single input image
+                # QtBaseModel.predict expects an image or list, so we pass [input_image]
+                # It will return [combined_results] or []
+                result = self.loaded_model.predict([input_image])
+                
+                # If no detections, result is [], so we append None
+                if not result:
+                    results_list.append(None)
+                else:
+                    # Append the single combined_results object
+                    results_list.append(result[0])
+                    
+            except Exception as e:
+                print(f"Error during single-item prediction: {e}")
+                results_list.append(None) # Add None to keep list length consistent
+        
+        # Clean up GPU memory
         gc.collect()
         empty_cache()
 
