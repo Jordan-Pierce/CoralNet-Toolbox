@@ -2,9 +2,9 @@ import os
 import warnings
 
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
-                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle, QSizePolicy)
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty, QTimer
+from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QSizePolicy,
+                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle)
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import scale_pixmap
@@ -64,11 +64,18 @@ class ConfidenceBar(QFrame):
     def start_animation(self):
         """Start the fill animation."""
         if self.target_fill_width <= 0:
+            # Stop any existing animation
+            if self.animation is not None:
+                self.animation.stop()
+            
+            # Explicitly set the fill width to 0 and trigger a repaint
+            self._fill_width = 0
+            self.update()
             return
             
         self.animation = QPropertyAnimation(self, b"fill_width")
         self.animation.setDuration(500)  # 500ms duration
-        self.animation.setStartValue(0)
+        self.animation.setStartValue(0)  # Note: This could be self._fill_width for a smoother resume
         self.animation.setEndValue(self.target_fill_width)
         self.animation.setEasingCurve(QEasingCurve.InOutQuad)  # Smooth easing
         self.animation.start()
@@ -78,19 +85,35 @@ class ConfidenceBar(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        current_width = self.width()
+        current_height = self.height()
+
+        # Guard against painting on a widget with no size
+        if current_width < 1 or current_height < 1:
+            return
+
         # Draw the border for the entire bar area
         painter.setPen(self.color)
-        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        painter.drawRect(0, 0, current_width - 1, current_height - 1)
 
-        # Draw the filled part of the bar from left to the current fill_width
+        # Draw the filled part of the bar
         painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))
-        painter.drawRect(0, 0, self._fill_width, self.height() - 1)
+        
+        # Clamp the _fill_width to be valid and within the widget's bounds
+        fill_w = min(self._fill_width, current_width - 1)
+        
+        if fill_w > 0:
+            painter.drawRect(0, 0, fill_w, current_height - 1)
 
     def mousePressEvent(self, event):
         """Handle mouse press events on the bar."""
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
-            self.handle_click()
+            # self.handle_click() # <-- DO NOT CALL DIRECTLY
+
+            # Defer the click handling. This lets the mousePressEvent finish
+            # before the widget is potentially deleted by the click's action.
+            QTimer.singleShot(0, self.handle_click)
 
     def handle_click(self):
         """Handle the logic when the bar is clicked."""
