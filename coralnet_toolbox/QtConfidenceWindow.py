@@ -140,7 +140,6 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout = None
 
         self.init_graphics_view()
-        # Note: init_bar_chart_widget() is called after layouts are added
 
         self.annotation = None
         self.user_confidence = None
@@ -213,7 +212,6 @@ class ConfidenceWindow(QWidget):
     def resizeEvent(self, event):
         """Handle resize events for the widget."""
         super().resizeEvent(event)
-        self.update_blank_pixmap()
         self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         
     def keyPressEvent(self, event):
@@ -255,7 +253,6 @@ class ConfidenceWindow(QWidget):
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
         self.groupBoxLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
-        self.update_blank_pixmap()
 
     def init_bar_chart_widget(self):
         """Initialize the widget and layout for the confidence bar chart."""
