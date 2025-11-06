@@ -1027,7 +1027,6 @@ class AnnotationWindow(QGraphicsView):
         # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
         
         # Update the view
         self.viewport().update()
@@ -1189,7 +1188,6 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         # --- Conditional UI Logic (runs only if the image is visible) ---
         if annotation.image_path == self.current_image_path:
@@ -1200,9 +1198,6 @@ class AnnotationWindow(QGraphicsView):
             # Create a cropped image for the confidence window
             if not annotation.cropped_image and self.rasterio_image:
                 annotation.create_cropped_image(self.rasterio_image)
-            
-            # Display the cropped image in the confidence window
-            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # --- Finalization ---
         # Set the visibility based on the current UI state
@@ -1244,7 +1239,6 @@ class AnnotationWindow(QGraphicsView):
             # --- Connect signals for future interaction ---
             annotation.selected.connect(self.select_annotation)
             annotation.annotationDeleted.connect(self.delete_annotation)
-            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         # --- Final UI Updates (after all annotations are processed) ---
         if images_to_update:
