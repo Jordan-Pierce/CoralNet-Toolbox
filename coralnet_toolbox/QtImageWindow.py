@@ -184,6 +184,7 @@ class ImageWindow(QWidget):
     filterChanged = pyqtSignal(int)  # Number of filtered images
     rasterAdded = pyqtSignal(str)  # Path of added raster
     rasterRemoved = pyqtSignal(str)  # Path of removed raster
+    filterGroupToggled = pyqtSignal(bool)  # When filter group is toggled
 
     def __init__(self, main_window):
         """Initialize the ImageWindow widget."""
@@ -238,7 +239,7 @@ class ImageWindow(QWidget):
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
 
-        # --- NEW: Create a container widget for all contents ---
+        # --- Create a container widget for all contents ---
         # This one widget will hold everything inside the group box.
         self.filter_content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.filter_content_widget)
@@ -247,7 +248,7 @@ class ImageWindow(QWidget):
 
         # Create a form layout for the search bars
         self.search_layout = QFormLayout()
-        # --- MODIFIED: Add search_layout to the new content_layout ---
+        # --- Add search_layout to the new content_layout ---
         self.content_layout.addLayout(self.search_layout)
 
         # Set fixed width for search bars (big effect on layout width)
@@ -319,15 +320,14 @@ class ImageWindow(QWidget):
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Add rows to form layout
-        # (This part is unchanged)
         self.search_layout.addRow("Filters:", self.filter_combo)
         self.search_layout.addRow("Search Images:", self.image_search_container)
         self.search_layout.addRow("Search Labels:", self.label_search_container)
 
-        # --- NEW: Add the single content widget to the group's layout ---
+        # --- Add the single content widget to the group's layout ---
         self.filter_layout.addWidget(self.filter_content_widget)
 
-        # --- NEW: Make the group box checkable and connect its signal ---
+        # --- Make the group box checkable and connect its signal ---
         self.filter_group.setCheckable(True)
         self.filter_group.toggled.connect(self.on_filter_group_toggled)
         
@@ -462,6 +462,9 @@ class ImageWindow(QWidget):
         else:
             # Set max height to 0 to collapse it
             self.filter_content_widget.setMaximumHeight(0)
+        
+        # Emit signal to MainWindow to expand/collapse layout
+        self.filterGroupToggled.emit(checked)
         
     @contextmanager
     def busy_cursor(self):

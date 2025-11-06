@@ -328,6 +328,8 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
+        # Connect the filterChanged signal from ImageWindow to expand ConfidenceWindow height
+        self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
 
         # ----------------------------------------
         # Create the menu bar
@@ -1728,10 +1730,26 @@ class MainWindow(QMainWindow):
             self.device_tool_action.setToolTip(device_tooltip)
 
     def handle_image_changed(self):
+        """Handle actions needed when the image is changed."""
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
         if self.annotation_window.selected_tool == 'see_anything':
             self.annotation_window.tools['see_anything'].cancel_working_area()
+            
+    def on_image_window_filter_toggled(self, is_expanded):
+        """
+        Adjusts the vertical stretch between ImageWindow and ConfidenceWindow
+        when the filter group in ImageWindow is toggled.
+        """
+        if is_expanded:
+            # Reset to default stretch factors (54 / 46)
+            self.image_layout.setStretch(0, 54)  # index 0 is image_window
+            self.image_layout.setStretch(1, 46)  # index 1 is confidence_window
+        else:
+            # Filters are hidden, give less space to image_window
+            # and more to confidence_window.
+            self.image_layout.setStretch(0, 54)
+            self.image_layout.setStretch(1, 66)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
