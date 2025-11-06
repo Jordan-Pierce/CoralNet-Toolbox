@@ -30,9 +30,12 @@ class SAMTool(Tool):
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
         self.sam_dialog = None
+        
+        # Set the animation manager for pulse animations
+        self.animation_manager = self.annotation_window.animation_manager
 
         self.cursor = Qt.CrossCursor
-        self.default_cursor = Qt.ArrowCursor  # Add this for clarity
+        self.default_cursor = Qt.ArrowCursor 
 
         # Store polygon points from SAM prediction
         self.points = []
@@ -122,6 +125,7 @@ class SAMTool(Tool):
 
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
+        self.working_area.set_animation_manager(self.animation_manager)
 
         # Get the thickness for the working area graphics
         pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
@@ -189,6 +193,7 @@ class SAMTool(Tool):
             
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
+        self.working_area.set_animation_manager(self.animation_manager)
         
         # Get the thickness for the working area graphics
         pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
@@ -393,10 +398,10 @@ class SAMTool(Tool):
             if not self.temp_annotation:
                 QApplication.restoreOverrideCursor()
                 return
-                
+            
+            self.temp_annotation.set_animation_manager(self.animation_manager)
             # Create the graphics item for the temporary annotation
             self.temp_annotation.create_graphics_item(self.annotation_window.scene)
-            
             # Make the annotation animated immediately
             self.temp_annotation.animate(force=True)
             
@@ -753,6 +758,9 @@ class SAMTool(Tool):
         if not annotation:
             QApplication.restoreOverrideCursor()
             return None
+
+        # Set the animation manager for the annotation
+        annotation.set_animation_manager(self.animation_manager)
 
         # Update confidence - make sure to extract confidence from results
         confidence = float(results.boxes.conf[top1_index])

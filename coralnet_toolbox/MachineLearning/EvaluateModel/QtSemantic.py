@@ -60,7 +60,7 @@ class EvaluateModelWorker(QThread):
 
             # Evaluate the model
             self.model.eval(
-                data_yaml=self.params['data'],
+                data_yaml=self.params['data_yaml'],
                 split=self.params['split'],
                 num_vis_samples=self.params['num_vis_samples'],
                 output_dir=self.params['save_dir'],

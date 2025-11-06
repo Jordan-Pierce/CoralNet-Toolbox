@@ -1,8 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import os
 from itertools import groupby
 from operator import attrgetter
@@ -10,52 +7,27 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
-                             QGroupBox, QButtonGroup, QPushButton, QHBoxLayout,
-                             QDialogButtonBox)
+                             QGroupBox, QButtonGroup, QDialogButtonBox)
 
 from coralnet_toolbox.MachineLearning.BatchInference.QtBase import Base
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-# TODO Crash might be due to multithreading?
+
 class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Classify Batch Inference")
 
         self.deploy_model_dialog = main_window.classify_deploy_model_dialog
-        
-        # Add step-by-step buttons after the base class is initialized
-        self.add_step_buttons()
-        
-    def add_step_buttons(self):
-        """
-        Add buttons for step-by-step processing (preprocess and inference).
-        """
-        # Create a group box for the separate action buttons
-        step_group_box = QGroupBox("Step-by-Step Processing")
-        step_layout = QHBoxLayout()
-        
-        # Add buttons for individual steps
-        self.preprocess_button = QPushButton("1. Preprocess Annotations")
-        self.infer_button = QPushButton("2. Run Inference")
-        self.infer_button.setEnabled(False)  # Disable until preprocessing is done
-        
-        # Connect the buttons to their respective methods
-        self.preprocess_button.clicked.connect(self.preprocess_only)
-        self.infer_button.clicked.connect(self.infer_only)
-        
-        step_layout.addWidget(self.preprocess_button)
-        step_layout.addWidget(self.infer_button)
-        step_group_box.setLayout(step_layout)
-        
-        # Insert the group box before the last widget (which should be the button box)
-        self.layout.insertWidget(self.layout.count() - 1, step_group_box)
         
     def setup_task_specific_layout(self):
         """
@@ -87,15 +59,11 @@ class Classify(Base):
 
     def setup_buttons_layout(self):
         """
-        Override the base class method to use custom button labels.
+        Override the base class method to use the default OK button.
         """
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        ok_button = button_box.button(QDialogButtonBox.Ok)
-        ok_button.setText("Run All Steps")
-        
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
-        
         self.layout.addWidget(button_box)
     
     def preprocess_annotations(self):
@@ -110,8 +78,19 @@ class Classify(Base):
             for image_path in self.image_paths:
                 self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
-        # Crop annotations
-        self.bulk_preprocess_patch_annotations()
+        # Check if annotations need to be cropped
+        annotations_to_crop = []
+        for annotation in self.annotations:
+            if hasattr(annotation, 'cropped_image') and annotation.cropped_image:
+                # Annotation already has cropped image, add to prepared patches
+                self.prepared_patches.append(annotation)
+            else:
+                # Annotation needs to be cropped
+                annotations_to_crop.append(annotation)
+
+        # Only crop annotations that need cropping
+        if annotations_to_crop:
+            self.bulk_preprocess_patch_annotations(annotations_to_crop)
     
     def apply(self):
         """
@@ -120,6 +99,9 @@ class Classify(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            # Get the selected image paths first
+            self.image_paths = self.get_selected_image_paths()
+            
             # Run preprocessing and inference
             self.preprocess_annotations()
             self.batch_inference()
@@ -136,107 +118,32 @@ class Classify(Base):
 
         self.accept()
 
-    def preprocess_only(self):
-        """
-        Perform only the preprocessing step.
-        """
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # Get the selected image paths
-            self.image_paths = self.get_selected_image_paths()
-            self.preprocess_annotations()
-            self.infer_button.setEnabled(True)
-            QMessageBox.information(self, 
-                                    "Preprocessing Complete", 
-                                    f"Successfully preprocessed {len(self.prepared_patches)} annotations.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to preprocess annotations: {str(e)}")
-        finally:
-            QApplication.restoreOverrideCursor()
-    
-    def infer_only(self):
-        """
-        Perform only the inference step.
-        """
-        if not self.prepared_patches:
-            QMessageBox.warning(self, 
-                                "Warning", 
-                                "No preprocessed annotations found. Please run preprocessing first.")
-            return
-            
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            self.batch_inference()
-            QMessageBox.information(self, 
-                                    "Inference Complete", 
-                                   "Batch inference completed successfully.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to perform inference: {str(e)}")
-        finally:
-            QApplication.restoreOverrideCursor()
-
-    def preprocess_patch_annotations(self):
-        """
-        Preprocess patch annotations by cropping the images concurrently.
-        
-        Deprecated: Use bulk_preprocess_patch_annotations instead.
-        """
-        # Get unique image paths
-        self.image_paths = list(set(a.image_path for a in self.annotations))
-        if not self.image_paths:
-            return
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
-
-        # Group annotations by image path
-        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')),
-                                   key=attrgetter('image_path'))
-
-        try:
-            # Crop the annotations
-            for idx, (image_path, group) in enumerate(grouped_annotations):
-                # Process image annotations
-                image_annotations = list(group)
-                image_annotations = self.annotation_window.crop_annotations(image_path, 
-                                                                            image_annotations, 
-                                                                            verbose=False)
-                # Add the cropped annotations to the list of prepared patches
-                self.prepared_patches.extend(image_annotations)
-
-                # Update the progress bar
-                progress_bar.update_progress()
-
-        except Exception as exc:
-            print(f'{image_path} generated an exception: {exc}')
-
-        finally:
-            # Restore the cursor
-            QApplication.restoreOverrideCursor()
-            progress_bar.stop_progress()
-            progress_bar.close()
-            
-    def bulk_preprocess_patch_annotations(self):
+    def bulk_preprocess_patch_annotations(self, annotations_to_crop=None):
         """
         Bulk preprocess patch annotations by cropping the images concurrently.
+        
+        Args:
+            annotations_to_crop: List of annotations that need to be cropped.
+                                If None, uses self.annotations.
         """
-        # Get unique image paths
-        self.image_paths = list(set(a.image_path for a in self.annotations))
-        if not self.image_paths:
+        if annotations_to_crop is None:
+            annotations_to_crop = self.annotations
+            
+        if not annotations_to_crop:
             return
 
+        # Get unique image paths for annotations that need cropping
+        crop_image_paths = list(set(a.image_path for a in annotations_to_crop))
+        
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
+        progress_bar.start_progress(len(crop_image_paths))
 
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')),
-                                   key=attrgetter('image_path'))
+        grouped_annotations = groupby(sorted(annotations_to_crop, key=attrgetter('image_path')),
+                                      key=attrgetter('image_path'))
 
         try:
             # Use ThreadPoolExecutor for parallel processing
@@ -273,17 +180,18 @@ class Classify(Base):
                         progress_bar.update_progress()
 
         except Exception as e:
-            print(f"{futures[future]} generated an exception: {e}")
+            print(f"Error in bulk preprocessing: {e}")
 
         finally:
             # Restore the cursor
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 
     def batch_inference(self):
         """
-        Perform batch inference on the selected images and annotations.
+        Perform batch inference on the selected images.
         
         Slower doing a for-loop over the prepared patches, but it's safer and memory efficient.
         """
@@ -297,24 +205,22 @@ class Classify(Base):
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
 
         # Group annotations by image path
         groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')),
-                        key=attrgetter('image_path'))
+                         key=attrgetter('image_path'))
+        
+        # Count number of unique image paths
+        num_paths = len(set(a.image_path for a in self.prepared_patches))
 
         # Make predictions on each image's annotations
-        for path, patches in groups:
+        for idx, (path, patches) in enumerate(groups):
             try:
-                print(f"\nMaking predictions on {path}")
-                self.deploy_model_dialog.predict(inputs=list(patches))
-                
+                progress_bar.set_title(f"Predicting: {idx + 1}/{num_paths} - {os.path.basename(path)}")
+                self.deploy_model_dialog.predict(inputs=list(patches), progress_bar=progress_bar)
             except Exception as e:
                 print(f"Failed to make predictions on {path}: {e}")
                 continue
-            
-            finally: 
-                progress_bar.update_progress()
 
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()

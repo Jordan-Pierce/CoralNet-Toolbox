@@ -1,6 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import gc
 import os
@@ -9,7 +7,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
-                             QComboBox, QSlider, QSpinBox)
+                             QSlider)
 
 from torch.cuda import empty_cache
 
@@ -17,10 +15,10 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.MachineLearning.SMP import SemanticModel 
 
-from coralnet_toolbox.Results import ResultsProcessor
-from coralnet_toolbox.Results.MapResults import MapResults
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -172,9 +170,10 @@ class Semantic(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, image_paths=None):
+    def predict(self, image_paths=None, progress_bar=None):
         """
         Make predictions on the given image paths using the loaded model.
+        Processes tiles one-by-one to conserve memory and update the UI in real-time.
 
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
@@ -191,70 +190,149 @@ class Semantic(Base):
 
         # Get project labels for mask annotation creation
         project_labels = list(self.class_mapping.values())
+        # Get full list of model class names for _reconstruct_semantic_mask
+        model_class_names = ['background'] + self.class_names 
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
+        
+        # Track if we created the progress bar ourselves
+        progress_bar_created_here = progress_bar is None
+        
         try:
-            for image_path in image_paths:
-                # --- Get raster object as well ---
-                inputs, raster = self._get_inputs(image_path)
-                if inputs is None:
+            # --- We process one image at a time ---
+            for idx, image_path in enumerate(image_paths):
+                
+                # --- 1. Get Raster and Work Items ---
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster is None:
+                    print(f"Warning: Could not get raster for {image_path}. Skipping.")
                     continue
 
                 # Ensure the raster has a mask annotation
                 if raster.mask_annotation is None:
                     raster.get_mask_annotation(project_labels)
+                    
+                mask_annotation = raster.mask_annotation
+                
+                # Get the mapping from Label UUID -> internal mask class ID (once)
+                mask_annotation_map = mask_annotation.label_id_to_class_id_map
+                
+                # Get the list of items to process
+                is_full_image = self.annotation_window.get_selected_tool() != "work_area"
+                
+                if is_full_image:
+                    work_items_data = [raster.image_path]  # List with one string
+                    work_areas = [None]  # Dummy list to make loops match
+                else:
+                    # Get both parallel lists: coordinate objects and data arrays
+                    work_areas = raster.get_work_areas()  # List of WorkArea objects
+                    work_items_data = raster.get_work_areas_data()  # List of np.ndarray
 
-                results = self._apply_model(inputs)
-                # --- Pass raster to _process_results ---
-                self._process_results(results, image_path, raster)
+                if not work_items_data or not work_areas:
+                    print(f"Warning: No work items found for {image_path}. Skipping.")
+                    continue
+                    
+                if len(work_items_data) != len(work_areas):
+                    print(f"Error: Mismatch in work items. Data: {len(work_items_data)}, Areas: {len(work_areas)}")
+                    continue
 
-                # Update the progress bar
-                progress_bar.update_progress()
+                # --- 2. Setup Progress Bar (New Style) ---
+                title = f"Predicting: {idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
+                if progress_bar is None:
+                    progress_bar = ProgressBar(self.annotation_window)
+                    progress_bar.show()
+                progress_bar.set_title(title)
+                progress_bar.start_progress(len(work_items_data))  # Total is number of tiles
+                
+                # --- 3. Process One Item at a Time (Streaming) ---
+                try:
+                    # Loop by index to keep parallel lists in sync
+                    for idx_tile in range(len(work_items_data)):
+                        
+                        # Get the data and the corresponding coordinate object
+                        input_data = [work_items_data[idx_tile]]
+                        item = work_areas[idx_tile]  # This is the WorkArea object or None
+                        
+                        # --- 3a. Get Input Data and Offset ---
+                        if is_full_image:
+                            # Full image path, offset is 0
+                            offset = (0, 0)
+                        else:
+                            # WorkArea object
+                            item.highlight()  # Highlight current tile
+                            # Get (x, y) coords from the rect
+                            offset = (int(item.rect.x()), int(item.rect.y()))
+                            QApplication.processEvents()
+
+                        # --- 3b. Apply Model ---
+                        results_list = self._apply_model(input_data)
+                        
+                        if not results_list or not results_list[0]:
+                            if not is_full_image: 
+                                item.unhighlight()
+                            progress_bar.update_progress()
+                            continue
+                            
+                        # Get the single Results object. 
+                        results_obj = results_list[0][0] 
+                        results_obj.path = image_path  # Fix path
+
+                        # --- 3c. Reconstruct Small Mask ---
+                        reconstructed_mask = _reconstruct_semantic_mask(
+                            results_obj,
+                            model_class_names,      # List of model class names
+                            self.class_mapping,         # Project's map {'Coral-A': LabelObj}
+                            mask_annotation_map         # Mask's map {LabelObj.id: 2}
+                        )
+                        
+                        # --- 3d. Update Main Annotation (Streaming) ---
+                        # This updates the UI *immediately* for each tile
+                        mask_annotation.update_mask_with_mask(
+                            reconstructed_mask, 
+                            top_left=offset
+                        )
+                        
+                        if not is_full_image: 
+                            item.unhighlight()
+                        progress_bar.update_progress()
+                        
+                        # Break if this was a full image
+                        if is_full_image:
+                            break
+
+                except Exception as e:
+                    print(f"An error occurred during prediction on {image_path}: {e}")
+                    # Let the outer finally block handle cleanup
+                
+                # --- 4. Recalculate Stats ---
+                # This is called *after* all tiles for an image are done
+                mask_annotation.recalculate_class_statistics()
 
         except Exception as e:
-            print("An error occurred during prediction:", e)
+            print(f"A fatal error occurred during the prediction workflow: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
+            # --- 5. Final Cleanup ---
+            # This block now runs ONCE at the end of the entire function
+            if progress_bar_created_here and progress_bar is not None:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+                
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-        gc.collect()
-        empty_cache()
-
-    def _get_inputs(self, image_path):
-        """Get the inputs for the model prediction."""
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        if raster is None:
-            return None, None
-        
-        if self.annotation_window.get_selected_tool() != "work_area":
-            # Use the image path
-            work_areas_data = [raster.image_path]
-        else:
-            # Get the work areas
-            work_areas_data = raster.get_work_areas_data()
-
-        # --- Return raster object ---
-        return work_areas_data, raster
+            gc.collect()
+            empty_cache()
 
     def _apply_model(self, inputs):
-        """Apply the SemanticModel to the inputs."""
+        """
+        Apply the SemanticModel to the inputs.
+        (This method no longer shows its own progress bar)
+        """
         
         # Get prediction parameters
         confidence = self.main_window.get_uncertainty_thresh()
-        
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(inputs))
         
         # Run prediction on the batch of inputs
         # Our SemanticModel returns a list of Results objects
@@ -264,93 +342,8 @@ class Semantic(Base):
             # Add other inference params here if needed
         )
         
-        # Manually update the progress bar to 100%
-        # (predict is blocking, so we can't update per-item)
-        for _ in inputs:
-            progress_bar.update_progress()
-
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-
         # Clean up GPU memory
         gc.collect()
         empty_cache()
         
         return results_list
-
-    def _process_results(self, results_list, image_path, raster):
-        """Process the results and update the mask annotation."""
-        # (The 'raster' argument is new, passed from predict())
-        
-        # Get the raster object and number of work items
-        total = raster.count_work_items()
-
-        # Get the work areas (if any)
-        work_areas = raster.get_work_areas()
-
-        # --- Get the mask annotation layer ---
-        mask_annotation = raster.mask_annotation
-        if mask_annotation is None:
-            print("Error: No mask annotation layer found to apply results to.")
-            return
-
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
-        progress_bar.show()
-        progress_bar.start_progress(total)
-
-        updated_results = []
-
-        for idx, results in enumerate(results_list):
-            # Each Results is a list (within the results_list, [[], ]
-            if results:
-                # Update path
-                results[0].path = image_path
-                # Check if the work area is valid, or the image path is being used
-                if work_areas and self.annotation_window.get_selected_tool() == "work_area":
-                    # Highlight the work area being processed
-                    work_areas[idx].highlight()
-                    # Map results from work area to the full image
-                    results_obj = MapResults().map_results_from_work_area(results[0],
-                                                                          raster,
-                                                                          work_areas[idx],
-                                                                          task=self.task)
-                    # Revert the work area highlight
-                    work_areas[idx].unhighlight()
-                else:
-                    results_obj = results[0]
-
-                # Append the result object (not a list) to the updated results list
-                updated_results.append(results_obj)
-
-                # Update the index for the next work area
-                idx += 1
-                progress_bar.update_progress()
-
-        # --- Process the Results ---
-        
-        # Get the mapping from Label UUID -> internal mask class ID
-        mask_annotation_map = mask_annotation.label_id_to_class_id_map  # TODO if a label is deleted?
-        
-        # Process all results for this image.
-        # If tiled, updated_results will have many items.
-        # If full-image, updated_results will have one item.
-        
-        for idx, results in enumerate(updated_results):
-            # Reconstruct the (H, W) semantic mask from the Results object
-            reconstructed_mask = _reconstruct_semantic_mask(
-                results,
-                ['background'] + self.class_names,              # List of model class names ['Coral-A']
-                self.class_mapping,                             # Project's map {'Coral-A': LabelObj}
-                mask_annotation_map                             # Mask's map {LabelObj.id: 2}
-            )
-    
-            # Update the main mask annotation with this tile's data
-            # This method respects locked pixels
-            mask_annotation.update_mask_with_prediction_mask(reconstructed_mask, top_left=(0, 0))
-        
-        # Close the progress bar
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()

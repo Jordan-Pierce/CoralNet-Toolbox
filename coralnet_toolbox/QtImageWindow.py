@@ -5,11 +5,12 @@ from contextlib import contextmanager
 
 import rasterio
 
+from PyQt5.QtGui import QStandardItem
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
-                             QFormLayout, QFrame)
+                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem)
 
 from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -54,6 +55,127 @@ class NoArrowKeyTableView(QTableView):
         super().mousePressEvent(event)
         
 
+class CheckableComboBox(QComboBox):
+    """
+    A custom QComboBox that displays checkable items in its dropdown list
+    and stays open to allow for multiple selections.
+    """
+    # Signal to emit when the check state changes
+    filterChanged = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Use a non-editable QLineEdit to display selected items
+        self.line_edit = QLineEdit(self)
+        self.line_edit.setReadOnly(True)
+        self.setLineEdit(self.line_edit)
+
+        self.placeholder_text = "Select filters..."
+        self.line_edit.setText(self.placeholder_text)
+        
+        # Flag to prevent recursive signal handling
+        self._block_signals = False
+
+        # Connect the itemChanged signal from the model
+        self.model().itemChanged.connect(self.on_item_changed)
+        
+        # Install an event filter on the view's viewport
+        # to prevent the popup from closing when an item is clicked.
+        self.view().viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """
+        Event filter to keep the popup open and manually toggle checks.
+        """
+        if obj == self.view().viewport() and event.type() == event.MouseButtonRelease:
+            # Check if the click was on a valid item index
+            index = self.view().indexAt(event.pos())
+            if index.isValid():
+                
+                # Get the item that was clicked
+                item = self.model().itemFromIndex(index)
+                if item:
+                    # Find the current state and set the new, opposite state
+                    state = item.checkState()
+                    new_state = Qt.Checked if state == Qt.Unchecked else Qt.Unchecked
+                    
+                    # Manually set the new check state
+                    # This will correctly trigger the on_item_changed signal
+                    item.setCheckState(new_state)
+
+                # We still return True to prevent the popup from closing
+                # after the click.
+                return True 
+        
+        # Pass on all other events
+        return super().eventFilter(obj, event)
+
+    def hidePopup(self):
+        """
+        Override hidePopup to update the display text when the popup closes.
+        """
+        self.update_display_text()
+        super().hidePopup()
+        
+    def addItem(self, text):
+        """Add a checkable item to the list."""
+        super().addItem(text)
+        
+        # Get the QStandardItem we just added
+        item = self.model().item(self.count() - 1)
+        
+        # Set it to be checkable
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Unchecked)
+
+    def on_item_changed(self, item):
+        """Handle when an item's check state is changed."""
+        if self._block_signals:
+            return  # Prevent recursion
+
+        self._block_signals = True
+        
+        text = item.text()
+        state = item.checkState()
+
+        # --- Enforce Mutual Exclusivity ---
+        if state == Qt.Checked:
+            if text == "Has Annotations":
+                self.uncheck_item("No Annotations")
+            elif text == "No Annotations":
+                self.uncheck_item("Has Annotations")
+        # ----------------------------------
+
+        self.filterChanged.emit()
+        self._block_signals = False
+
+    def uncheck_item(self, text):
+        """Find an item by its text and uncheck it."""
+        for i in range(self.count()):
+            item = self.model().item(i)
+            if item.text() == text and item.checkState() == Qt.Checked:
+                item.setCheckState(Qt.Unchecked)
+                break
+
+    def update_display_text(self):
+        """Update the QLineEdit to show the currently checked items."""
+        checked = self.get_checked_items()
+        if not checked:
+            self.line_edit.setText(self.placeholder_text)
+        else:
+            self.line_edit.setText(", ".join(checked))
+
+    def get_checked_items(self):
+        """Return a list of strings for all checked items."""
+        checked = []
+        for i in range(self.count()):
+            item = self.model().item(i)
+            if item.checkState() == Qt.Checked:
+                checked.append(item.text())
+        return checked
+        
+
 class ImageWindow(QWidget):
     # Signals
     imageSelected = pyqtSignal(str)  # Path of selected image
@@ -62,6 +184,7 @@ class ImageWindow(QWidget):
     filterChanged = pyqtSignal(int)  # Number of filtered images
     rasterAdded = pyqtSignal(str)  # Path of added raster
     rasterRemoved = pyqtSignal(str)  # Path of removed raster
+    filterGroupToggled = pyqtSignal(bool)  # When filter group is toggled
 
     def __init__(self, main_window):
         """Initialize the ImageWindow widget."""
@@ -116,50 +239,34 @@ class ImageWindow(QWidget):
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
 
-        # Create a grid layout for the checkboxes
-        self.checkbox_layout = QVBoxLayout()
-        self.filter_layout.addLayout(self.checkbox_layout)
-
-        # Create two horizontal layouts for the rows
-        self.checkbox_row1 = QHBoxLayout()
-        self.checkbox_row2 = QHBoxLayout()
-        self.checkbox_layout.addLayout(self.checkbox_row1)
-        self.checkbox_layout.addLayout(self.checkbox_row2)
-
-        # Add a QButtonGroup for the checkboxes
-        self.checkbox_group = QButtonGroup(self)
-        self.checkbox_group.setExclusive(False)
-
-        # Top row: Highlighted and Has Predictions
-        self.highlighted_checkbox = QCheckBox("Highlighted", self) 
-        self.highlighted_checkbox.stateChanged.connect(self.schedule_filter)
-        self.checkbox_row1.addWidget(self.highlighted_checkbox)
-        self.checkbox_group.addButton(self.highlighted_checkbox)
-
-        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
-        self.has_predictions_checkbox.stateChanged.connect(self.schedule_filter)
-        self.checkbox_row1.addWidget(self.has_predictions_checkbox)
-        self.checkbox_group.addButton(self.has_predictions_checkbox)
-
-        # Bottom row: No Annotations and Has Annotations
-        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
-        self.no_annotations_checkbox.stateChanged.connect(self.schedule_filter)
-        self.checkbox_row2.addWidget(self.no_annotations_checkbox)
-        self.checkbox_group.addButton(self.no_annotations_checkbox)
-
-        self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
-        self.has_annotations_checkbox.stateChanged.connect(self.schedule_filter)
-        self.checkbox_row2.addWidget(self.has_annotations_checkbox)
-        self.checkbox_group.addButton(self.has_annotations_checkbox)
+        # --- Create a container widget for all contents ---
+        # This one widget will hold everything inside the group box.
+        self.filter_content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.filter_content_widget)
+        # Remove padding so it looks seamless inside the group box
+        self.content_layout.setContentsMargins(0, 0, 0, 0) 
 
         # Create a form layout for the search bars
         self.search_layout = QFormLayout()
-        self.filter_layout.addLayout(self.search_layout)
+        # --- Add search_layout to the new content_layout ---
+        self.content_layout.addLayout(self.search_layout)
 
         # Set fixed width for search bars (big effect on layout width)
         fixed_width = 125
 
-        # Create containers for search bars and buttons
+        # --- Setup NEW Filter ComboBox ---
+        self.filter_combo = CheckableComboBox(self)
+        self.filter_combo.addItem("Highlighted")
+        self.filter_combo.addItem("Has Predictions")
+        self.filter_combo.addItem("Has Annotations")
+        self.filter_combo.addItem("No Annotations")
+        
+        self.filter_combo.setCurrentIndex(-1)  
+        
+        self.filter_combo.filterChanged.connect(self.schedule_filter)
+
+        # --- Create containers for search bars and buttons ---
+        # (This part is unchanged)
         self.image_search_container = QWidget()
         self.image_search_layout = QHBoxLayout(self.image_search_container)
         self.image_search_layout.setContentsMargins(0, 0, 0, 0)
@@ -169,6 +276,7 @@ class ImageWindow(QWidget):
         self.label_search_layout.setContentsMargins(0, 0, 0, 0)
 
         # Setup image search
+        # (This part is unchanged)
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
         self.search_bar_images.setPlaceholderText("Type to search images")
@@ -184,6 +292,7 @@ class ImageWindow(QWidget):
         self.image_search_layout.addWidget(self.image_search_button)
 
         # Setup label search
+        # (This part is unchanged)
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
         self.search_bar_labels.setPlaceholderText("Type to search labels")
@@ -194,6 +303,7 @@ class ImageWindow(QWidget):
         self.label_search_layout.addWidget(self.search_bar_labels)
 
         # Add top-k combo box
+        # (This part is unchanged)
         self.top_k_combo = QComboBox(self)
         self.top_k_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
         self.top_k_combo.setCurrentText("Top1")
@@ -205,10 +315,24 @@ class ImageWindow(QWidget):
         self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.label_search_button.clicked.connect(self.filter_images)
         self.label_search_layout.addWidget(self.label_search_button)
+        
+        # --- Set horizontal policy to expand and fill the layout column ---
+        self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Add rows to form layout
+        self.search_layout.addRow("Filters:", self.filter_combo)
         self.search_layout.addRow("Search Images:", self.image_search_container)
         self.search_layout.addRow("Search Labels:", self.label_search_container)
+
+        # --- Add the single content widget to the group's layout ---
+        self.filter_layout.addWidget(self.filter_content_widget)
+
+        # --- Make the group box checkable and connect its signal ---
+        self.filter_group.setCheckable(True)
+        self.filter_group.toggled.connect(self.on_filter_group_toggled)
+        
+        # Set the default state to checked (expanded)
+        self.filter_group.setChecked(True)
 
         # Add the group box to the main layout  
         self.layout.addWidget(self.filter_group)
@@ -326,6 +450,21 @@ class ImageWindow(QWidget):
         """Schedule filtering after a short delay to avoid excessive updates."""
         self.search_timer.stop()
         self.search_timer.start(300)  # 300ms delay
+        
+    def on_filter_group_toggled(self, checked):
+        """
+        Shows or hides the filter content by changing its maximum height,
+        which preserves the horizontal width.
+        """
+        if checked:
+            # Set a very large max height (the default "no limit")
+            self.filter_content_widget.setMaximumHeight(16777215)
+        else:
+            # Set max height to 0 to collapse it
+            self.filter_content_widget.setMaximumHeight(0)
+        
+        # Emit signal to MainWindow to expand/collapse layout
+        self.filterGroupToggled.emit(checked)
         
     @contextmanager
     def busy_cursor(self):
@@ -543,22 +682,22 @@ class ImageWindow(QWidget):
         self.selected_image_path = path
         
     def on_toggle(self, new_state: bool):
-            """
-            Sets the checked state for all currently highlighted rows.
+        """
+        Sets the checked state for all currently highlighted rows.
 
-            Args:
-                new_state (bool): The new state to set (True for checked, False for unchecked).
-            """
-            highlighted_paths = self.table_model.get_highlighted_paths()
-            if not highlighted_paths:
-                return
+        Args:
+            new_state (bool): The new state to set (True for checked, False for unchecked).
+        """
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        if not highlighted_paths:
+            return
 
-            for path in highlighted_paths:
-                raster = self.raster_manager.get_raster(path)
-                if raster:
-                    raster.checkbox_state = new_state
-                    # Notify the model to update the view for this specific raster
-                    self.table_model.update_raster_data(path)
+        for path in highlighted_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster:
+                raster.checkbox_state = new_state
+                # Notify the model to update the view for this specific raster
+                self.table_model.update_raster_data(path)
             
     #
     # Public methods
@@ -759,10 +898,15 @@ class ImageWindow(QWidget):
         # Get filter criteria
         search_text = self.search_bar_images.currentText()
         search_label = self.search_bar_labels.currentText()
-        no_annotations = self.no_annotations_checkbox.isChecked()
-        has_annotations = self.has_annotations_checkbox.isChecked()
-        has_predictions = self.has_predictions_checkbox.isChecked()
-        highlighted_only = self.highlighted_checkbox.isChecked()
+        
+        # --- Get values from the new CheckableComboBox ---
+        checked_filters = self.filter_combo.get_checked_items()
+        
+        highlighted_only = "Highlighted" in checked_filters
+        has_predictions = "Has Predictions" in checked_filters
+        has_annotations = "Has Annotations" in checked_filters
+        no_annotations = "No Annotations" in checked_filters
+        # --- End new logic ---
         
         # Get top-k value from combo box
         top_k_text = self.top_k_combo.currentText()
@@ -1067,6 +1211,9 @@ class ImageWindow(QWidget):
         )
         
         if reply == QMessageBox.Yes:
+            # Untoggle tools
+            self.main_window.untoggle_all_tools()
+            # Delete images
             self.delete_images(highlighted_paths)
             
     def delete_highlighted_images_annotations(self):
@@ -1086,6 +1233,8 @@ class ImageWindow(QWidget):
         )
         
         if reply == QMessageBox.Yes:
+            # Untoggle tools
+            self.main_window.untoggle_all_tools()
             # Temporarily disconnect annotation signals
             self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
             self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)

@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import random
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, pyqtProperty
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
                              QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox, 
@@ -30,28 +30,30 @@ from coralnet_toolbox.Icons import get_icon
 
 class PatchGraphic(QGraphicsRectItem):
     def __init__(self, x, y, size, color, parent=None):
-        # Use size for both width and height; color is applied separately
         super().__init__(x, y, size, size, parent)
-
-        # Store the base color for brush
         self.base_color = color
-        
-        # Animation properties (updated for pulsing)
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
 
-        # Default styling with animated pen
+        # --- Animation Properties ---
+        self.animation_manager = None
+        self.is_animating = False
+
+        self._pulse_alpha = 128
+        self._pulse_direction = 1
+
         self.default_brush = QBrush(QColor(color.red(), color.green(), color.blue(), 50))
-
-        # Initial appearance
         self.setPen(self._create_pen())
         self.setBrush(self.default_brush)
         
-        # Start animation immediately
-        self.animation_timer.start()
+    def set_animation_manager(self, manager):
+        """Set the animation manager for this graphic."""
+        self.animation_manager = manager
+        
+    def is_graphics_item_valid(self):
+        """Check if the graphics item is still valid (not deleted)."""
+        try:
+            return self.scene() is not None
+        except RuntimeError:
+            return False
 
     def _create_pen(self):
         """Create a pulsing dotted pen with brighter color."""
@@ -62,6 +64,22 @@ class PatchGraphic(QGraphicsRectItem):
         pen = QPen(pen_color, 3)  # Increased width
         pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen
+    
+    def tick_animation(self):
+        """Update the pulse alpha for a heartbeat-like effect."""
+        if self._pulse_direction == 1:
+            self._pulse_alpha += 30
+        else:
+            self._pulse_alpha -= 10
+
+        if self._pulse_alpha >= 255:
+            self._pulse_alpha = 255
+            self._pulse_direction = -1
+        elif self._pulse_alpha <= 50:
+            self._pulse_alpha = 50
+            self._pulse_direction = 1
+
+        self.setPen(self._create_pen())
     
     def _update_pulse_alpha(self):
         """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
@@ -82,9 +100,25 @@ class PatchGraphic(QGraphicsRectItem):
         
         self.setPen(self._create_pen())
         
+    def animate(self):
+        """Start animating the graphic."""
+        self.is_animating = True
+        if self.animation_manager:
+            self.animation_manager.register_animating_object(self)
+
+    def deanimate(self):
+        """Stop animating the graphic."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+        self._pulse_alpha = 128
+        self.setPen(self._create_pen())
+            
     def __del__(self):
-        """Clean up the timer when the graphic is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
+        """Clean up when the graphic is deleted."""
+        if hasattr(self, 'is_animating') and self.is_animating:
+            self.deanimate()
+        if hasattr(self, 'animation_timer') and self.animation_timer: # Keep for old instances
             self.animation_timer.stop()
 
 
@@ -98,6 +132,7 @@ class PatchSamplingDialog(QDialog):
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
         
+        self.animation_manager = self.annotation_window.animation_manager
         self.graphics_utility = self.annotation_window.graphics_utility
 
         self.setWindowTitle("Sample Annotations")
@@ -444,7 +479,10 @@ class PatchSamplingDialog(QDialog):
                                          inner_width, 
                                          inner_height, 
                                          self.annotation_window.current_image_path)
-                
+        
+        # Animate the margin work area
+        self.margin_work_area.set_animation_manager(self.animation_manager)
+        
         # Create graphics using the WorkArea's own method
         thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
         margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
@@ -490,7 +528,11 @@ class PatchSamplingDialog(QDialog):
                 color = found.label.color if found else sample_label.color
             else:
                 color = sample_label.color
+                
             graphic = PatchGraphic(x, y, size, color)
+            graphic.set_animation_manager(self.animation_manager)
+            graphic.animate()
+            
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
         self.annotation_window.viewport().update()
@@ -678,9 +720,11 @@ class PatchSamplingDialog(QDialog):
     def clear_annotation_graphics(self):
         """Remove all annotation preview graphics, including margin visualizations."""
         for graphic in self.annotation_graphics:
+            if hasattr(graphic, 'deanimate'):
+                graphic.deanimate()
             self.annotation_window.scene.removeItem(graphic)
         self.annotation_graphics = []
-        # Remove margin work area and its shadow if present
+
         if self.margin_work_area is not None:
             self.margin_work_area.remove_from_scene()
             self.margin_work_area = None

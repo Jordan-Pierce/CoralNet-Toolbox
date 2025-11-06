@@ -1,10 +1,13 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout, QLabel,
                              QDialog, QDialogButtonBox, QGroupBox, QButtonGroup)
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -137,10 +140,17 @@ class BatchInferenceDialog(QDialog):
         Apply batch inference.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Make predictions on each image's annotations
+        progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
+        progress_bar.show()
+        
         try:
-            self.deploy_model_dialog.predict(self.get_selected_image_paths())
+            self.deploy_model_dialog.predict(self.get_selected_image_paths(), progress_bar)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to make predictions: {str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
             self.accept()

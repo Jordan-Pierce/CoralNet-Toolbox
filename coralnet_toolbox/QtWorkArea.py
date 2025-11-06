@@ -1,9 +1,8 @@
 import warnings
 
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, QTimer, pyqtProperty
-from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
-                             QApplication)
+from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, pyqtProperty
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -37,6 +36,10 @@ class WorkArea(QObject):
         
         self.rect = QRectF(x, y, width, height)
         self.image_path = image_path
+        
+        self.animation_manager = None  # Will hold the central manager
+        self.is_animating = False      # Tracks animation state
+        
         self.graphics_item = None  # Reference to the main graphics item in the scene
         self.remove_button = None  # Reference to the remove button graphics item
         self.shadow_area = None  # Reference to the shadow graphics item
@@ -50,11 +53,8 @@ class WorkArea(QObject):
         # Animation properties (updated for pulsing)
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
         self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Update every 50ms for faster pulsing
-
-    @pyqtProperty(int)  # Added for pulsing alpha
+        
+    @pyqtProperty(int)
     def pulse_alpha(self):
         """Get the current pulse alpha for animation."""
         return self._pulse_alpha
@@ -65,14 +65,18 @@ class WorkArea(QObject):
         self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
         self._update_pen_style()
     
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
+    # --- NEW: Public method for the AnimationManager to call ---
+    def tick_animation(self):
+        """
+        Update the pulse alpha for a heartbeat-like effect.
+        This is now called by the GLOBAL timer in AnimationManager.
+        """
         if self._pulse_direction == 1:
             # Quick increase (systole-like)
             self._pulse_alpha += 30
         else:
             # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
+            self._pulse_alpha -= 10
 
         # Check direction before clamping to ensure smooth transition
         if self._pulse_alpha >= 255:
@@ -82,28 +86,36 @@ class WorkArea(QObject):
             self._pulse_alpha = 50   # Clamp to min
             self._pulse_direction = 1
         
+        # Update the pen style after the alpha is calculated
         self._update_pen_style()
     
     def _create_pen(self):
         """Create a pen with pulsing alpha and brighter color if animating."""
         pen = QPen(self.work_area_pen)
-        if self.animation_timer.isActive():
+        
+        # Check self.is_animating flag instead of timer
+        if self.is_animating:
             pen_color = QColor(self.work_area_pen.color())
             pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
             pen.setColor(pen_color)
+            
         pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen
 
     def animate(self):
-        """Start the pulsing animation for the work area rectangle."""
-        if not self.animation_timer.isActive():
-            self.animation_timer.start()
+        """Start the pulsing animation by registering with the global timer."""
+        self.is_animating = True
+        if self.animation_manager:
+            self.animation_manager.register_animating_object(self)
     
     def deanimate(self):
-        """Stop the pulsing animation for the work area rectangle."""
-        self.animation_timer.stop()
+        """Stop the pulsing animation by de-registering from the global timer."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+            
         self._pulse_alpha = 128  # Reset to default
-        self._update_pen_style()
+        self._update_pen_style()  # Apply the default style
     
     def highlight(self):
         """Highlight the working area by turning its pen blood red."""
@@ -126,7 +138,28 @@ class WorkArea(QObject):
         if self.graphics_item:
             self.graphics_item.setPen(self._create_pen())
             self.graphics_item.update()
-            QApplication.processEvents()
+
+    def set_animation_manager(self, manager):
+        """
+        Binds this object to the central AnimationManager.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
+
+    def is_graphics_item_valid(self):
+        """
+        Checks if the graphics item is still valid and added to a scene.
+        
+        Returns:
+            bool: True if the item exists and has a scene, False otherwise.
+        """
+        try:
+            return self.graphics_item and self.graphics_item.scene()
+        except RuntimeError:
+            # This can happen if the C++ part of the item is deleted
+            return False
 
     @classmethod
     def from_rect(cls, rect, image_path=None):
@@ -177,7 +210,7 @@ class WorkArea(QObject):
             'image_path': self.image_path
         }
         
-    def create_graphics(self, scene, pen_width=2, include_shadow=False):
+    def create_graphics(self, scene, pen_width=2, include_shadow=False, animate=True):
         """
         Create and return the graphics representation of this work area.
         
@@ -185,6 +218,7 @@ class WorkArea(QObject):
             scene: The QGraphicsScene to add the items to
             pen_width: Width of the pen for the rectangle
             include_shadow: Whether to include a shadow effect
+            animate: Whether to start the pulsing animation
             
         Returns:
             QGraphicsRectItem: The created rectangle item
@@ -201,9 +235,11 @@ class WorkArea(QObject):
             
             # Add to scene
             scene.addItem(self.graphics_item)
-            # Always start animation when shown
-            self.animate()
-        
+            
+            # It calls the new animate() which registers with the manager
+            if animate:
+                self.animate()
+                
         # Remove any existing shadow before creating a new one
         if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
             self.shadow_area.scene().removeItem(self.shadow_area)
@@ -319,11 +355,15 @@ class WorkArea(QObject):
         if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
             self.shadow_area.scene().removeItem(self.shadow_area)
             self.shadow_area = None
+            
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
             self.remove_button = None
+            
+            self.deanimate()
             return True
+            
         return False
         
     def set_remove_button_visibility(self, visible):
@@ -373,6 +413,8 @@ class WorkArea(QObject):
                 
     def remove(self):
         """Remove this work area and emit the removed signal."""
+        self.deanimate()
+        
         # Remove graphics from scene
         self.remove_from_scene()
         
@@ -416,6 +458,7 @@ class WorkArea(QObject):
         ))
 
     def __del__(self):
-        """Clean up the timer when the work area is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
+        """Clean up when the work area is deleted."""
+        # Ensure it de-registers from the global timer if it's still animating
+        if hasattr(self, 'is_animating') and self.is_animating:
+            self.deanimate()

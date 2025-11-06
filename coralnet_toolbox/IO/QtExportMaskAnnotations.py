@@ -34,11 +34,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class ColorSwatchWidget(QWidget):
     """A simple widget to display a color swatch with a border."""
     def __init__(self, color, parent=None):
+        """Initialize the color swatch widget."""
         super().__init__(parent)
         self.color = color
         self.setFixedSize(24, 24)
 
     def paintEvent(self, event):
+        """Paint the color swatch with border."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
@@ -64,6 +66,7 @@ class ClickableColorSwatchWidget(ColorSwatchWidget):
     clicked = pyqtSignal()
 
     def mousePressEvent(self, event):
+        """Handle mouse press to emit clicked signal."""
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
@@ -76,6 +79,7 @@ class ClickableColorSwatchWidget(ColorSwatchWidget):
 
 class ExportMaskAnnotations(QDialog):
     def __init__(self, main_window):
+        """Initialize the export mask annotations dialog."""
         super().__init__(main_window)
         self.main_window = main_window
         self.image_window = main_window.image_window
@@ -120,10 +124,12 @@ class ExportMaskAnnotations(QDialog):
         self.update_ui_for_mode()
 
     def showEvent(self, event):
+        """Handle show event and update UI."""
         super().showEvent(event)
         self.update_ui_for_mode()
 
     def setup_info_layout(self, parent_layout=None):
+        """Set up the information layout section."""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
         info_text = (
@@ -144,6 +150,7 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(group_box)
 
     def setup_output_layout(self, parent_layout=None):
+        """Set up the output directory and format layout."""
         groupbox = QGroupBox("Output Directory and File Format")
         layout = QFormLayout()
 
@@ -162,6 +169,7 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(groupbox)
 
     def setup_mask_format_layout(self, parent_layout=None):
+        """Set up the mask format and options layout."""
         groupbox = QGroupBox("Export Mode and Format")
         main_layout = QVBoxLayout()
 
@@ -205,6 +213,7 @@ class ExportMaskAnnotations(QDialog):
         self.update_georef_availability()
 
     def setup_image_selection_layout(self, parent_layout=None):
+        """Set up the image selection layout."""
         group_box = QGroupBox("Apply To")
         layout = QVBoxLayout()
         self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
@@ -227,6 +236,7 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(group_box)
 
     def setup_annotation_layout(self, parent_layout=None):
+        """Set up the annotations to include layout."""
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
         
@@ -250,6 +260,7 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(groupbox)
 
     def setup_label_layout(self, parent_layout=None):
+        """Set up the labels to include and rasterization order layout."""
         groupbox = QGroupBox("Labels to Include / Rasterization Order")
         layout = QVBoxLayout()
         self.label_table = QTableWidget()
@@ -285,6 +296,7 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(groupbox)
 
     def setup_buttons_layout(self, parent_layout=None):
+        """Set up the buttons layout."""
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
         self.export_button = QPushButton("Export")
@@ -324,9 +336,9 @@ class ExportMaskAnnotations(QDialog):
         checkbox_widget = self.create_centered_checkbox(checked=True)
         self.label_table.setCellWidget(0, 0, checkbox_widget)
         
-        label_item = QTableWidgetItem("Background")
+        label_item = QTableWidgetItem("background")
         label_item.setFlags(label_item.flags() & ~Qt.ItemIsEditable)
-        label_item.setData(Qt.UserRole, "Background")
+        label_item.setData(Qt.UserRole, "background")
         self.label_table.setItem(0, 1, label_item)
 
         if self.mask_mode in ['semantic', 'sfm']:
@@ -390,6 +402,7 @@ class ExportMaskAnnotations(QDialog):
         self.label_table.blockSignals(False)
         
     def pick_background_color(self):
+        """Pick the background color using a color dialog."""
         color = QColorDialog.getColor(self.rgb_background_color, self, "Select Background Color")
         if color.isValid():
             self.rgb_background_color = color
@@ -401,6 +414,7 @@ class ExportMaskAnnotations(QDialog):
                     swatch.setColor(color)
 
     def create_centered_checkbox(self, checked=True):
+        """Create a centered checkbox widget."""
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
         widget = QWidget()
@@ -411,11 +425,13 @@ class ExportMaskAnnotations(QDialog):
         return widget
         
     def browse_output_dir(self):
+        """Browse for the output directory."""
         directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if directory:
             self.output_dir_edit.setText(directory)
 
     def get_selected_image_paths(self):
+        """Get the selected image paths based on the apply options."""
         current_image_path = self.annotation_window.current_image_path
         if not current_image_path:
             return []
@@ -436,6 +452,7 @@ class ExportMaskAnnotations(QDialog):
         return [current_image_path]
 
     def validate_inputs(self):
+        """Validate the user inputs before export."""
         if not self.output_dir_edit.text():
             QMessageBox.warning(self, 
                                 "Missing Input", 
@@ -452,6 +469,7 @@ class ExportMaskAnnotations(QDialog):
         return True
 
     def run_export_process(self):
+        """Run the export process for mask annotations."""
         if not self.validate_inputs():
             return
 
@@ -473,7 +491,7 @@ class ExportMaskAnnotations(QDialog):
                     used_mask_values[mask_value] = []
                 used_mask_values[mask_value].append(label_code)
 
-                if label_code == "Background":
+                if label_code == "background":
                     self.background_value = mask_value
                 else:
                     self.label_code_to_export_value[label_code] = mask_value
@@ -566,6 +584,7 @@ class ExportMaskAnnotations(QDialog):
             progress_bar.close()
 
     def create_mask_for_image(self, image_path, output_path):
+        """Create a mask for the given image."""
         height, width, has_georef, transform, crs = self.get_image_metadata(image_path, self.file_format)
         if not height or not width:
             print(f"Skipping {image_path}: could not determine dimensions.")
@@ -696,10 +715,11 @@ class ExportMaskAnnotations(QDialog):
             return None  # Fallback to blank mask
 
     def export_metadata(self, output_path):
+        """Export metadata files based on the mode."""
         if self.mask_mode == 'semantic':
             class_mapping = {}
             if self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
-                background_label = "Background"
+                background_label = "background"
                 background_index = self.label_table.cellWidget(0, 2).value()
                 class_mapping[background_label] = {
                     "label": background_label,
@@ -715,7 +735,7 @@ class ExportMaskAnnotations(QDialog):
         elif self.mask_mode == 'rgb':
             color_legend = {}
             if self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
-                color_legend["Background"] = self.background_value
+                color_legend["background"] = self.background_value
 
             for label, color in self.labels_to_render:
                 color_legend[label.short_label_code] = color
@@ -726,6 +746,7 @@ class ExportMaskAnnotations(QDialog):
         # No metadata file needed for SfM mode
 
     def get_annotations_for_image(self, image_path, label):
+        """Get annotations for the image and label."""
         annotations = []
         # self.annotation_types now only contains VECTOR types
         if not self.annotation_types:
@@ -740,16 +761,18 @@ class ExportMaskAnnotations(QDialog):
         return annotations
 
     def draw_annotations_on_mask(self, mask, annotations, value):
+        """Draw annotations on the mask."""
         for ann in annotations:
             if isinstance(ann, (PatchAnnotation, RectangleAnnotation)):
-                p1 = (int(ann.top_left.x()), int(ann.top_left.y()))
-                p2 = (int(ann.bottom_right.x()), int(ann.bottom_right.y()))
+                p1 = (int(ann.get_bounding_box_top_left().x()), int(ann.get_bounding_box_top_left().y()))
+                p2 = (int(ann.get_bounding_box_bottom_right().x()), int(ann.get_bounding_box_bottom_right().y()))
                 cv2.rectangle(mask, p1, p2, value, -1)
             elif isinstance(ann, PolygonAnnotation):
                 points = np.array([[p.x(), p.y()] for p in ann.points], dtype=np.int32)
                 cv2.fillPoly(mask, [points], value)
 
     def get_image_metadata(self, image_path, file_format):
+        """Get image metadata including dimensions and georeferencing."""
         transform, crs, has_georef = None, None, False
         width, height = None, None
         raster = self.image_window.raster_manager.get_raster(image_path)
@@ -778,12 +801,14 @@ class ExportMaskAnnotations(QDialog):
 
     # --- Row Movement and UI Helpers ---
     def move_row_up(self):
+        """Move the selected row up in the table."""
         current_row = self.label_table.currentRow()
         if current_row > 0:
             self.swap_rows(current_row, current_row - 1)
             self.label_table.selectRow(current_row - 1)
 
     def move_row_down(self):
+        """Move the selected row down in the table."""
         current_row = self.label_table.currentRow()
         if 0 <= current_row < self.label_table.rowCount() - 1:
             self.swap_rows(current_row, current_row + 1)
@@ -804,7 +829,7 @@ class ExportMaskAnnotations(QDialog):
         table_data[row1], table_data[row2] = table_data[row2], table_data[row1]
 
         # Step 3: Map old label order to new order
-        new_label_order = [data['code'] for data in table_data if data['code'] != 'Background']
+        new_label_order = [data['code'] for data in table_data if data['code'] != 'background']
         
         def label_sort_key(x):
             if x.short_label_code in new_label_order:
@@ -819,6 +844,7 @@ class ExportMaskAnnotations(QDialog):
             self.label_table.cellWidget(r, 0).findChild(QCheckBox).setChecked(data['checked'])
 
     def update_georef_availability(self):
+        """Update georeferencing availability based on file format."""
         is_tif = '.tif' in self.file_format_combo.currentText().lower()
         self.preserve_georef_checkbox.setEnabled(is_tif)
         if not is_tif:
@@ -828,4 +854,5 @@ class ExportMaskAnnotations(QDialog):
             self.georef_note.setStyleSheet("color: #666; font-style: italic;")
 
     def closeEvent(self, event):
+        """Handle the close event."""
         super().closeEvent(event)

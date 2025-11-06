@@ -1,6 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import gc
 import os
@@ -8,8 +6,7 @@ import os
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
-                             QSlider)
+from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout, QSlider)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -19,6 +16,9 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 from coralnet_toolbox.Results import ResultsProcessor
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -108,9 +108,13 @@ class Classify(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, inputs=None):
+    def predict(self, inputs=None, progress_bar=None):
         """
         Predict the classification results for the given inputs.
+        
+        Args:
+            inputs: List of annotations to predict on. If None, uses selected or all review annotations.
+            progress_bar: Optional progress bar instance to use. If None, no progress bar is shown.
         """
         if self.loaded_model is None:
             return
@@ -163,7 +167,8 @@ class Classify(Base):
                                                  uncertainty_thresh=self.main_window.get_uncertainty_thresh())
 
             # Process the classification results using the valid inputs
-            results_processor.process_classification_results(results, valid_inputs)
+            # Pass the progress_bar parameter to avoid creating nested progress bars
+            results_processor.process_classification_results(results, valid_inputs, progress_bar=progress_bar)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

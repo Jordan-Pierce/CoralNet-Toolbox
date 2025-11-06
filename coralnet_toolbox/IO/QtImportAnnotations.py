@@ -113,7 +113,8 @@ class ImportAnnotations:
             progress_bar.stop_progress()
             progress_bar.close()
         if updated_annotations:
-            QMessageBox.information(self.annotation_window, "Annotations Updated",
+            QMessageBox.information(self.annotation_window, 
+                                    "Annotations Updated",
                                     "Some annotations have been updated to match the color of the labels "
                                     "already in the project.")
         # --- End of label update section ---

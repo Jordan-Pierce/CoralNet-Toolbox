@@ -2,8 +2,8 @@ import warnings
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Annotations import (
@@ -124,6 +124,10 @@ class AnnotationWindow(QGraphicsView):
 
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
+        
+        # Reference to the global animation manager
+        self.animation_manager = None
+        self.set_animation_manager(main_window.animation_manager)
 
         self.annotation_size = 224
         self.transparency = 128
@@ -179,6 +183,15 @@ class AnnotationWindow(QGraphicsView):
 
         # Initialize the action stack for undo/redo
         self.action_stack = ActionStack()
+        
+    def set_animation_manager(self, manager):
+        """
+        Receives the central AnimationManager from the MainWindow.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
 
     def _is_in_mask_editing_mode(self):
         """Check if the annotation window is currently in mask editing mode."""
@@ -990,6 +1003,9 @@ class AnnotationWindow(QGraphicsView):
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""
+        # Set the animation manager
+        annotation.set_animation_manager(self.animation_manager)
+        
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -1011,7 +1027,6 @@ class AnnotationWindow(QGraphicsView):
         # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
         
         # Update the view
         self.viewport().update()
@@ -1156,6 +1171,9 @@ class AnnotationWindow(QGraphicsView):
         """
         if annotation is None:
             return
+        
+        # Set the animation manager
+        annotation.set_animation_manager(self.animation_manager)
 
         # --- Core Logic (runs for every annotation) ---
         # Add to the main annotation dictionary
@@ -1170,7 +1188,6 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         # --- Conditional UI Logic (runs only if the image is visible) ---
         if annotation.image_path == self.current_image_path:
@@ -1181,15 +1198,14 @@ class AnnotationWindow(QGraphicsView):
             # Create a cropped image for the confidence window
             if not annotation.cropped_image and self.rasterio_image:
                 annotation.create_cropped_image(self.rasterio_image)
-            
-            # Display the cropped image in the confidence window
-            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # --- Finalization ---
         # Set the visibility based on the current UI state
         self.set_annotation_visibility(annotation)
         # Update the annotation count in the ImageWindow table
         self.main_window.image_window.update_image_annotations(annotation.image_path)
+        # Update the confidence window with the new annotation
+        self.main_window.confidence_window.display_cropped_image(annotation)
 
         # If requested, record this single addition as an undo-able action
         if record_action:
@@ -1225,7 +1241,6 @@ class AnnotationWindow(QGraphicsView):
             # --- Connect signals for future interaction ---
             annotation.selected.connect(self.select_annotation)
             annotation.annotationDeleted.connect(self.delete_annotation)
-            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         # --- Final UI Updates (after all annotations are processed) ---
         if images_to_update:

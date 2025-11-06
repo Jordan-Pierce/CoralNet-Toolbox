@@ -4,14 +4,12 @@ import re
 import uuid
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer, Qt, pyqtSignal, QMimeData, QRectF, QTimer, pyqtProperty
-from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag, QBrush, QColor, QDrag,
-                         QFontMetrics, QLinearGradient, QPainter, QPen)
+from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty
+from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QApplication, QGroupBox, QScrollArea,
-                             QApplication, QGraphicsDropShadowEffect,
-                             QSizePolicy, QWidget)
+                             QGraphicsDropShadowEffect)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -134,12 +132,13 @@ class Label(QWidget):
         layout.addWidget(self.display_widget)
         layout.addWidget(self.link_checkbox)
 
-        # --- Animation properties ---
+        # --- Animation Properties ---
+        self.animation_manager = None
+        self.is_animating = False
+
+        # --- Animation properties (no timer) ---
         self._pulse_alpha = 128
         self._pulse_direction = 1
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)
 
         # --- Widget settings ---
         self.setFixedHeight(30)
@@ -156,9 +155,9 @@ class Label(QWidget):
         """Internal slot to handle clicks from the display widget."""
         self.is_selected = not self.is_selected
         if self.is_selected:
-            self.start_animation()
+            self.animate()
         else:
-            self.stop_animation()
+            self.deanimate()
         self.display_widget.update()  # Triggers a repaint of the child widget
         self.selected.emit(self)
 
@@ -188,6 +187,29 @@ class Label(QWidget):
         if event.button() == Qt.RightButton:
             self.drag_start_position = None
         super().mouseReleaseEvent(event)
+        
+    def set_animation_manager(self, manager):
+        """
+        Binds this object to the central AnimationManager.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
+
+    def is_graphics_item_valid(self):
+        """
+        Checks if the widget is still valid and visible.
+        
+        Returns:
+            bool: True if the widget is visible, False otherwise.
+        """
+        try:
+            # For a QWidget, we can check if it's visible
+            return self.isVisible()
+        except RuntimeError:
+            # This can happen if the C++ part of the item is deleted
+            return False
 
     @property
     def is_linked(self):
@@ -198,7 +220,7 @@ class Label(QWidget):
         """Programmatically select the label."""
         if not self.is_selected:
             self.is_selected = True
-            self.start_animation()
+            self.animate()
             self.display_widget.update()
             self.selected.emit(self)
 
@@ -206,7 +228,7 @@ class Label(QWidget):
         """Programmatically deselect the label."""
         if self.is_selected:
             self.is_selected = False
-            self.stop_animation()
+            self.deanimate()
             self.display_widget.update()
 
     def update_color(self):
@@ -232,6 +254,14 @@ class Label(QWidget):
         """Update the label's pen width value."""
         self.pen_width = pen_width
         self.update_color()
+        
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        # This just calls the existing private method that holds the logic
+        self._update_pulse_alpha()
 
     @pyqtProperty(int)
     def pulse_alpha(self):
@@ -260,14 +290,18 @@ class Label(QWidget):
         
         self.display_widget.update()
 
-    def start_animation(self):
-        """Start the pulsing animation."""
-        if not self.animation_timer.isActive():
-            self.animation_timer.start()
+    def animate(self):
+        """Start the pulsing animation by registering with the global timer."""
+        self.is_animating = True
+        if self.animation_manager:
+            self.animation_manager.register_animating_object(self)
     
-    def stop_animation(self):
-        """Stop the pulsing animation."""
-        self.animation_timer.stop()
+    def deanimate(self):
+        """Stop the pulsing animation by de-registering from the global timer."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+
         self._pulse_alpha = 128
         self.display_widget.update()
 
@@ -311,6 +345,9 @@ class Label(QWidget):
     def __del__(self):
         """Clean up the timer when the label is deleted."""
         try:
+            if hasattr(self, 'is_animating') and self.is_animating:
+                self.deanimate()
+                
             if hasattr(self, 'animation_timer') and self.animation_timer:
                 self.animation_timer.stop()
         except RuntimeError:
@@ -326,6 +363,9 @@ class LabelWindow(QWidget):
         super().__init__()
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
+        
+        self.animation_manager = None
+        self.set_animation_manager(main_window.animation_manager)
 
         self.label_locked = False
         self.locked_label = None
@@ -353,6 +393,15 @@ class LabelWindow(QWidget):
 
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
+        
+    def set_animation_manager(self, manager):
+        """
+        Receives the central AnimationManager from the MainWindow.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
 
     def setup_ui(self):
         """Set up the user interface."""
@@ -673,6 +722,8 @@ class LabelWindow(QWidget):
         """Add a review label to the window and place it at the front of the label list."""
         # Create the label
         label = Label("Review", "Review", QColor(255, 255, 255), label_id="-1")
+        # Animate
+        label.set_animation_manager(self.animation_manager)
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
@@ -688,6 +739,8 @@ class LabelWindow(QWidget):
         """Add a new label to the window."""
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id)
+        # Animate
+        label.set_animation_manager(self.animation_manager)
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)

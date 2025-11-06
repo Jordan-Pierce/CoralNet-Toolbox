@@ -2,9 +2,9 @@ import os
 import warnings
 
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
-                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton)
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty, QTimer
+from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QSizePolicy,
+                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle)
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import scale_pixmap
@@ -64,11 +64,18 @@ class ConfidenceBar(QFrame):
     def start_animation(self):
         """Start the fill animation."""
         if self.target_fill_width <= 0:
+            # Stop any existing animation
+            if self.animation is not None:
+                self.animation.stop()
+            
+            # Explicitly set the fill width to 0 and trigger a repaint
+            self._fill_width = 0
+            self.update()
             return
             
         self.animation = QPropertyAnimation(self, b"fill_width")
         self.animation.setDuration(500)  # 500ms duration
-        self.animation.setStartValue(0)
+        self.animation.setStartValue(0)  # Note: This could be self._fill_width for a smoother resume
         self.animation.setEndValue(self.target_fill_width)
         self.animation.setEasingCurve(QEasingCurve.InOutQuad)  # Smooth easing
         self.animation.start()
@@ -78,19 +85,35 @@ class ConfidenceBar(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        current_width = self.width()
+        current_height = self.height()
+
+        # Guard against painting on a widget with no size
+        if current_width < 1 or current_height < 1:
+            return
+
         # Draw the border for the entire bar area
         painter.setPen(self.color)
-        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        painter.drawRect(0, 0, current_width - 1, current_height - 1)
 
-        # Draw the filled part of the bar from left to the current fill_width
+        # Draw the filled part of the bar
         painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))
-        painter.drawRect(0, 0, self._fill_width, self.height() - 1)
+        
+        # Clamp the _fill_width to be valid and within the widget's bounds
+        fill_w = min(self._fill_width, current_width - 1)
+        
+        if fill_w > 0:
+            painter.drawRect(0, 0, fill_w, current_height - 1)
 
     def mousePressEvent(self, event):
         """Handle mouse press events on the bar."""
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
-            self.handle_click()
+            # self.handle_click() # <-- DO NOT CALL DIRECTLY
+
+            # Defer the click handling. This lets the mousePressEvent finish
+            # before the widget is potentially deleted by the click's action.
+            QTimer.singleShot(0, self.handle_click)
 
     def handle_click(self):
         """Handle the logic when the bar is clicked."""
@@ -98,6 +121,8 @@ class ConfidenceBar(QFrame):
         if self.confidence_window.main_window.annotation_window.selected_tool == "select":
             # Emit the signal with the label object
             self.barClicked.emit(self.label)
+            # Set focus to the confidence window for keyboard events
+            self.confidence_window.setFocus()
 
     def enterEvent(self, event):
         """Handle mouse enter events to change the cursor."""
@@ -138,7 +163,6 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout = None
 
         self.init_graphics_view()
-        self.init_bar_chart_widget()
 
         self.annotation = None
         self.user_confidence = None
@@ -149,6 +173,8 @@ class ConfidenceWindow(QWidget):
         # Get and store the icons
         self.user_icon = get_icon("user.png")
         self.machine_icon = get_icon("machine.png")
+        self.prev_icon = self.style().standardIcon(QStyle.SP_ArrowLeft)
+        self.next_icon = self.style().standardIcon(QStyle.SP_ArrowRight)
         
         self.top_k_icons = {
             "1": get_icon("1.png").pixmap(12, 12),
@@ -158,7 +184,33 @@ class ConfidenceWindow(QWidget):
             "5": get_icon("5.png").pixmap(12, 12)
         }
 
-        # Create a label for the dimensions and a toggle button
+        # --- Graphics View Controls Layout ---
+        
+        # Create navigation buttons for previous/next annotation
+        self.prev_button = QPushButton(self.prev_icon, " Prev")
+        self.prev_button.setToolTip("Select an annotation to enable navigation")
+        self.prev_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.prev_button.clicked.connect(self.on_prev_clicked)
+        
+        self.next_button = QPushButton(self.next_icon, " Next")
+        self.next_button.setToolTip("Select an annotation to enable navigation")
+        self.next_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.next_button.clicked.connect(self.on_next_clicked)
+        
+        nav_layout = QHBoxLayout()
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.prev_button)
+        nav_layout.addWidget(self.next_button)
+        nav_layout.addStretch()
+        
+        self.groupBoxLayout.addLayout(nav_layout)
+        
+        # --- End Graphics View Controls ---
+
+        # Initialize the bar chart (adds it to the layout)
+        self.init_bar_chart_widget()
+
+        # Create a label for the dimensions and a toggle button (NOW AT THE BOTTOM)
         self.dimensions_label = QLabel(self)
         self.dimensions_label.setAlignment(Qt.AlignCenter)
 
@@ -172,15 +224,17 @@ class ConfidenceWindow(QWidget):
         dim_layout = QHBoxLayout()
         dim_layout.addWidget(self.dimensions_label)
         dim_layout.addWidget(self.toggle_button)
-        self.groupBoxLayout.addLayout(dim_layout)
+        self.groupBoxLayout.addLayout(dim_layout)  # Add layout to the bottom
 
         # Add the groupbox to the main layout
         self.layout.addWidget(self.groupBox)
         
+        # Set initial state of buttons
+        self.set_navigation_enabled(False)
+        
     def resizeEvent(self, event):
         """Handle resize events for the widget."""
         super().resizeEvent(event)
-        self.update_blank_pixmap()
         self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         
     def keyPressEvent(self, event):
@@ -193,6 +247,28 @@ class ConfidenceWindow(QWidget):
                 self.handle_bar_click(label)
         else:
             super().keyPressEvent(event)
+            
+    def set_navigation_enabled(self, enabled):
+        """Enable or disable annotation navigation buttons."""
+        self.prev_button.setEnabled(enabled)
+        self.next_button.setEnabled(enabled)
+        
+        if not enabled:
+            self.prev_button.setToolTip("Select an annotation to enable navigation")
+            self.next_button.setToolTip("Select an annotation to enable navigation")
+        else:
+            self.prev_button.setToolTip("Previous Annotation")
+            self.next_button.setToolTip("Next Annotation")
+
+    def on_prev_clicked(self):
+        """Handle previous button click."""
+        self.main_window.annotation_window.cycle_annotations(-1)
+        self.setFocus()
+
+    def on_next_clicked(self):
+        """Handle next button click."""
+        self.main_window.annotation_window.cycle_annotations(1)
+        self.setFocus()
 
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
@@ -200,7 +276,6 @@ class ConfidenceWindow(QWidget):
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
         self.groupBoxLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
-        self.update_blank_pixmap()
 
     def init_bar_chart_widget(self):
         """Initialize the widget and layout for the confidence bar chart."""
@@ -325,9 +400,14 @@ class ConfidenceWindow(QWidget):
                 else:
                     self.dimensions_label.setText(f"Crop: {orig_height} x {orig_width}")
 
+                # Enable navigation buttons
+                self.set_navigation_enabled(True)
+
         except Exception as e:
             # Cropped image is None or some other error occurred
             print(f"Error displaying cropped image: {e}")
+            # Ensure buttons are disabled if loading fails
+            self.set_navigation_enabled(False)
 
     def create_annotation_tooltip(self, annotation):
         """Create a formatted tooltip for the annotation displayed in the graphics view."""
@@ -495,3 +575,5 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setToolTip("")
         # Set the toggle button to user mode
         self.set_user_icon(False)
+        # Disable navigation buttons
+        self.set_navigation_enabled(False)

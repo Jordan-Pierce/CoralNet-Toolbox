@@ -69,6 +69,8 @@ class WorkAreaTool(Tool):
         """Remove all work area graphics from the scene without clearing the data in the raster."""
         # Create a copy to safely iterate
         for work_area in self.work_areas:
+            # Deanimate to unregister from animation manager
+            work_area.deanimate()
             # Then handle the main graphics item and its children
             if work_area.graphics_item and work_area.graphics_item.scene():
                 try:
@@ -276,9 +278,13 @@ class WorkAreaTool(Tool):
         # Create a WorkArea object from the rect
         work_area = WorkArea.from_rect(rect, self.get_current_image_name())
         
+        # Set the animation manager reference
+        work_area.set_animation_manager(self.annotation_window.animation_manager)
+        
         # Create graphics using the WorkArea's own method
         thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
         work_area.create_graphics(self.annotation_window.scene, thickness)
+        work_area.animate()
         
         # Add close button but initially hidden unless Ctrl is pressed
         button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
@@ -460,11 +466,16 @@ class WorkAreaTool(Tool):
                 work_area.graphics_item = None
                 work_area.remove_button = None
                 
+                # Set the animation manager reference
+                work_area.set_animation_manager(self.annotation_window.animation_manager)
+                
                 # Add work area graphics to the scene
                 thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
                 button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
                 
                 if work_area.add_to_scene(self.annotation_window.scene, thickness, button_size):
+                    # Animate the work area
+                    work_area.animate()
                     # Set initial button visibility based on Ctrl state
                     work_area.set_remove_button_visibility(self.ctrl_pressed)
                     

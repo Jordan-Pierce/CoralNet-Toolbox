@@ -1,17 +1,18 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QPen, QBrush
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogButtonBox, 
-                             QGroupBox, QFormLayout, QComboBox, QPushButton, QSpinBox,
-                             QHBoxLayout, QWidget, QGraphicsRectItem, QDoubleSpinBox, QCheckBox,
-                             QButtonGroup, QListWidget, QTableWidget, QTableWidgetItem, QHeaderView)
+                             QGroupBox, QFormLayout, QPushButton, QHBoxLayout, QCheckBox,
+                             QButtonGroup, QTableWidget, QTableWidgetItem, QApplication)
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -24,7 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class TileCreation(QDialog):
+class TileManager(QDialog):
     """
     Base class for performing tiled creation on images using object detection, and instance segmentation.
 
@@ -36,10 +37,12 @@ class TileCreation(QDialog):
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
+        
+        self.animation_manager = main_window.animation_manager
         self.graphics_utility = main_window.annotation_window.graphics_utility
 
         self.setWindowIcon(get_icon("tile.png"))
-        self.setWindowTitle("Tile Creation")
+        self.setWindowTitle("Tile Manager")
         self.resize(400, 600)
         
         # Initialize graphics tracking lists and objects
@@ -58,6 +61,11 @@ class TileCreation(QDialog):
         self.setup_tile_config_layout()
         # Set up apply to options layout
         self.setup_apply_options_layout()
+        
+        # Status bar
+        self.status_label = QLabel("No tiles previewed")
+        self.layout.addWidget(self.status_label)
+        
         # Buttons at bottom
         self.setup_buttons_layout()
         
@@ -67,6 +75,7 @@ class TileCreation(QDialog):
         self.update_tile_size_limits()
         self.clear_tiles()
         self.clear_checkboxes()
+        self.preview_tiles()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
@@ -137,14 +146,36 @@ class TileCreation(QDialog):
         buttons_layout = QHBoxLayout()
         
         # Preview button
-        self.preview_button = QPushButton("Preview Tiles")
+        self.preview_button = QPushButton("Update Preview")
         self.preview_button.clicked.connect(self.preview_tiles)
         buttons_layout.addWidget(self.preview_button)
         
         # Clear button
-        self.clear_button = QPushButton("Clear Tiles")
+        self.clear_button = QPushButton("Clear Preview")
         self.clear_button.clicked.connect(self.clear_tiles)
         buttons_layout.addWidget(self.clear_button)
+        
+        # Add button layout first
+        self.layout.addLayout(buttons_layout)
+        
+        # Create a second row for delete buttons
+        delete_buttons_layout = QHBoxLayout()
+        
+        # Delete tiles for current image button
+        self.delete_current_button = QPushButton("Delete Tiles (Current Image)")
+        self.delete_current_button.clicked.connect(self.delete_tiles_current_image)
+        # Red text to indicate destructive action
+        self.delete_current_button.setStyleSheet("QPushButton { color: #d32f2f; }")
+        delete_buttons_layout.addWidget(self.delete_current_button)
+        
+        # Delete tiles for all images button
+        self.delete_all_button = QPushButton("Delete Tiles (All Images)")
+        self.delete_all_button.clicked.connect(self.delete_tiles_all_images)
+        # Red text to indicate destructive action
+        self.delete_all_button.setStyleSheet("QPushButton { color: #d32f2f; }")
+        delete_buttons_layout.addWidget(self.delete_all_button)
+        
+        self.layout.addLayout(delete_buttons_layout)
         
         # Create a button box with custom buttons
         button_box = QDialogButtonBox()
@@ -157,8 +188,7 @@ class TileCreation(QDialog):
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
 
-        # Add button layout first, then the standard button box
-        self.layout.addLayout(buttons_layout)
+        # Add the standard button box
         self.layout.addWidget(button_box)
         
     def setup_apply_options_layout(self):
@@ -375,8 +405,10 @@ class TileCreation(QDialog):
             self.annotation_window.current_image_path
         )
         
+        self.margin_work_area.set_animation_manager(self.animation_manager)
+        
         # Set a different color for the margin boundary
-        self.margin_work_area.work_area_pen = QPen(QColor(0, 0, 255), 2, Qt.DashLine)
+        self.margin_work_area.work_area_pen = QPen(QColor(230, 62, 0), 2, Qt.DashLine)
         
         # Create graphics with shadow to highlight the working area
         margin_graphics = self.margin_work_area.create_graphics(
@@ -385,10 +417,8 @@ class TileCreation(QDialog):
             include_shadow=True  # Add shadow to highlight the usable area
         )
         
-        # Add the margin rectangle to our graphics list
         self.all_graphics.append(margin_graphics)
         
-        # Also track the shadow item for proper cleanup
         if self.margin_work_area.shadow_area:
             self.all_graphics.append(self.margin_work_area.shadow_area)
         
@@ -420,9 +450,12 @@ class TileCreation(QDialog):
                         self.annotation_window.current_image_path
                     )
                     
+                    tile_work_area.set_animation_manager(self.animation_manager)
+                    
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, pen_width=thickness,
+                        self.annotation_window.scene, 
+                        pen_width=thickness
                     )
                     
                     # Store the graphics for later removal
@@ -451,9 +484,12 @@ class TileCreation(QDialog):
                             self.annotation_window.current_image_path
                         )
                         
+                        tile_work_area.set_animation_manager(self.animation_manager)
+                        
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
-                            self.annotation_window.scene, pen_width=thickness,
+                            self.annotation_window.scene, 
+                            pen_width=thickness
                         )
                         
                         # Store the graphics for later removal
@@ -482,9 +518,12 @@ class TileCreation(QDialog):
                             self.annotation_window.current_image_path
                         )
                         
+                        tile_work_area.set_animation_manager(self.animation_manager)
+                        
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
-                            self.annotation_window.scene, pen_width=thickness,
+                            self.annotation_window.scene, 
+                            pen_width=thickness
                         )
                         
                         # Store the graphics for later removal
@@ -508,9 +547,12 @@ class TileCreation(QDialog):
                                 self.annotation_window.current_image_path
                             )
                             
+                            tile_work_area.set_animation_manager(self.animation_manager)
+                            
                             # Add to scene with thinner line and store the graphics
                             tile_graphics = tile_work_area.create_graphics(
-                                self.annotation_window.scene, pen_width=thickness,
+                                self.annotation_window.scene, 
+                                pen_width=thickness
                             )
                             
                             # Store the graphics for later removal
@@ -541,9 +583,12 @@ class TileCreation(QDialog):
                         self.annotation_window.current_image_path
                     )
                     
+                    tile_work_area.set_animation_manager(self.animation_manager)
+                    
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, pen_width=thickness,
+                        self.annotation_window.scene, 
+                        pen_width=thickness
                     )
                     
                     # Store the graphics for later removal
@@ -555,15 +600,11 @@ class TileCreation(QDialog):
         # Count tiles
         total_tiles = len(self.tile_work_areas)
         
-        # Show tile count in a message
+        # Update status bar
         coverage_status = "with full coverage" if ensure_coverage else "with standard grid"
-        QMessageBox.information(
-            self, 
-            "Tile Preview", 
-            f"Created {total_tiles} tiles {coverage_status}:\n"
-            f"• Tile size: {tile_width}×{tile_height} pixels\n"
-            f"• Overlap: {overlap_width}×{overlap_height} pixels\n"
-            f"• Effective step: {effective_width}×{effective_height} pixels"
+        self.status_label.setText(
+            f"Tiles: {total_tiles} ({num_tiles_x}×{num_tiles_y} grid, {coverage_status}) | "
+            f"Size: {tile_width}×{tile_height} | Overlap: {overlap_width}×{overlap_height}"
         )
 
     def clear_tiles(self):
@@ -590,6 +631,98 @@ class TileCreation(QDialog):
         
         # Update the view
         self.annotation_window.viewport().update()
+        
+        # Reset status
+        self.status_label.setText("No tiles previewed")
+
+    def delete_tiles_current_image(self):
+        """Delete all existing tile work areas for the current image."""
+        # Get the current image path
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            QMessageBox.warning(self, "No Image", "No image is currently loaded.")
+            return
+        
+        # Get the raster for the current image
+        raster = self.main_window.image_window.raster_manager.get_raster(current_image_path)
+        if not raster:
+            QMessageBox.warning(self, "Error", "Could not access image data.")
+            return
+        
+        # Check if there are any work areas to delete
+        if not raster.has_work_areas():
+            QMessageBox.information(self, 
+                                    "No Tiles", 
+                                    "There are no tiles to delete for the current image.")
+            return
+        
+        # Confirm deletion
+        tile_count = len(raster.get_work_areas())
+        reply = QMessageBox.question(
+            self, "Confirm Deletion", 
+            f"Are you sure you want to delete {tile_count} tile(s) from the current image?\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear all work areas from the raster
+            raster.clear_work_areas()
+            
+            # Clear any preview tiles from the scene as well
+            self.clear_tiles()
+            
+            QMessageBox.information(self, 
+                                    "Tiles Deleted", 
+                                    f"Successfully deleted {tile_count} tile(s) from the current image.")
+    
+    def delete_tiles_all_images(self):
+        """Delete all existing tile work areas for all images in the project."""
+        # Get all rasters from the raster manager
+        raster_manager = self.main_window.image_window.raster_manager
+        all_rasters = [raster_manager.get_raster(path) for path in raster_manager.image_paths]
+        
+        # Count total tiles across all images
+        total_tiles = 0
+        images_with_tiles = 0
+        for raster in all_rasters:
+            if raster and raster.has_work_areas():
+                total_tiles += len(raster.get_work_areas())
+                images_with_tiles += 1
+        
+        # Check if there are any tiles to delete
+        if total_tiles == 0:
+            QMessageBox.information(self, 
+                                    "No Tiles", 
+                                    "There are no tiles to delete in any images.")
+            return
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion", 
+            f"Are you sure you want to delete {total_tiles} tile(s) from "
+            f"{images_with_tiles} image(s)?\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear work areas from all rasters
+            deleted_count = 0
+            for raster in all_rasters:
+                if raster and raster.has_work_areas():
+                    deleted_count += len(raster.get_work_areas())
+                    raster.clear_work_areas()
+            
+            # Clear any preview tiles from the scene as well
+            self.clear_tiles()
+            
+            QMessageBox.information(self, 
+                                    "Tiles Deleted", 
+                                    f"Successfully deleted {deleted_count} tile(s) from "
+                                    f"{images_with_tiles} image(s).")
 
     def generate_tile_work_areas(self, params, image_path):
         """
@@ -773,8 +906,17 @@ class TileCreation(QDialog):
                 left_pct, top_pct, right_pct, bottom_pct = margins
             else:
                 left_pct = top_pct = right_pct = bottom_pct = margins[0]
+                
+        # Create a progress bar
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Applying Tile Work Areas")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
     
         for image_path in image_paths:
+            # Update progress bar first
+            progress_bar.update_progress()
+            
             # For the current image, use the annotation window for validation
             if image_path == self.annotation_window.current_image_path:
                 is_valid, error_message, params = self.validate_parameters(image_path)
@@ -852,9 +994,12 @@ class TileCreation(QDialog):
             for work_area in tile_work_areas:
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
-    
-        # Show summary message
-        QMessageBox.information(self, "Tiles Added", f"Added {total_tiles} tiles to selected images.")
+            
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
     
         # Show dialog if any images were skipped due to errors
         if errors:

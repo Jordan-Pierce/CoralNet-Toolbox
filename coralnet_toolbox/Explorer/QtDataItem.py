@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QTimer, QRectF
+from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter
 from PyQt5.QtWidgets import QGraphicsObject, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
 
@@ -52,12 +52,35 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
         
-        # Animation properties (updated for pulsing)
+        # --- Animation Properties ---
+        self.animation_manager = None
+        self.is_animating = False
+        
+        # --- Animation properties ---
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
         self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-        self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
+        
+    def set_animation_manager(self, manager):
+        """
+        Binds this object to the central AnimationManager.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
+        
+    def is_graphics_item_valid(self):
+        """
+        Checks if the graphics item is still valid and added to a scene.
+        
+        Returns:
+            bool: True if the item exists and has a scene, False otherwise.
+        """
+        try:
+            return self.scene() is not None
+        except RuntimeError:
+            # This can happen if the C++ part of the item is deleted
+            return False
 
     def boundingRect(self):
         """Returns the bounding rectangle, which depends on the display mode and depth."""
@@ -134,16 +157,16 @@ class EmbeddingPointItem(QGraphicsObject):
             border_color.setAlpha(opacity)
             border_pen = QPen(border_color, scaled_pen_width)
             if self.isSelected():
-                # Use a darker version of the color for better visibility
+                # Tell manager to start animating
+                self.animate()
+                
                 border_color = QColor(self.data_item.effective_color).darker(150)  
-                border_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+                border_color.setAlpha(self._pulse_alpha)
                 border_pen = QPen(border_color, scaled_pen_width)
-                border_pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
-                if not self.animation_timer.isActive():
-                    self.animation_timer.start()  # Start pulsing on selection
+                border_pen.setStyle(Qt.DotLine)
             else:
-                if self.animation_timer.isActive():
-                    self.animation_timer.stop()  # Stop pulsing on deselection
+                # Tell manager to stop animating
+                self.deanimate()
 
             painter.setPen(border_pen)
             painter.setBrush(Qt.NoBrush)
@@ -151,23 +174,32 @@ class EmbeddingPointItem(QGraphicsObject):
         else:
             # Draw Original Dot with scaled size and pen
             if self.isSelected():
-                # Use a darker version of the color for better visibility
+                # Tell manager to start animating
+                self.animate()
+                
                 darker_color = QColor(self.data_item.effective_color).darker(150)  
-                darker_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+                darker_color.setAlpha(self._pulse_alpha)
                 animated_pen = QPen(darker_color, scaled_pen_width)
-                animated_pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
-                if not self.animation_timer.isActive():
-                    self.animation_timer.start()  # Start pulsing on selection
+                animated_pen.setStyle(Qt.DotLine)
                 painter.setPen(animated_pen)
             else:
+                # Tell manager to stop animating
+                self.deanimate()
+                
                 pen_color = QColor("black")
                 pen_color.setAlpha(opacity)
                 painter.setPen(QPen(pen_color, scaled_pen_width))
-                if self.animation_timer.isActive():
-                    self.animation_timer.stop()  # Stop pulsing on deselection
 
             painter.setBrush(effective_brush_color)
             painter.drawEllipse(self.boundingRect())
+            
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        # This just calls the existing private method that holds the logic
+        self._update_pulse_alpha()
     
     def _update_pulse_alpha(self):
         """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
@@ -188,10 +220,25 @@ class EmbeddingPointItem(QGraphicsObject):
         
         self.update()  # Trigger repaint
     
+    def animate(self):
+        """Start the pulsing animation by registering with the global timer."""
+        self.is_animating = True
+        if self.animation_manager:
+            self.animation_manager.register_animating_object(self)
+            
+    def deanimate(self):
+        """Stop the pulsing animation by de-registering from the global timer."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+            
+        self._pulse_alpha = 128  # Reset to default
+        self.update()  # Apply the default style
+    
     def __del__(self):
         """Clean up the timer when the item is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
+        if hasattr(self, 'is_animating') and self.is_animating:
+            self.deanimate()
             
 
 class AnnotationImageWidget(QWidget):
@@ -199,26 +246,48 @@ class AnnotationImageWidget(QWidget):
 
     def __init__(self, data_item, widget_height=96, annotation_viewer=None, parent=None):
         super(AnnotationImageWidget, self).__init__(parent)
-        self.data_item = data_item  # The single source of truth for state
+        self.data_item = data_item
         self.annotation = data_item.annotation
         self.annotation_viewer = annotation_viewer
 
         self.widget_height = widget_height
         self.aspect_ratio = 1.0
         self.pixmap = None
-        self.is_loaded = False  # Flag for lazy loading
+        self.is_loaded = False
 
-        # Animation properties (updated for pulsing)
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-        self.animation_timer = QTimer(self)
-        self.animation_timer.timeout.connect(self._update_pulse_alpha)
-        self.animation_timer.setInterval(50)  # Reduced to 50ms for faster, heartbeat-like pulsing
+        # --- Animation Properties ---
+        self.animation_manager = None
+        self.is_animating = False
+        
+        # --- Animation properties (no timer) ---
+        self._pulse_alpha = 128
+        self._pulse_direction = 1
 
         self.setup_ui()
-        self.recalculate_aspect_ratio()  # Calculate aspect ratio from geometry
-        self.update_height(self.widget_height)  # Set initial size
+        self.recalculate_aspect_ratio()
+        self.update_height(self.widget_height)
         self.update_tooltip()
+        
+    def set_animation_manager(self, manager):
+        """
+        Binds this object to the central AnimationManager.
+        
+        Args:
+            manager (AnimationManager): The central animation manager instance.
+        """
+        self.animation_manager = manager
+        
+    def is_graphics_item_valid(self):
+        """
+        Checks if the widget is still valid and visible.
+        
+        Returns:
+            bool: True if the widget is visible, False otherwise.
+        """
+        try:
+            return self.isVisible()
+        except RuntimeError:
+            return False
 
     def setup_ui(self):
         """Set up the basic UI with a label for the image."""
@@ -331,11 +400,9 @@ class AnnotationImageWidget(QWidget):
         is_selected = self.data_item.is_selected
 
         if is_selected:
-            if not self.animation_timer.isActive():
-                self.animation_timer.start()
+            self.animate()
         else:
-            if self.animation_timer.isActive():
-                self.animation_timer.stop()
+            self.deanimate()
             self._pulse_alpha = 128  # Reset to default
 
         # Trigger a repaint to show the new selection state (border, etc.)
@@ -380,6 +447,14 @@ class AnnotationImageWidget(QWidget):
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
         
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        # This just calls the existing private method that holds the logic
+        self._update_pulse_alpha()
+        
     def _update_pulse_alpha(self):
         """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
         if self._pulse_direction == 1:
@@ -398,7 +473,22 @@ class AnnotationImageWidget(QWidget):
             self._pulse_direction = 1
         
         self.update()  # Trigger repaint
-
+        
+    def animate(self):
+        """Start the pulsing animation by registering with the global timer."""
+        self.is_animating = True
+        if self.animation_manager:
+            self.animation_manager.register_animating_object(self)
+            
+    def deanimate(self):
+        """Stop the pulsing animation by de-registering from the global timer."""
+        self.is_animating = False
+        if self.animation_manager:
+            self.animation_manager.unregister_animating_object(self)
+            
+        self._pulse_alpha = 128  # Reset to default
+        self.update()  # Apply the default style
+    
     def mousePressEvent(self, event):
         """Handle mouse press events for selection, delegating logic to the viewer."""
         if event.button() == Qt.LeftButton:
@@ -416,8 +506,8 @@ class AnnotationImageWidget(QWidget):
         
     def __del__(self):
         """Clean up the timer when the widget is deleted."""
-        if hasattr(self, 'animation_timer') and self.animation_timer:
-            self.animation_timer.stop()
+        if hasattr(self, 'is_animating') and self.is_animating:
+            self.deanimate()            
 
 
 class AnnotationDataItem:

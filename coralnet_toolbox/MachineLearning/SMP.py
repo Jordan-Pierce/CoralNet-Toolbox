@@ -2348,7 +2348,7 @@ class Trainer:
                 pred_probs = torch.softmax(output_mask, dim=1)
                 pred_confidence, pred_class = torch.max(pred_probs, dim=1)
                 pred_class = torch.where(
-                    pred_confidence >= 0.5,
+                    pred_confidence >= 0.1,
                     pred_class,
                     torch.zeros_like(pred_class)
                 )
@@ -2527,7 +2527,7 @@ class Evaluator:
                 pred_probs = torch.softmax(output_mask, dim=1)
                 pred_confidence, pred_class = torch.max(pred_probs, dim=1)
                 pred_class = torch.where(
-                    pred_confidence >= self.confidence_threshold,
+                    pred_confidence >= 0.1,
                     pred_class,
                     torch.zeros_like(pred_class)
                 )

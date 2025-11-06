@@ -21,6 +21,9 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QGroupBox, QSpacerItem)
 
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
+from coralnet_toolbox.QtAnimationManager import AnimationManager
+from coralnet_toolbox.QtSystemMonitor import SystemMonitor
+from coralnet_toolbox.QtTimer import TimerGroupBox
 
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
@@ -36,7 +39,7 @@ from coralnet_toolbox.Tile import (
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
     TileSemanticDataset as SemanticTileDatasetDialog,
-    TileCreation as TileCreationDialog,
+    TileManager as TileManagerDialog,
     TileBatchInference as TileBatchInferenceDialog
 )
 
@@ -125,11 +128,7 @@ from coralnet_toolbox.BreakTime import (
     LightCycleGame
 )
 
-from coralnet_toolbox.QtSystemMonitor import SystemMonitor
-
 from coralnet_toolbox.Icons import get_icon
-
-from coralnet_toolbox.QtTimer import TimerGroupBox
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -145,6 +144,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self, __version__):
         super().__init__()
+        
+        # Create the animation manager
+        self.animation_manager = AnimationManager(self)
+        self.animation_manager.start_timer(interval=50)  # 50ms interval
         
         # Get the process ID
         self.pid = os.getpid()
@@ -290,12 +293,12 @@ class MainWindow(QMainWindow):
         self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
 
         # Create dialogs (Tile)
+        self.tile_manager_dialog = TileManagerDialog(self)
+        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.semantic_tile_dataset_dialog = SemanticTileDatasetDialog(self)
-        self.tile_creation_dialog = TileCreationDialog(self)
-        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
 
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -325,6 +328,8 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
+        # Connect the filterChanged signal from ImageWindow to expand ConfidenceWindow height
+        self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
 
         # ----------------------------------------
         # Create the menu bar
@@ -484,7 +489,17 @@ class MainWindow(QMainWindow):
         
         # Tile menu
         self.tile_menu = self.menu_bar.addMenu("Tile")
-
+        
+        # Tile Creation
+        self.tile_manager_action = QAction("Tile Manager", self)
+        self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
+        self.tile_menu.addAction(self.tile_manager_action)
+        # Tile Batch Inference
+        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
+        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
+        self.tile_menu.addAction(self.tile_batch_inference_action)
+        # Add a separator
+        self.tile_menu.addSeparator()
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
@@ -503,14 +518,6 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action = QAction("Semantic", self)
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
-        # Tile Inference
-        self.tile_creation_action = QAction("Tile Creation", self)
-        self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
-        self.tile_menu.addAction(self.tile_creation_action)
-        # Tile Batch Inference
-        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
-        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
-        self.tile_menu.addAction(self.tile_batch_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -1723,10 +1730,26 @@ class MainWindow(QMainWindow):
             self.device_tool_action.setToolTip(device_tooltip)
 
     def handle_image_changed(self):
+        """Handle actions needed when the image is changed."""
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
         if self.annotation_window.selected_tool == 'see_anything':
             self.annotation_window.tools['see_anything'].cancel_working_area()
+            
+    def on_image_window_filter_toggled(self, is_expanded):
+        """
+        Adjusts the vertical stretch between ImageWindow and ConfidenceWindow
+        when the filter group in ImageWindow is toggled.
+        """
+        if is_expanded:
+            # Reset to default stretch factors (54 / 46)
+            self.image_layout.setStretch(0, 54)  # index 0 is image_window
+            self.image_layout.setStretch(1, 46)  # index 1 is confidence_window
+        else:
+            # Filters are hidden, give less space to image_window
+            # and more to confidence_window.
+            self.image_layout.setStretch(0, 54)
+            self.image_layout.setStretch(1, 66)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -1786,8 +1809,12 @@ class MainWindow(QMainWindow):
 
         if not linked_label_ids:
             return  # Do nothing if no labels are linked
-
+        
+        # Make cursory busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Block signals to prevent recursive updates
         self.annotation_window.blockSignals(True)
+        
         try:
             # 1. Toggle visibility for all VECTOR annotations associated with the linked labels
             for annotation in self.annotation_window.annotations_dict.values():
@@ -1811,6 +1838,9 @@ class MainWindow(QMainWindow):
                 mask.update_visible_labels(new_mask_visible_ids)
 
         finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Unblock signals
             self.annotation_window.blockSignals(False)
 
         # Update the button's tooltip
@@ -2339,8 +2369,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_tile_creation_dialog(self):
-        """Open the Tile Creation dialog to create work areas on images."""
+    def open_tile_manager_dialog(self):
+        """Open the Tile Manager dialog to create work areas on images."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -2350,7 +2380,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.tile_creation_dialog.exec_()
+            self.tile_manager_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
