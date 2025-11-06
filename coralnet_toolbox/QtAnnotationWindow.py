@@ -1204,6 +1204,8 @@ class AnnotationWindow(QGraphicsView):
         self.set_annotation_visibility(annotation)
         # Update the annotation count in the ImageWindow table
         self.main_window.image_window.update_image_annotations(annotation.image_path)
+        # Update the confidence window with the new annotation
+        self.main_window.confidence_window.display_cropped_image(annotation)
 
         # If requested, record this single addition as an undo-able action
         if record_action:
