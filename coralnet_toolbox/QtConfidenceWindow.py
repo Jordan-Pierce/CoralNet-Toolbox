@@ -4,7 +4,7 @@ import warnings
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
-                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton)
+                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle, QSizePolicy)
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import scale_pixmap
@@ -98,6 +98,8 @@ class ConfidenceBar(QFrame):
         if self.confidence_window.main_window.annotation_window.selected_tool == "select":
             # Emit the signal with the label object
             self.barClicked.emit(self.label)
+            # Set focus to the confidence window for keyboard events
+            self.confidence_window.setFocus()
 
     def enterEvent(self, event):
         """Handle mouse enter events to change the cursor."""
@@ -138,7 +140,7 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout = None
 
         self.init_graphics_view()
-        self.init_bar_chart_widget()
+        # Note: init_bar_chart_widget() is called after layouts are added
 
         self.annotation = None
         self.user_confidence = None
@@ -149,6 +151,8 @@ class ConfidenceWindow(QWidget):
         # Get and store the icons
         self.user_icon = get_icon("user.png")
         self.machine_icon = get_icon("machine.png")
+        self.prev_icon = self.style().standardIcon(QStyle.SP_ArrowLeft)
+        self.next_icon = self.style().standardIcon(QStyle.SP_ArrowRight)
         
         self.top_k_icons = {
             "1": get_icon("1.png").pixmap(12, 12),
@@ -158,7 +162,33 @@ class ConfidenceWindow(QWidget):
             "5": get_icon("5.png").pixmap(12, 12)
         }
 
-        # Create a label for the dimensions and a toggle button
+        # --- Graphics View Controls Layout ---
+        
+        # Create navigation buttons for previous/next annotation
+        self.prev_button = QPushButton(self.prev_icon, " Prev")
+        self.prev_button.setToolTip("Select an annotation to enable navigation")
+        self.prev_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.prev_button.clicked.connect(self.on_prev_clicked)
+        
+        self.next_button = QPushButton(self.next_icon, " Next")
+        self.next_button.setToolTip("Select an annotation to enable navigation")
+        self.next_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.next_button.clicked.connect(self.on_next_clicked)
+        
+        nav_layout = QHBoxLayout()
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.prev_button)
+        nav_layout.addWidget(self.next_button)
+        nav_layout.addStretch()
+        
+        self.groupBoxLayout.addLayout(nav_layout)
+        
+        # --- End Graphics View Controls ---
+
+        # Initialize the bar chart (adds it to the layout)
+        self.init_bar_chart_widget()
+
+        # Create a label for the dimensions and a toggle button (NOW AT THE BOTTOM)
         self.dimensions_label = QLabel(self)
         self.dimensions_label.setAlignment(Qt.AlignCenter)
 
@@ -172,10 +202,13 @@ class ConfidenceWindow(QWidget):
         dim_layout = QHBoxLayout()
         dim_layout.addWidget(self.dimensions_label)
         dim_layout.addWidget(self.toggle_button)
-        self.groupBoxLayout.addLayout(dim_layout)
+        self.groupBoxLayout.addLayout(dim_layout)  # Add layout to the bottom
 
         # Add the groupbox to the main layout
         self.layout.addWidget(self.groupBox)
+        
+        # Set initial state of buttons
+        self.set_navigation_enabled(False)
         
     def resizeEvent(self, event):
         """Handle resize events for the widget."""
@@ -193,6 +226,28 @@ class ConfidenceWindow(QWidget):
                 self.handle_bar_click(label)
         else:
             super().keyPressEvent(event)
+            
+    def set_navigation_enabled(self, enabled):
+        """Enable or disable annotation navigation buttons."""
+        self.prev_button.setEnabled(enabled)
+        self.next_button.setEnabled(enabled)
+        
+        if not enabled:
+            self.prev_button.setToolTip("Select an annotation to enable navigation")
+            self.next_button.setToolTip("Select an annotation to enable navigation")
+        else:
+            self.prev_button.setToolTip("Previous Annotation")
+            self.next_button.setToolTip("Next Annotation")
+
+    def on_prev_clicked(self):
+        """Handle previous button click."""
+        self.main_window.annotation_window.cycle_annotations(-1)
+        self.setFocus()
+
+    def on_next_clicked(self):
+        """Handle next button click."""
+        self.main_window.annotation_window.cycle_annotations(1)
+        self.setFocus()
 
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
@@ -325,9 +380,14 @@ class ConfidenceWindow(QWidget):
                 else:
                     self.dimensions_label.setText(f"Crop: {orig_height} x {orig_width}")
 
+                # Enable navigation buttons
+                self.set_navigation_enabled(True)
+
         except Exception as e:
             # Cropped image is None or some other error occurred
             print(f"Error displaying cropped image: {e}")
+            # Ensure buttons are disabled if loading fails
+            self.set_navigation_enabled(False)
 
     def create_annotation_tooltip(self, annotation):
         """Create a formatted tooltip for the annotation displayed in the graphics view."""
@@ -495,3 +555,5 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setToolTip("")
         # Set the toggle button to user mode
         self.set_user_icon(False)
+        # Disable navigation buttons
+        self.set_navigation_enabled(False)
