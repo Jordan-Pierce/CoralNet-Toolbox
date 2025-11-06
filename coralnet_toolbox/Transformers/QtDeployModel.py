@@ -1,7 +1,7 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import os
 import gc
 import traceback
 
@@ -25,6 +25,8 @@ from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_numpy
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -466,14 +468,17 @@ class DeployModelDialog(QDialog):
             self.loaded_model = OWLViTModel(ontology=self.ontology,
                                             device=self.main_window.device)
 
-    def predict(self, image_paths=None):
+    def predict(self, image_paths=None, progress_bar=None):
         """
         Make predictions on the given image paths using the loaded model.
+        Processes tiles in mini-batches for speed, but post-processes
+        one-by-one to provide UI feedback.
 
         Args:
             image_paths: List of image paths to process. If None, uses the current image.
         """
         if not self.loaded_model:
+            QMessageBox.warning(self, "Warning", "No model loaded.")
             return
         
         if not image_paths:
@@ -482,6 +487,10 @@ class DeployModelDialog(QDialog):
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
             image_paths = [self.annotation_window.current_image_path]
+
+        # --- Define a batch size for prediction ---
+        # Transformers models are VRAM-heavy, so use a smaller batch size.
+        BATCH_SIZE = 8
 
         # Create a results processor
         results_processor = ResultsProcessor(
@@ -496,40 +505,151 @@ class DeployModelDialog(QDialog):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
+        # Track if we created the progress bar ourselves
+        progress_bar_created_here = progress_bar is None
+        
         try:
-            for image_path in image_paths:
-                inputs = self._get_inputs(image_path)
-                if inputs is None:
+            # --- We process one image at a time ---
+            for idx, image_path in enumerate(image_paths):
+                
+                # --- 1. Get Raster and Work Items ---
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster is None:
+                    print(f"Warning: Could not get raster for {image_path}. Skipping.")
                     continue
+                
+                # Get the list of items to process
+                is_full_image = self.annotation_window.get_selected_tool() != "work_area"
+                
+                if is_full_image:
+                    work_items_data = [raster.get_numpy()]  # Get full numpy array
+                    work_areas = [None]  # Dummy list to make loops match
+                else:
+                    # Get both parallel lists: coordinate objects and data arrays
+                    work_areas = raster.get_work_areas()  # List of WorkArea objects
+                    work_items_data = raster.get_work_areas_data()  # List of np.ndarray
 
-                results = self._apply_model(inputs)
-                results = self._apply_sam(results, image_path)
-                self._process_results(results_processor, results, image_path)
+                if not work_items_data or not work_areas:
+                    print(f"Warning: No work items found for {image_path}. Skipping.")
+                    continue
+                    
+                if len(work_items_data) != len(work_areas):
+                    print(f"Error: Mismatch in work items. Data: {len(work_items_data)}, Areas: {len(work_areas)}")
+                    continue
+                
+                # --- 2. Setup Progress Bar ---
+                title = f"Predicting: {idx + 1}/{len(image_paths)} - {os.path.basename(image_path)}"
+                if progress_bar is None:
+                    progress_bar = ProgressBar(self.annotation_window)
+                    progress_bar.show()
+                progress_bar.set_title(title)
+                progress_bar.start_progress(len(work_items_data))  # Total is still number of tiles
 
-                # Update the progress bar
-                progress_bar.update_progress()
+                # --- 3. Process Tiles and Collect Results ---
+                
+                # Create a list to hold all results for THIS image
+                results_for_this_image = []
+                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+                
+                try:
+                    # --- Loop over the data in mini-batches ---
+                    for i in range(0, len(work_items_data), BATCH_SIZE):
+                        
+                        # Get the mini-batch chunks
+                        data_chunk = work_items_data[i: i + BATCH_SIZE]
+                        area_chunk = work_areas[i: i + BATCH_SIZE]
+                        
+                        # --- 3a. Apply Model (Batched) ---
+                        # Returns a flat list: [res1, res2, ...]
+                        batch_results_list = self._apply_model(data_chunk)
+                        
+                        # --- 3b. Apply SAM (Batched) ---
+                        # Takes a flat list, returns a flat list: [sam_res1, sam_res2, ...]
+                        sam_results_list = self._apply_sam(batch_results_list, image_path)
+
+                        # Safety check
+                        if len(sam_results_list) != len(area_chunk):
+                            print(f"Warning: Mismatch in batch results (Got {len(sam_results_list)}, "
+                                  f"expected {len(area_chunk)}). Skipping batch.")
+                            
+                            # Update progress bar for the skipped items
+                            for _ in area_chunk:
+                                progress_bar.update_progress()
+                            continue
+                            
+                        # --- 3c. Post-process (Streaming w/ Highlight) ---
+                        # Loop through the flat lists
+                        for results_obj, work_area in zip(sam_results_list, area_chunk):
+                            
+                            # --- Highlight at the START of post-processing ---
+                            if work_area:
+                                work_area.highlight()
+                                # --- Force UI redraw ---
+                                QApplication.processEvents()
+
+                            if not results_obj:  # Handle potential empty result from SAM or Model
+                                if work_area: 
+                                    work_area.unhighlight()
+                                progress_bar.update_progress()
+                                continue
+
+                            # Get the single result object
+                            results_obj.path = image_path
+                            
+                            # --- 3d. Map Result ---
+                            if work_area:
+                                # Highlight is already active
+                                mapped_result = MapResults().map_results_from_work_area(
+                                    results_obj,
+                                    raster,
+                                    work_area,
+                                    is_segmentation
+                                )
+                            else:
+                                mapped_result = results_obj
+
+                            # --- 3e. Append to list, DO NOT process yet ---
+                            results_for_this_image.append(mapped_result)
+
+                            # --- 3f. Update progress bar for this tile ---
+                            progress_bar.update_progress()
+                            
+                            # --- 3g. Unhighlight at the END of post-processing ---
+                            if work_area:
+                                work_area.unhighlight()
+
+                        # --- Clean up GPU memory *after* the mini-batch ---
+                        gc.collect()
+                        empty_cache()
+
+                except Exception as e:
+                    print(f"An error occurred during prediction on {image_path}: {e}")
+                    traceback.print_exc()
+                
+                # --- 4. Process All Results for This Image at Once ---
+                if results_for_this_image:
+                    # This function is now just a simple wrapper
+                    self._process_results(results_processor, results_for_this_image, image_path)
 
         except Exception as e:
-            print("An error occurred during prediction:", e)
+            print(f"A fatal error occurred during the prediction workflow: {e}")
+            traceback.print_exc()
         finally:
+            # --- 5. Final Cleanup ---
+            if progress_bar_created_here and progress_bar is not None:
+                progress_bar.finish_progress()
+                progress_bar.stop_progress()
+                progress_bar.close()
+                
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-        gc.collect()
-        empty_cache()
+            gc.collect()
+            empty_cache()
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         raster = self.image_window.raster_manager.get_raster(image_path)
         if raster is None:
-            return None, None
+            return None  # Return None on failure
         
         if self.annotation_window.get_selected_tool() != "work_area":
             # Use the image path
@@ -541,35 +661,36 @@ class DeployModelDialog(QDialog):
         return work_areas_data
 
     def _apply_model(self, inputs):
-        """Apply the model to the inputs."""
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(inputs))
-
+        """
+        Apply the model to the inputs (batched).
+        Removes internal progress bar and loop.
+        """
         results_list = []
-
-        # Process each input separately
-        for idx, input_image in enumerate(inputs):
-            # Run the model on the input image
-            results = self.loaded_model.predict(input_image)
-            # Add the results to the list
-            results_list.append(results)
-            # Update the progress bar
-            progress_bar.update_progress()
-            # Clean up GPU memory after each prediction
-            gc.collect()
-            empty_cache()
-
-        # Close the progress bar
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
+        try:
+            # Run the model on the entire batch of inputs
+            results_list = self.loaded_model.predict(inputs)
+        except Exception as e:
+            print(f"Error during batched model prediction: {e}")
+            # If batch fails, try one-by-one as a fallback
+            results_list = []
+            for img in inputs:
+                try:
+                    results_list.append(self.loaded_model.predict(img))
+                except Exception as e_inner:
+                    print(f"Error during single-item fallback prediction: {e_inner}")
+                    results_list.append(None)  # Add None to keep list length consistent
+        
+        # Clean up GPU memory after each prediction
+        gc.collect()
+        empty_cache()
 
         return results_list
 
     def _apply_sam(self, results_list, image_path):
-        """Apply SAM to the results if needed."""
+        """
+        Apply SAM to the results if needed.
+        (Removes internal progress bar and cursor logic)
+        """
         # Check if SAM model is deployed and loaded
         self.update_sam_task_state()
         if self.task != 'segment':
@@ -585,86 +706,45 @@ class DeployModelDialog(QDialog):
             self.use_sam_dropdown.setCurrentText("False")
             return results_list
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
-        progress_bar.show()
-        progress_bar.start_progress(len(results_list))
-
         updated_results = []
-
-        for idx, results in enumerate(results_list):
-            # Each Results is a list (within the results_list, [[], ]
-            if results:
-                # Run it rough the SAM model
-                results = self.sam_dialog.predict_from_results(results, image_path)
-                updated_results.append(results)
-
-            # Update the progress bar
-            progress_bar.update_progress()
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
+        for results_obj in results_list:  # results_list is now flat [res1, res2]
+            if results_obj:
+                # SAM's predict_from_results expects a list
+                sam_result = self.sam_dialog.predict_from_results([results_obj], image_path)
+                if sam_result:
+                    updated_results.append(sam_result[0])
+                else:
+                    updated_results.append(None)  # Keep list length consistent
+            else:
+                updated_results.append(None)   # Pass through Nones
 
         return updated_results
 
     def _process_results(self, results_processor, results_list, image_path):
-        """Process the results using the result processor."""
-        # Get the raster object and number of work items
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        total = raster.count_work_items()
-
-        # Get the work areas (if any)
-        work_areas = raster.get_work_areas()
-
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
-        progress_bar.show()
-        progress_bar.start_progress(total)
+        """
+        Process the results using the result processor.
+        (Simplified: This now just prepares the list for the processor)
+        """
+        
+        # This function no longer needs:
+        # - Raster object, total, work_areas
+        # - Progress bar
+        # - MapResults, highlight/unhighlight (done in predict)
 
         updated_results = []
-
-        for idx, results in enumerate(results_list):
-            # Each Results is a list (within the results_list, [[], ]
-            if results:
+        
+        # results_list is already a flat list of mapped results
+        for results_obj in results_list:
+            if results_obj:
                 # Update path and names
-                results[0].path = image_path
-
-                # Check if the work area is valid, or the image path is being used
-                if work_areas and self.annotation_window.get_selected_tool() == "work_area":
-                    # Highlight the work area being processed
-                    work_areas[idx].highlight()
-                    # Map results from work area to the full image
-                    results = MapResults().map_results_from_work_area(results[0], 
-                                                                      raster, 
-                                                                      work_areas[idx],
-                                                                      self.use_sam_dropdown.currentText() == "True")
-
-                    # Unhighlight the work area after processing
-                    work_areas[idx].unhighlight()
-                else:
-                    results = results[0]
-
-                # Append the result object (not a list) to the updated results list
-                updated_results.append(results)
-
-                # Update the index for the next work area
-                idx += 1
-                progress_bar.update_progress()
+                results_obj.path = image_path
+                updated_results.append(results_obj)
 
         # Process the Results
         if self.use_sam_dropdown.currentText() == "True":
             results_processor.process_segmentation_results(updated_results)
         else:
             results_processor.process_detection_results(updated_results)
-
-        # Close the progress bar
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
 
     def deactivate_model(self):
         """
