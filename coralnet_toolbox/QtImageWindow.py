@@ -238,9 +238,17 @@ class ImageWindow(QWidget):
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
 
+        # --- NEW: Create a container widget for all contents ---
+        # This one widget will hold everything inside the group box.
+        self.filter_content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.filter_content_widget)
+        # Remove padding so it looks seamless inside the group box
+        self.content_layout.setContentsMargins(0, 0, 0, 0) 
+
         # Create a form layout for the search bars
         self.search_layout = QFormLayout()
-        self.filter_layout.addLayout(self.search_layout)
+        # --- MODIFIED: Add search_layout to the new content_layout ---
+        self.content_layout.addLayout(self.search_layout)
 
         # Set fixed width for search bars (big effect on layout width)
         fixed_width = 125
@@ -251,11 +259,13 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("No Annotations")
-        self.filter_combo.filterChanged.connect(self.schedule_filter)
         
-        self.filter_combo.setCurrentIndex(-1)
+        self.filter_combo.setCurrentIndex(-1)  
+        
+        self.filter_combo.filterChanged.connect(self.schedule_filter)
 
         # --- Create containers for search bars and buttons ---
+        # (This part is unchanged)
         self.image_search_container = QWidget()
         self.image_search_layout = QHBoxLayout(self.image_search_container)
         self.image_search_layout.setContentsMargins(0, 0, 0, 0)
@@ -265,6 +275,7 @@ class ImageWindow(QWidget):
         self.label_search_layout.setContentsMargins(0, 0, 0, 0)
 
         # Setup image search
+        # (This part is unchanged)
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
         self.search_bar_images.setPlaceholderText("Type to search images")
@@ -280,6 +291,7 @@ class ImageWindow(QWidget):
         self.image_search_layout.addWidget(self.image_search_button)
 
         # Setup label search
+        # (This part is unchanged)
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
         self.search_bar_labels.setPlaceholderText("Type to search labels")
@@ -290,6 +302,7 @@ class ImageWindow(QWidget):
         self.label_search_layout.addWidget(self.search_bar_labels)
 
         # Add top-k combo box
+        # (This part is unchanged)
         self.top_k_combo = QComboBox(self)
         self.top_k_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
         self.top_k_combo.setCurrentText("Top1")
@@ -301,14 +314,25 @@ class ImageWindow(QWidget):
         self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.label_search_button.clicked.connect(self.filter_images)
         self.label_search_layout.addWidget(self.label_search_button)
-
-        # --- Set width for new combo box to align with others ---
+        
+        # --- Set horizontal policy to expand and fill the layout column ---
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Add rows to form layout
+        # (This part is unchanged)
         self.search_layout.addRow("Filters:", self.filter_combo)
         self.search_layout.addRow("Search Images:", self.image_search_container)
         self.search_layout.addRow("Search Labels:", self.label_search_container)
+
+        # --- NEW: Add the single content widget to the group's layout ---
+        self.filter_layout.addWidget(self.filter_content_widget)
+
+        # --- NEW: Make the group box checkable and connect its signal ---
+        self.filter_group.setCheckable(True)
+        self.filter_group.toggled.connect(self.on_filter_group_toggled)
+        
+        # Set the default state to checked (expanded)
+        self.filter_group.setChecked(True)
 
         # Add the group box to the main layout  
         self.layout.addWidget(self.filter_group)
@@ -426,6 +450,18 @@ class ImageWindow(QWidget):
         """Schedule filtering after a short delay to avoid excessive updates."""
         self.search_timer.stop()
         self.search_timer.start(300)  # 300ms delay
+        
+    def on_filter_group_toggled(self, checked):
+        """
+        Shows or hides the filter content by changing its maximum height,
+        which preserves the horizontal width.
+        """
+        if checked:
+            # Set a very large max height (the default "no limit")
+            self.filter_content_widget.setMaximumHeight(16777215)
+        else:
+            # Set max height to 0 to collapse it
+            self.filter_content_widget.setMaximumHeight(0)
         
     @contextmanager
     def busy_cursor(self):
