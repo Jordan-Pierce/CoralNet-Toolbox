@@ -431,14 +431,6 @@ class AnnotationWindow(QGraphicsView):
             # Pass the image_path for efficiency
             self.set_annotation_scale(annotation, image_path=image_path)
             
-        # If the currently selected annotation was just updated, refresh the
-        # confidence window to show the change.
-        current_conf_anno = self.main_window.confidence_window.annotation
-        if (current_conf_anno and
-            current_conf_anno.image_path == image_path and
-            current_conf_anno in annotations):
-            self.main_window.confidence_window.refresh_display()
-
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:
@@ -630,7 +622,7 @@ class AnnotationWindow(QGraphicsView):
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
-        
+            
         # Clean up
         self.clear_scene()
 
