@@ -247,6 +247,7 @@ class SAMTool(Tool):
         
         # Create a dashed blue pen for the working area preview
         pen = QPen(QColor(0, 168, 230))
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
         pen.setWidth(2)
         
@@ -445,6 +446,7 @@ class SAMTool(Tool):
 
         # Create a dashed pen for the rectangle
         pen = QPen(self.annotation_window.selected_label.color)
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
         pen.setWidth(width)
 

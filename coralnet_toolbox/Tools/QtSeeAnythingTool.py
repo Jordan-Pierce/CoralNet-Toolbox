@@ -269,6 +269,7 @@ class SeeAnythingTool(Tool):
         
         # Create a dashed blue pen for the working area preview
         pen = QPen(QColor(0, 168, 230))
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
         pen.setWidth(2)
         
@@ -326,6 +327,7 @@ class SeeAnythingTool(Tool):
 
             # Style the rectangle
             pen = QPen(QColor(color))
+            pen.setCosmetic(True)
             pen.setWidth(width)
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)

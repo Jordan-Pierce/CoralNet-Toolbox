@@ -328,12 +328,15 @@ class Annotation(QObject):
             
             pen = QPen(pen_color.lighter(150), 4)  # Changed to lighter for brighter selected appearance
             pen.setStyle(Qt.DotLine)  # Predefined dotted line
+            pen.setCosmetic(True)
             return pen
         else:
             # Use label color with solid line for unselected items, always opaque
             pen_color = QColor(base_color)
             pen_color.setAlpha(255)  # Pen should always be fully opaque
-            return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+            pen = QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+            pen.setCosmetic(True)
+            return pen
     
     def _update_pen_styles(self):
         """Update pen styles with current pulse alpha."""

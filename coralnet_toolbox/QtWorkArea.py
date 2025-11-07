@@ -46,7 +46,7 @@ class WorkArea(QObject):
         
         # Create a random color for the work area
         self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DotLine)  # Changed to static dotted line
-        
+        self.work_area_pen.setCosmetic(True)  # Ensure pen width is constant regardless of zoom
         # Store the original color for reverting
         self.original_color = QColor(0, 168, 230)
         
@@ -92,6 +92,7 @@ class WorkArea(QObject):
     def _create_pen(self):
         """Create a pen with pulsing alpha and brighter color if animating."""
         pen = QPen(self.work_area_pen)
+        pen.setCosmetic(True)
         
         # Check self.is_animating flag instead of timer
         if self.is_animating:
@@ -296,6 +297,7 @@ class WorkArea(QObject):
             
             # Set the pen properties - thicker red lines
             red_pen = QPen(QColor(255, 0, 0), thickness)
+            red_pen.setCosmetic(True)
             line1.setPen(red_pen)
             line2.setPen(red_pen)
             
