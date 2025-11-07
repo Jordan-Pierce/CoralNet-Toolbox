@@ -158,6 +158,7 @@ class MultiPolygonAnnotation(Annotation):
 
         # Draw the outline for the combined path
         pen = QPen(Qt.black, 1, Qt.SolidLine)
+        pen.setCosmetic(True)
         result_painter.setPen(pen)
         result_painter.setClipping(False)
         result_painter.drawPath(full_path)  # Draw outlines for all polygons and holes

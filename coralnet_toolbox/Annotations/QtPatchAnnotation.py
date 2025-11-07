@@ -214,6 +214,7 @@ class PatchAnnotation(Annotation):
 
         # Draw the solid line outline on top
         pen = QPen(Qt.black)
+        pen.setCosmetic(True)
         pen.setStyle(Qt.SolidLine)
         pen.setWidth(1)
         result_painter.setPen(pen)
