@@ -534,8 +534,10 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             self.rubber_band_origin = self.graphics_view.mapToScene(event.pos())
             self.rubber_band = QGraphicsRectItem(QRectF(self.rubber_band_origin, self.rubber_band_origin))
-            self.rubber_band.setPen(QPen(QColor(0, 100, 255), 1, Qt.DotLine))
-            self.rubber_band.setBrush(QBrush(QColor(0, 100, 255, 50)))
+            pen = QPen(QColor(0, 168, 230), 3, Qt.DashLine)
+            pen.setCosmetic(True)
+            self.rubber_band.setPen(pen)
+            self.rubber_band.setBrush(QBrush(QColor(0, 168, 230, 30)))
             self.graphics_scene.addItem(self.rubber_band)
 
         elif event.button() == Qt.RightButton:
@@ -1462,6 +1464,8 @@ class AnnotationViewer(QWidget):
         # Create and show the rubber band if not already present
         if not self.rubber_band:
             self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
+            style = "QRubberBand { border: 3px dashed rgb(0, 168, 230); background-color: rgba(0, 168, 230, 30); }"
+            self.rubber_band.setStyleSheet(style)
 
         rect = QRect(self.rubber_band_origin, event.pos()).normalized()
         self.rubber_band.setGeometry(rect)

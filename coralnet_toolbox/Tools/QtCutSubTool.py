@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPen, QPainterPath
+from PyQt5.QtGui import QPen, QPainterPath, QColor
 from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
@@ -154,7 +154,7 @@ class CutSubTool(SubTool):
         path = QPainterPath()
         path.moveTo(position)
         self.cutting_path_item = QGraphicsPathItem(path)
-        pen = QPen(Qt.red, 3, Qt.DashLine)
+        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)
         pen.setCosmetic(True)
         self.cutting_path_item.setPen(pen)
         self.annotation_window.scene.addItem(self.cutting_path_item)

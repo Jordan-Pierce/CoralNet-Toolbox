@@ -295,7 +295,7 @@ class WorkArea(QObject):
             line2 = QGraphicsLineItem(0, button_size, button_size, 0, self.remove_button)
             
             # Set the pen properties - thicker red lines
-            red_pen = QPen(QColor(255, 0, 0), thickness)
+            red_pen = QPen(QColor(230, 62, 0), thickness)
             red_pen.setCosmetic(True)
             line1.setPen(red_pen)
             line2.setPen(red_pen)
