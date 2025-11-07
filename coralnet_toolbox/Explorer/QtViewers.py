@@ -1464,7 +1464,8 @@ class AnnotationViewer(QWidget):
         # Create and show the rubber band if not already present
         if not self.rubber_band:
             self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-            style = "QRubberBand { border: 3px dashed rgb(0, 168, 230); background-color: rgba(0, 168, 230, 30); }"
+            style = ("QRubberBand { border: 3px rgb(0, 168, 230); border-style: dashed; "
+                     "background-color: rgba(0, 168, 230, 30); }")
             self.rubber_band.setStyleSheet(style)
 
         rect = QRect(self.rubber_band_origin, event.pos()).normalized()
