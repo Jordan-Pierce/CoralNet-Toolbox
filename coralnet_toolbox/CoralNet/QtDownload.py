@@ -299,20 +299,23 @@ class DownloadDialog(QDialog):
                         
                     # Fall back to traditional ChromeDriverManager for older versions
                     except (ImportError, Exception) as e:
-                        self.progress_bar.update_progress(50, f"Trying alternative driver setup: {e}")
+                        self.progress_bar.update_progress_percentage(50)
+                        self.progress_bar.setWindowTitle(f"Trying alternative driver setup: {e}")
                         service = ChromeService(ChromeDriverManager().install())
                         self.driver = webdriver.Chrome(service=service, options=options)
                         success = True
                         
                 # Last resort: try finding local chromedriver in PATH
                 except Exception as e:
-                    self.progress_bar.update_progress(75, f"Trying default driver: {e}")
+                    self.progress_bar.update_progress_percentage(75)
+                    self.progress_bar.setWindowTitle(f"Trying default driver: {e}")
                     self.driver = webdriver.Chrome(options=options)
                     success = True
                     
             # Handle older Selenium versions as fallback
             except ImportError:
-                self.progress_bar.update_progress(85, "Using legacy driver setup")
+                self.progress_bar.update_progress_percentage(85)
+                self.progress_bar.setWindowTitle("Using legacy driver setup")
                 # Fall back to the old-style initialization
                 try:
                     # Cross-platform driver name handling
