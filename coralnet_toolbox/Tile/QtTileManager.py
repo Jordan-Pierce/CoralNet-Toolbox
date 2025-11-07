@@ -39,7 +39,6 @@ class TileManager(QDialog):
         self.annotation_window = main_window.annotation_window
         
         self.animation_manager = main_window.animation_manager
-        self.graphics_utility = main_window.annotation_window.graphics_utility
 
         self.setWindowIcon(get_icon("tile.png"))
         self.setWindowTitle("Tile Manager")
@@ -396,9 +395,6 @@ class TileManager(QDialog):
                                 f"Tile size: {tile_width}×{tile_height} pixels")
             return
         
-        # Get the thickness of the work areas
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        
         # Create a margin work area to show the boundary with shadow
         self.margin_work_area = WorkArea(
             left, top, usable_width, usable_height,
@@ -408,12 +404,11 @@ class TileManager(QDialog):
         self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Set a different color for the margin boundary
-        self.margin_work_area.work_area_pen = QPen(QColor(230, 62, 0), 2, Qt.DashLine)
+        self.margin_work_area.work_area_pen = QPen(QColor(230, 62, 0), 2, Qt.DashLine)  # blood red
         
         # Create graphics with shadow to highlight the working area
         margin_graphics = self.margin_work_area.create_graphics(
             self.annotation_window.scene, 
-            pen_width=thickness + 3,
             include_shadow=True  # Add shadow to highlight the usable area
         )
         
@@ -455,7 +450,6 @@ class TileManager(QDialog):
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(
                         self.annotation_window.scene, 
-                        pen_width=thickness
                     )
                     
                     # Store the graphics for later removal
@@ -489,7 +483,6 @@ class TileManager(QDialog):
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
                             self.annotation_window.scene, 
-                            pen_width=thickness
                         )
                         
                         # Store the graphics for later removal
@@ -523,7 +516,6 @@ class TileManager(QDialog):
                         # Add to scene with thinner line and store the graphics
                         tile_graphics = tile_work_area.create_graphics(
                             self.annotation_window.scene, 
-                            pen_width=thickness
                         )
                         
                         # Store the graphics for later removal
@@ -552,7 +544,6 @@ class TileManager(QDialog):
                             # Add to scene with thinner line and store the graphics
                             tile_graphics = tile_work_area.create_graphics(
                                 self.annotation_window.scene, 
-                                pen_width=thickness
                             )
                             
                             # Store the graphics for later removal
@@ -588,7 +579,6 @@ class TileManager(QDialog):
                     # Add to scene with thinner line and store the graphics
                     tile_graphics = tile_work_area.create_graphics(
                         self.annotation_window.scene, 
-                        pen_width=thickness
                     )
                     
                     # Store the graphics for later removal

@@ -195,8 +195,7 @@ class WorkAreaTool(Tool):
             return None
 
         work_area = WorkArea.from_rect(constrained_viewport_rect, self.get_current_image_name())
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        work_area.create_graphics(self.annotation_window.scene, thickness)
+        work_area.create_graphics(self.annotation_window.scene)
 
         if work_area.graphics_item and work_area.graphics_item.scene():
             return work_area
@@ -229,7 +228,8 @@ class WorkAreaTool(Tool):
         # Create a dashed blue pen for the working area preview
         pen = QPen(QColor(0, 168, 230))
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(2)
+        pen.setWidth(3)
+        pen.setCosmetic(True)
         
         self.current_rect.setPen(pen)
         self.current_rect.setBrush(QBrush(QColor(0, 168, 230, 30)))  # Light blue transparent fill
@@ -282,13 +282,11 @@ class WorkAreaTool(Tool):
         work_area.set_animation_manager(self.annotation_window.animation_manager)
         
         # Create graphics using the WorkArea's own method
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        work_area.create_graphics(self.annotation_window.scene, thickness)
+        work_area.create_graphics(self.annotation_window.scene)
         work_area.animate()
         
         # Add close button but initially hidden unless Ctrl is pressed
-        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
-        work_area.create_remove_button(button_size, thickness)
+        work_area.create_remove_button()
         work_area.set_remove_button_visibility(self.ctrl_pressed)
         
         # Connect to remove signal
@@ -334,10 +332,7 @@ class WorkAreaTool(Tool):
         work_area = WorkArea.from_rect(viewport_rect, self.get_current_image_name())
         
         # Add work area graphics to the scene in one step
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
-        
-        if work_area.add_to_scene(self.annotation_window.scene, thickness, button_size):
+        if work_area.add_to_scene(self.annotation_window.scene, 2):
             # Set initial button visibility based on Ctrl state
             work_area.set_remove_button_visibility(self.ctrl_pressed)
             
@@ -470,10 +465,8 @@ class WorkAreaTool(Tool):
                 work_area.set_animation_manager(self.annotation_window.animation_manager)
                 
                 # Add work area graphics to the scene
-                thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-                button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
                 
-                if work_area.add_to_scene(self.annotation_window.scene, thickness, button_size):
+                if work_area.add_to_scene(self.annotation_window.scene, 2):
                     # Animate the work area
                     work_area.animate()
                     # Set initial button visibility based on Ctrl state

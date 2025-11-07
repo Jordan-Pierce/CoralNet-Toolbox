@@ -287,7 +287,7 @@ class ScaleTool(Tool):
         self.pixel_length = 0.0
         
         # --- Graphics Items ---
-        pen = QPen(QColor(230, 62, 0, 255), 2, Qt.DashLine)
+        pen = QPen(QColor(230, 62, 0, 255), 4, Qt.DashLine)
         pen.setCosmetic(True)  # Ensures line is visible at all zoom levels
         
         # Line (for Set Scale and Measure Line)

@@ -45,11 +45,11 @@ class WorkArea(QObject):
         self.shadow_area = None  # Reference to the shadow graphics item
         
         # Create a random color for the work area
-        self.work_area_pen = QPen(QColor(0, 168, 230), 2, Qt.DotLine)  # Changed to static dotted line
+        self.work_area_pen = QPen(QColor(0, 168, 230), 3, Qt.DotLine)  # Changed to static dotted line
         self.work_area_pen.setCosmetic(True)  # Ensure pen width is constant regardless of zoom
+        
         # Store the original color for reverting
         self.original_color = QColor(0, 168, 230)
-        
         # Animation properties (updated for pulsing)
         self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
         self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
@@ -65,7 +65,6 @@ class WorkArea(QObject):
         self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
         self._update_pen_style()
     
-    # --- NEW: Public method for the AnimationManager to call ---
     def tick_animation(self):
         """
         Update the pulse alpha for a heartbeat-like effect.
@@ -211,7 +210,7 @@ class WorkArea(QObject):
             'image_path': self.image_path
         }
         
-    def create_graphics(self, scene, pen_width=2, include_shadow=False, animate=True):
+    def create_graphics(self, scene, pen_width=3, include_shadow=False, animate=True):
         """
         Create and return the graphics representation of this work area.
         
@@ -227,7 +226,7 @@ class WorkArea(QObject):
         # Create rectangle item if it doesn't exist
         if not self.graphics_item:
             self.graphics_item = QGraphicsRectItem(self.rect)
-            self.work_area_pen.setWidth(pen_width)
+            # Pen width is already set to 2 in __init__, no need to change
             self.graphics_item.setPen(self._create_pen())
             
             # Store reference to the work area in the graphics item
@@ -273,7 +272,7 @@ class WorkArea(QObject):
         
         return self.graphics_item
         
-    def create_remove_button(self, button_size=20, thickness=2):
+    def create_remove_button(self, button_size=10, thickness=4):
         """
         Create a remove button (X) for this work area.
         
@@ -322,7 +321,7 @@ class WorkArea(QObject):
             
         return self.remove_button
     
-    def add_to_scene(self, scene, pen_width=2, button_size=20):
+    def add_to_scene(self, scene, pen_width=3, button_size=10):
         """
         Add this work area's graphics to the specified scene.
         Creates both the rectangle and remove button in one operation.
@@ -336,12 +335,12 @@ class WorkArea(QObject):
             bool: True if successfully added to the scene, False otherwise
         """
         # Create the main rectangle graphic
-        graphics_item = self.create_graphics(scene, pen_width)
+        graphics_item = self.create_graphics(scene)
         if not graphics_item or not graphics_item.scene():
             return False
             
         # Create the remove button
-        remove_button = self.create_remove_button(button_size, pen_width)
+        remove_button = self.create_remove_button()
         if not remove_button:
             return False
             
@@ -368,6 +367,46 @@ class WorkArea(QObject):
             
         return False
         
+    def update_remove_button_appearance(self):
+        """Update the remove button size and thickness to appear consistent at current zoom level."""
+        if not self.remove_button or not self.graphics_item or not self.graphics_item.scene():
+            return
+            
+        # Get the current view
+        views = self.graphics_item.scene().views()
+        if not views:
+            return
+        view = views[0]
+        
+        # Get current zoom scale
+        scale = view.transform().m11()
+        if scale == 0:
+            scale = 1
+            
+        # Desired screen size for the button
+        desired_screen_size = 20
+        desired_margin = 10
+        
+        # Convert to scene coordinates
+        scene_size = desired_screen_size / scale
+        scene_margin = desired_margin / scale
+        
+        # Get the line items
+        child_items = self.remove_button.childItems()
+        if len(child_items) >= 2:
+            line1 = child_items[0]  # Assuming first is line1
+            line2 = child_items[1]  # Assuming second is line2
+            
+            # Update line positions
+            line1.setLine(0, 0, scene_size, scene_size)
+            line2.setLine(0, scene_size, scene_size, 0)
+            
+            # Update position relative to work area
+            self.remove_button.setPos(
+                self.rect.right() - scene_size - scene_margin, 
+                self.rect.top() + scene_margin
+            )
+    
     def set_remove_button_visibility(self, visible):
         """
         Set the visibility of the remove button.
@@ -376,6 +415,8 @@ class WorkArea(QObject):
             visible (bool): Whether the button should be visible
         """
         if self.remove_button:
+            if visible:
+                self.update_remove_button_appearance()
             self.remove_button.setVisible(visible)
         
     def contains_point(self, point):

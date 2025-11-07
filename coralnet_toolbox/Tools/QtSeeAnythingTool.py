@@ -142,12 +142,9 @@ class SeeAnythingTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
         self.working_area.set_animation_manager(self.animation_manager)
-        
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
 
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
 
@@ -214,12 +211,9 @@ class SeeAnythingTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
         self.working_area.set_animation_manager(self.animation_manager)
-
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
         
@@ -322,13 +316,10 @@ class SeeAnythingTool(Tool):
             # Get color from the selected label
             color = self.annotation_window.selected_label.color
 
-            # Get the thickness for the rectangle graphics
-            width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-
             # Style the rectangle
             pen = QPen(QColor(color))
             pen.setCosmetic(True)
-            pen.setWidth(width)
+            pen.setWidth(4)
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)
 

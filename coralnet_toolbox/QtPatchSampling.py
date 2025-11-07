@@ -60,8 +60,8 @@ class PatchGraphic(QGraphicsRectItem):
         # Use a lighter version of the base color for better visibility
         pen_color = QColor(self.base_color).darker(150)  # Changed to lighter for brighter appearance
         pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-        
-        pen = QPen(pen_color, 3)  # Increased width
+        pen = QPen(pen_color, 4)  # Increased width
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen
     
@@ -133,7 +133,6 @@ class PatchSamplingDialog(QDialog):
         self.image_window = main_window.image_window
         
         self.animation_manager = self.annotation_window.animation_manager
-        self.graphics_utility = self.annotation_window.graphics_utility
 
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_icon("coral.png"))
@@ -484,10 +483,7 @@ class PatchSamplingDialog(QDialog):
         self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Create graphics using the WorkArea's own method
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
-                                                                thickness, 
-                                                                include_shadow=True)
+        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         
         # Don't show remove button for margin visualization
         self.annotation_graphics.append(margin_graphics)

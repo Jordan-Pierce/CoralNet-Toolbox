@@ -126,12 +126,9 @@ class SAMTool(Tool):
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         self.working_area.set_animation_manager(self.animation_manager)
-
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-
+        
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
 
@@ -195,11 +192,8 @@ class SAMTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         self.working_area.set_animation_manager(self.animation_manager)
         
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
         
@@ -441,14 +435,11 @@ class SAMTool(Tool):
         # Create rectangle graphic
         rect = QRectF(top_left, bottom_right)
 
-        # Get the thickness for the rectangle graphic
-        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-
         # Create a dashed pen for the rectangle
         pen = QPen(self.annotation_window.selected_label.color)
         pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(width)
+        pen.setWidth(4)
 
         self.rectangle_graphics = QGraphicsRectItem(rect)
         self.rectangle_graphics.setPen(pen)
