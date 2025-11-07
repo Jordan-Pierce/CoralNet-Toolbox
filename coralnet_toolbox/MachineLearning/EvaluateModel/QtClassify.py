@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPushButton,
-                             QLabel, QVBoxLayout)
+                             QLabel, QVBoxLayout, QSpinBox, QDoubleSpinBox, QComboBox)
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import Base
 
@@ -13,11 +13,13 @@ class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Classification Model")
-        self.task = 'classify'
-        self.imgsz = 256
         
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
+        
+        self.task = 'classify'
+        self.imgsz = 256
+        
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
         
@@ -51,6 +53,50 @@ class Classify(Base):
         dataset_layout.addWidget(self.dataset_edit)
         dataset_layout.addWidget(self.dataset_button)
         layout.addRow("Dataset Directory:", dataset_layout)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_parameters_layout(self):
+        """Setup the parameters layout."""
+        group_box = QGroupBox("Parameters")
+        layout = QFormLayout()
+        
+        # Image size
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(self.imgsz)
+        layout.addRow("Image Size:", self.imgsz_spinbox)
+        
+        # Batch size
+        self.batch_spinbox = QSpinBox()
+        self.batch_spinbox.setMinimum(1)
+        self.batch_spinbox.setMaximum(1024)
+        self.batch_spinbox.setValue(16)
+        layout.addRow("Batch:", self.batch_spinbox)
+        
+        # Confidence threshold
+        self.conf_spinbox = QDoubleSpinBox()
+        self.conf_spinbox.setMinimum(0.0)
+        self.conf_spinbox.setMaximum(1.0)
+        self.conf_spinbox.setSingleStep(0.001)
+        self.conf_spinbox.setDecimals(3)
+        self.conf_spinbox.setValue(0.001)
+        layout.addRow("Confidence:", self.conf_spinbox)
+        
+        # Augment
+        self.augment_combo = QComboBox()
+        self.augment_combo.addItems(["True", "False"])
+        self.augment_combo.setCurrentText("False")
+        layout.addRow("Augment:", self.augment_combo)
+
+        # Workers
+        self.workers_spinbox = QSpinBox()
+        self.workers_spinbox.setMinimum(0)
+        self.workers_spinbox.setMaximum(64)
+        self.workers_spinbox.setValue(8)
+        layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
