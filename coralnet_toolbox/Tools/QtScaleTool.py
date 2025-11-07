@@ -300,7 +300,7 @@ class ScaleTool(Tool):
         self.preview_rect.setPen(pen)
         self.preview_rect.setZValue(100)
         
-        self.show_crosshair = False  # Disable default crosshair
+        self.show_crosshair = True  # Enable crosshair for precise measurements
         
         # --- Accumulation Variables ---
         self.current_line_length = 0.0
@@ -477,6 +477,18 @@ class ScaleTool(Tool):
                 self.calculate_rect_measurement()
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        """
+        Override to show crosshair for measurement tool regardless of selected label.
+        """
+        # Handle crosshair display without requiring selected_label
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        
+        if cursor_in_window and self.active and self.show_crosshair:
+            self.update_crosshair(scene_pos)
+        else:
+            self.clear_crosshair()
+        
         if not self.is_drawing:
             return
             
