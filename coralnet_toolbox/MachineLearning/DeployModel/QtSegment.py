@@ -359,7 +359,7 @@ class Segment(Base):
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
             # Only close the progress bar if we created it here
-            if progress_bar_created_here:
+            if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()
                 progress_bar.stop_progress()
                 progress_bar.close()

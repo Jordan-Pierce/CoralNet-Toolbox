@@ -136,27 +136,21 @@ class DeployGeneratorDialog(QDialog):
 
         # Block signals to prevent setChecked from triggering the ImageWindow's
         # own filtering logic. We want to be in complete control.
-        iw.highlighted_checkbox.blockSignals(True)
-        iw.has_predictions_checkbox.blockSignals(True)
-        iw.no_annotations_checkbox.blockSignals(True)
-        iw.has_annotations_checkbox.blockSignals(True)
+        iw.filter_combo.blockSignals(True)
 
         # Disable and set filter checkboxes
-        iw.highlighted_checkbox.setEnabled(False)
-        iw.has_predictions_checkbox.setEnabled(False)
-        iw.no_annotations_checkbox.setEnabled(False)
-        iw.has_annotations_checkbox.setEnabled(False)
+        # Set only "Has Annotations" checked
+        for i in range(iw.filter_combo.count()):
+            item = iw.filter_combo.model().item(i)
+            if item.text() == "Has Annotations":
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
         
-        iw.highlighted_checkbox.setChecked(False)
-        iw.has_predictions_checkbox.setChecked(False)
-        iw.no_annotations_checkbox.setChecked(False)
-        iw.has_annotations_checkbox.setChecked(True)  # This will no longer trigger a filter
+        iw.filter_combo.setEnabled(False)
 
         # Unblock signals now that we're done.
-        iw.highlighted_checkbox.blockSignals(False)
-        iw.has_predictions_checkbox.blockSignals(False)
-        iw.no_annotations_checkbox.blockSignals(False)
-        iw.has_annotations_checkbox.blockSignals(False)
+        iw.filter_combo.blockSignals(False)
 
         # Disable search UI elements
         iw.home_button.setEnabled(False)
@@ -1175,7 +1169,7 @@ class DeployGeneratorDialog(QDialog):
         except Exception as e:
             print(f"A fatal error occurred during the prediction workflow: {e}")
         finally:
-            if progress_bar_created_here:
+            if progress_bar_created_here and progress_bar is not None:
                 progress_bar.finish_progress()
                 progress_bar.stop_progress()
                 progress_bar.close()
