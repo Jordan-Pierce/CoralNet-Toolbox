@@ -1,4 +1,5 @@
 import warnings
+
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
