@@ -108,6 +108,23 @@ class ScaleToolDialog(QDialog):
         self.scale_layout.addRow("Units:", self.units_combo)
         self.scale_layout.addRow("Pixel Length:", self.pixel_length_label)
         self.scale_layout.addRow("Result:", self.calculated_scale_label)
+        
+        # Button for current image (styled in red)
+        self.remove_current_button = QPushButton("Remove Scale from Current Image")
+        self.remove_current_button.setToolTip("Removes the scale data from this image only.")
+        self.remove_current_button.setStyleSheet(
+            "background-color: #D9534F; color: white; font-weight: bold;"
+        )
+        self.scale_layout.addRow(self.remove_current_button)
+
+        # Button for all images (styled in red)
+        self.remove_all_button = QPushButton("Remove Scale from ALL Images")
+        self.remove_all_button.setToolTip("Removes all scale data from every image in this project.")
+        # Style the button to be red as a warning
+        self.remove_all_button.setStyleSheet(
+            "background-color: #D9534F; color: white; font-weight: bold;"
+        )
+        self.scale_layout.addRow(self.remove_all_button)
 
     def setup_line_tab(self, tab_widget):
         """Populates the 'Measure Line' tab."""
@@ -279,6 +296,9 @@ class ScaleTool(Tool):
         
         self.dialog.rect_add_button.clicked.connect(self.add_rect_to_total)
         self.dialog.rect_clear_button.clicked.connect(self.clear_rect_total)
+        
+        self.dialog.remove_current_button.clicked.connect(self.remove_scale_current)
+        self.dialog.remove_all_button.clicked.connect(self.remove_scale_all)
 
         # --- Drawing State ---
         self.is_drawing = False
@@ -738,3 +758,89 @@ class ScaleTool(Tool):
                                 "Success",
                                 f"Successfully applied new scale ({scale_text}) "
                                 f"to {success_count} image(s).")
+        
+    def remove_scale_current(self):
+        """Removes scale from the currently loaded image."""
+        current_path = self.annotation_window.current_image_path
+        if not current_path:
+            QMessageBox.warning(self.dialog, "No Image", "No image is currently loaded.")
+            return
+
+        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
+        if not raster or raster.scale_x is None:
+            QMessageBox.information(self.dialog, "No Scale", "The current image has no scale data to remove.")
+            return
+
+        # Warn the user
+        reply = QMessageBox.question(self.dialog,
+                                     "Confirm Removal",
+                                     "Are you sure you want to remove the scale from the current image?\n"
+                                     "This cannot be undone.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            # 1. Remove scale from Raster
+            raster.remove_scale()
+            
+            # 2. Update all associated annotations
+            self.annotation_window.update_annotations_scale(current_path)
+            
+            # 3. Update UI
+            self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
+            self.main_window.update_view_dimensions(raster.width, raster.height)
+            QMessageBox.information(self.dialog, "Success", "Scale removed from the current image.")
+
+    def remove_scale_all(self):
+        """Removes scale from ALL images in the project."""
+        all_paths = self.main_window.image_window.raster_manager.image_paths
+        if not all_paths:
+            QMessageBox.warning(self.dialog, "No Images", "There are no images in the project.")
+            return
+
+        # CRITICAL warning for the user
+        reply = QMessageBox.warning(self.dialog,
+                                    "Confirm Global Removal",
+                                    "ARE YOU SURE?\n\n"
+                                    "This will remove scale data from ALL images in this project.\n"
+                                    "This action cannot be undone.",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self.annotation_window, title="Removing All Scale Data")
+            progress_bar.show()
+            progress_bar.start_progress(len(all_paths))
+
+            current_image_was_updated = False
+            
+            try:
+                for path in all_paths:
+                    if progress_bar.wasCanceled():
+                        break
+                    
+                    raster = self.main_window.image_window.raster_manager.get_raster(path)
+                    if raster and raster.scale_x is not None:
+                        # 1. Remove scale from Raster
+                        raster.remove_scale()
+                        
+                        # 2. Update all associated annotations
+                        self.annotation_window.update_annotations_scale(path)
+
+                        if path == self.annotation_window.current_image_path:
+                            current_image_was_updated = True
+                    
+                    progress_bar.update_progress()
+            finally:
+                progress_bar.stop_progress()
+                progress_bar.close()
+                QApplication.restoreOverrideCursor()
+
+            # Update UI if the current image was affected
+            if current_image_was_updated:
+                raster = self.main_window.image_window.raster_manager.get_raster(
+                    self.annotation_window.current_image_path
+                )
+                self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
+                self.main_window.update_view_dimensions(raster.width, raster.height)
+
+            QMessageBox.information(self.dialog, "Success", "Scale data has been removed from all images.")

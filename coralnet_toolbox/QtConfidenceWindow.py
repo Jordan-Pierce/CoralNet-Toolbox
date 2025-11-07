@@ -351,8 +351,13 @@ class ConfidenceWindow(QWidget):
         if self.annotation:
             # Update annotation data
             self.update_annotation(self.annotation)
+            
             # Recreate the bar chart with updated data
             self.create_bar_chart()
+            
+            # Recreate the tooltip to reflect any data changes (like scale)
+            self.create_annotation_tooltip(self.annotation)
+            
             # Update the graphics view border color based on top confidence
             if self.chart_dict:
                 labels, confidences = self.get_chart_data()
@@ -447,21 +452,36 @@ class ConfidenceWindow(QWidget):
             width = annotation.cropped_image.width()
             height = annotation.cropped_image.height()
             tooltip_parts.append(f"<b>Cropped Dimensions:</b> {width} x {height}")
-        
-        # Area and perimeter
+            
+        # Area
         try:
-            area = annotation.get_area()
-            if area is not None:
-                tooltip_parts.append(f"<b>Area:</b> {area:.2f} pixels²")
+            # Check for new scaled method first
+            scaled_area = annotation.get_scaled_area()
+            if scaled_area:
+                area, units = scaled_area
+                tooltip_parts.append(f"<b>Area:</b> {area:.2f} {units}²")
+            else:
+                # Fallback to pixel area
+                area = annotation.get_area()
+                if area is not None:
+                    tooltip_parts.append(f"<b>Area:</b> {area:.2f} pixels²")
         except (NotImplementedError, AttributeError):
-            pass
+            pass  # No area method available
         
+        # Perimeter
         try:
-            perimeter = annotation.get_perimeter()
-            if perimeter is not None:
-                tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} pixels")
+            # Check for new scaled method first
+            scaled_perimeter = annotation.get_scaled_perimeter()
+            if scaled_perimeter:
+                perimeter, units = scaled_perimeter
+                tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} {units}")
+            else:
+                # Fallback to pixel perimeter
+                perimeter = annotation.get_perimeter()
+                if perimeter is not None:
+                    tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} pixels")
         except (NotImplementedError, AttributeError):
-            pass
+            pass  # No perimeter method available
         
         # Additional data
         if hasattr(annotation, 'data') and annotation.data:

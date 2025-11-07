@@ -393,6 +393,51 @@ class AnnotationWindow(QGraphicsView):
                 
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
+        
+    def set_annotation_scale(self, annotation, image_path=None):
+        """
+        Updates a single annotation's scale properties to match its raster.
+        Uses the provided image_path if available, otherwise defaults to the
+        path stored on the annotation object itself.
+        """
+        if not annotation:
+            return
+            
+        # Determine the correct image path to use
+        path_to_use = image_path if image_path is not None else annotation.image_path
+            
+        raster = self.main_window.image_window.raster_manager.get_raster(path_to_use)
+        if raster:
+            annotation.scale_x = raster.scale_x
+            annotation.scale_y = raster.scale_y
+            annotation.scale_units = raster.scale_units
+        else:
+            # Ensure scale is None if raster isn't found
+            annotation.scale_x = None
+            annotation.scale_y = None
+            annotation.scale_units = None
+
+    def set_annotations_scale(self, image_path):
+        """
+        Updates the scale properties of all annotations associated with a specific
+        image path by calling set_annotation_scale on each one.
+        """
+        annotations = self.get_image_annotations(image_path)
+        if not annotations:
+            return
+
+        # Loop through all annotations for this image and sync their scale
+        for annotation in annotations:
+            # Pass the image_path for efficiency
+            self.set_annotation_scale(annotation, image_path=image_path)
+            
+        # If the currently selected annotation was just updated, refresh the
+        # confidence window to show the change.
+        current_conf_anno = self.main_window.confidence_window.annotation
+        if (current_conf_anno and
+            current_conf_anno.image_path == image_path and
+            current_conf_anno in annotations):
+            self.main_window.confidence_window.refresh_display()
 
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
@@ -1003,6 +1048,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the animation manager
         annotation.set_animation_manager(self.animation_manager)
         
+        # Inject / update scale
+        self.set_annotation_scale(annotation)
+        
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -1181,6 +1229,9 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
+            
+        # Inject / update scale
+        self.set_annotation_scale(annotation)
 
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)

@@ -134,7 +134,7 @@ class Tool:
         
         # Create horizontal line across the full width of the image
         self.h_crosshair_line = QGraphicsLineItem(image_rect.left(), scene_pos.y(), image_rect.right(), scene_pos.y())
-        pen = QPen(QColor(255, 255, 255, 180), 3, Qt.DashLine)
+        pen = QPen(QColor(255, 255, 255, 180), 1, Qt.DashLine)
         pen.setCosmetic(True)
         self.h_crosshair_line.setPen(pen)
         self.h_crosshair_line.setZValue(1000)
@@ -142,7 +142,7 @@ class Tool:
         
         # Create vertical line across the full height of the image
         self.v_crosshair_line = QGraphicsLineItem(scene_pos.x(), image_rect.top(), scene_pos.x(), image_rect.bottom())
-        pen = QPen(QColor(255, 255, 255, 180), 3, Qt.DashLine)
+        pen = QPen(QColor(255, 255, 255, 180), 1, Qt.DashLine)
         pen.setCosmetic(True)
         self.v_crosshair_line.setPen(pen)
         self.v_crosshair_line.setZValue(1000)

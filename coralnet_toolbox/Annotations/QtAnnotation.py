@@ -54,6 +54,10 @@ class Annotation(QObject):
         self.center_xy = None
         self.annotation_size = None
         self.tolerance = 0.1  # Default detail level for simplification/densification
+        
+        self.scale_x: float | None = None
+        self.scale_y: float | None = None
+        self.scale_units: str | None = None
 
         # Attributes to store the graphics items for center/centroid and bounding box
         self.center_graphics_item = None
@@ -87,6 +91,47 @@ class Annotation(QObject):
     def get_perimeter(self):
         """Calculate the perimeter of the annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_scaled_area(self) -> tuple[float, str] | None:
+        """
+        Calculates the real-world area if scale is available.
+
+        Returns:
+            tuple (float, str): The scaled area and its units (e.g., 'm'),
+                                or None if scale is not set.
+        """
+        if self.scale_x and self.scale_y and self.scale_units:
+            try:
+                pixel_area = self.get_area()
+                scaled_area = pixel_area * (self.scale_x * self.scale_y)
+                # Standardize 'metre' to 'm' for display
+                units = 'm' if self.scale_units == 'metre' else self.scale_units
+                return scaled_area, units
+            except (NotImplementedError, TypeError):
+                return None
+        return None
+
+    def get_scaled_perimeter(self) -> tuple[float, str] | None:
+        """
+        Calculates the real-world perimeter if scale is available.
+        Assumes scale_x is the representative scale factor.
+
+        Returns:
+            tuple (float, str): The scaled perimeter and its units (e.g., 'm'),
+                                or None if scale is not set.
+        """
+        if self.scale_x and self.scale_units:
+            try:
+                pixel_perimeter = self.get_perimeter()
+                # Use scale_x as the primary factor.
+                # Our ScaleTool sets x and y to be the same.
+                scaled_perimeter = pixel_perimeter * self.scale_x
+                # Standardize 'metre' to 'm' for display
+                units = 'm' if self.scale_units == 'metre' else self.scale_units
+                return scaled_perimeter, units
+            except (NotImplementedError, TypeError):
+                return None
+        return None
 
     def get_polygon(self):
         """Get the polygon representation of this annotation."""
@@ -659,6 +704,21 @@ class Annotation(QObject):
             confidences.append(np.nan)
         while len(suggestions) < 5:
             suggestions.append(np.nan)
+            
+        # Default to pixel values and "pixels" units
+        area_val = self.get_area()
+        perimeter_val = self.get_perimeter()
+        units_val = "pixels"
+        
+        # Overwrite with scaled values if available
+        scaled_area = self.get_scaled_area()
+        if scaled_area:
+            area_val = scaled_area[0]
+            units_val = scaled_area[1]  # e.g., "m"
+
+        scaled_perimeter = self.get_scaled_perimeter()
+        if scaled_perimeter:
+            perimeter_val = scaled_perimeter[0]
 
         return {
             'Name': os.path.basename(self.image_path),
@@ -666,8 +726,9 @@ class Annotation(QObject):
             'Row': int(self.center_xy.y()),
             'Column': int(self.center_xy.x()),
             'Patch Size': self.annotation_size,
-            'Area': self.get_area(),
-            'Perimeter': self.get_perimeter(),
+            'Area': area_val,
+            'Perimeter': perimeter_val,
+            'Units': units_val,
             'Annotation Type': type(self).__name__.replace('Annotation', ''),
             'Label': self.label.short_label_code,
             'Long Label': self.label.long_label_code,
@@ -705,6 +766,17 @@ class Annotation(QObject):
             'area': self.get_area(),
             'perimeter': self.get_perimeter(),
         }
+        
+        # Add scaled values if they exist
+        scaled_area = self.get_scaled_area()
+        if scaled_area:
+            result['scaled_area'] = scaled_area[0]
+            result['area_units'] = scaled_area[1]
+
+        scaled_perimeter = self.get_scaled_perimeter()
+        if scaled_perimeter:
+            result['scaled_perimeter'] = scaled_perimeter[0]
+            result['perimeter_units'] = scaled_perimeter[1]
 
         return result
 
