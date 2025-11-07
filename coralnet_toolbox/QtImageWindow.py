@@ -5,7 +5,6 @@ from contextlib import contextmanager
 
 import rasterio
 
-from PyQt5.QtGui import QStandardItem
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
@@ -254,7 +253,7 @@ class ImageWindow(QWidget):
         # Set fixed width for search bars (big effect on layout width)
         fixed_width = 125
 
-        # --- Setup NEW Filter ComboBox ---
+        # --- Setup Filter ComboBox ---
         self.filter_combo = CheckableComboBox(self)
         self.filter_combo.addItem("Highlighted")
         self.filter_combo.addItem("Has Predictions")
@@ -266,7 +265,6 @@ class ImageWindow(QWidget):
         self.filter_combo.filterChanged.connect(self.schedule_filter)
 
         # --- Create containers for search bars and buttons ---
-        # (This part is unchanged)
         self.image_search_container = QWidget()
         self.image_search_layout = QHBoxLayout(self.image_search_container)
         self.image_search_layout.setContentsMargins(0, 0, 0, 0)
@@ -276,7 +274,6 @@ class ImageWindow(QWidget):
         self.label_search_layout.setContentsMargins(0, 0, 0, 0)
 
         # Setup image search
-        # (This part is unchanged)
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
         self.search_bar_images.setPlaceholderText("Type to search images")
@@ -292,7 +289,6 @@ class ImageWindow(QWidget):
         self.image_search_layout.addWidget(self.image_search_button)
 
         # Setup label search
-        # (This part is unchanged)
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
         self.search_bar_labels.setPlaceholderText("Type to search labels")
@@ -303,7 +299,6 @@ class ImageWindow(QWidget):
         self.label_search_layout.addWidget(self.search_bar_labels)
 
         # Add top-k combo box
-        # (This part is unchanged)
         self.top_k_combo = QComboBox(self)
         self.top_k_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
         self.top_k_combo.setCurrentText("Top1")

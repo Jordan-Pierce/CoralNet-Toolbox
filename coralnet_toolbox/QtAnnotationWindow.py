@@ -3,7 +3,7 @@ import warnings
 from typing import Optional
 
 from PyQt5.QtGui import QMouseEvent, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Annotations import (
@@ -25,7 +25,8 @@ from coralnet_toolbox.Tools import (
     SeeAnythingTool,
     SelectTool,
     ZoomTool,
-    WorkAreaTool
+    WorkAreaTool,
+    ScaleTool
 )
 
 from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
@@ -173,6 +174,7 @@ class AnnotationWindow(QGraphicsView):
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
+            "scale": ScaleTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self)

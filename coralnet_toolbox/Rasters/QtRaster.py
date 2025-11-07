@@ -151,12 +151,11 @@ class Raster(QObject):
                     # Case 1: Already projected. Just read the scale.
                     transform = self._rasterio_src.transform
                     
-                    self.scale_x = abs(transform.a) 
-                    self.scale_y = abs(transform.e)
-                    self.scale_units = self._rasterio_src.crs.linear_units 
+                    scale_x = abs(transform.a) 
+                    scale_y = abs(transform.e)
+                    scale_units = self._rasterio_src.crs.linear_units 
                     
-                    self.metadata['scale_x'] = f"{self.scale_x:.4f} {self.scale_units}"
-                    self.metadata['scale_y'] = f"{self.scale_y:.4f} {self.scale_units}"
+                    self.update_scale(scale_x, scale_y, scale_units)
                 
                 elif self._rasterio_src.crs.is_geographic:
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
@@ -174,9 +173,11 @@ class Raster(QObject):
                         )
                         
                         # Now, the transform's components are in meters
-                        self.scale_x = abs(transform.a)
-                        self.scale_y = abs(transform.e)
-                        self.scale_units = 'metre'  # EPSG:3857 units are meters
+                        scale_x = abs(transform.a)
+                        scale_y = abs(transform.e)
+                        scale_units = 'metre'  # EPSG:3857 units are meters
+                        
+                        self.update_scale(scale_x, scale_y, scale_units)
                         
                         # Update metadata to show the *derived* scale
                         self.metadata['scale_x'] = f"~{self.scale_x:.4f} {self.scale_units} (from EPSG:3857)"
@@ -196,6 +197,36 @@ class Raster(QObject):
         except Exception as e:
             print(f"Error loading rasterio image {self.image_path}: {str(e)}")
             return False
+            
+    def update_scale(self, scale_x: float, scale_y: float, units: str):
+        """
+        Update the scale information for this raster.
+        
+        Args:
+            scale_x (float): The horizontal scale (e.g., meters per pixel)
+            scale_y (float): The vertical scale (e.g., meters per pixel)
+            units (str): The name of the units (e.g., 'metre', 'cm')
+        """
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+        self.scale_units = units
+        
+        # Update metadata to match
+        self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"
+        self.metadata['scale_y'] = f"{self.scale_y:.6f} {self.scale_units}"
+
+    def remove_scale(self):
+        """
+        Remove all scale information from this raster.
+        """
+        self.scale_x = None
+        self.scale_y = None
+        self.scale_units = None
+        
+        # Remove from metadata if keys exist
+        self.metadata.pop('scale_x', None)
+        self.metadata.pop('scale_y', None)
+        self.metadata.pop('original_crs', None) # Also remove derived crs
     
     @property
     def rasterio_src(self):
