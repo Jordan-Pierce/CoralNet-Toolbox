@@ -2,8 +2,8 @@ import warnings
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -47,7 +47,6 @@ class SAMTool(Tool):
 
         # Working area and related attributes
         self.working_area = None
-        self.shadow_area = None
         self.image_path = None
         self.original_image = None
         self.original_width = None
@@ -128,25 +127,9 @@ class SAMTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-
-        # Create a semi-transparent overlay for the shadow
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
-        # Subtract the work area from the overlay
-        shadow_path = shadow_path.simplified()
-
-        # Create the shadow item
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
-
-        # Add the shadow item to the scene
-        self.annotation_window.scene.addItem(self.shadow_area)
 
         # Update the working area image, set in model
         self.image = self.original_image[top:bottom, left:right]
@@ -193,21 +176,9 @@ class SAMTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-        
-        # Create shadow overlay
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())
-        shadow_path.addRect(self.working_area.rect)
-        shadow_path = shadow_path.simplified()
-        
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))
-        self.annotation_window.scene.addItem(self.shadow_area)
         
         # Update the working area image in the SAM model
         self.image = self.original_image[top:bottom, left:right]
@@ -243,7 +214,7 @@ class SAMTool(Tool):
         pen = QPen(QColor(0, 168, 230))
         pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(2)
+        pen.setWidth(3)
         
         self.working_area_temp_graphics = QGraphicsRectItem(rect)
         self.working_area_temp_graphics.setPen(pen)
@@ -877,11 +848,6 @@ class SAMTool(Tool):
         if self.working_area:
             self.working_area.remove_from_scene()
             self.working_area = None
-
-        # Remove shadow area
-        if self.shadow_area:
-            self.annotation_window.scene.removeItem(self.shadow_area)
-            self.shadow_area = None
 
         # Reset all state variables
         self.points = []
