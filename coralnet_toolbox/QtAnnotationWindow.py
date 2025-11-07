@@ -29,8 +29,6 @@ from coralnet_toolbox.Tools import (
     ScaleTool
 )
 
-from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -157,9 +155,6 @@ class AnnotationWindow(QGraphicsView):
         self.rasterio_image = None
         self.active_image = False
         self.current_image_path = None
-
-        # Initialize the graphics utility class for standardized visual elements
-        self.graphics_utility = GraphicsUtility()
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)

@@ -153,9 +153,9 @@ class CutSubTool(SubTool):
         self.cutting_points = [position]
         path = QPainterPath()
         path.moveTo(position)
-        line_thickness = self.parent_tool.graphics_utility.get_selection_thickness(self.annotation_window)
         self.cutting_path_item = QGraphicsPathItem(path)
-        pen = QPen(Qt.red, line_thickness, Qt.DashLine)
+        pen = QPen(Qt.red, 3, Qt.DashLine)
+        pen.setCosmetic(True)
         self.cutting_path_item.setPen(pen)
         self.annotation_window.scene.addItem(self.cutting_path_item)
 

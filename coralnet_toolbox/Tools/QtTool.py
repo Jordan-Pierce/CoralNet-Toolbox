@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QMouseEvent, QColor
-from PyQt5.QtWidgets import QGraphicsPixmapItem
+from PyQt5.QtGui import QMouseEvent, QColor, QPen
+from PyQt5.QtWidgets import QGraphicsPixmapItem, QGraphicsLineItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -16,7 +16,6 @@ class Tool:
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
-        self.graphics_utility = self.annotation_window.graphics_utility
 
         self.active = False
         self.cursor = Qt.ArrowCursor
@@ -134,17 +133,19 @@ class Tool:
         image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
         
         # Create horizontal line across the full width of the image
-        self.h_crosshair_line = self.graphics_utility.create_guide_line(
-            QPointF(image_rect.left(), scene_pos.y()),
-            QPointF(image_rect.right(), scene_pos.y())
-        )
+        self.h_crosshair_line = QGraphicsLineItem(image_rect.left(), scene_pos.y(), image_rect.right(), scene_pos.y())
+        pen = QPen(QColor(255, 255, 255, 180), 3, Qt.DashLine)
+        pen.setCosmetic(True)
+        self.h_crosshair_line.setPen(pen)
+        self.h_crosshair_line.setZValue(1000)
         self.annotation_window.scene.addItem(self.h_crosshair_line)
         
         # Create vertical line across the full height of the image
-        self.v_crosshair_line = self.graphics_utility.create_guide_line(
-            QPointF(scene_pos.x(), image_rect.top()),
-            QPointF(scene_pos.x(), image_rect.bottom())
-        )
+        self.v_crosshair_line = QGraphicsLineItem(scene_pos.x(), image_rect.top(), scene_pos.x(), image_rect.bottom())
+        pen = QPen(QColor(255, 255, 255, 180), 3, Qt.DashLine)
+        pen.setCosmetic(True)
+        self.v_crosshair_line.setPen(pen)
+        self.v_crosshair_line.setZValue(1000)
         self.annotation_window.scene.addItem(self.v_crosshair_line)
         
     def clear_crosshair(self):
