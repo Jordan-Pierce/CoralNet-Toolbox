@@ -284,7 +284,7 @@ The main window consists of several components:
 - **Lock Label**: Click the "Lock Label" button to lock the selected label
 - **Enable / Disable Labels**: Enable / disable labels by their checkbox, adjusting 
   - Select / Unselect *all* labels by pressing the asterisk button
-  - Enabled labels can be hidded / shown, or have their transparency hidden 
+  - Enabled labels can be hidden / shown, or have their transparency hidden 
 - **Filter Labels**: Use the filter text box to search for specific labels
 - **Label Count**: Displays the total number of labels in the project
 - **Annotation Count**: Shows information about the current annotations:
