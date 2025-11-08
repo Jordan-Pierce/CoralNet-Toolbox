@@ -189,6 +189,14 @@ The main window consists of several components:
       - PolygonAnnotations can be combined with other overlapping polygons to create a polygon
       - MultiPolygonAnnotations can be made with multiple non-overlapping polygons
 
+- **Scale Tool**: Provide scale to the image(s), and measure distances on the current image.
+  - <kbd>Left-Click</kbd> to set the starting point.
+  - Drag to draw a line, then <kbd>Left-Click</kbd> again to set the endpoint.
+  - Press <kbd>Backspace</kbd> to cancel drawing the scale line.
+  - The scale will be calculated based on the known provided length and pixel length.
+  - Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.
+  - Preferred units can be set in the Status Bar.
+
 - **Patch Tool**: After selecting the tool
   - <kbd>Left-Click</kbd>: Add a patch annotation at the clicked position
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the patch size up or down
@@ -258,8 +266,9 @@ The main window consists of several components:
 - **View Extent**: Displays the view extent
 - **Annotation Visibility**: Show / Hide all existing annotations
 - **Annotation Transparency**: Adjust the annotation transparency
-  - **Select All Labels**: Select all labels, adjusting transparency for all labels
-  - **Unselect All Labels**: Unselect all labels, adjusting transparency for only selected labels
+- **Scale**: Displays the scale dimensions
+  - Provides a dropdown to select preferred units (mm, cm, m, km)
+  - Enabled when a scale is set using the Scale Tool or imported from an image
 - **Patch Size**: Manipulate Patch Size (only active when using Patch Tool)
 - **Parameters**: Adjust parameters including uncertainty, IoU, and area thresholds
 
@@ -273,6 +282,9 @@ The main window consists of several components:
 - **Delete Label**: Click the "Delete Label" button to delete the selected label
 - **Edit Label**: Click the "Edit Label" button to edit the selected label
 - **Lock Label**: Click the "Lock Label" button to lock the selected label
+- **Enable / Disable Labels**: Enable / disable labels by their checkbox, adjusting 
+  - Select / Unselect *all* labels by pressing the asterisk button
+  - Enabled labels can be hidden / shown, or have their transparency hidden 
 - **Filter Labels**: Use the filter text box to search for specific labels
 - **Label Count**: Displays the total number of labels in the project
 - **Annotation Count**: Shows information about the current annotations:
@@ -310,17 +322,19 @@ The main window consists of several components:
   - The border of the image is highlighted with the color of the top confident label
 - **Confidence Chart**: Displays a bar chart with confidence scores
   - **Top 5 Predictions**: Shows up to 5 predictions with their confidence scores
-  - **Prediction Selection**: Click on any confidence bar to change the annotation's label
+  - **Prediction Selection**: Click on any confidence bar to change the annotation's label, verifying it
   - **Numerical Keys**: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions
+  - **Prev / Next buttons**: Cycle through annotations in order of their creation
 - **Confidence Mode Toggle**: 
-  - Click the icon button next to the dimensions to toggle between user and machine confidence views
-  - User icon shows user-assigned confidence scores
-  - Machine icon shows model-predicted confidence scores
-  - The toggle is only enabled when both user and machine confidences are available
+    - Click the icon button next to the dimensions to toggle between user and machine confidence views
+    - User icon shows user-assigned confidence scores
+    - Machine icon shows model-predicted confidence scores
+    - The toggle is only enabled when both user and machine confidences are available
 - **Visual Indicators**:
   - Each confidence bar shows the label color and confidence percentage
   - Numbered indicators (1-5) show the rank of each prediction
   - Hover over confidence bars to see a pointing hand cursor when selection is possible
+- **Tool Tip**: Hover over the window while an annotation is selected to see its metadata, including (scaled) dimensions
 
 ### [Hotkeys](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys)
 
@@ -331,7 +345,7 @@ The main window consists of several components:
 - <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images
 - <kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels
 - <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations
-- <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations
+- <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations (when pressed twice)
 - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch between tools within the existing tool group, example:
   - When a PatchAnnotation is selected, this switches back to the PatchTool
   - When the PatchTool is active, this switches back to the SelectTool
@@ -346,6 +360,6 @@ The main window consists of several components:
   - <kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using YOLOE model
   - <kbd>Ctrl</kbd> + <kbd>7</kbd>: Make predictions using Transformers model
 
-- **Tooltips**: Hover over tool buttons, image / annotation rows for information about them
+- **Tooltips**: Hover over tool buttons, image / annotation rows, and the Confidence Window for additional information
 
 

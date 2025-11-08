@@ -410,6 +410,14 @@ class ScaleTool(Tool):
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
         
+        # Reset totals when switching tabs
+        scale, units = self.get_current_scale()
+        self.total_line_length = 0.0
+        self.dialog.line_total_length_label.setText(f"0.0 {units}")
+        self.total_rect_area = 0.0
+        area_units = f"{units}²" if units != "px" else "px²"
+        self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
+        
         # Enable "Set Scale" button ONLY on the first tab
         if index == 0:
             self.dialog.set_scale_button.setEnabled(True)
@@ -659,7 +667,7 @@ class ScaleTool(Tool):
     def apply_scale(self):
         """
         Calculates and applies the new scale to the selected raster(s).
-        """
+        """        
         # --- 1. Get User Input ---
         known_length = self.dialog.known_length_input.value()
         units = self.dialog.units_combo.currentText()
@@ -731,6 +739,10 @@ class ScaleTool(Tool):
                 if raster:
                     # We assume square pixels from this tool
                     raster.update_scale(new_scale, new_scale, 'metre')
+                    
+                    # Update all annotations for this image with the new scale
+                    self.annotation_window.set_annotations_scale(path)
+                
                     success_count += 1
                 
                 progress_bar.update_progress()
@@ -759,6 +771,10 @@ class ScaleTool(Tool):
                                 f"Successfully applied new scale ({scale_text}) "
                                 f"to {success_count} image(s).")
         
+        # Refresh the confidence window to update the tooltip, just in case
+        if self.main_window.confidence_window.annotation:
+            self.main_window.confidence_window.refresh_display()
+        
     def remove_scale_current(self):
         """Removes scale from the currently loaded image."""
         current_path = self.annotation_window.current_image_path
@@ -779,15 +795,20 @@ class ScaleTool(Tool):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            # 1. Remove scale from Raster
+            # Remove scale from Raster
             raster.remove_scale()
             
-            # 2. Update all associated annotations
-            self.annotation_window.update_annotations_scale(current_path)
+            # Update all associated annotations
+            self.annotation_window.set_annotations_scale(current_path)
             
-            # 3. Update UI
+            # Update UI
             self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
             self.main_window.update_view_dimensions(raster.width, raster.height)
+
+            # Refresh the confidence window to update the tooltip
+            if self.main_window.confidence_window.annotation:
+                self.main_window.confidence_window.refresh_display()
+            
             QMessageBox.information(self.dialog, "Success", "Scale removed from the current image.")
 
     def remove_scale_all(self):
@@ -823,8 +844,11 @@ class ScaleTool(Tool):
                         # 1. Remove scale from Raster
                         raster.remove_scale()
                         
+                        # Update all associated annotations
+                        self.annotation_window.set_annotations_scale(path)
+                        
                         # 2. Update all associated annotations
-                        self.annotation_window.update_annotations_scale(path)
+                        self.annotation_window.set_annotations_scale(path)
 
                         if path == self.annotation_window.current_image_path:
                             current_image_was_updated = True
@@ -842,5 +866,9 @@ class ScaleTool(Tool):
                 )
                 self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
                 self.main_window.update_view_dimensions(raster.width, raster.height)
+                
+                # Refresh the confidence window to update the tooltip
+                if self.main_window.confidence_window.annotation:
+                    self.main_window.confidence_window.refresh_display()
 
             QMessageBox.information(self.dialog, "Success", "Scale data has been removed from all images.")

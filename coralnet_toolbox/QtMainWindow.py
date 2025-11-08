@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
 
+        # Set the default scale unit
+        self.current_unit_scale = 'm'
+
         # Create windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
@@ -762,6 +765,15 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
+            "scale": ("Scale Tool\n\n"
+                      "Provide scale to the image(s), and measure distances on the current image.\n"
+                      "• Left-click to set the starting point.\n"
+                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
+                      "• Press Backspace to cancel drawing the scale line."
+                      "• The scale will be calculated based on the known provided length and pixel length.\n"
+                      "• Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.\n"
+                      "• Preferred units can be set in the Status Bar."),
+
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
@@ -835,11 +847,6 @@ class MainWindow(QMainWindow):
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
             
-            "scale": ("Scale Tool\n\n"
-                      "Provide scale to the image(s), measure distances on the image.\n"
-                      "• Left-click to set the starting point.\n"
-                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
-                      "• The scale will be calculated based on the known length and pixel length."),
         }
     
         self.toolbar = QToolBar("Tools", self)
@@ -870,6 +877,14 @@ class MainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
+        self.scale_tool_action = QAction(self.scale_icon, "Scale", self)
+        self.scale_tool_action.setCheckable(True)
+        self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
+        self.scale_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.scale_tool_action)
+
+        self.toolbar.addSeparator()
+        
         self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.setToolTip(self.tool_descriptions["patch"])
@@ -932,13 +947,6 @@ class MainWindow(QMainWindow):
         
         self.toolbar.addSeparator()
         
-        self.scale_tool_action = QAction(self.scale_icon, "Scale", self)
-        self.scale_tool_action.setCheckable(True)
-        self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
-        self.scale_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.scale_tool_action)
-
-        self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
@@ -1910,10 +1918,10 @@ class MainWindow(QMainWindow):
             self.scaled_view_dims_label.setEnabled(True)
             self.scale_unit_dropdown.setEnabled(True)
             
-            # If it was disabled before, set to 'm' (metre) by default
+            # If it was disabled before, set to the last selected unit by default
             if was_disabled:
                 self.scale_unit_dropdown.blockSignals(True)
-                self.scale_unit_dropdown.setCurrentText('m')
+                self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
                 self.scale_unit_dropdown.blockSignals(False)
 
             # Manually call the update function to display the new values
@@ -1943,6 +1951,15 @@ class MainWindow(QMainWindow):
 
         # Update the dimensions label
         self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
+
+        # Remember the selected unit
+        self.current_unit_scale = to_unit
+        
+        # Refresh the confidence window if an annotation is selected
+        # This is the only refresh needed, as it's the only
+        # change that can happen *while* an annotation is displayed.
+        if self.confidence_window.annotation:
+            self.confidence_window.refresh_display()
         
     def toggle_annotations_visibility(self, hide):
         """Toggle the visibility of annotations based on the hide button state and linked labels."""

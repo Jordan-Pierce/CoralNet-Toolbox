@@ -6,8 +6,10 @@ from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurv
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QSizePolicy,
                              QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle)
 
-from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import scale_pixmap
+from coralnet_toolbox.utilities import convert_scale_units
+
+from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -456,10 +458,22 @@ class ConfidenceWindow(QWidget):
         # Area
         try:
             # Check for new scaled method first
-            scaled_area = annotation.get_scaled_area()
-            if scaled_area:
-                area, units = scaled_area
-                tooltip_parts.append(f"<b>Area:</b> {area:.2f} {units}²")
+            scaled_area_data = annotation.get_scaled_area()
+            if scaled_area_data:
+                base_area_value, base_linear_unit = scaled_area_data
+                
+                # Get the target unit from MainWindow's dropdown
+                target_unit = self.main_window.current_unit_scale
+                
+                # Get the linear conversion factor (e.g., 1 'metre' to 'cm' = 100)
+                linear_conv_factor = convert_scale_units(1.0, base_linear_unit, target_unit)
+                # Area factor is the square of the linear factor
+                area_conv_factor = linear_conv_factor * linear_conv_factor
+                
+                # Calculate the final area in the target units
+                converted_area = base_area_value * area_conv_factor
+                
+                tooltip_parts.append(f"<b>Area:</b> {converted_area:.2f} {target_unit}²")
             else:
                 # Fallback to pixel area
                 area = annotation.get_area()
@@ -471,10 +485,17 @@ class ConfidenceWindow(QWidget):
         # Perimeter
         try:
             # Check for new scaled method first
-            scaled_perimeter = annotation.get_scaled_perimeter()
-            if scaled_perimeter:
-                perimeter, units = scaled_perimeter
-                tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} {units}")
+            scaled_perimeter_data = annotation.get_scaled_perimeter()
+            if scaled_perimeter_data:
+                base_perimeter_value, base_linear_unit = scaled_perimeter_data
+                
+                # Get the target unit from MainWindow's dropdown
+                target_unit = self.main_window.current_unit_scale
+                
+                # Convert the perimeter value (linear)
+                converted_perimeter = convert_scale_units(base_perimeter_value, base_linear_unit, target_unit)
+                
+                tooltip_parts.append(f"<b>Perimeter:</b> {converted_perimeter:.2f} {target_unit}")
             else:
                 # Fallback to pixel perimeter
                 perimeter = annotation.get_perimeter()
@@ -597,3 +618,5 @@ class ConfidenceWindow(QWidget):
         self.set_user_icon(False)
         # Disable navigation buttons
         self.set_navigation_enabled(False)
+        # Clear the annotation reference
+        self.annotation = None

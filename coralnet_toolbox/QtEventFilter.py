@@ -3,6 +3,8 @@ import warnings
 from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import QApplication, QMessageBox, QLineEdit
 
+from coralnet_toolbox.Icons import get_icon
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -182,10 +184,17 @@ class GlobalEventFilter(QObject):
         return False
     
     def show_exit_confirmation_dialog(self):
-        # noinspection PyTypeChecker
-        reply = QMessageBox.question(None,
-                                     'Confirm Exit',
-                                     'Are you sure you want to exit?',
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        """Show a confirmation dialog when the user attempts to exit the application."""
+        # Create the message box
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle('Confirm Exit')
+        msg_box.setText('Are you sure you want to exit?')
+        msg_box.setIcon(QMessageBox.Question)
+        
+        # Set the custom icon
+        msg_box.setWindowIcon(get_icon('coralnet.png'))
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+        reply = msg_box.exec_()
         if reply == QMessageBox.Yes:
             QApplication.quit()
