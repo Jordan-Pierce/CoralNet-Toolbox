@@ -135,7 +135,7 @@ class BrushTool(Tool):
         
         # Get the label's color and transparency
         label_color = self.annotation_window.selected_label.color
-        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+        transparency = self.annotation_window.main_window.get_transparency_value()
         
         # Create the item for the brush shape
         radius = self.brush_size / 2.0

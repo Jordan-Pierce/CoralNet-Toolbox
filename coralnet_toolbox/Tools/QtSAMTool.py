@@ -581,20 +581,20 @@ class SAMTool(Tool):
                             self.temp_annotation.label.color,
                             self.temp_annotation.image_path,
                             self.temp_annotation.label.id,
-                            self.temp_annotation.label.transparency,
+                            self.main_window.get_transparency_value(),
                             holes=self.temp_annotation.holes
                         )
                     elif isinstance(self.temp_annotation, RectangleAnnotation):
                         # For rectangle annotations, use the top_left and bottom_right
                         final_annotation = RectangleAnnotation(
-                            top_left=self.temp_annotation.top_left,
-                            bottom_right=self.temp_annotation.bottom_right,
-                            short_label_code=self.temp_annotation.label.short_label_code,
-                            long_label_code=self.temp_annotation.label.long_label_code,
-                            color=self.temp_annotation.label.color,
-                            image_path=self.temp_annotation.image_path,
-                            label_id=self.temp_annotation.label.id,
-                            transparency=self.temp_annotation.label.transparency
+                            self.temp_annotation.top_left,
+                            self.temp_annotation.bottom_right,
+                            self.temp_annotation.label.short_label_code,
+                            self.temp_annotation.label.long_label_code,
+                            self.temp_annotation.label.color,
+                            self.temp_annotation.image_path,
+                            self.temp_annotation.label.id,
+                            self.main_window.get_transparency_value()
                         )
 
                     # Copy confidence data
@@ -775,14 +775,14 @@ class SAMTool(Tool):
             
             # Create a rectangle annotation
             annotation = RectangleAnnotation(
-                top_left=top_left,
-                bottom_right=bottom_right,
-                short_label_code=self.annotation_window.selected_label.short_label_code,
-                long_label_code=self.annotation_window.selected_label.long_label_code,
-                color=self.annotation_window.selected_label.color,
-                image_path=self.annotation_window.current_image_path,
-                label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.label_window.active_label.transparency
+                top_left,
+                bottom_right,
+                self.annotation_window.selected_label.short_label_code,
+                self.annotation_window.selected_label.long_label_code,
+                self.annotation_window.selected_label.color,
+                self.annotation_window.current_image_path,
+                self.annotation_window.selected_label.id,
+                self.main_window.get_transparency_value()
             )
         else:
             # Original polygon code
@@ -823,7 +823,7 @@ class SAMTool(Tool):
                 color=self.annotation_window.selected_label.color,
                 image_path=self.annotation_window.current_image_path,
                 label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.label_window.active_label.transparency
+                transparency=self.main_window.get_transparency_value()
             )
             
         return annotation
