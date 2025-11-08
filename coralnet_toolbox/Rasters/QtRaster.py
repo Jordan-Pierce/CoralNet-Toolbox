@@ -17,6 +17,7 @@ from PyQt5.QtCore import QObject
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 
+from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
@@ -143,20 +144,20 @@ class Raster(QObject):
             self.metadata['dimensions'] = f"{self.width}x{self.height}"
             self.metadata['bands'] = self.channels
 
-            if self._rasterio_src.crs:
-                # Store the CRS string in metadata
-                self.metadata['crs'] = str(self._rasterio_src.crs)
-                
                 if self._rasterio_src.crs.is_projected:
-                    # Case 1: Already projected. Just read the scale.
+                    # Case 1: Already projected. Read the scale and convert to meters.
                     transform = self._rasterio_src.transform
-                    
+
                     scale_x = abs(transform.a) 
                     scale_y = abs(transform.e)
-                    scale_units = self._rasterio_src.crs.linear_units 
+                    source_units = self._rasterio_src.crs.linear_units.lower()
+
+                    # Convert scale to meters per pixel
+                    scale_x_meters = convert_scale_units(scale_x, source_units, 'metre')
+                    scale_y_meters = convert_scale_units(scale_y, source_units, 'metre')
+
+                    self.update_scale(scale_x_meters, scale_y_meters, 'metre')
                     
-                    self.update_scale(scale_x, scale_y, scale_units)
-                
                 elif self._rasterio_src.crs.is_geographic:
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
                     try:

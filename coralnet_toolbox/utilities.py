@@ -602,11 +602,11 @@ def scale_pixmap(pixmap, max_size):
 
 def convert_scale_units(value, from_unit, to_unit):
     """
-    Convert a value from one metric unit to another.
+    Convert a value from one unit to another. Supports common metric and imperial units.
 
     Args:
         value (float): The value to convert.
-        from_unit (str): The unit to convert from (e.g., 'metre', 'm', 'cm').
+        from_unit (str): The unit to convert from (e.g., 'metre', 'm', 'cm', 'foot', 'us survey foot').
         to_unit (str): The unit to convert to (e.g., 'mm', 'cm', 'm', 'km').
 
     Returns:
@@ -615,31 +615,41 @@ def convert_scale_units(value, from_unit, to_unit):
     from_unit = from_unit.lower()
     to_unit = to_unit.lower()
 
-    # Standardize from_unit to meters first
-    if from_unit in ['metre', 'm']:
-        value_in_meters = value
-    elif from_unit == 'mm':
-        value_in_meters = value / 1000.0
-    elif from_unit == 'cm':
-        value_in_meters = value / 100.0
-    elif from_unit == 'km':
-        value_in_meters = value * 1000.0
-    else:
-        # If unit is unknown, return original value
+    # Conversion factors to meters
+    to_meters = {
+        'metre': 1.0,
+        'm': 1.0,
+        'mm': 0.001,
+        'cm': 0.01,
+        'km': 1000.0,
+        'foot': 0.3048,
+        'us survey foot': 1200 / 3937,
+    }
+
+    # Conversion factors from meters
+    from_meters = {
+        'mm': 1000.0,
+        'cm': 100.0,
+        'metre': 1.0,
+        'm': 1.0,
+        'km': 0.001,
+        'foot': 1 / 0.3048,
+        'us survey foot': 3937 / 1200,
+    }
+
+    if from_unit not in to_meters:
+        # If from_unit is unknown, return original value as a fallback
         return value
 
-    # Now convert from meters to the target unit
-    if to_unit == 'mm':
-        return value_in_meters * 1000.0
-    elif to_unit == 'cm':
-        return value_in_meters * 100.0
-    elif to_unit in ['metre', 'm']:
+    # Convert from_unit to meters
+    value_in_meters = value * to_meters[from_unit]
+
+    if to_unit not in from_meters:
+        # If to_unit is unknown, return value in meters as a fallback
         return value_in_meters
-    elif to_unit == 'km':
-        return value_in_meters / 1000.0
-    else:
-        # If unit is unknown, return value in meters
-        return value_in_meters
+
+    # Convert from meters to to_unit
+    return value_in_meters * from_meters[to_unit]
     
 
 def simplify_polygon(xy_points, simplify_tolerance=0.1):

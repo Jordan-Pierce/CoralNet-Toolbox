@@ -226,7 +226,6 @@ class WorkArea(QObject):
         # Create rectangle item if it doesn't exist
         if not self.graphics_item:
             self.graphics_item = QGraphicsRectItem(self.rect)
-            # Pen width is already set to 2 in __init__, no need to change
             self.graphics_item.setPen(self._create_pen())
             
             # Store reference to the work area in the graphics item
