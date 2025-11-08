@@ -345,7 +345,7 @@ The main window consists of several components:
 - <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images
 - <kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels
 - <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations
-- <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations
+- <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations (when pressed twice)
 - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch between tools within the existing tool group, example:
   - When a PatchAnnotation is selected, this switches back to the PatchTool
   - When the PatchTool is active, this switches back to the SelectTool
