@@ -1955,6 +1955,12 @@ class MainWindow(QMainWindow):
         # Remember the selected unit
         self.current_unit_scale = to_unit
         
+        # Refresh the confidence window if an annotation is selected
+        # This is the only refresh needed, as it's the only
+        # change that can happen *while* an annotation is displayed.
+        if self.confidence_window.annotation:
+            self.confidence_window.refresh_display()
+        
     def toggle_annotations_visibility(self, hide):
         """Toggle the visibility of annotations based on the hide button state and linked labels."""
         # Determine the desired visibility state for linked items

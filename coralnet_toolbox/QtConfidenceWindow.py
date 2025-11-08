@@ -618,3 +618,5 @@ class ConfidenceWindow(QWidget):
         self.set_user_icon(False)
         # Disable navigation buttons
         self.set_navigation_enabled(False)
+        # Clear the annotation reference
+        self.annotation = None
