@@ -410,6 +410,14 @@ class ScaleTool(Tool):
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
         
+        # Reset totals when switching tabs
+        scale, units = self.get_current_scale()
+        self.total_line_length = 0.0
+        self.dialog.line_total_length_label.setText(f"0.0 {units}")
+        self.total_rect_area = 0.0
+        area_units = f"{units}²" if units != "px" else "px²"
+        self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
+        
         # Enable "Set Scale" button ONLY on the first tab
         if index == 0:
             self.dialog.set_scale_button.setEnabled(True)
