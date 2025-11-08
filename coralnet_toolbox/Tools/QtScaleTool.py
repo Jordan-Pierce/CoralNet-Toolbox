@@ -783,8 +783,8 @@ class ScaleTool(Tool):
             raster.remove_scale()
             
             # 2. Update all associated annotations
-            self.annotation_window.update_annotations_scale(current_path)
-            
+            self.annotation_window.set_annotations_scale(current_path)
+
             # 3. Update UI
             self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
             self.main_window.update_view_dimensions(raster.width, raster.height)
@@ -824,7 +824,7 @@ class ScaleTool(Tool):
                         raster.remove_scale()
                         
                         # 2. Update all associated annotations
-                        self.annotation_window.update_annotations_scale(path)
+                        self.annotation_window.set_annotations_scale(path)
 
                         if path == self.annotation_window.current_image_path:
                             current_image_was_updated = True

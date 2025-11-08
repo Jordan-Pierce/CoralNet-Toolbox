@@ -765,6 +765,15 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
+            "scale": ("Scale Tool\n\n"
+                      "Provide scale to the image(s), and measure distances on the current image.\n"
+                      "• Left-click to set the starting point.\n"
+                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
+                      "• Press Backspace to cancel drawing the scale line."
+                      "• The scale will be calculated based on the known provided length and pixel length.\n"
+                      "• Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.\n"
+                      "• Preferred units can be set in the Status Bar."),
+
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
@@ -838,11 +847,6 @@ class MainWindow(QMainWindow):
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
             
-            "scale": ("Scale Tool\n\n"
-                      "Provide scale to the image(s), measure distances on the image.\n"
-                      "• Left-click to set the starting point.\n"
-                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
-                      "• The scale will be calculated based on the known length and pixel length."),
         }
     
         self.toolbar = QToolBar("Tools", self)
@@ -873,6 +877,14 @@ class MainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
+        self.scale_tool_action = QAction(self.scale_icon, "Scale", self)
+        self.scale_tool_action.setCheckable(True)
+        self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
+        self.scale_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.scale_tool_action)
+
+        self.toolbar.addSeparator()
+        
         self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.setToolTip(self.tool_descriptions["patch"])
@@ -935,13 +947,6 @@ class MainWindow(QMainWindow):
         
         self.toolbar.addSeparator()
         
-        self.scale_tool_action = QAction(self.scale_icon, "Scale", self)
-        self.scale_tool_action.setCheckable(True)
-        self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
-        self.scale_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.scale_tool_action)
-
-        self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
