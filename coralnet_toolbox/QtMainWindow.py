@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
 
+        # Set the default scale unit
+        self.current_unit_scale = 'm'
+
         # Create windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
@@ -1910,10 +1913,10 @@ class MainWindow(QMainWindow):
             self.scaled_view_dims_label.setEnabled(True)
             self.scale_unit_dropdown.setEnabled(True)
             
-            # If it was disabled before, set to 'm' (metre) by default
+            # If it was disabled before, set to the last selected unit by default
             if was_disabled:
                 self.scale_unit_dropdown.blockSignals(True)
-                self.scale_unit_dropdown.setCurrentText('m')
+                self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
                 self.scale_unit_dropdown.blockSignals(False)
 
             # Manually call the update function to display the new values
@@ -1943,6 +1946,9 @@ class MainWindow(QMainWindow):
 
         # Update the dimensions label
         self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
+
+        # Remember the selected unit
+        self.current_unit_scale = to_unit
         
     def toggle_annotations_visibility(self, hide):
         """Toggle the visibility of annotations based on the hide button state and linked labels."""
