@@ -17,6 +17,7 @@ class Classify(Base):
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
         
+        self.resize(400, 400)  # Decreased height for less parameter
         self.task = 'classify'
         self.imgsz = 256
         
