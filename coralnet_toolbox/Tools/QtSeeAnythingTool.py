@@ -1,13 +1,12 @@
 import warnings
 
-
 import copy
 
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QGraphicsPathItem, QApplication
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
+from PyQt5.QtWidgets import QMessageBox, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -52,7 +51,6 @@ class SeeAnythingTool(Tool):
         self.rectangle_items = []  
 
         self.working_area = None
-        self.shadow_area = None
 
         self.image_path = None
         self.original_image = None
@@ -142,30 +140,11 @@ class SeeAnythingTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
         self.working_area.set_animation_manager(self.animation_manager)
-        
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
 
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-
-        # Create a semi-transparent overlay for the shadow
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
-        # Subtract the work area from the overlay
-        shadow_path = shadow_path.simplified()
-
-        # Create the shadow item
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
-
-        # Add the shadow item to the scene
-        self.annotation_window.scene.addItem(self.shadow_area)
 
         # Crop the image based on the working area
         self.work_area_image = self.original_image[top:bottom, left:right]
@@ -214,26 +193,11 @@ class SeeAnythingTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         # Set animation manager
         self.working_area.set_animation_manager(self.animation_manager)
-
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-        
-        # Create shadow overlay
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())
-        shadow_path.addRect(self.working_area.rect)
-        shadow_path = shadow_path.simplified()
-        
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))
-        self.annotation_window.scene.addItem(self.shadow_area)
         
         # Crop the image based on the working area
         self.work_area_image = self.original_image[top:bottom, left:right]
@@ -269,8 +233,9 @@ class SeeAnythingTool(Tool):
         
         # Create a dashed blue pen for the working area preview
         pen = QPen(QColor(0, 168, 230))
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(2)
+        pen.setWidth(3)
         
         self.working_area_temp_graphics = QGraphicsRectItem(rect)
         self.working_area_temp_graphics.setPen(pen)
@@ -321,12 +286,10 @@ class SeeAnythingTool(Tool):
             # Get color from the selected label
             color = self.annotation_window.selected_label.color
 
-            # Get the thickness for the rectangle graphics
-            width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-
             # Style the rectangle
             pen = QPen(QColor(color))
-            pen.setWidth(width)
+            pen.setCosmetic(True)
+            pen.setWidth(4)
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)
 
@@ -908,10 +871,6 @@ class SeeAnythingTool(Tool):
             # Properly remove the working area using its method
             self.working_area.remove_from_scene()
             self.working_area = None
-
-        if self.shadow_area:
-            self.annotation_window.scene.removeItem(self.shadow_area)
-            self.shadow_area = None
 
         self.image_path = None
         self.original_image = None

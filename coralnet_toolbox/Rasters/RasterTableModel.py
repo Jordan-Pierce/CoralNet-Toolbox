@@ -111,13 +111,22 @@ class RasterTableModel(QAbstractTableModel):
                 tooltip_parts = [
                     f"<b>Path:</b> {path}",
                     f"<b>Dimensions:</b> {dimensions}",
+                ]
+
+                # Add scale information if it exists
+                if raster.scale_x and raster.scale_units:
+                    # Standardize 'metre' to 'm'
+                    units = 'm' if raster.scale_units == 'metre' else raster.scale_units
+                    tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {units}/pixel")
+
+                tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",
                     f"<b>Predictions:</b> {'Yes' if raster.has_predictions else 'No'}"
-                ]
+                ])
 
                 if raster.has_work_areas():
                     tooltip_parts.append(f"<b>Work Areas:</b> {raster.count_work_items()}")
-
+                
                 return "<br>".join(tooltip_parts)
 
             elif index.column() == self.ANNOTATION_COUNT_COL:

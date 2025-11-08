@@ -6,14 +6,18 @@ from collections import defaultdict
 from typing import Optional, Set, List
 
 import cv2
-import rasterio
 import numpy as np
+
+import rasterio
+from rasterio.crs import CRS
+from rasterio.warp import calculate_default_transform
 
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 
+from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
@@ -86,6 +90,11 @@ class Raster(QObject):
         self.channels = 0
         self.shape = (0, 0, 0)  # Shape of the image (height, width, channels)
         
+        # Scale information (if available)
+        self.scale_x: Optional[float] = None
+        self.scale_y: Optional[float] = None
+        self.scale_units: Optional[str] = None
+        
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
@@ -134,14 +143,91 @@ class Raster(QObject):
             # Update metadata
             self.metadata['dimensions'] = f"{self.width}x{self.height}"
             self.metadata['bands'] = self.channels
-            if hasattr(self._rasterio_src, 'crs') and self._rasterio_src.crs:
-                self.metadata['crs'] = str(self._rasterio_src.crs)
+
+            if self._rasterio_src.crs:
+                # Case 1: Already projected. Read the scale and convert to meters.
+                transform = self._rasterio_src.transform
+
+                scale_x = abs(transform.a) 
+                scale_y = abs(transform.e)
+                source_units = self._rasterio_src.crs.linear_units.lower()
+
+                # Convert scale to meters per pixel
+                scale_x_meters = convert_scale_units(scale_x, source_units, 'metre')
+                scale_y_meters = convert_scale_units(scale_y, source_units, 'metre')
+
+                self.update_scale(scale_x_meters, scale_y_meters, 'metre')
+                
+            elif self._rasterio_src.crs.is_geographic:
+                # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
+                try:
+                    # Define the destination CRS (Web Mercator)
+                    dst_crs = CRS.from_epsg(3857)
+                    
+                    # Calculate the transform, new width, and new height for the reprojected image
+                    transform, width, height = calculate_default_transform(
+                        self._rasterio_src.crs,     # Source CRS
+                        dst_crs,                    # Destination CRS
+                        self._rasterio_src.width,   # Source width
+                        self._rasterio_src.height,  # Source height
+                        *self._rasterio_src.bounds  # Source bounds
+                    )
+                    
+                    # Now, the transform's components are in meters
+                    scale_x = abs(transform.a)
+                    scale_y = abs(transform.e)
+                    scale_units = 'metre'  # EPSG:3857 units are meters
+                    
+                    self.update_scale(scale_x, scale_y, scale_units)
+                    
+                    # Update metadata to show the *derived* scale
+                    self.metadata['scale_x'] = f"~{self.scale_x:.4f} {self.scale_units} (from EPSG:3857)"
+                    self.metadata['scale_y'] = f"~{self.scale_y:.4f} {self.scale_units} (from EPSG:3857)"
+                    self.metadata['original_crs'] = str(self._rasterio_src.crs)
+
+                except Exception as e:
+                    # Fallback if reprojection calculation fails
+                    print(f"Could not calculate default transform for {self.image_path}: {e}")
+                    self.metadata['units'] = "degrees (reprojection failed)"
+                    # scale attributes remain None
+                
+                # Case 3: No CRS. self.scale_x, self.scale_y, and self.scale_units correctly remain None
             
             return True
             
         except Exception as e:
             print(f"Error loading rasterio image {self.image_path}: {str(e)}")
             return False
+            
+    def update_scale(self, scale_x: float, scale_y: float, units: str):
+        """
+        Update the scale information for this raster.
+        
+        Args:
+            scale_x (float): The horizontal scale (e.g., meters per pixel)
+            scale_y (float): The vertical scale (e.g., meters per pixel)
+            units (str): The name of the units (e.g., 'metre', 'cm')
+        """
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+        self.scale_units = units
+        
+        # Update metadata to match
+        self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"
+        self.metadata['scale_y'] = f"{self.scale_y:.6f} {self.scale_units}"
+
+    def remove_scale(self):
+        """
+        Remove all scale information from this raster.
+        """
+        self.scale_x = None
+        self.scale_y = None
+        self.scale_units = None
+        
+        # Remove from metadata if keys exist
+        self.metadata.pop('scale_x', None)
+        self.metadata.pop('scale_y', None)
+        self.metadata.pop('original_crs', None) # Also remove derived crs
     
     @property
     def rasterio_src(self):

@@ -49,6 +49,7 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
 
         self.default_pen = QPen(QColor("black"), POINT_WIDTH)
+        self.default_pen.setCosmetic(True)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
         
@@ -156,6 +157,7 @@ class EmbeddingPointItem(QGraphicsObject):
             border_color = QColor(self.data_item.effective_color)
             border_color.setAlpha(opacity)
             border_pen = QPen(border_color, scaled_pen_width)
+            border_pen.setCosmetic(True)
             if self.isSelected():
                 # Tell manager to start animating
                 self.animate()
@@ -163,6 +165,7 @@ class EmbeddingPointItem(QGraphicsObject):
                 border_color = QColor(self.data_item.effective_color).darker(150)  
                 border_color.setAlpha(self._pulse_alpha)
                 border_pen = QPen(border_color, scaled_pen_width)
+                border_pen.setCosmetic(True)
                 border_pen.setStyle(Qt.DotLine)
             else:
                 # Tell manager to stop animating
@@ -180,6 +183,7 @@ class EmbeddingPointItem(QGraphicsObject):
                 darker_color = QColor(self.data_item.effective_color).darker(150)  
                 darker_color.setAlpha(self._pulse_alpha)
                 animated_pen = QPen(darker_color, scaled_pen_width)
+                animated_pen.setCosmetic(True)
                 animated_pen.setStyle(Qt.DotLine)
                 painter.setPen(animated_pen)
             else:
@@ -188,7 +192,9 @@ class EmbeddingPointItem(QGraphicsObject):
                 
                 pen_color = QColor("black")
                 pen_color.setAlpha(opacity)
-                painter.setPen(QPen(pen_color, scaled_pen_width))
+                pen = QPen(pen_color, scaled_pen_width)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
 
             painter.setBrush(effective_brush_color)
             painter.drawEllipse(self.boundingRect())
@@ -434,9 +440,11 @@ class AnnotationImageWidget(QWidget):
             pen_color = pen_color.darker(150)  # Changed to darker for brighter selected appearance
             pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
             pen = QPen(pen_color, ANNOTATION_WIDTH)
+            pen.setCosmetic(True)
             pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         else:
             pen = QPen(pen_color, ANNOTATION_WIDTH)
+            pen.setCosmetic(True)
             pen.setStyle(Qt.SolidLine)
 
         painter.setPen(pen)

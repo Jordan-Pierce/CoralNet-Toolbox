@@ -150,6 +150,15 @@ class SaveProject(QDialog):
                         },
                         'work_areas': work_areas_list
                     }
+
+                    # Include scale information if available
+                    if raster.scale_x is not None and raster.scale_y is not None and raster.scale_units is not None:
+                        image_data['scale'] = {
+                            'scale_x': raster.scale_x,
+                            'scale_y': raster.scale_y,
+                            'scale_units': raster.scale_units
+                        }
+
                     export_images.append(image_data)
                 progress_bar.update_progress()
 

@@ -3,7 +3,7 @@ import warnings
 from typing import Optional
 
 from PyQt5.QtGui import QMouseEvent, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Annotations import (
@@ -25,10 +25,9 @@ from coralnet_toolbox.Tools import (
     SeeAnythingTool,
     SelectTool,
     ZoomTool,
-    WorkAreaTool
+    WorkAreaTool,
+    ScaleTool
 )
-
-from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -157,9 +156,6 @@ class AnnotationWindow(QGraphicsView):
         self.active_image = False
         self.current_image_path = None
 
-        # Initialize the graphics utility class for standardized visual elements
-        self.graphics_utility = GraphicsUtility()
-
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
@@ -173,6 +169,7 @@ class AnnotationWindow(QGraphicsView):
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
+            "scale": ScaleTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self)
@@ -396,7 +393,44 @@ class AnnotationWindow(QGraphicsView):
                 
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
+        
+    def set_annotation_scale(self, annotation, image_path=None):
+        """
+        Updates a single annotation's scale properties to match its raster.
+        Uses the provided image_path if available, otherwise defaults to the
+        path stored on the annotation object itself.
+        """
+        if not annotation:
+            return
+            
+        # Determine the correct image path to use
+        path_to_use = image_path if image_path is not None else annotation.image_path
+            
+        raster = self.main_window.image_window.raster_manager.get_raster(path_to_use)
+        if raster:
+            annotation.scale_x = raster.scale_x
+            annotation.scale_y = raster.scale_y
+            annotation.scale_units = raster.scale_units
+        else:
+            # Ensure scale is None if raster isn't found
+            annotation.scale_x = None
+            annotation.scale_y = None
+            annotation.scale_units = None
 
+    def set_annotations_scale(self, image_path):
+        """
+        Updates the scale properties of all annotations associated with a specific
+        image path by calling set_annotation_scale on each one.
+        """
+        annotations = self.get_image_annotations(image_path)
+        if not annotations:
+            return
+
+        # Loop through all annotations for this image and sync their scale
+        for annotation in annotations:
+            # Pass the image_path for efficiency
+            self.set_annotation_scale(annotation, image_path=image_path)
+            
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:
@@ -588,7 +622,9 @@ class AnnotationWindow(QGraphicsView):
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
-        
+            if self.selected_tool == "scale":
+                self.main_window.untoggle_all_tools()
+            
         # Clean up
         self.clear_scene()
 
@@ -1006,6 +1042,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the animation manager
         annotation.set_animation_manager(self.animation_manager)
         
+        # Inject / update scale
+        self.set_annotation_scale(annotation)
+        
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -1184,6 +1223,9 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
+            
+        # Inject / update scale
+        self.set_annotation_scale(annotation)
 
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)

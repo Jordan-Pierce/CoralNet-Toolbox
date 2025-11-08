@@ -21,6 +21,7 @@ class ResizeSubTool(SubTool):
         self.target_annotation = None
         self.resize_handle_name = None
         self.resize_handles_items = []
+        self._current_annotation = None  # Track which annotation we're showing handles for
 
     def activate(self, event, **kwargs):
         """
@@ -55,6 +56,9 @@ class ResizeSubTool(SubTool):
         
         # Continuously update handles as we resize
         self.display_resize_handles(self.target_annotation)
+        
+        # Force the scene to update immediately
+        self.annotation_window.scene.update()
 
     def mouseReleaseEvent(self, event):
         """Finalize the resize, update related windows, and deactivate."""
@@ -75,18 +79,44 @@ class ResizeSubTool(SubTool):
         """Display resize handles for the given annotation."""
         self.remove_resize_handles()
         handles = self._get_handles(annotation)
-        handle_size = self.parent_tool.graphics_utility.get_handle_size(self.annotation_window)
+        
+        # If we're currently resizing and the handle no longer exists, deactivate
+        if self.is_active and self.resize_handle_name not in handles:
+            self.parent_tool.deactivate_subtool()
+            return
+        
+        # Connect to annotation updates to automatically refresh handles
+        if hasattr(annotation, 'annotationUpdated'):
+            # Disconnect any existing connections first to avoid duplicates
+            try:
+                annotation.annotationUpdated.disconnect(self._on_annotation_updated)
+            except:
+                pass  # Connection didn't exist
+            # Connect to the update signal
+            annotation.annotationUpdated.connect(self._on_annotation_updated)
+        
+        # Store reference to current annotation for updates
+        self._current_annotation = annotation
+        
+        # Calculate handle size based on current zoom to maintain constant screen size
+        scale = self.annotation_window.transform().m11()
+        if scale == 0:
+            scale = 1  # avoid division by zero
+        desired_screen_size = 15  # Desired handle size in screen pixels
+        handle_size = desired_screen_size / scale
 
         for handle_name, point in handles.items():
-            ellipse = QGraphicsEllipseItem(point.x() - handle_size // 2,
-                                           point.y() - handle_size // 2,
+            ellipse = QGraphicsEllipseItem(point.x() - handle_size / 2,
+                                           point.y() - handle_size / 2,
                                            handle_size,
                                            handle_size)
             
             handle_color = QColor(annotation.label.color)
             border_color = QColor(255 - handle_color.red(), 255 - handle_color.green(), 255 - handle_color.blue())
             
-            ellipse.setPen(QPen(border_color, 2))
+            pen = QPen(border_color, 3)
+            pen.setCosmetic(True)  # Keep pen width constant
+            ellipse.setPen(pen)
             ellipse.setBrush(QBrush(handle_color))
             ellipse.setData(1, handle_name)  # Store handle name
             ellipse.setAcceptHoverEvents(True)
@@ -95,8 +125,27 @@ class ResizeSubTool(SubTool):
             self.annotation_window.scene.addItem(ellipse)
             self.resize_handles_items.append(ellipse)
 
+    def _on_annotation_updated(self, annotation):
+        """Handle annotation updates by refreshing the resize handles."""
+        # Only refresh if this is the annotation we're currently showing handles for
+        if hasattr(self, '_current_annotation') and annotation == self._current_annotation:
+            # Don't refresh during active resize to avoid interference
+            if not self.is_active:
+                self.display_resize_handles(annotation)
+
     def remove_resize_handles(self):
         """Remove any displayed resize handles."""
+        # Disconnect from annotation updates
+        if hasattr(self, '_current_annotation') and hasattr(self._current_annotation, 'annotationUpdated'):
+            try:
+                self._current_annotation.annotationUpdated.disconnect(self._on_annotation_updated)
+            except:
+                pass  # Connection didn't exist
+        
+        # Clear the reference
+        if hasattr(self, '_current_annotation'):
+            del self._current_annotation
+        
         for handle in self.resize_handles_items:
             self.annotation_window.scene.removeItem(handle)
         self.resize_handles_items.clear()

@@ -169,7 +169,7 @@ class RectangleTool(Tool):
                                          self.annotation_window.selected_label.color,
                                          self.annotation_window.current_image_path,
                                          self.annotation_window.selected_label.id,
-                                         self.annotation_window.main_window.label_window.active_label.transparency)
+                                         self.annotation_window.main_window.get_transparency_value())
         if finished:
             self.start_point = None
             self.end_point = None
@@ -192,10 +192,7 @@ class RectangleTool(Tool):
             # Create a rectangle from start_point to scene_pos
             self.cursor_annotation = self.create_annotation(scene_pos)
             if self.cursor_annotation:
-                # Make the cursor annotation semi-transparent to distinguish it from actual annotations
-                active_label = self.annotation_window.main_window.label_window.active_label
-                transparency = active_label.transparency if active_label else 128
-                self.cursor_annotation.update_transparency(transparency)
+                self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
                 self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):

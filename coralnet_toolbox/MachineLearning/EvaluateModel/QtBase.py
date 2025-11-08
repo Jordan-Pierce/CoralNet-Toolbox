@@ -59,6 +59,8 @@ class EvaluateModelWorker(QThread):
         try:
             # Emit signal to indicate evaluation has started
             self.evaluation_started.emit()
+            
+            print("Starting model evaluation...")
 
             # Modify the save directory
             save_dir = self.params['save_dir']

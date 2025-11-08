@@ -208,6 +208,11 @@ class OpenProject(QDialog):
                             raster.add_work_area(work_area)
                         except Exception as e:
                             print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
+
+                    # Set scale from JSON if available, overriding any extracted scale
+                    scale_data = data.get('scale')
+                    if scale_data:
+                        raster.update_scale(scale_data['scale_x'], scale_data['scale_y'], scale_data['scale_units'])
                 
                 progress_bar.update_progress()
 

@@ -1,9 +1,10 @@
 import warnings
+
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -47,7 +48,6 @@ class SAMTool(Tool):
 
         # Working area and related attributes
         self.working_area = None
-        self.shadow_area = None
         self.image_path = None
         self.original_image = None
         self.original_width = None
@@ -126,30 +126,11 @@ class SAMTool(Tool):
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         self.working_area.set_animation_manager(self.animation_manager)
-
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-
+        
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-
-        # Create a semi-transparent overlay for the shadow
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
-        # Subtract the work area from the overlay
-        shadow_path = shadow_path.simplified()
-
-        # Create the shadow item
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
-
-        # Add the shadow item to the scene
-        self.annotation_window.scene.addItem(self.shadow_area)
 
         # Update the working area image, set in model
         self.image = self.original_image[top:bottom, left:right]
@@ -195,25 +176,10 @@ class SAMTool(Tool):
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         self.working_area.set_animation_manager(self.animation_manager)
         
-        # Get the thickness for the working area graphics
-        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
-        
-        # Create shadow overlay
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())
-        shadow_path.addRect(self.working_area.rect)
-        shadow_path = shadow_path.simplified()
-        
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))
-        self.annotation_window.scene.addItem(self.shadow_area)
         
         # Update the working area image in the SAM model
         self.image = self.original_image[top:bottom, left:right]
@@ -247,8 +213,9 @@ class SAMTool(Tool):
         
         # Create a dashed blue pen for the working area preview
         pen = QPen(QColor(0, 168, 230))
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(2)
+        pen.setWidth(3)
         
         self.working_area_temp_graphics = QGraphicsRectItem(rect)
         self.working_area_temp_graphics.setPen(pen)
@@ -440,13 +407,11 @@ class SAMTool(Tool):
         # Create rectangle graphic
         rect = QRectF(top_left, bottom_right)
 
-        # Get the thickness for the rectangle graphic
-        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-
         # Create a dashed pen for the rectangle
         pen = QPen(self.annotation_window.selected_label.color)
+        pen.setCosmetic(True)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(width)
+        pen.setWidth(4)
 
         self.rectangle_graphics = QGraphicsRectItem(rect)
         self.rectangle_graphics.setPen(pen)
@@ -616,20 +581,20 @@ class SAMTool(Tool):
                             self.temp_annotation.label.color,
                             self.temp_annotation.image_path,
                             self.temp_annotation.label.id,
-                            self.temp_annotation.label.transparency,
+                            self.main_window.get_transparency_value(),
                             holes=self.temp_annotation.holes
                         )
                     elif isinstance(self.temp_annotation, RectangleAnnotation):
                         # For rectangle annotations, use the top_left and bottom_right
                         final_annotation = RectangleAnnotation(
-                            top_left=self.temp_annotation.top_left,
-                            bottom_right=self.temp_annotation.bottom_right,
-                            short_label_code=self.temp_annotation.label.short_label_code,
-                            long_label_code=self.temp_annotation.label.long_label_code,
-                            color=self.temp_annotation.label.color,
-                            image_path=self.temp_annotation.image_path,
-                            label_id=self.temp_annotation.label.id,
-                            transparency=self.temp_annotation.label.transparency
+                            self.temp_annotation.top_left,
+                            self.temp_annotation.bottom_right,
+                            self.temp_annotation.label.short_label_code,
+                            self.temp_annotation.label.long_label_code,
+                            self.temp_annotation.label.color,
+                            self.temp_annotation.image_path,
+                            self.temp_annotation.label.id,
+                            self.main_window.get_transparency_value()
                         )
 
                     # Copy confidence data
@@ -810,14 +775,14 @@ class SAMTool(Tool):
             
             # Create a rectangle annotation
             annotation = RectangleAnnotation(
-                top_left=top_left,
-                bottom_right=bottom_right,
-                short_label_code=self.annotation_window.selected_label.short_label_code,
-                long_label_code=self.annotation_window.selected_label.long_label_code,
-                color=self.annotation_window.selected_label.color,
-                image_path=self.annotation_window.current_image_path,
-                label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.label_window.active_label.transparency
+                top_left,
+                bottom_right,
+                self.annotation_window.selected_label.short_label_code,
+                self.annotation_window.selected_label.long_label_code,
+                self.annotation_window.selected_label.color,
+                self.annotation_window.current_image_path,
+                self.annotation_window.selected_label.id,
+                self.main_window.get_transparency_value()
             )
         else:
             # Original polygon code
@@ -858,7 +823,7 @@ class SAMTool(Tool):
                 color=self.annotation_window.selected_label.color,
                 image_path=self.annotation_window.current_image_path,
                 label_id=self.annotation_window.selected_label.id,
-                transparency=self.main_window.label_window.active_label.transparency
+                transparency=self.main_window.get_transparency_value()
             )
             
         return annotation
@@ -884,11 +849,6 @@ class SAMTool(Tool):
         if self.working_area:
             self.working_area.remove_from_scene()
             self.working_area = None
-
-        # Remove shadow area
-        if self.shadow_area:
-            self.annotation_window.scene.removeItem(self.shadow_area)
-            self.shadow_area = None
 
         # Reset all state variables
         self.points = []

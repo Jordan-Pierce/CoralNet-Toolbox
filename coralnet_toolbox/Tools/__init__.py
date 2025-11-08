@@ -12,6 +12,7 @@ from .QtSeeAnythingTool import SeeAnythingTool
 from .QtSelectTool import SelectTool 
 from .QtZoomTool import ZoomTool
 from .QtWorkAreaTool import WorkAreaTool
+from .QtScaleTool import ScaleTool
 
 from .QtCutSubTool import CutSubTool
 from .QtMoveSubTool import MoveSubTool
@@ -32,6 +33,7 @@ __all__ = [
     'SelectTool',
     'ZoomTool',
     'WorkAreaTool',
+    'ScaleTool',
     'CutSubTool',
     'MoveSubTool',
     'ResizeSubTool',
