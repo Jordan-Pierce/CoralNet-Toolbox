@@ -86,7 +86,7 @@ class Classify(Base):
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
             except:
-                imgsz = 640
+                imgsz = 256
 
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
             self.class_names = list(self.loaded_model.names.values())
