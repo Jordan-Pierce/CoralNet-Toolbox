@@ -32,8 +32,6 @@ class Segment(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Segmentation Model (Ctrl + 3)")
 
-        self.task = 'segment'
-
     def showEvent(self, event):
         """
         Handle the show event to update label options and sync uncertainty threshold.
@@ -151,6 +149,8 @@ class Segment(Base):
         """
         Load the segmentation model.
         """
+        self.task = 'segment'
+
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return

@@ -31,8 +31,6 @@ class Classify(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Classification Model (Ctrl + 1)")
 
-        self.task = 'classify'
-
     def showEvent(self, event):
         """
         Handle the show event to update label options and sync uncertainty threshold.
@@ -72,6 +70,8 @@ class Classify(Base):
         """
         Load the classification model.
         """
+        self.task = 'classify'
+        
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return

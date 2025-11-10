@@ -152,7 +152,7 @@ class Base(QDialog):
         # Export Format Dropdown
         self.export_format_combo = QComboBox()
         # Common formats from export.md
-        self.export_format_combo.addItems(["engine", "onnx", "torchscript", "openvino", "coreml", "pb", "tflite"])
+        self.export_format_combo.addItems(["engine"])
         self.export_format_combo.setEditable(True)
         layout.addRow("Export Format:", self.export_format_combo)
 

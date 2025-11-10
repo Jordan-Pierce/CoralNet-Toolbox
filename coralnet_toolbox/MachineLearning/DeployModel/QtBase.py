@@ -46,6 +46,8 @@ class Base(QDialog):
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
+        
+        self.BATCH_SIZE = 16
 
         self.task = None
         self.max_detect = 300
@@ -230,7 +232,7 @@ class Base(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Model File", "",
-            "Model Files (*.pt *.onnx *.torchscript *.engine *.bin)",
+            "Model Files (*.pt *.engine)",
             options=options
         )
 
