@@ -27,21 +27,23 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -
     bash /tmp/miniconda.sh -b -p /opt/conda && \
     rm /tmp/miniconda.sh
 
-# Add conda to PATH
 ENV PATH=/opt/conda/bin:$PATH
 
-# Create and activate Python 3.10 environment
-RUN conda create -n coralnet python=3.10 -y
+# Accept Conda Terms of Service
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=true
+
+# Configure conda to use conda-forge as primary channel
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict
+
+# Create Python 3.10 environment with pip
+RUN conda create -n coralnet python=3.10 pip -y
 
 # Make RUN commands use the new environment
 SHELL ["conda", "run", "-n", "coralnet", "/bin/bash", "-c"]
 
 # Install coralnet-toolbox and PyQt5 dependencies in the conda environment
 RUN pip install coralnet-toolbox
-
-# Alternatively, if you need to use uv instead of pip:
-# RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-# RUN uv pip install coralnet-toolbox
 
 # Set up VNC
 RUN mkdir -p /root/.vnc
