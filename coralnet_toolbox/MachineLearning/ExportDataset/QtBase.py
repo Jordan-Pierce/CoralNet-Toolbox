@@ -43,7 +43,7 @@ class Base(QDialog):
         self.image_window = main_window.image_window
 
         self.resize(800, 800)
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Export Dataset")
 
         self.selected_labels = []

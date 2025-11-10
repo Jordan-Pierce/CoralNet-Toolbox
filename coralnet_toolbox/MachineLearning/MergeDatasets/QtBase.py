@@ -37,7 +37,7 @@ class Base(QDialog):
         """
         super().__init__(parent)
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Merge Datasets")
         self.resize(500, 500)
 

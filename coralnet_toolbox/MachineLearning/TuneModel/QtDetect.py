@@ -102,4 +102,4 @@ class Detect(Base):
             self.model_combo.addItems(list(community_configs.keys()))
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolov8n.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo11n.pt'))

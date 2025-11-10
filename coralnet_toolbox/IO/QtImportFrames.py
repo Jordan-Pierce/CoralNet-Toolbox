@@ -284,7 +284,7 @@ class ImportFrames(QDialog):
         self.main_window = main_window
         self.image_window = main_window.image_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Import Frames from Video")
         self.resize(1000, 600)
 

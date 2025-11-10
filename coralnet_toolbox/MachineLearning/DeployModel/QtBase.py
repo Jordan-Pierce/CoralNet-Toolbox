@@ -36,7 +36,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Deploy Model")
         self.resize(400, 325)
 
