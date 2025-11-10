@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     xfce4 \
     xfce4-goodies \
     tightvncserver \
+    novnc \
     websockify \
     net-tools \
     libgl1-mesa-glx \
@@ -43,16 +44,18 @@ RUN conda create -n coralnet python=3.10 pip -y
 SHELL ["conda", "run", "-n", "coralnet", "/bin/bash", "-c"]
 
 # Install coralnet-toolbox and PyQt5 dependencies in the conda environment
-RUN pip install coralnet-toolbox
+RUN pip install uv
+RUN uv pip install coralnet-toolbox
 
 # Set up VNC
 RUN mkdir -p /root/.vnc
-RUN echo "$VNC_PW" | vncpasswd -f > /root/.vnc/passwd
+RUN touch /root/.vnc/passwd
 RUN chmod 600 /root/.vnc/passwd
 
 # Copy and set up startup script
 COPY start-coralnet.sh /usr/local/bin/start-coralnet.sh
 RUN chmod +x /usr/local/bin/start-coralnet.sh
+RUN apt-get update && apt-get install -y dos2unix && dos2unix /usr/local/bin/start-coralnet.sh && apt-get remove -y dos2unix && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Expose VNC and noVNC ports
 EXPOSE 5901 6901
