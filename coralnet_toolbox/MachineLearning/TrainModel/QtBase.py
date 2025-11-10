@@ -425,6 +425,10 @@ class Base(QDialog):
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
         
+        # Single Class (cls)
+        self.single_class_combo = create_bool_combo()
+        form_layout.addRow("Single Class:", self.single_class_combo)
+
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
@@ -710,6 +714,7 @@ class Base(QDialog):
                 'dropout': self.dropout_spinbox,
                 'save': self.save_combo,
                 'weighted': self.weighted_combo,
+                'single_cls': self.single_class_combo,
                 'val': self.val_combo,
                 'verbose': self.verbose_combo,
                 'optimizer': self.optimizer_combo
@@ -780,6 +785,7 @@ class Base(QDialog):
             export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
             export_data['save'] = self.save_combo.currentText() == "True"
             export_data['weighted'] = self.weighted_combo.currentText() == "True"
+            export_data['single_cls'] = self.single_class_combo.currentText() == "True"
             export_data['val'] = self.val_combo.currentText() == "True"
             export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
@@ -854,6 +860,7 @@ class Base(QDialog):
             'verbose': self.verbose_combo.currentText() == "True",
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            'single_cls': self.single_class_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
