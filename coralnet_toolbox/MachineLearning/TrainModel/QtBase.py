@@ -158,7 +158,13 @@ class TrainModelWorker(QThread):
         """
         try:           
             # Check that there is a test folder
-            test_folder = f"{self.params['data']}/test"
+            if self.params['task'] == 'classify':
+                test_folder = f"{self.params['data']}/test"
+            else:  # detect, segment
+                # params['data'] is the path to the dataset YAML file
+                # so we need to get the parent folder and then look for the test folder
+                test_folder = os.path.join(os.path.dirname(self.params['data']), "test")
+                
             print(f"Note: Looking for test folder: {test_folder}")
             if not os.path.exists(test_folder):
                 print("Warning: No test folder found in that location. Skipping evaluation.")
