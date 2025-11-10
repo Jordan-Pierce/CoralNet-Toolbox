@@ -81,7 +81,7 @@ class Classify(Base):
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
             # Load the model (8.3.141) YOLO handles RTDETR too
-            self.loaded_model = YOLO(self.model_path)
+            self.loaded_model = YOLO(self.model_path, task=self.task)
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
