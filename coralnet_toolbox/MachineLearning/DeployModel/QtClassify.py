@@ -79,6 +79,14 @@ class Classify(Base):
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            # TODO: Improve batch size handling for different model types
+            # Set BATCH_SIZE based on model type.
+            # .engine models require a fixed batch size (usually 1)
+            if self.model_path.endswith('.engine'):
+                self.BATCH_SIZE = 1
+            else:
+                self.BATCH_SIZE = 0
 
             # Load the model (8.3.141) YOLO handles RTDETR too
             self.loaded_model = YOLO(self.model_path, task=self.task)
@@ -153,13 +161,23 @@ class Classify(Base):
                     continue
 
         # Only proceed if we have valid images to process
-        if images_np:
-            # Predict the classification results
-            results = self.loaded_model(images_np,
-                                        conf=self.main_window.get_uncertainty_thresh(),
-                                        device=self.main_window.device,
-                                        half=True,
-                                        stream=True)
+        if images_np:            
+            if not self.BATCH_SIZE:
+                # Predict the classification results
+                results = self.loaded_model(images_np,
+                                            conf=self.main_window.get_uncertainty_thresh(),
+                                            device=self.main_window.device,
+                                            half=True,
+                                            stream=True)
+                
+            else:  # process one by one
+                results = []
+                for _ in range(len(images_np)):
+                    result = self.loaded_model(images_np[_],
+                                               conf=self.main_window.get_uncertainty_thresh(),
+                                               device=self.main_window.device,
+                                               half=True)
+                    results.append(result)
 
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,

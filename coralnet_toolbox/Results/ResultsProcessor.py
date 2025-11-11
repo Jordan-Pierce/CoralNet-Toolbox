@@ -358,12 +358,12 @@ class ResultsProcessor:
 
         return image_path, top1cls, top1conf, predictions
 
-    def process_classification_results(self, results_generator, annotations, progress_bar=None):
+    def process_classification_results(self, results_list, annotations, progress_bar=None):
         """
         Process the classification results from the results generator.
         
         Args:
-            results_generator: Generator of classification results
+            results_list: List of classification results
             annotations: List of annotations to update
             progress_bar: Optional external progress bar. If None, creates its own.
         """
@@ -377,7 +377,7 @@ class ResultsProcessor:
         progress_bar.start_progress(len(annotations))
 
         try:
-            for result, annotation in zip(results_generator, annotations):
+            for result, annotation in zip(results_list, annotations):
                 if result:
                     try:
                         # Extract results and pass them to the dedicated update/display method
