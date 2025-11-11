@@ -2,10 +2,11 @@ import warnings
 
 import os
 import gc
+import yaml
+import uuid
 import datetime
 import traceback
 import ujson as json
-import yaml
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -936,10 +937,36 @@ class Base(QDialog):
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
         os.makedirs(output_dir_path, exist_ok=True)
-        if self.class_mapping:
-            # Write the json file to the output directory
+
+        # Check if single_cls is True. self.params is set in self.train_model()
+        is_single_cls = self.params.get('single_cls', False)
+
+        mapping_to_save = {}
+        if is_single_cls:
+            # If single_cls=True, the model will be trained with one class: 'item'.
+            # We must save a class_mapping.json that reflects this,
+            # regardless of what the original dataset's mapping was.
+            # The model's output will be 'item', so deployment needs an 'item' label.
+            print("Note: single_cls=True. Saving 'item' class mapping.")
+            item_label = {
+                'id': str(uuid.uuid4()),  # Generate a new unique ID
+                'short_label_code': 'item',
+                'long_label_code': 'item',
+                'color': [255, 0, 0]  # Default to red
+            }
+            # The mapping file maps index (as string) to label dict.
+            # For single_cls, the index will always be '0'.
+            mapping_to_save = {'0': item_label}
+
+        elif self.class_mapping:
+            # Standard multi-class case: save the dataset's class mapping
+            mapping_to_save = self.class_mapping
+        
+        # Only write if there is a mapping to save
+        if mapping_to_save:
+            # Write the (potentially modified) json file to the output directory
             with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
-                json.dump(self.class_mapping, json_file, indent=4)
+                json.dump(mapping_to_save, json_file, indent=4)
 
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
