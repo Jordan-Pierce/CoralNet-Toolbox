@@ -433,6 +433,7 @@ class Base(QDialog):
         
         # Single Class (cls)
         self.single_class_combo = create_bool_combo()
+        self.single_class_combo.setCurrentText("False")  # Default to False
         form_layout.addRow("Single Class:", self.single_class_combo)
 
         # Weighted Dataset
