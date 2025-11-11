@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVB
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
 
 from torch.cuda import empty_cache
+import torch
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
@@ -251,6 +252,9 @@ class Base(QDialog):
         self.model_path = None
         # Class mapping
         self.class_mapping = {}
+
+        self.is_optimizing = False
+        self.exported_model_path = None
 
         # Task specific parameters
         self.imgsz = 640
@@ -840,7 +844,7 @@ class Base(QDialog):
         Handle the OK button click event.
         """
         self.train_model()
-        super().accept()
+        # Don't call super().accept() here, call it in on_training_completed
 
     def get_parameters(self):
         """
@@ -959,13 +963,80 @@ class Base(QDialog):
         msg_box.setText("Model training has successfully been completed.")
         ok_button = msg_box.addButton(QMessageBox.Ok)
         
+        has_cuda = torch.cuda.is_available()
+        if has_cuda:
+            optimize_button = msg_box.addButton("Optimize Model", QMessageBox.AcceptRole)
         deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
         msg_box.exec_()
 
-        if msg_box.clickedButton() == deploy_button:
+        clicked = msg_box.clickedButton()
+        if clicked == ok_button:
+            super().accept()
+        elif has_cuda and clicked == optimize_button:
+            self.is_optimizing = True
+            self.optimize_trained_model()
+        elif clicked == deploy_button:
             self.deploy_trained_model()
+            super().accept()
+            
+    def optimize_trained_model(self):
+        """
+        Automatically export the trained model with pre-filled parameters without showing the dialog.
+        """
+        output_folder = f"{self.params['project']}/{self.params['name']}"
+        weights_folder = f"{output_folder}/weights"
+        
+        # Find the best weights file
+        best_weights = None
+        for fname in os.listdir(weights_folder):
+            if fname.startswith("best") and fname.endswith(".pt"):
+                best_weights = f"{weights_folder}/{fname}"
+                break
 
-    def deploy_trained_model(self):
+        if not best_weights:
+            QMessageBox.warning(self, "Optimize Model", "Could not find trained model weights.")
+            return
+
+        # Get the optimize dialog
+        optimize_dialog = self.main_window.optimize_model_dialog
+
+        # Pre-fill the parameters
+        optimize_dialog.model_path_edit.setText(best_weights)
+        optimize_dialog.imgsz_spinbox.setValue(self.params['imgsz'])
+        optimize_dialog.data_edit.setText(self.params['data'])  # Dataset YAML or directory
+        optimize_dialog.int8_combo.setCurrentText("True")  # Enable INT8 quantization
+
+        # Connect the export completed signal
+        optimize_dialog.export_completed.connect(self.on_export_completed_signal)
+
+        # Automatically start the export process
+        optimize_dialog.export_model()
+
+    def on_export_completed_signal(self, exported_path):
+        """
+        Handle the event when the export completes.
+        """
+        self.exported_model_path = exported_path
+        if self.is_optimizing:
+            self.on_optimize_completed()
+
+    def on_optimize_completed(self):
+        """
+        Handle the event when the optimization completes.
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Model Optimization Status")
+        msg_box.setText("Model optimization has successfully been completed.")
+        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+        clicked = msg_box.clickedButton()
+        if clicked == deploy_button:
+            self.deploy_trained_model(self.exported_model_path)
+        super().accept()
+
+    def deploy_trained_model(self, model_path=None):
         """
         Load the trained model and class mapping into the existing deployment dialog,
         update the status and labels, but do not show the dialog.
@@ -979,16 +1050,27 @@ class Base(QDialog):
         output_folder = f"{self.params['project']}/{self.params['name']}"
         weights_folder = f"{output_folder}/weights"
         
-        # Find the best weights file (usually 'best.pt' or similar)
-        best_weights = None
-        for fname in os.listdir(weights_folder):
-            if fname.startswith("best") and fname.endswith(".pt"):
-                best_weights = f"{weights_folder}/{fname}"
-                break
+        if model_path is None:
+            # Find the best weights file (usually 'best.pt' or similar)
+            best_weights = None
+            for fname in os.listdir(weights_folder):
+                if fname.startswith("best") and fname.endswith(".pt"):
+                    best_weights = f"{weights_folder}/{fname}"
+                    break
 
-        if not best_weights:
-            QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
-            return
+            if not best_weights:
+                QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
+                return
+
+            task = self.task
+        else:
+            best_weights = model_path
+            if not os.path.exists(best_weights):
+                QMessageBox.warning(self, "Deploy Model", "Could not find model weights.")
+                return
+
+            # Use the same task as the trained model
+            task = self.task
 
         # Load class mapping if available
         class_mapping_path = f"{output_folder}/class_mapping.json"
@@ -1001,11 +1083,11 @@ class Base(QDialog):
                 QMessageBox.warning(self, "Deploy Model", f"Failed to load class mapping: {str(e)}")
 
         # Use the existing deployment dialog instance from main_window
-        if self.task == "classify":
+        if task == "classify":
             deploy_dialog = self.main_window.classify_deploy_model_dialog
-        elif self.task == "detect":
+        elif task == "detect":
             deploy_dialog = self.main_window.detect_deploy_model_dialog
-        elif self.task == "segment":
+        elif task == "segment":
             deploy_dialog = self.main_window.segment_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
@@ -1023,7 +1105,4 @@ class Base(QDialog):
             deploy_dialog.check_and_display_class_names()
         if hasattr(deploy_dialog, "status_bar"):
             deploy_dialog.status_bar.setText(f"Model loaded: {os.path.basename(best_weights)}")
-
-    # Do NOT show the dialog (no exec_())
-
 
