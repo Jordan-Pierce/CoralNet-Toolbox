@@ -508,8 +508,10 @@ class MainWindow(QMainWindow):
         self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
         self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
         self.tile_menu.addAction(self.tile_batch_inference_action)
+        
         # Add a separator
         self.tile_menu.addSeparator()
+        
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
@@ -551,7 +553,7 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
         
-        # tune Model submenu
+        # Tune Model submenu
         self.ml_tune_model_menu = self.ml_menu.addMenu("Tune Model")
         # Tune Classification Model
         self.ml_classify_tune_model_action = QAction("Classify", self)
@@ -569,6 +571,9 @@ class MainWindow(QMainWindow):
         self.ml_semantic_tune_model_action = QAction("Semantic", self)
         self.ml_semantic_tune_model_action.triggered.connect(self.open_semantic_tune_model_dialog)
         # self.ml_tune_model_menu.addAction(self.ml_semantic_tune_model_action)
+        
+        # Add a separator
+        self.ml_menu.addSeparator()
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -650,6 +655,9 @@ class MainWindow(QMainWindow):
         self.ml_semantic_batch_inference_action = QAction("Semantic", self)
         self.ml_semantic_batch_inference_action.triggered.connect(self.open_semantic_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
+        
+        # Add a separator
+        self.ml_menu.addSeparator()
 
         # Video Inference submenu
         self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
