@@ -181,6 +181,8 @@ class Base(QDialog):
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(1)
+        # Disable to make it stay as 1
+        self.batch_spinbox.setEnabled(False)
         general_layout.addRow("Batch Size (batch):", self.batch_spinbox)
         
         self.device_edit = QLineEdit()

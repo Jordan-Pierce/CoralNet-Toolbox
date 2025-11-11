@@ -232,8 +232,8 @@ class Base(QDialog):
         
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
-        self.num_viz_sample_spinbox.setRange(1, 1000)
-        self.num_viz_sample_spinbox.setValue(3)
+        self.num_viz_sample_spinbox.setRange(1, 10)
+        self.num_viz_sample_spinbox.setValue(1)
         misc_form.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
         
         layout.addRow(misc_group)

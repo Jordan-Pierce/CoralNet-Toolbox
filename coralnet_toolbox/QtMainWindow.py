@@ -2676,6 +2676,13 @@ class MainWindow(QMainWindow):
 
     def open_optimize_model_dialog(self):
         """Open the Optimize Model dialog to optimize a model."""
+        # Check if the user has a GPU available using torch
+        if not torch.cuda.is_available():
+            QMessageBox.warning(self,
+                                "Optimize Model",
+                                "A GPU is required to optimize models. No GPU was detected.")
+            return
+        
         try:
             self.untoggle_all_tools()
             self.optimize_model_dialog.exec_()
