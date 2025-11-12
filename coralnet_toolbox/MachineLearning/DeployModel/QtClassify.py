@@ -2,6 +2,7 @@ import warnings
 
 import gc
 import os
+from copy import deepcopy
 
 import numpy as np
 
@@ -162,11 +163,6 @@ class Classify(Base):
 
         # Only proceed if we have valid images to process
         if images_np:            
-            # Create a result processor
-            results_processor = ResultsProcessor(self.main_window,
-                                                 self.class_mapping,
-                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh())
-
             if not self.BATCH_SIZE:
                 # Predict the classification results
                 results = self.loaded_model(images_np,
@@ -175,16 +171,20 @@ class Classify(Base):
                                             half=True,
                                             stream=True)
                 
-            else:  # process one by one and extract immediately to avoid same result issue
+            else:  # process one by one
                 results = []
                 for _ in range(len(images_np)):
                     result = self.loaded_model(images_np[_],
                                                conf=self.main_window.get_uncertainty_thresh(),
                                                device=self.main_window.device,
                                                half=True)
-                    # Extract data immediately to avoid issues with model returning same object
-                    extracted = results_processor.extract_classification_result(result)
-                    results.append(extracted)
+                    if result:  # Ensure the result list is not empty
+                        results.append(deepcopy(result[0]))  # Append the Results object itself
+
+            # Create a result processor
+            results_processor = ResultsProcessor(self.main_window,
+                                                 self.class_mapping,
+                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh())
 
             # Process the classification results using the valid inputs
             # Pass the progress_bar parameter to avoid creating nested progress bars

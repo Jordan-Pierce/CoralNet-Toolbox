@@ -335,15 +335,8 @@ class ResultsProcessor:
     def extract_classification_result(self, result):
         """
         Extract relevant information from a classification result.
-        """
+        """        
         predictions = {}
-
-        # Handle case where result is a list (e.g., for .engine models)
-        if isinstance(result, list):
-            if result:
-                result = result[0]
-            else:
-                return None, None, None, {}
 
         try:
             image_path = result.path.replace("\\", "/")
@@ -388,10 +381,7 @@ class ResultsProcessor:
                 if result:
                     try:
                         # Handle both Results objects (from stream) and pre-extracted tuples (from .engine)
-                        if isinstance(result, tuple):
-                            image_path, cls_name, conf, predictions = result
-                        else:
-                            image_path, cls_name, conf, predictions = self.extract_classification_result(result)
+                        image_path, cls_name, conf, predictions = self.extract_classification_result(result)
                         if image_path is None:
                             continue
                         self._update_and_display_classification(annotation, cls_name, conf, predictions)
