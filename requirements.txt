@@ -19,7 +19,6 @@ transformers>=4.56.0
 hf_xet
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.27
-tensorrt
 roboflow
 rasterio
 requests

@@ -2676,6 +2676,15 @@ class MainWindow(QMainWindow):
 
     def open_optimize_model_dialog(self):
         """Open the Optimize Model dialog to optimize a model."""
+        # Check if TensorRT is available
+        try:
+            import tensorrt  # noqa: F401
+        except ImportError:
+            QMessageBox.warning(self,
+                                "TensorRT Not Installed",
+                                "TensorRT is not installed. Some optimization features may not be available. "
+                                "Please install TensorRT for full functionality (not available on MacOS).")
+        
         # Check if the user has a GPU available using torch
         if not torch.cuda.is_available():
             QMessageBox.warning(self,
