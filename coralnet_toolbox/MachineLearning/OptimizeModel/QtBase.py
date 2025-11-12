@@ -87,6 +87,7 @@ class Base(QDialog):
     A dialog for optimizing and exporting a YOLO model with specific parameters.
     Updated to mirror the structure of eval.py.
     """
+    export_completed = pyqtSignal(str)
 
     def __init__(self, main_window, parent=None):
         """
@@ -401,6 +402,12 @@ class Base(QDialog):
         QApplication.restoreOverrideCursor()
         message = "Model export has successfully completed."
         QMessageBox.information(self, "Model Export Status", message)
+        
+        # Compute exported path
+        model_path = self.model_path_edit.text()
+        format_ = self.params.get('format', 'engine')
+        exported_path = model_path.replace('.pt', f'.{format_}')
+        self.export_completed.emit(exported_path)
 
     def on_export_error(self, error_message):
         # Restore cursor
