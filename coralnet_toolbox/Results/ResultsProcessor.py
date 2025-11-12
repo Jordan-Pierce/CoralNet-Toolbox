@@ -338,6 +338,13 @@ class ResultsProcessor:
         """
         predictions = {}
 
+        # Handle case where result is a list (e.g., for .engine models)
+        if isinstance(result, list):
+            if result:
+                result = result[0]
+            else:
+                return None, None, None, {}
+
         try:
             image_path = result.path.replace("\\", "/")
             class_names = result.names
@@ -348,7 +355,7 @@ class ResultsProcessor:
             top5conf = result.probs.top5conf
         except Exception as e:
             print(f"Warning: Failed to process classification result\n{e}")
-            return predictions
+            return None, None, None, {}
 
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
@@ -380,8 +387,13 @@ class ResultsProcessor:
             for result, annotation in zip(results_list, annotations):
                 if result:
                     try:
-                        # Extract results and pass them to the dedicated update/display method
-                        _, cls_name, conf, predictions = self.extract_classification_result(result)
+                        # Handle both Results objects (from stream) and pre-extracted tuples (from .engine)
+                        if isinstance(result, tuple):
+                            image_path, cls_name, conf, predictions = result
+                        else:
+                            image_path, cls_name, conf, predictions = self.extract_classification_result(result)
+                        if image_path is None:
+                            continue
                         self._update_and_display_classification(annotation, cls_name, conf, predictions)
                     except Exception as e:
                         print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")
