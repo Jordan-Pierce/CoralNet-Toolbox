@@ -990,18 +990,19 @@ class Base(QDialog):
         msg_box.setText("Model training has successfully been completed.")
         ok_button = msg_box.addButton(QMessageBox.Ok)
         
-        has_cuda = torch.cuda.is_available()
-        if has_cuda:
-            optimize_button = msg_box.addButton("Optimize Model", QMessageBox.AcceptRole)
+        # TODO: Re-enable optimization option when CUDA is supported
+        # has_cuda = torch.cuda.is_available()
+        # if has_cuda:
+        #     optimize_button = msg_box.addButton("Optimize Model", QMessageBox.AcceptRole)
         deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
         msg_box.exec_()
 
         clicked = msg_box.clickedButton()
         if clicked == ok_button:
             super().accept()
-        elif has_cuda and clicked == optimize_button:
-            self.is_optimizing = True
-            self.optimize_trained_model()
+        # elif has_cuda and clicked == optimize_button:
+        #     self.is_optimizing = True
+        #     self.optimize_trained_model()
         elif clicked == deploy_button:
             self.deploy_trained_model()
             super().accept()
@@ -1030,6 +1031,7 @@ class Base(QDialog):
         # Pre-fill the parameters
         optimize_dialog.model_path_edit.setText(best_weights)
         optimize_dialog.imgsz_spinbox.setValue(self.params['imgsz'])
+        optimize_dialog.dynamic_combo.setCurrentText("True")  # Enable dynamic shapes
         optimize_dialog.data_edit.setText(self.params['data'])  # Dataset YAML or directory
         optimize_dialog.int8_combo.setCurrentText("True")  # Enable INT8 quantization
 
