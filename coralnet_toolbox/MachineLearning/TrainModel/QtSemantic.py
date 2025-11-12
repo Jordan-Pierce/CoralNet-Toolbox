@@ -115,8 +115,12 @@ class TrainModelWorker(QThread):
             eval_params = {
                 'data_yaml': self.params['data_yaml'],
                 'imgsz': self.params['imgsz'],
-                'split': 'test',  # Evaluate on the test set only
-                'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
+                'split': 'test',
+                'save_dir': Path(self.params['project']) / self.params['name'] / 'test',
+                'num_vis_samples': 5,  # Default number of visualization samples
+                'device': self.device,  # Use the training device
+                'batch': 1,  # Default batch size
+                'conf': 0.5  # Default confidence threshold
             }
 
             # Create and start the worker thread
