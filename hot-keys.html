@@ -9,15 +9,7 @@
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f3f4f6;
-            d                    <kbd>?<br>/</kbd>
-                    <kbd class="hotkey long-key">Shift
-                        <span class="tooltiptext">
-                            <b>Annotation Editing</b>
-                            <ul>
-                                <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
-                                <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
-                                <li><b>Ctrl + Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
-                            </ul>flex;
+            display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
@@ -31,6 +23,7 @@
             padding: 1.5rem;
             border-radius: 0.75rem;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transform: scale(0.8);
         }
         .keyboard-body {
             display: flex;
@@ -327,9 +320,7 @@
                 <div class="key-row">
                     <kbd class="long-key">Tab</kbd>
                     <kbd>Q</kbd>
-                    <kbd class="hotkey">W
-                        <span class="tooltiptext"><!-- Removed incorrect label cycling; no other actions for W --></span>
-                    </kbd>
+                    <kbd>W</kbd>
                     <kbd>E</kbd>
                     <kbd>R</kbd>
                     <kbd>T</kbd>
@@ -343,16 +334,13 @@
                     <kbd>|<br>\</kbd>
                 </div>
                 <div class="key-row">
-                    <kbd class="long-key">Caps Lock</kbd>
                     <kbd class="hotkey">A
-                        <span class="tooltiptext"><!-- Removed incorrect label cycling; no other actions for A --></span>
+                        <span class="tooltiptext"><b>Selection</b><ul><li><b>Ctrl + A</b>: Select all annotations, unselect all annotations.</li></ul></span>
                     </kbd>
                     <kbd class="hotkey">S
-                        <span class="tooltiptext"><b>Navigation</b><ul><li><b>Ctrl + S</b>: Save the project.</li></ul></span>
+                        <span class="tooltiptext"><b>General</b><ul><li><b>Ctrl + S</b>: Save the project.</li></ul></span>
                     </kbd>
-                    <kbd class="hotkey">D
-                        <span class="tooltiptext"><!-- Removed incorrect label cycling; no other actions for D --></span>
-                    </kbd>
+                    <kbd>D</kbd>
                     <kbd>F</kbd>
                     <kbd>G</kbd>
                     <kbd>H</kbd>
@@ -370,11 +358,6 @@
                             <ul>
                                 <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
                                 <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
-                            </ul>
-                            <b>Selection</b>
-                            <ul>
-                                <li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li>
-                                <li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li>
                             </ul>
                             <b>Work Areas</b>
                             <ul>
@@ -416,11 +399,6 @@
                                 <li><b>Ctrl + Shift</b>: Show resize handles for a selected annotation.</li>
                                 <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
                             </ul>
-                            <b>Selection</b>
-                            <ul>
-                                <li><b>Ctrl + Shift + &lt;</b>: Select all annotations.</li>
-                                <li><b>Ctrl + Shift + &gt;</b>: Unselect all annotations.</li>
-                            </ul>
                             <b>Work Areas</b>
                             <ul>
                                 <li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li>
@@ -431,40 +409,7 @@
                 </div>
                 <div class="key-row">
                     <kbd class="hotkey long-key">Ctrl
-                         <span class="tooltiptext">
-                            <b>Selection</b>
-                            <ul>
-                                <li><b>+ Click</b>: Add/remove annotation to/from selection.</li>
-                                <li><b>+ Drag</b>: Rectangle-select multiple annotations.</li>
-                                <li><b>+ A</b>: Select all annotations, unselect all annotations.</li>
-                            </ul>
-                            <b>Navigation</b>
-                             <ul>
-                                <li><b>+ Left/Right</b>: Cycle through annotations.</li>
-                                <li><b>+ W/A/S/D</b>: Cycle through labels.</li>
-                            </ul>
-                             <b>Annotation Editing</b>
-                             <ul>
-                                <li><b>+ Mouse Wheel</b>: Change selected annotation size.</li>
-                                <li><b>+ Backspace/Delete</b>: Remove selected annotation(s).</li>
-                                <li><b>+ X/C</b>: Cut/Combine annotations.</li>
-                            </ul>
-                             <b>Model Interaction</b>
-                             <ul>
-                                <li><b>+ Space</b>: Confirm prediction for selected annotation.</li>
-                                <li><b>+ 1-7</b>: Run various prediction models.</li>
-                            </ul>
-                             <b>Tool Control</b>
-                             <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
-                             <b>Semantic Annotation</b>
-                             <ul>
-                                <li><b>+ Mouse Wheel</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
-                                <li><b>+ Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
-                                <li><b>+ Backspace/Delete</b>: Clear mask annotation (Erase Tool).</li>
-                             </ul>
-                             <b>General</b>
-                             <ul><li><b>+ S</b>: Save the project.</li></ul>
-                        </span>
+                         <span class="tooltiptext"><ul><li><b>Ctrl</b>: Used to enter hotkey mode, used with most hotkey combinations.</li></ul></span>
                     </kbd>
                     <kbd>Win</kbd>
                     <kbd class="hotkey">Alt
@@ -504,40 +449,7 @@
                     <kbd>Win</kbd>
                     <kbd>Menu</kbd>
                     <kbd class="hotkey long-key">Ctrl
-                         <span class="tooltiptext">
-                            <b>Selection</b>
-                            <ul>
-                                <li><b>+ Click</b>: Add/remove annotation to/from selection.</li>
-                                <li><b>+ Drag</b>: Rectangle-select multiple annotations.</li>
-                                <li><b>+ A</b>: Select all annotations, unselect all annotations.</li>
-                            </ul>
-                            <b>Navigation</b>
-                             <ul>
-                                <li><b>+ Left/Right</b>: Cycle through annotations.</li>
-                                <li><b>+ W/A/S/D</b>: Cycle through labels.</li>
-                            </ul>
-                             <b>Annotation Editing</b>
-                             <ul>
-                                <li><b>+ Mouse Wheel</b>: Change selected annotation size.</li>
-                                <li><b>+ Backspace/Delete</b>: Remove selected annotation(s).</li>
-                                <li><b>+ X/C</b>: Cut/Combine annotations.</li>
-                            </ul>
-                             <b>Model Interaction</b>
-                             <ul>
-                                <li><b>+ Space</b>: Confirm prediction for selected annotation.</li>
-                                <li><b>+ 1-7</b>: Run various prediction models.</li>
-                            </ul>
-                             <b>Tool Control</b>
-                             <ul><li><b>+ Alt</b>: Switch tool / Create temporary work area.</li></ul>
-                             <b>Semantic Annotation</b>
-                             <ul>
-                                <li><b>+ Mouse Wheel</b>: Adjust brush/eraser size (Brush/Erase Tools).</li>
-                                <li><b>+ Shift</b>: Switch brush/eraser shape (Brush/Erase Tools).</li>
-                                <li><b>+ Backspace/Delete</b>: Clear mask annotation (Erase Tool).</li>
-                             </ul>
-                             <b>General</b>
-                             <ul><li><b>+ S</b>: Save the project.</li></ul>
-                        </span>
+                         <span class="tooltiptext"><ul><li><b>Ctrl</b>: Used to enter hotkey mode, used with most hotkey combinations.</li></ul></span>
                     </kbd>
                 </div>
             </div>
