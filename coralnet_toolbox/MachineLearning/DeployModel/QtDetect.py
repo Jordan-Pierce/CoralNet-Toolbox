@@ -32,8 +32,6 @@ class Detect(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Detection Model (Ctrl + 2)")
 
-        self.task = 'detect'
-
     def showEvent(self, event):
         """
         Handle the show event to update label options and sync uncertainty threshold.
@@ -151,6 +149,8 @@ class Detect(Base):
         """
         Load the detection model.
         """
+        self.task = 'detect'
+                
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return
@@ -158,10 +158,18 @@ class Detect(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            # TODO: Improve batch size handling for different model types
+            # Set BATCH_SIZE based on model type.
+            # .engine models require a fixed batch size (usually 1)
+            if self.model_path.endswith('.engine'):
+                self.BATCH_SIZE = 1
+            else:
+                self.BATCH_SIZE = 16
+                
             # Ensure task is correct after loading model
             self.update_sam_task_state()  
             # Load the model (8.3.141) YOLO handles RTDETR too
-            self.loaded_model = YOLO(self.model_path)
+            self.loaded_model = YOLO(self.model_path, task=self.task)
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
@@ -206,9 +214,6 @@ class Detect(Base):
                 QMessageBox.warning(self, "Warning", "No image is currently loaded for annotation.")
                 return
             image_paths = [self.annotation_window.current_image_path]
-
-        # --- Define a batch size for prediction ---
-        BATCH_SIZE = 16
 
         # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(
@@ -271,11 +276,11 @@ class Detect(Base):
                 
                 try:
                     # --- Loop over the data in mini-batches ---
-                    for i in range(0, len(work_items_data), BATCH_SIZE):
+                    for i in range(0, len(work_items_data), self.BATCH_SIZE):
                         
                         # Get the mini-batch chunks
-                        data_chunk = work_items_data[i: i + BATCH_SIZE]
-                        area_chunk = work_areas[i: i + BATCH_SIZE]
+                        data_chunk = work_items_data[i: i + self.BATCH_SIZE]
+                        area_chunk = work_areas[i: i + self.BATCH_SIZE]
                         
                         # --- 3a. Apply Model (Batched) ---
                         # Returns a flat list: [res1, res2, ...]

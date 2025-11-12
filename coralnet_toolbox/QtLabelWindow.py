@@ -1252,7 +1252,7 @@ class AddLabelDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -1332,7 +1332,7 @@ class EditLabelDialog(QDialog):
         self.label_window = label_window
         self.label = label
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Edit Label")
         self.setObjectName("EditLabelDialog")
 

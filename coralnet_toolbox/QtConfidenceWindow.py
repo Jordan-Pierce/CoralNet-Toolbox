@@ -585,15 +585,29 @@ class ConfidenceWindow(QWidget):
 
     def handle_bar_click(self, label):
         """Handle clicks on a confidence bar to update the annotation."""
+        # Guard clause: If no annotation is selected, do nothing.
+        if not self.annotation:
+            return
+
+        # Store a local reference to the annotation.
+        # This is crucial because unselect_annotation() will call clear_display()
+        # and set self.annotation to None.
+        annotation_to_update = self.annotation
+
         # Update the confidences to whichever bar was selected
-        self.annotation.update_user_confidence(label)
+        annotation_to_update.update_user_confidence(label)
         # Update the label to whichever bar was selected
-        self.annotation.update_label(label)
+        annotation_to_update.update_label(label)
+        
         # Update the search bars
         self.main_window.image_window.update_search_bars()
+        
         # Update everything else (essentially)
-        self.main_window.annotation_window.unselect_annotation(self.annotation)
-        self.main_window.annotation_window.select_annotation(self.annotation)
+        # This next line will set self.annotation to None via clear_display()
+        self.main_window.annotation_window.unselect_annotation(annotation_to_update)
+        
+        # Reselect the annotation using our saved local reference
+        self.main_window.annotation_window.select_annotation(annotation_to_update)
 
     def clear_layout(self, layout):
         """Remove all widgets from the specified layout."""

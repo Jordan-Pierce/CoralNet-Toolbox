@@ -2,10 +2,11 @@ import warnings
 
 import os
 import gc
+import yaml
+import uuid
 import datetime
 import traceback
 import ujson as json
-import yaml
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -20,6 +21,7 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVB
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame, QSpinBox)
 
 from torch.cuda import empty_cache
+import torch
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
@@ -158,7 +160,13 @@ class TrainModelWorker(QThread):
         """
         try:           
             # Check that there is a test folder
-            test_folder = f"{self.params['data']}/test"
+            if self.params['task'] == 'classify':
+                test_folder = f"{self.params['data']}/test"
+            else:  # detect, segment
+                # params['data'] is the path to the dataset YAML file
+                # so we need to get the parent folder and then look for the test folder
+                test_folder = os.path.join(os.path.dirname(self.params['data']), "test")
+                
             print(f"Note: Looking for test folder: {test_folder}")
             if not os.path.exists(test_folder):
                 print("Warning: No test folder found in that location. Skipping evaluation.")
@@ -225,7 +233,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Train Model")
         self.resize(600, 750)  
 
@@ -245,6 +253,9 @@ class Base(QDialog):
         self.model_path = None
         # Class mapping
         self.class_mapping = {}
+
+        self.is_optimizing = False
+        self.exported_model_path = None
 
         # Task specific parameters
         self.imgsz = 640
@@ -425,6 +436,11 @@ class Base(QDialog):
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
         
+        # Single Class (cls)
+        self.single_class_combo = create_bool_combo()
+        self.single_class_combo.setCurrentText("False")  # Default to False
+        form_layout.addRow("Single Class:", self.single_class_combo)
+
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
@@ -452,7 +468,7 @@ class Base(QDialog):
         
         # Workers
         self.workers_spinbox = QSpinBox()
-        self.workers_spinbox.setMinimum(1)
+        self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(8)
         form_layout.addRow("Workers:", self.workers_spinbox)
@@ -710,6 +726,7 @@ class Base(QDialog):
                 'dropout': self.dropout_spinbox,
                 'save': self.save_combo,
                 'weighted': self.weighted_combo,
+                'single_cls': self.single_class_combo,
                 'val': self.val_combo,
                 'verbose': self.verbose_combo,
                 'optimizer': self.optimizer_combo
@@ -780,6 +797,7 @@ class Base(QDialog):
             export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
             export_data['save'] = self.save_combo.currentText() == "True"
             export_data['weighted'] = self.weighted_combo.currentText() == "True"
+            export_data['single_cls'] = self.single_class_combo.currentText() == "True"
             export_data['val'] = self.val_combo.currentText() == "True"
             export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
@@ -827,7 +845,7 @@ class Base(QDialog):
         Handle the OK button click event.
         """
         self.train_model()
-        super().accept()
+        # Don't call super().accept() here, call it in on_training_completed
 
     def get_parameters(self):
         """
@@ -854,6 +872,7 @@ class Base(QDialog):
             'verbose': self.verbose_combo.currentText() == "True",
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            'single_cls': self.single_class_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
@@ -918,10 +937,36 @@ class Base(QDialog):
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
         os.makedirs(output_dir_path, exist_ok=True)
-        if self.class_mapping:
-            # Write the json file to the output directory
+
+        # Check if single_cls is True. self.params is set in self.train_model()
+        is_single_cls = self.params.get('single_cls', False)
+
+        mapping_to_save = {}
+        if is_single_cls:
+            # If single_cls=True, the model will be trained with one class: 'item'.
+            # We must save a class_mapping.json that reflects this,
+            # regardless of what the original dataset's mapping was.
+            # The model's output will be 'item', so deployment needs an 'item' label.
+            print("Note: single_cls=True. Saving 'item' class mapping.")
+            item_label = {
+                'id': str(uuid.uuid4()),  # Generate a new unique ID
+                'short_label_code': 'item',
+                'long_label_code': 'item',
+                'color': [255, 0, 0]  # Default to red
+            }
+            # The mapping file maps index (as string) to label dict.
+            # For single_cls, the index will always be '0'.
+            mapping_to_save = {'0': item_label}
+
+        elif self.class_mapping:
+            # Standard multi-class case: save the dataset's class mapping
+            mapping_to_save = self.class_mapping
+        
+        # Only write if there is a mapping to save
+        if mapping_to_save:
+            # Write the (potentially modified) json file to the output directory
             with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
-                json.dump(self.class_mapping, json_file, indent=4)
+                json.dump(mapping_to_save, json_file, indent=4)
 
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
@@ -945,13 +990,82 @@ class Base(QDialog):
         msg_box.setText("Model training has successfully been completed.")
         ok_button = msg_box.addButton(QMessageBox.Ok)
         
+        # TODO: Re-enable optimization option when CUDA is supported
+        # has_cuda = torch.cuda.is_available()
+        # if has_cuda:
+        #     optimize_button = msg_box.addButton("Optimize Model", QMessageBox.AcceptRole)
         deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
         msg_box.exec_()
 
-        if msg_box.clickedButton() == deploy_button:
+        clicked = msg_box.clickedButton()
+        if clicked == ok_button:
+            super().accept()
+        # elif has_cuda and clicked == optimize_button:
+        #     self.is_optimizing = True
+        #     self.optimize_trained_model()
+        elif clicked == deploy_button:
             self.deploy_trained_model()
+            super().accept()
+            
+    def optimize_trained_model(self):
+        """
+        Automatically export the trained model with pre-filled parameters without showing the dialog.
+        """
+        output_folder = f"{self.params['project']}/{self.params['name']}"
+        weights_folder = f"{output_folder}/weights"
+        
+        # Find the best weights file
+        best_weights = None
+        for fname in os.listdir(weights_folder):
+            if fname.startswith("best") and fname.endswith(".pt"):
+                best_weights = f"{weights_folder}/{fname}"
+                break
 
-    def deploy_trained_model(self):
+        if not best_weights:
+            QMessageBox.warning(self, "Optimize Model", "Could not find trained model weights.")
+            return
+
+        # Get the optimize dialog
+        optimize_dialog = self.main_window.optimize_model_dialog
+
+        # Pre-fill the parameters
+        optimize_dialog.model_path_edit.setText(best_weights)
+        optimize_dialog.imgsz_spinbox.setValue(self.params['imgsz'])
+        optimize_dialog.dynamic_combo.setCurrentText("True")  # Enable dynamic shapes
+        optimize_dialog.data_edit.setText(self.params['data'])  # Dataset YAML or directory
+        optimize_dialog.int8_combo.setCurrentText("True")  # Enable INT8 quantization
+
+        # Connect the export completed signal
+        optimize_dialog.export_completed.connect(self.on_export_completed_signal)
+
+        # Automatically start the export process
+        optimize_dialog.export_model()
+
+    def on_export_completed_signal(self, exported_path):
+        """
+        Handle the event when the export completes.
+        """
+        self.exported_model_path = exported_path
+        if self.is_optimizing:
+            self.on_optimize_completed()
+
+    def on_optimize_completed(self):
+        """
+        Handle the event when the optimization completes.
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Model Optimization Status")
+        msg_box.setText("Model optimization has successfully been completed.")
+        deploy_button = msg_box.addButton("Deploy Model", QMessageBox.AcceptRole)
+        msg_box.addButton(QMessageBox.Ok)
+        msg_box.exec_()
+
+        clicked = msg_box.clickedButton()
+        if clicked == deploy_button:
+            self.deploy_trained_model(self.exported_model_path)
+        super().accept()
+
+    def deploy_trained_model(self, model_path=None):
         """
         Load the trained model and class mapping into the existing deployment dialog,
         update the status and labels, but do not show the dialog.
@@ -965,16 +1079,27 @@ class Base(QDialog):
         output_folder = f"{self.params['project']}/{self.params['name']}"
         weights_folder = f"{output_folder}/weights"
         
-        # Find the best weights file (usually 'best.pt' or similar)
-        best_weights = None
-        for fname in os.listdir(weights_folder):
-            if fname.startswith("best") and fname.endswith(".pt"):
-                best_weights = f"{weights_folder}/{fname}"
-                break
+        if model_path is None:
+            # Find the best weights file (usually 'best.pt' or similar)
+            best_weights = None
+            for fname in os.listdir(weights_folder):
+                if fname.startswith("best") and fname.endswith(".pt"):
+                    best_weights = f"{weights_folder}/{fname}"
+                    break
 
-        if not best_weights:
-            QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
-            return
+            if not best_weights:
+                QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
+                return
+
+            task = self.task
+        else:
+            best_weights = model_path
+            if not os.path.exists(best_weights):
+                QMessageBox.warning(self, "Deploy Model", "Could not find model weights.")
+                return
+
+            # Use the same task as the trained model
+            task = self.task
 
         # Load class mapping if available
         class_mapping_path = f"{output_folder}/class_mapping.json"
@@ -987,11 +1112,11 @@ class Base(QDialog):
                 QMessageBox.warning(self, "Deploy Model", f"Failed to load class mapping: {str(e)}")
 
         # Use the existing deployment dialog instance from main_window
-        if self.task == "classify":
+        if task == "classify":
             deploy_dialog = self.main_window.classify_deploy_model_dialog
-        elif self.task == "detect":
+        elif task == "detect":
             deploy_dialog = self.main_window.detect_deploy_model_dialog
-        elif self.task == "segment":
+        elif task == "segment":
             deploy_dialog = self.main_window.segment_deploy_model_dialog
         else:
             QMessageBox.warning(self, "Deploy Model", "Unknown task type for deployment.")
@@ -1009,7 +1134,4 @@ class Base(QDialog):
             deploy_dialog.check_and_display_class_names()
         if hasattr(deploy_dialog, "status_bar"):
             deploy_dialog.status_bar.setText(f"Model loaded: {os.path.basename(best_weights)}")
-
-    # Do NOT show the dialog (no exec_())
-
 

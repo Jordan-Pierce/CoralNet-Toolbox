@@ -2,6 +2,7 @@ import warnings
 
 import gc
 import os
+from copy import deepcopy
 
 import numpy as np
 
@@ -30,8 +31,6 @@ class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Classification Model (Ctrl + 1)")
-
-        self.task = 'classify'
 
     def showEvent(self, event):
         """
@@ -72,6 +71,8 @@ class Classify(Base):
         """
         Load the classification model.
         """
+        self.task = 'classify'
+        
         if not self.model_path:
             QMessageBox.warning(self, "Warning", "Please select a model file first")
             return
@@ -79,14 +80,22 @@ class Classify(Base):
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            # TODO: Improve batch size handling for different model types
+            # Set BATCH_SIZE based on model type.
+            # .engine models require a fixed batch size (usually 1)
+            if self.model_path.endswith('.engine'):
+                self.BATCH_SIZE = 1
+            else:
+                self.BATCH_SIZE = 0
 
             # Load the model (8.3.141) YOLO handles RTDETR too
-            self.loaded_model = YOLO(self.model_path)
+            self.loaded_model = YOLO(self.model_path, task=self.task)
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
             except:
-                imgsz = 640
+                imgsz = 256
 
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
             self.class_names = list(self.loaded_model.names.values())
@@ -153,13 +162,24 @@ class Classify(Base):
                     continue
 
         # Only proceed if we have valid images to process
-        if images_np:
-            # Predict the classification results
-            results = self.loaded_model(images_np,
-                                        conf=self.main_window.get_uncertainty_thresh(),
-                                        device=self.main_window.device,
-                                        half=True,
-                                        stream=True)
+        if images_np:            
+            if not self.BATCH_SIZE:
+                # Predict the classification results
+                results = self.loaded_model(images_np,
+                                            conf=self.main_window.get_uncertainty_thresh(),
+                                            device=self.main_window.device,
+                                            half=True,
+                                            stream=True)
+                
+            else:  # process one by one
+                results = []
+                for _ in range(len(images_np)):
+                    result = self.loaded_model(images_np[_],
+                                               conf=self.main_window.get_uncertainty_thresh(),
+                                               device=self.main_window.device,
+                                               half=True)
+                    if result:  # Ensure the result list is not empty
+                        results.append(deepcopy(result[0]))  # Append the Results object itself
 
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,

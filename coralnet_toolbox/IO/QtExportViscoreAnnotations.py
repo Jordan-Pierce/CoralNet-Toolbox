@@ -32,7 +32,7 @@ class ExportViscoreAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Export Viscore Annotations")
         self.resize(600, 150)
 

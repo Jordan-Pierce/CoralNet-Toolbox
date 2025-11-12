@@ -244,7 +244,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Import Dataset")
         self.resize(500, 350)
 

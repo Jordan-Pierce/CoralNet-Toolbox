@@ -1,5 +1,6 @@
 import warnings
 
+import os
 from typing import Optional
 
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -615,7 +616,7 @@ class AnnotationWindow(QGraphicsView):
         QApplication.processEvents()
 
     def set_image(self, image_path):
-        """Set and display an image at the given path."""
+        """Set and display an image at the given path using a staged load for instant feedback."""
         # Calculate GDIs for Windows if needed
         self.main_window.check_windows_gdi_count()
         
@@ -624,11 +625,11 @@ class AnnotationWindow(QGraphicsView):
             self.tools[self.selected_tool].stop_current_drawing()
             if self.selected_tool == "scale":
                 self.main_window.untoggle_all_tools()
-            
-        # Clean up
+                    
+        # Clean up (This is the ONLY scene clear)
         self.clear_scene()
 
-        # Clear the action stack to prevent actions from the previous image from carrying over
+        # Clear the action stack
         self.action_stack.undo_stack.clear()
         self.action_stack.redo_stack.clear()
 
@@ -636,38 +637,64 @@ class AnnotationWindow(QGraphicsView):
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
             return
 
-        # Set the image representations in the annotation window
+        # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
             return
+            
+        # Get low-res thumbnail first for a preview
+        low_res_qimage = raster.get_thumbnail(longest_edge=256)
+        if low_res_qimage is None or low_res_qimage.isNull():
+            # If thumbnail fails, just exit
+            self.main_window.image_window.show_error(
+                "Image Loading Error",
+                f"Image {os.path.basename(image_path)} thumbnail could not be loaded."
+            )
+            return
+            
+        low_res_pixmap = QPixmap.fromImage(low_res_qimage)
+        
+        # Add the base image pixmap and set its Z-value
+        base_image_item = QGraphicsPixmapItem(low_res_pixmap)
+        base_image_item.setZValue(-10)
+        self.scene.addItem(base_image_item)
+
+        # Fit the low-res image in view
+        self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        
+        # Force Qt to process events and redraw the screen with the low-res image
+        QApplication.processEvents()
         
         # Update the rasterio image source for cropping annotations
         self.rasterio_image = raster.rasterio_src
         # Get QImage and convert to QPixmap for display
         q_image = raster.get_qimage()
         if q_image is None or q_image.isNull():
-            return
-        
+            self.main_window.image_window.show_error(
+                "Image Loading Error",
+                f"Image {os.path.basename(image_path)} full resolution could not be loaded."
+            )
+            return  # Failed to load full res, but preview is still visible
+
         # Convert and set the QPixmap
         self.pixmap_image = QPixmap.fromImage(q_image)
         self.current_image_path = image_path
         self.active_image = True
 
+        # --- SWAP IN FULL-RES PIXMAP (NO SCENE CLEAR) ---
+        base_image_item.setPixmap(self.pixmap_image)
+
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
         
-        # Add the base image pixmap and set its Z-value to be at the bottom
-        base_image_item = QGraphicsPixmapItem(self.pixmap_image)
-        base_image_item.setZValue(-10)
-        self.scene.addItem(base_image_item)
-
         # Update the zoom tool's state
         self.tools["zoom"].reset_zoom()
+        # Re-fit the view to the new, full-res pixmap
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.tools["zoom"].calculate_min_zoom()
 
-        # Toggle the cursor annotation to reflect the new image and label state
+        # Toggle the cursor annotation
         self.toggle_cursor_annotation()
 
         # Load all associated annotations

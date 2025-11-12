@@ -34,7 +34,7 @@ class ImportViscoreAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Import Viscore Annotations")
         self.resize(400, 200)
 

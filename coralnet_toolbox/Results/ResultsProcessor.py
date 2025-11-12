@@ -335,7 +335,7 @@ class ResultsProcessor:
     def extract_classification_result(self, result):
         """
         Extract relevant information from a classification result.
-        """
+        """        
         predictions = {}
 
         try:
@@ -348,7 +348,7 @@ class ResultsProcessor:
             top5conf = result.probs.top5conf
         except Exception as e:
             print(f"Warning: Failed to process classification result\n{e}")
-            return predictions
+            return None, None, None, {}
 
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
@@ -358,12 +358,12 @@ class ResultsProcessor:
 
         return image_path, top1cls, top1conf, predictions
 
-    def process_classification_results(self, results_generator, annotations, progress_bar=None):
+    def process_classification_results(self, results_list, annotations, progress_bar=None):
         """
         Process the classification results from the results generator.
         
         Args:
-            results_generator: Generator of classification results
+            results_list: List of classification results
             annotations: List of annotations to update
             progress_bar: Optional external progress bar. If None, creates its own.
         """
@@ -377,11 +377,13 @@ class ResultsProcessor:
         progress_bar.start_progress(len(annotations))
 
         try:
-            for result, annotation in zip(results_generator, annotations):
+            for result, annotation in zip(results_list, annotations):
                 if result:
                     try:
-                        # Extract results and pass them to the dedicated update/display method
-                        _, cls_name, conf, predictions = self.extract_classification_result(result)
+                        # Handle both Results objects (from stream) and pre-extracted tuples (from .engine)
+                        image_path, cls_name, conf, predictions = self.extract_classification_result(result)
+                        if image_path is None:
+                            continue
                         self._update_and_display_classification(annotation, cls_name, conf, predictions)
                     except Exception as e:
                         print(f"Warning: Failed to process classification result for annotation {annotation.id}\n{e}")

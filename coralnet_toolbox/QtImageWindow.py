@@ -191,6 +191,8 @@ class ImageWindow(QWidget):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
+        self.is_loading = False
+
         # Initialize managers and supporting objects
         self.raster_manager = RasterManager()
         self.image_filter = ImageFilter(self.raster_manager)
@@ -793,65 +795,58 @@ class ImageWindow(QWidget):
             image_path (str): Path to the image
             update (bool): Whether to update the image even if it's already selected
         """
-        # Validate path
-        if image_path not in self.raster_manager.image_paths:
+        if self.is_loading:
             return
+            
+        self.is_loading = True  # Set the lock
         
-        # Check if already selected
-        if image_path == self.selected_image_path and not update:
-            return
+        try:
+            # Validate path
+            if image_path not in self.raster_manager.image_paths:
+                return
+            
+            # Check if already selected
+            if image_path == self.selected_image_path and not update:
+                return
+            
+            with self.busy_cursor():
+                try:
+                    # Unhighlight all rows
+                    self.unhighlight_all_rows()
+                    
+                    # Get the raster (but don't load data from it yet)
+                    raster = self.raster_manager.get_raster(image_path)
+                    
+                    # Mark as checked when viewed
+                    raster.checkbox_state = True
+                    self.table_model.update_raster_data(image_path)
+                    
+                    # Update selection
+                    self.selected_image_path = image_path
+                    self.table_model.set_selected_path(image_path)
+                    self.select_row_for_path(image_path)
+                    
+                    # Update index label
+                    self.update_current_image_index_label()
+                    
+                    # This single call now handles the staged load (low-res -> high-res)
+                    # We pass the raster object directly to avoid a duplicate lookup
+                    self.annotation_window.set_image(image_path)
+                    
+                    # Emit signals
+                    self.imageSelected.emit(image_path)
+                    self.imageChanged.emit()
+                    self.imageLoaded.emit(image_path)
+                    
+                except Exception as e:
+                    # If set_image fails, it will handle its own errors, 
+                    # but we catch any other unexpected errors here.
+                    self.show_error("Image Loading Error",
+                                    f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
         
-        with self.busy_cursor():
-            try:
-                # Unhighlight all rows
-                self.unhighlight_all_rows()
-                
-                # Get the raster
-                raster = self.raster_manager.get_raster(image_path)
-                
-                # Mark as checked when viewed
-                raster.checkbox_state = True
-                self.table_model.update_raster_data(image_path)
-                
-                # Update selection
-                self.selected_image_path = image_path
-                self.table_model.set_selected_path(image_path)
-                self.select_row_for_path(image_path)
-                
-                # Update index label
-                self.update_current_image_index_label()
-                
-                # Load and display a preview immediately
-                low_res_image = raster.get_thumbnail(longest_edge=256)
-                self.annotation_window.display_image(low_res_image)
-                
-                # Load the full resolution image
-                q_image = raster.get_qimage()
-                if q_image is None or q_image.isNull():
-                    # Remove the problematic image and refresh UI
-                    self.raster_manager.remove_raster(image_path)
-                    self.selected_image_path = None
-                    self.annotation_window.clear_scene()
-                    self.filter_images()
-                    self.show_error("Image Loading Error", 
-                                    f"Image {os.path.basename(image_path)} could not be loaded and was removed.")
-                    return
-                
-                # Set the image in the annotation window
-                self.annotation_window.set_image(image_path)
-                
-                # Emit signals
-                self.imageSelected.emit(image_path)
-                self.imageChanged.emit()
-                self.imageLoaded.emit(image_path)
-                
-                # Prefetch adjacent images
-                self.prefetch_adjacent_images()
-                
-            except Exception as e:
-                self.show_error("Image Loading Error",
-                                f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
-                
+        finally:
+            self.is_loading = False  # Release the lock
+
     def select_row_for_path(self, path):
         """
         Select the row for a given path.
@@ -1042,47 +1037,6 @@ class ImageWindow(QWidget):
         
         # Load the first image
         self.load_image_by_path(self.table_model.filtered_paths[0])
-        
-    def prefetch_adjacent_images(self):
-        """
-        Prefetch adjacent images for smoother navigation.
-        Creates thumbnails in a background thread.
-        """
-        if not self.selected_image_path or not self.table_model.filtered_paths:
-            return
-            
-        current_index = self.table_model.get_row_for_path(self.selected_image_path)
-        if current_index < 0:
-            return
-            
-        # Get next and previous indices
-        next_index = (current_index + 1) % len(self.table_model.filtered_paths)
-        prev_index = (current_index - 1) % len(self.table_model.filtered_paths)
-        
-        # Get paths
-        paths = []
-        if next_index != current_index:
-            paths.append(self.table_model.get_path_at_row(next_index))
-        if prev_index != current_index:
-            paths.append(self.table_model.get_path_at_row(prev_index))
-            
-        # Start background thread to preload thumbnails
-        if paths:
-            QThreadPool.globalInstance().start(lambda: self._preload_thumbnails(paths))
-            
-    def _preload_thumbnails(self, paths):
-        """
-        Preload thumbnails for the given paths.
-        
-        Args:
-            paths (list): List of paths to preload
-        """
-        for path in paths:
-            if path in self.raster_manager.image_paths:
-                raster = self.raster_manager.get_raster(path)
-                if raster:
-                    # Just access the thumbnail to trigger creation
-                    raster.get_thumbnail(longest_edge=256)
                     
     def cycle_previous_image(self):
         """Load the previous image in the filtered list."""
