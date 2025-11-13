@@ -2398,7 +2398,7 @@ class Trainer:
             # Increment the counters
             self.since_best += 1
             self.since_drop += 1
-            print(f"📉 Model did not improve after epoch {epoch}")
+            print(f"📉 Model did not improve after epoch {self.best_epoch}")
 
         # Overfitting indication (only if validation is available)
         if valid_logs and train_loss < loss_value:
