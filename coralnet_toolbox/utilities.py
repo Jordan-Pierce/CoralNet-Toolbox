@@ -622,7 +622,11 @@ def convert_scale_units(value, from_unit, to_unit):
         'mm': 0.001,
         'cm': 0.01,
         'km': 1000.0,
+        'in': 0.0254,
+        'ft': 0.3048,
         'foot': 0.3048,
+        'yd': 0.9144,
+        'mi': 1609.344,
         'us survey foot': 1200 / 3937,
     }
 
@@ -633,7 +637,11 @@ def convert_scale_units(value, from_unit, to_unit):
         'metre': 1.0,
         'm': 1.0,
         'km': 0.001,
+        'in': 1 / 0.0254,
+        'ft': 1 / 0.3048,
         'foot': 1 / 0.3048,
+        'yd': 1 / 0.9144,
+        'mi': 1 / 1609.344,
         'us survey foot': 3937 / 1200,
     }
 

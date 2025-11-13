@@ -94,7 +94,7 @@ class ScaleToolDialog(QDialog):
         self.known_length_input.setToolTip("Enter the real-world length of the line you will draw.")
         
         self.units_combo = QComboBox()
-        self.units_combo.addItems(["mm", "cm", "m", "km"])
+        self.units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
         self.units_combo.setCurrentText("m")
         self.units_combo.setToolTip("Select the units for the known length.")
 
@@ -130,6 +130,11 @@ class ScaleToolDialog(QDialog):
         """Populates the 'Measure Line' tab."""
         layout = QFormLayout(tab_widget)
         
+        self.line_units_combo = QComboBox()
+        self.line_units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
+        self.line_units_combo.setCurrentText("m")
+        self.line_units_combo.setToolTip("Select the units for displaying measurements.")
+        
         self.line_length_label = QLabel("N/A")
         self.line_total_length_label = QLabel("0.0")
 
@@ -137,6 +142,7 @@ class ScaleToolDialog(QDialog):
         self.line_clear_button = QPushButton("Clear Total")
         self.line_add_button.setEnabled(False)
 
+        layout.addRow("Display Units:", self.line_units_combo)
         layout.addRow("Current Length:", self.line_length_label)
         layout.addRow("Total Length:", self.line_total_length_label)
         layout.addRow(self.line_add_button)
@@ -146,6 +152,11 @@ class ScaleToolDialog(QDialog):
         """Populates the 'Measure Rectangle' tab."""
         layout = QFormLayout(tab_widget)
         
+        self.rect_units_combo = QComboBox()
+        self.rect_units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
+        self.rect_units_combo.setCurrentText("m")
+        self.rect_units_combo.setToolTip("Select the units for displaying measurements.")
+        
         self.rect_perimeter_label = QLabel("N/A")
         self.rect_area_label = QLabel("N/A")
         self.rect_total_area_label = QLabel("0.0")
@@ -154,6 +165,7 @@ class ScaleToolDialog(QDialog):
         self.rect_clear_button = QPushButton("Clear Total")
         self.rect_add_button.setEnabled(False)
 
+        layout.addRow("Display Units:", self.rect_units_combo)
         layout.addRow("Perimeter:", self.rect_perimeter_label)
         layout.addRow("Area:", self.rect_area_label)
         layout.addRow("Total Area:", self.rect_total_area_label)
@@ -238,12 +250,14 @@ class ScaleToolDialog(QDialog):
         self.line_length_label.setText("N/A")
         self.line_total_length_label.setText("0.0")
         self.line_add_button.setEnabled(False)
+        self.line_units_combo.setCurrentText("m")  # Reset to meters
         
         # Reset Rect Tab
         self.rect_perimeter_label.setText("N/A")
         self.rect_area_label.setText("N/A")
         self.rect_total_area_label.setText("0.0")
         self.rect_add_button.setEnabled(False)
+        self.rect_units_combo.setCurrentText("m")  # Reset to meters
 
         self.update_checkboxes()
 
@@ -411,11 +425,13 @@ class ScaleTool(Tool):
         self.accumulated_rects.clear()
         
         # Reset totals when switching tabs
-        scale, units = self.get_current_scale()
         self.total_line_length = 0.0
-        self.dialog.line_total_length_label.setText(f"0.0 {units}")
+        line_units = self.dialog.line_units_combo.currentText()
+        self.dialog.line_total_length_label.setText(f"0.0 {line_units}")
+        
         self.total_rect_area = 0.0
-        area_units = f"{units}²" if units != "px" else "px²"
+        rect_units = self.dialog.rect_units_combo.currentText()
+        area_units = f"{rect_units}²" if rect_units != "px" else "px²"
         self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
         
         # Enable "Set Scale" button ONLY on the first tab
@@ -533,23 +549,40 @@ class ScaleTool(Tool):
                 self.dialog.pixel_length_label.setText(f"{self.pixel_length:.2f} px")
             else:
                 # Live update for line length
-                scale, units = self.get_current_scale()
-                length = self.pixel_length * scale
-                self.dialog.line_length_label.setText(f"{length:.3f} {units}")
+                scale, _ = self.get_current_scale()
+                display_units = self.dialog.line_units_combo.currentText()
+                length_meters = self.pixel_length * scale
+                
+                if display_units != "m":
+                    length_display = convert_scale_units(length_meters, 'metre', display_units)
+                else:
+                    length_display = length_meters
+                    
+                self.dialog.line_length_label.setText(f"{length_display:.3f} {display_units}")
 
         # --- Mode 2: Measure Rectangle ---
         elif self.current_mode == 2:
             self.end_point = scene_pos
             self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
             # Live update for rect
-            scale, units = self.get_current_scale()
-            area_units = f"{units}²" if units != "px" else "px²"
+            scale, _ = self.get_current_scale()
+            display_units = self.dialog.rect_units_combo.currentText()
+            area_units = f"{display_units}²" if display_units != "px" else "px²"
             rect = QRectF(self.start_point, self.end_point).normalized()
-            real_width = rect.width() * scale
-            real_height = rect.height() * scale
+            
+            real_width_m = rect.width() * scale
+            real_height_m = rect.height() * scale
+            
+            if display_units != "m":
+                real_width = convert_scale_units(real_width_m, 'metre', display_units)
+                real_height = convert_scale_units(real_height_m, 'metre', display_units)
+            else:
+                real_width = real_width_m
+                real_height = real_height_m
+                
             perimeter = 2 * (real_width + real_height)
             area = real_width * real_height
-            self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {units}")
+            self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {display_units}")
             self.dialog.rect_area_label.setText(f"{area:.3f} {area_units}")
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -572,19 +605,29 @@ class ScaleTool(Tool):
 
     def calculate_line_measurement(self):
         """Calculates and displays the length of the drawn line."""
-        scale, units = self.get_current_scale()
+        scale, _ = self.get_current_scale()
+        display_units = self.dialog.line_units_combo.currentText()
         
-        self.current_line_length = self.pixel_length * scale
+        # Calculate length in meters first
+        length_meters = self.pixel_length * scale
         
-        self.dialog.line_length_label.setText(f"{self.current_line_length:.3f} {units}")
+        # Convert to display units
+        if display_units != "m":
+            length_display = convert_scale_units(length_meters, 'metre', display_units)
+        else:
+            length_display = length_meters
+        
+        self.current_line_length = length_display
+        
+        self.dialog.line_length_label.setText(f"{length_display:.3f} {display_units}")
         self.dialog.line_add_button.setEnabled(True)
 
     def add_line_to_total(self):
         """Adds the current line length to the total."""
         self.total_line_length += self.current_line_length
-        scale, units = self.get_current_scale()
+        display_units = self.dialog.line_units_combo.currentText()
             
-        self.dialog.line_total_length_label.setText(f"{self.total_line_length:.3f} {units}")
+        self.dialog.line_total_length_label.setText(f"{self.total_line_length:.3f} {display_units}")
         
         # Create a permanent line item to keep visible
         perm_line = QGraphicsLineItem(self.preview_line.line())
@@ -599,8 +642,8 @@ class ScaleTool(Tool):
 
     def clear_line_total(self):
         self.total_line_length = 0.0
-        scale, units = self.get_current_scale()
-        self.dialog.line_total_length_label.setText(f"0.0 {units}")
+        display_units = self.dialog.line_units_combo.currentText()
+        self.dialog.line_total_length_label.setText(f"0.0 {display_units}")
         
         # Remove accumulated lines
         for line in self.accumulated_lines:
@@ -611,16 +654,25 @@ class ScaleTool(Tool):
 
     def calculate_rect_measurement(self):
         """Calculates and displays rect perimeter and area."""
-        scale, units = self.get_current_scale()
-        area_units = f"{units}²" if units != "px" else "px²"
+        scale, _ = self.get_current_scale()
+        display_units = self.dialog.rect_units_combo.currentText()
+        area_units = f"{display_units}²" if display_units != "px" else "px²"
 
         rect = QRectF(self.start_point, self.end_point).normalized()
         pixel_width = rect.width()
         pixel_height = rect.height()
 
-        # We assume square pixels from this tool
-        real_width = pixel_width * scale
-        real_height = pixel_height * scale
+        # Calculate dimensions in meters first
+        real_width_m = pixel_width * scale
+        real_height_m = pixel_height * scale
+        
+        # Convert to display units
+        if display_units != "m":
+            real_width = convert_scale_units(real_width_m, 'metre', display_units)
+            real_height = convert_scale_units(real_height_m, 'metre', display_units)
+        else:
+            real_width = real_width_m
+            real_height = real_height_m
         
         perimeter = 2 * (real_width + real_height)
         area = real_width * real_height
@@ -628,14 +680,14 @@ class ScaleTool(Tool):
         # Store for accumulation
         self.current_rect_area = area 
 
-        self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {units}")
+        self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {display_units}")
         self.dialog.rect_area_label.setText(f"{area:.3f} {area_units}")
         self.dialog.rect_add_button.setEnabled(True)
 
     def add_rect_to_total(self):
         self.total_rect_area += self.current_rect_area
-        scale, units = self.get_current_scale()
-        area_units = f"{units}²" if units != "px" else "px²"
+        display_units = self.dialog.rect_units_combo.currentText()
+        area_units = f"{display_units}²" if display_units != "px" else "px²"
         
         self.dialog.rect_total_area_label.setText(f"{self.total_rect_area:.3f} {area_units}")
         
@@ -653,8 +705,8 @@ class ScaleTool(Tool):
 
     def clear_rect_total(self):
         self.total_rect_area = 0.0
-        scale, units = self.get_current_scale()
-        area_units = f"{units}²" if units != "px" else "px²"
+        display_units = self.dialog.rect_units_combo.currentText()
+        area_units = f"{display_units}²" if display_units != "px" else "px²"
         self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
         
         # Remove accumulated rects

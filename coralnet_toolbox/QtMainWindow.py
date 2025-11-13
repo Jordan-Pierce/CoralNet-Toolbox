@@ -1011,7 +1011,8 @@ class MainWindow(QMainWindow):
         self.scaled_view_dims_label.setEnabled(False)   # Disabled by default
         
         self.scale_unit_dropdown = QComboBox()
-        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km'])
+        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.scale_unit_dropdown.setFixedWidth(60)
         self.scale_unit_dropdown.setEnabled(False)      # Disabled by default
 
