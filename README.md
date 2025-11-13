@@ -27,33 +27,35 @@
 # Create and activate custom environment
 conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
-```
 
-**2. Install**
-
-```bash
-# Use UV for the fastest installation
+# Install uv
 pip install uv
-uv pip install coralnet-toolbox
 ```
 
-**3. Launch**
-
-```bash
-coralnet-toolbox
-```
-
-**4. (Optional) GPU Acceleration**
-For full acceleration, install PyTorch with CUDA support.
+**2. (Optional) GPU Acceleration**
+If you have an NVIDIA GPU with CUDA, install PyTorch with CUDA support for full acceleration.
 
 ```bash
 # Example for CUDA 12.9; use your version of CUDA
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 ```
 
+**3. Install**
+
+```bash
+# Use UV for the fastest installation
+uv pip install coralnet-toolbox
+```
+> **Fallback**: If UV fails, use regular pip: `pip install coralnet-toolbox`
+
+**4. Launch**
+
+```bash
+coralnet-toolbox
+```
+
 *See the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details on other versions.*
 
-> **Fallback**: If UV fails, use regular pip: `pip install coralnet-toolbox`
 
 ### 🎯 **GPU Status Indicators**
 - **🐢** CPU only
