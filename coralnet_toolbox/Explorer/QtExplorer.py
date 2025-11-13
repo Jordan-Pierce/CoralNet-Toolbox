@@ -35,12 +35,14 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
     from umap import UMAP
 except ImportError:
     print("Warning: sklearn or umap not installed. Some features may be unavailable.")
     StandardScaler = None
     PCA = None
     TSNE = None
+    LDA = None
     UMAP = None
 
 
@@ -52,6 +54,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 POINT_WIDTH = 3
+REVIEW_LABEL = 'Review'
 
 # ----------------------------------------------------------------------------------------------------------------------
 # ExplorerWindow
@@ -1397,18 +1400,13 @@ class ExplorerWindow(QMainWindow):
 
     def _run_dimensionality_reduction(self, features, params):
         """
-        Runs dimensionality reduction with automatic PCA preprocessing for UMAP and t-SNE.
-
-        Args:
-            features (np.ndarray): Feature matrix of shape (N, D).
-            params (dict): Embedding parameters, including technique and its hyperparameters.
-
-        Returns:
-            np.ndarray or None: Embedded features of shape (N, 2) or (N, 3), or None on failure.
+        Runs dimensionality reduction with optional PCA preprocessing.
+        For LDA, fits on labeled data and transforms all data.
         """
         technique = params.get('technique', 'UMAP')
         pca_components = params.get('pca_components', 50)
         n_components = params.get('dimensions', 3)
+        perform_pca_before = params.get('perform_pca_before', True)
 
         if len(features) <= n_components:
             return None
@@ -1416,9 +1414,8 @@ class ExplorerWindow(QMainWindow):
         try:
             features_scaled = StandardScaler().fit_transform(features)
             
-            # **Only apply PCA preprocessing for 3D embeddings**
-            is_3d = (n_components == 3)
-            if is_3d and technique in ["UMAP", "TSNE"] and features_scaled.shape[1] > pca_components:
+            # Apply PCA preprocessing if enabled and not PCA technique
+            if perform_pca_before and technique != "PCA" and features_scaled.shape[1] > pca_components:
                 pca_components = min(pca_components, features_scaled.shape[0] - 1, features_scaled.shape[1])
                 print(f"Applying PCA preprocessing to {pca_components} components before {technique}")
                 pca = PCA(n_components=pca_components, random_state=42)
@@ -1426,7 +1423,33 @@ class ExplorerWindow(QMainWindow):
                 variance_explained = sum(pca.explained_variance_ratio_) * 100
                 print(f"Variance explained by PCA: {variance_explained:.1f}%")
 
-            # Proceed with the selected dimensionality reduction technique
+            if technique == "LDA":
+                # Separate labeled and unlabeled data
+                labels = []
+                labeled_indices = []
+                unlabeled_indices = []
+                for i, item in enumerate(self.current_data_items):
+                    label_name = getattr(item.effective_label, 'short_label_code', REVIEW_LABEL)
+                    if label_name != REVIEW_LABEL:
+                        labels.append(label_name)
+                        labeled_indices.append(i)
+                    else:
+                        unlabeled_indices.append(i)
+                
+                if len(set(labels)) < 2:
+                    QMessageBox.warning(self, "LDA Error", 
+                                        f"LDA requires at least 2 classes (not '{REVIEW_LABEL}').")
+                    return None
+                
+                labeled_features = features_scaled[labeled_indices]
+                n_components_lda = min(n_components, len(set(labels)) - 1)
+                reducer = LDA(n_components=n_components_lda)
+                reducer.fit(labeled_features, labels)
+                
+                # Transform all data
+                return reducer.transform(features_scaled)
+            
+            # Existing logic for other techniques...
             if technique == "UMAP":
                 n_neighbors = min(params.get('n_neighbors', 15), len(features_scaled) - 1)
                 reducer = UMAP(
@@ -1451,7 +1474,6 @@ class ExplorerWindow(QMainWindow):
             else:
                 return None
 
-            # Fit and transform the features
             return reducer.fit_transform(features_scaled)
 
         except Exception as e:
@@ -1579,6 +1601,15 @@ class ExplorerWindow(QMainWindow):
             features = np.array(final_feature_list)
             self.current_data_items = final_data_items
             self.annotation_viewer.update_annotations(self.current_data_items)
+
+            # Validate LDA requirements if selected
+            if embedding_params.get('technique') == 'LDA':
+                labeled_count = sum(1 for item in final_data_items 
+                                    if getattr(item.effective_label, 'short_label_code', REVIEW_LABEL) != REVIEW_LABEL)
+                if labeled_count < 2:
+                    QMessageBox.warning(self, "LDA Error", 
+                                        f"LDA requires at least 2 labeled annotations (not '{REVIEW_LABEL}').")
+                    return
 
             progress_bar.set_busy_mode("Running dimensionality reduction...")
             embedded_features = self._run_dimensionality_reduction(features, embedding_params)
