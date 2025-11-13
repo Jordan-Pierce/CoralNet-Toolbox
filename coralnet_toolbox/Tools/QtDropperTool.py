@@ -59,7 +59,7 @@ class DropperTool(Tool):
         if not label:
             QMessageBox.warning(self.annotation_window,
                                 "Label Not Found",
-                                f"No label found for class ID {class_id}.")
+                                "No label found for the selected pixel. Is it a locked pixel?")
             return
         
         # Emit the signal to select the label in the label window
