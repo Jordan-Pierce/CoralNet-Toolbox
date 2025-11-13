@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self.polygon_icon = get_icon("polygon.png")
         self.brush_icon = get_icon("brush.png")
         self.erase_icon = get_icon("erase.png")
+        self.dropper_icon = get_icon("dropper.png")
         self.fill_icon = get_icon("fill.png")
         self.sam_icon = get_icon("wizard.png")
         self.see_anything_icon = get_icon("eye.png")
@@ -822,6 +823,10 @@ class MainWindow(QMainWindow):
                      "Fill contiguous regions in mask annotations.\n"
                      "• Left-click to fill the region under the cursor with the selected label."),
 
+            "dropper": ("Dropper Tool\n\n"
+                        "Select a label from the current mask annotation.\n"
+                        "• Left-click on a pixel in the mask to select its label in the label window."),
+
             "sam": ("Segment Anything (SAM) Tool\n\n"
                     "Generates AI-powered segmentations.\n"
                     "• Left-click to create a working area, then left-click again to confirm.\n"
@@ -924,6 +929,12 @@ class MainWindow(QMainWindow):
         self.erase_tool_action.setToolTip(self.tool_descriptions["erase"])
         self.erase_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.erase_tool_action)
+
+        self.dropper_tool_action = QAction(self.dropper_icon, "Dropper", self)
+        self.dropper_tool_action.setCheckable(True)
+        self.dropper_tool_action.setToolTip(self.tool_descriptions["dropper"])
+        self.dropper_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.dropper_tool_action)
 
         self.fill_tool_action = QAction(self.fill_icon, "Fill", self)
         self.fill_tool_action.setCheckable(True)
@@ -1359,6 +1370,12 @@ class MainWindow(QMainWindow):
         elif selected_tool == 'erase':
             self.choose_specific_tool('brush')
             return
+        elif selected_tool == 'fill':
+            self.choose_specific_tool('brush')
+            return
+        elif selected_tool == 'dropper':
+            self.choose_specific_tool('brush')
+            return
                 
         if selected_tool != "select":
             self.choose_specific_tool("select")
@@ -1416,6 +1433,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1433,6 +1451,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1450,6 +1469,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1467,6 +1487,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1484,6 +1505,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1501,6 +1523,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1508,6 +1531,24 @@ class MainWindow(QMainWindow):
                 self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("erase")
+            else:
+                self.toolChanged.emit(None)
+
+        elif action == self.dropper_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+                self.scale_tool_action.setChecked(False)
+
+                self.toolChanged.emit("dropper")
             else:
                 self.toolChanged.emit(None)
 
@@ -1519,6 +1560,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1542,6 +1584,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1565,6 +1608,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
@@ -1582,6 +1626,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1599,6 +1644,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.brush_tool_action.setChecked(False)
                 self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
@@ -1620,6 +1666,7 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setChecked(False)
         self.brush_tool_action.setChecked(False)
         self.erase_tool_action.setChecked(False)
+        self.dropper_tool_action.setChecked(False)
         self.fill_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
@@ -1641,6 +1688,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1654,6 +1702,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1667,6 +1716,8 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1680,6 +1731,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(True)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1693,6 +1745,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(True)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1706,6 +1759,21 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(True)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
+
+        elif tool == "dropper":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(True)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1719,6 +1787,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1732,6 +1801,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
@@ -1745,6 +1815,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
@@ -1758,6 +1829,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1771,6 +1843,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
             self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
             self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
@@ -1783,9 +1856,13 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
     
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""

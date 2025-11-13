@@ -22,6 +22,7 @@ from coralnet_toolbox.Tools import (
     BrushTool,
     EraseTool,
     FillTool,
+    DropperTool,
     SAMTool,
     SeeAnythingTool,
     SelectTool,
@@ -173,11 +174,12 @@ class AnnotationWindow(QGraphicsView):
             "scale": ScaleTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
-            "erase": EraseTool(self)
+            "erase": EraseTool(self),
+            "dropper": DropperTool(self)
         }
 
         # Defines which tools trigger mask mode
-        self.mask_tools = {"brush", "fill", "erase"}
+        self.mask_tools = {"brush", "fill", "erase", "dropper"}
 
         # Initialize the action stack for undo/redo
         self.action_stack = ActionStack()
