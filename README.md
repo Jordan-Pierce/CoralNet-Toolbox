@@ -9,7 +9,6 @@
 
 [![Python Version](https://img.shields.io/pypi/pyversions/CoralNet-Toolbox.svg?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/CoralNet-Toolbox)
 [![Version](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg?style=for-the-badge&color=blue)](https://pypi.python.org/pypi/CoralNet-Toolbox)
-[![GitHub last commit](https://img.shields.io/github/last-commit/Jordan-Pierce/CoralNet-Toolbox?style=for-the-badge)](https://github.com/Jordan-Pierce/CoralNet-Toolbox)
 [![Downloads](https://img.shields.io/pepy/dt/coralnet-toolbox.svg?style=for-the-badge&color=brightgreen)](https://pepy.tech/project/coralnet-toolbox)
 
 [![PyPI Passing](https://img.shields.io/github/actions/workflow/status/Jordan-Pierce/CoralNet-Toolbox/pypi.yml?style=for-the-badge&label=PyPI%20Build&logo=github)](https://pypi.org/project/CoralNet-Toolbox)
