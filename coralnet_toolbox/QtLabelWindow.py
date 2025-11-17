@@ -1008,7 +1008,7 @@ class LabelWindow(QWidget):
                 annotation.update_label(label_to_update)
 
         # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
-        if self.annotation_window.current_mask_annotation and self.annotation_window._is_in_mask_editing_mode():
+        if self.annotation_window.current_mask_annotation:  # and self.annotation_window._is_in_mask_editing_mode():
             self.annotation_window.current_mask_annotation.update_graphics_item()
 
         # Force a repaint of the label widget itself and reorganize the grid
@@ -1077,7 +1077,7 @@ class LabelWindow(QWidget):
 
         # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask and self.annotation_window._is_in_mask_editing_mode():
+        if current_mask:  # and self.annotation_window._is_in_mask_editing_mode():
             current_mask.update_graphics_item()
 
     def delete_label(self, label):
@@ -1125,7 +1125,7 @@ class LabelWindow(QWidget):
 
         # If the currently visible mask was affected, refresh its view (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask and self.annotation_window._is_in_mask_editing_mode():
+        if current_mask:  # and self.annotation_window._is_in_mask_editing_mode():
             current_mask.update_graphics_item()
 
         # Store affected image paths before deletion to update them later
