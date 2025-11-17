@@ -1,6 +1,8 @@
 import warnings
+import math
+import numpy as np
 
-from PyQt5.QtCore import Qt, QLineF, QRectF
+from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint
 from PyQt5.QtGui import QMouseEvent, QPen, QColor
 from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWidget,
                              QFormLayout, QDoubleSpinBox, QComboBox, QLabel,
@@ -143,10 +145,29 @@ class ScaleToolDialog(QDialog):
         self.line_add_button.setEnabled(False)
 
         layout.addRow("Display Units:", self.line_units_combo)
-        layout.addRow("Current Length:", self.line_length_label)
-        layout.addRow("Total Length:", self.line_total_length_label)
+        layout.addRow("2D Length:", self.line_length_label)
+        layout.addRow("Total 2D Length:", self.line_total_length_label)
         layout.addRow(self.line_add_button)
         layout.addRow(self.line_clear_button)
+
+        # --- 3D Metrics ---
+        self.line_3d_group = QGroupBox("3D Z-Metrics")
+        self.line_3d_group.setToolTip("Requires a loaded Z-Channel to activate.")
+        self.line_3d_layout = QFormLayout()
+        self.line_3d_group.setLayout(self.line_3d_layout)
+
+        self.line_3d_length_label = QLabel("N/A")
+        self.line_delta_z_label = QLabel("N/A")
+        self.line_slope_label = QLabel("N/A")
+        self.line_rugosity_label = QLabel("N/A")
+        
+        self.line_3d_layout.addRow("3D Surface Length:", self.line_3d_length_label)
+        self.line_3d_layout.addRow("ΔZ (Elevation Change):", self.line_delta_z_label)
+        self.line_3d_layout.addRow("Slope / Grade:", self.line_slope_label)
+        self.line_3d_layout.addRow("Linear Rugosity:", self.line_rugosity_label)
+        
+        self.line_3d_group.setEnabled(False) # Disabled by default
+        layout.addRow(self.line_3d_group)
 
     def setup_rect_tab(self, tab_widget):
         """Populates the 'Measure Rectangle' tab."""
@@ -166,11 +187,30 @@ class ScaleToolDialog(QDialog):
         self.rect_add_button.setEnabled(False)
 
         layout.addRow("Display Units:", self.rect_units_combo)
-        layout.addRow("Perimeter:", self.rect_perimeter_label)
-        layout.addRow("Area:", self.rect_area_label)
-        layout.addRow("Total Area:", self.rect_total_area_label)
+        layout.addRow("2D Perimeter:", self.rect_perimeter_label)
+        layout.addRow("2D Area:", self.rect_area_label)
+        layout.addRow("Total 2D Area:", self.rect_total_area_label)
         layout.addRow(self.rect_add_button)
         layout.addRow(self.rect_clear_button)
+        
+        # --- 3D Metrics ---
+        self.rect_3d_group = QGroupBox("3D Z-Metrics")
+        self.rect_3d_group.setToolTip("Requires a loaded Z-Channel to activate.")
+        self.rect_3d_layout = QFormLayout()
+        self.rect_3d_group.setLayout(self.rect_3d_layout)
+        
+        self.rect_z_stats_label = QLabel("N/A")
+        self.rect_3d_surface_area_label = QLabel("N/A")
+        self.rect_volume_label = QLabel("N/A")
+        self.rect_rugosity_label = QLabel("N/A")
+        
+        self.rect_3d_layout.addRow("Z-Stats (Min/Max/Mean):", self.rect_z_stats_label)
+        self.rect_3d_layout.addRow("3D Surface Area:", self.rect_3d_surface_area_label)
+        self.rect_3d_layout.addRow("Prismatic Volume:", self.rect_volume_label)
+        self.rect_3d_layout.addRow("Areal Rugosity:", self.rect_rugosity_label)
+        
+        self.rect_3d_group.setEnabled(False) # Disabled by default
+        layout.addRow(self.rect_3d_group)
 
     def setup_options_layout(self):
         """
@@ -251,6 +291,11 @@ class ScaleToolDialog(QDialog):
         self.line_total_length_label.setText("0.0")
         self.line_add_button.setEnabled(False)
         self.line_units_combo.setCurrentText("m")  # Reset to meters
+        self.line_3d_group.setEnabled(False)
+        self.line_3d_length_label.setText("N/A")
+        self.line_delta_z_label.setText("N/A")
+        self.line_slope_label.setText("N/A")
+        self.line_rugosity_label.setText("N/A")
         
         # Reset Rect Tab
         self.rect_perimeter_label.setText("N/A")
@@ -258,6 +303,11 @@ class ScaleToolDialog(QDialog):
         self.rect_total_area_label.setText("0.0")
         self.rect_add_button.setEnabled(False)
         self.rect_units_combo.setCurrentText("m")  # Reset to meters
+        self.rect_3d_group.setEnabled(False)
+        self.rect_z_stats_label.setText("N/A")
+        self.rect_3d_surface_area_label.setText("N/A")
+        self.rect_volume_label.setText("N/A")
+        self.rect_rugosity_label.setText("N/A")
 
         self.update_checkboxes()
 
@@ -363,6 +413,59 @@ class ScaleTool(Tool):
         else:
             return 1.0, "px"
 
+    def get_current_z_data(self):
+        """
+        Helper to get z_channel, scale, and units for the current raster.
+        Also enables/disables the 3D metric groups in the dialog.
+        
+        Returns:
+            tuple: (raster, z_channel, scale_x, scale_y, z_unit) or (None, None, ...)
+        """
+        current_path = self.annotation_window.current_image_path
+        if not current_path:
+            self.dialog.line_3d_group.setEnabled(False)
+            self.dialog.rect_3d_group.setEnabled(False)
+            return None, None, None, None, None
+            
+        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
+        if not raster:
+            self.dialog.line_3d_group.setEnabled(False)
+            self.dialog.rect_3d_group.setEnabled(False)
+            return None, None, None, None, None
+
+        # Check for scale first
+        scale_x = raster.scale_x
+        scale_y = raster.scale_y
+        
+        # Now check for z_channel (lazily)
+        z_channel = raster.z_channel_lazy
+        z_unit = raster.z_unit
+        
+        # We need both scale and z-channel for 3D metrics
+        if scale_x is not None and z_channel is not None:
+            self.dialog.line_3d_group.setEnabled(True)
+            self.dialog.rect_3d_group.setEnabled(True)
+            return raster, z_channel, scale_x, scale_y, z_unit
+        else:
+            # If we're missing anything, disable the 3D fields
+            self.dialog.line_3d_group.setEnabled(False)
+            self.dialog.rect_3d_group.setEnabled(False)
+            self.reset_3d_labels() # Explicitly clear them
+            return raster, None, scale_x, scale_y, None # Return partial data
+
+    def reset_3d_labels(self):
+        """Resets just the 3D metric labels to N/A."""
+        # Line Tab
+        self.dialog.line_3d_length_label.setText("N/A")
+        self.dialog.line_delta_z_label.setText("N/A")
+        self.dialog.line_slope_label.setText("N/A")
+        self.dialog.line_rugosity_label.setText("N/A")
+        # Rect Tab
+        self.dialog.rect_z_stats_label.setText("N/A")
+        self.dialog.rect_3d_surface_area_label.setText("N/A")
+        self.dialog.rect_volume_label.setText("N/A")
+        self.dialog.rect_rugosity_label.setText("N/A")
+
     def activate(self):
         super().activate()
         # Set initial mode based on the currently selected tab
@@ -383,6 +486,9 @@ class ScaleTool(Tool):
             self.dialog.current_scale_status_label.setText(f"Scale: {scale:.6f} {units}/pixel")
         else:
             self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
+
+        # Check for Z-Data to enable/disable 3D tabs
+        self.get_current_z_data()
 
         self.dialog.show()
         self.dialog.activateWindow()  # Bring it to the front
@@ -415,6 +521,9 @@ class ScaleTool(Tool):
         """Called when the user clicks a different tab."""
         self.current_mode = index
         self.stop_current_drawing()
+        
+        # Check for Z-Data to enable/disable 3D groups
+        self.get_current_z_data()
         
         # Clear accumulated graphics when switching tabs
         for line in self.accumulated_lines:
@@ -454,6 +563,9 @@ class ScaleTool(Tool):
         self.dialog.line_length_label.setText("N/A")
         self.dialog.rect_perimeter_label.setText("N/A")
         self.dialog.rect_area_label.setText("N/A")
+        
+        # Reset 3D labels
+        self.reset_3d_labels()
         
         # Reset current measurements
         self.current_line_length = 0.0
@@ -500,7 +612,7 @@ class ScaleTool(Tool):
                 if self.current_mode == 0:
                     self.dialog.pixel_length_label.setText(f"{self.pixel_length:.2f} px")
                 else:
-                    self.calculate_line_measurement()
+                    self.calculate_line_measurement(final_calc=True) # <-- Changed
 
         # --- Mode 2: Measure Rectangle ---
         elif self.current_mode == 2:
@@ -518,7 +630,7 @@ class ScaleTool(Tool):
                 self.is_drawing = False
                 self.end_point = scene_pos
                 self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
-                self.calculate_rect_measurement()
+                self.calculate_rect_measurement(final_calc=True) # <-- Changed
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
@@ -549,41 +661,14 @@ class ScaleTool(Tool):
                 self.dialog.pixel_length_label.setText(f"{self.pixel_length:.2f} px")
             else:
                 # Live update for line length
-                scale, _ = self.get_current_scale()
-                display_units = self.dialog.line_units_combo.currentText()
-                length_meters = self.pixel_length * scale
-                
-                if display_units != "m":
-                    length_display = convert_scale_units(length_meters, 'metre', display_units)
-                else:
-                    length_display = length_meters
-                    
-                self.dialog.line_length_label.setText(f"{length_display:.3f} {display_units}")
+                self.calculate_line_measurement(final_calc=False) # <-- Changed
 
         # --- Mode 2: Measure Rectangle ---
         elif self.current_mode == 2:
             self.end_point = scene_pos
             self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
             # Live update for rect
-            scale, _ = self.get_current_scale()
-            display_units = self.dialog.rect_units_combo.currentText()
-            area_units = f"{display_units}²" if display_units != "px" else "px²"
-            rect = QRectF(self.start_point, self.end_point).normalized()
-            
-            real_width_m = rect.width() * scale
-            real_height_m = rect.height() * scale
-            
-            if display_units != "m":
-                real_width = convert_scale_units(real_width_m, 'metre', display_units)
-                real_height = convert_scale_units(real_height_m, 'metre', display_units)
-            else:
-                real_width = real_width_m
-                real_height = real_height_m
-                
-            perimeter = 2 * (real_width + real_height)
-            area = real_width * real_height
-            self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {display_units}")
-            self.dialog.rect_area_label.setText(f"{area:.3f} {area_units}")
+            self.calculate_rect_measurement(final_calc=False) # <-- Changed
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         pass
@@ -603,27 +688,114 @@ class ScaleTool(Tool):
 
     # --- Calculation and Accumulation Methods ---
 
-    def calculate_line_measurement(self):
+    def calculate_line_measurement(self, final_calc=False):
         """Calculates and displays the length of the drawn line."""
-        scale, _ = self.get_current_scale()
+        
+        # --- 1. Get Data ---
+        raster, z_channel, scale_x, scale_y, z_unit = self.get_current_z_data()
+        
+        # Check for invalid scale
+        if scale_x is None or scale_y is None:
+            self.dialog.line_length_label.setText("Scale Not Set")
+            self.reset_3d_labels()
+            return
+
         display_units = self.dialog.line_units_combo.currentText()
         
-        # Calculate length in meters first
-        length_meters = self.pixel_length * scale
+        # --- 2. 2D Calculations ---
+        length_2d_meters = self.pixel_length * scale_x # Assume square pixels
         
         # Convert to display units
         if display_units != "m":
-            length_display = convert_scale_units(length_meters, 'metre', display_units)
+            length_2d_display = convert_scale_units(length_2d_meters, 'metre', display_units)
         else:
-            length_display = length_meters
+            length_2d_display = length_2d_meters
         
-        self.current_line_length = length_display
+        if final_calc:
+            self.current_line_length = length_2d_display
+            self.dialog.line_add_button.setEnabled(True)
         
-        self.dialog.line_length_label.setText(f"{length_display:.3f} {display_units}")
-        self.dialog.line_add_button.setEnabled(True)
+        self.dialog.line_length_label.setText(f"{length_2d_display:.3f} {display_units}")
+
+        # --- 3. 3D Calculations ---
+        # Stop if no z_channel
+        if z_channel is None:
+            self.reset_3d_labels()
+            return
+            
+        try:
+            h, w = z_channel.shape
+            z_unit_str = z_unit if z_unit else 'z-units'
+
+            # Get Z start/end
+            p1 = QPoint(int(self.start_point.x()), int(self.start_point.y()))
+            p2 = QPoint(int(self.end_point.x()), int(self.end_point.y()))
+
+            # Clamp points to be inside raster bounds
+            p1.setX(max(0, min(p1.x(), w - 1)))
+            p1.setY(max(0, min(p1.y(), h - 1)))
+            p2.setX(max(0, min(p2.x(), w - 1)))
+            p2.setY(max(0, min(p2.y(), h - 1)))
+
+            z_start = z_channel[p1.y(), p1.x()]
+            z_end = z_channel[p2.y(), p2.x()]
+            
+            delta_z = z_end - z_start
+            self.dialog.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
+            
+            # Calculate Slope
+            if length_2d_meters > 0:
+                slope = (delta_z / length_2d_meters) * 100.0
+                self.dialog.line_slope_label.setText(f"{slope:.2f} %")
+            else:
+                self.dialog.line_slope_label.setText("N/A")
+
+            # --- 3D Length & Linear Rugosity ---
+            # "Walk" the line
+            num_samples = max(2, int(self.pixel_length / 2)) # Sample every 2 pixels
+            x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
+            y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
+            
+            total_3d_length = 0.0
+            
+            for i in range(num_samples - 1):
+                # Get segment start/end points (pixel coords)
+                x_a, y_a = x_samples[i], y_samples[i]
+                x_b, y_b = x_samples[i+1], y_samples[i+1]
+                
+                # Get Z values (clamped)
+                z_a = z_channel[min(max(0, int(y_a)), h-1), min(max(0, int(x_a)), w-1)]
+                z_b = z_channel[min(max(0, int(y_b)), h-1), min(max(0, int(x_b)), w-1)]
+                
+                # Get segment components in real-world units (meters)
+                dx_m = (x_b - x_a) * scale_x
+                dy_m = (y_b - y_a) * scale_y
+                dz = z_b - z_a # Already in z-units
+                
+                # Add 3D segment length
+                total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz**2)
+
+            # Convert 3D length to display units
+            if display_units != "m":
+                length_3d_display = convert_scale_units(total_3d_length, 'metre', display_units)
+            else:
+                length_3d_display = total_3d_length
+            
+            self.dialog.line_3d_length_label.setText(f"{length_3d_display:.3f} {display_units}")
+
+            # Calculate Linear Rugosity
+            if length_2d_meters > 0:
+                linear_rugosity = total_3d_length / length_2d_meters
+                self.dialog.line_rugosity_label.setText(f"{linear_rugosity:.3f}")
+            else:
+                self.dialog.line_rugosity_label.setText("N/A")
+                
+        except Exception as e:
+            print(f"Error in 3D line calculation: {e}")
+            self.reset_3d_labels()
 
     def add_line_to_total(self):
-        """Adds the current line length to the total."""
+        """Adds the current 2D line length to the total."""
         self.total_line_length += self.current_line_length
         display_units = self.dialog.line_units_combo.currentText()
             
@@ -639,6 +811,7 @@ class ScaleTool(Tool):
         self.current_line_length = 0.0  # Reset current
         self.dialog.line_add_button.setEnabled(False)
         self.dialog.line_length_label.setText("N/A")
+        self.reset_3d_labels() # Reset 3D fields too
 
     def clear_line_total(self):
         self.total_line_length = 0.0
@@ -652,39 +825,124 @@ class ScaleTool(Tool):
         
         self.stop_current_drawing()
 
-    def calculate_rect_measurement(self):
+    def calculate_rect_measurement(self, final_calc=False):
         """Calculates and displays rect perimeter and area."""
-        scale, _ = self.get_current_scale()
+        
+        # --- 1. Get Data ---
+        raster, z_channel, scale_x, scale_y, z_unit = self.get_current_z_data()
+
+        # Check for invalid scale
+        if scale_x is None or scale_y is None:
+            self.dialog.rect_perimeter_label.setText("Scale Not Set")
+            self.dialog.rect_area_label.setText("Scale Not Set")
+            self.reset_3d_labels()
+            return
+            
         display_units = self.dialog.rect_units_combo.currentText()
         area_units = f"{display_units}²" if display_units != "px" else "px²"
 
         rect = QRectF(self.start_point, self.end_point).normalized()
         pixel_width = rect.width()
         pixel_height = rect.height()
+        
+        if pixel_width < 1 or pixel_height < 1:
+            self.stop_current_drawing()
+            return
 
+        # --- 2. 2D Calculations ---
         # Calculate dimensions in meters first
-        real_width_m = pixel_width * scale
-        real_height_m = pixel_height * scale
+        real_width_m = pixel_width * scale_x
+        real_height_m = pixel_height * scale_y
+        area_2d_meters = real_width_m * real_height_m
         
         # Convert to display units
         if display_units != "m":
-            real_width = convert_scale_units(real_width_m, 'metre', display_units)
-            real_height = convert_scale_units(real_height_m, 'metre', display_units)
+            real_width_display = convert_scale_units(real_width_m, 'metre', display_units)
+            real_height_display = convert_scale_units(real_height_m, 'metre', display_units)
         else:
-            real_width = real_width_m
-            real_height = real_height_m
+            real_width_display = real_width_m
+            real_height_display = real_height_m
         
-        perimeter = 2 * (real_width + real_height)
-        area = real_width * real_height
+        perimeter_display = 2 * (real_width_display + real_height_display)
+        area_2d_display = real_width_display * real_height_display
         
-        # Store for accumulation
-        self.current_rect_area = area 
+        if final_calc:
+            # Store for accumulation
+            self.current_rect_area = area_2d_display
+            self.dialog.rect_add_button.setEnabled(True)
 
-        self.dialog.rect_perimeter_label.setText(f"{perimeter:.3f} {display_units}")
-        self.dialog.rect_area_label.setText(f"{area:.3f} {area_units}")
-        self.dialog.rect_add_button.setEnabled(True)
+        self.dialog.rect_perimeter_label.setText(f"{perimeter_display:.3f} {display_units}")
+        self.dialog.rect_area_label.setText(f"{area_2d_display:.3f} {area_units}")
+
+        # --- 3. 3D Calculations ---
+        # Stop if no z_channel
+        if z_channel is None:
+            self.reset_3d_labels()
+            return
+
+        try:
+            h, w = z_channel.shape
+            z_unit_str = z_unit if z_unit else 'z-units'
+            
+            # Get integer bounds for slicing, clamped to raster dims
+            x1 = max(0, int(math.floor(rect.left())))
+            y1 = max(0, int(math.floor(rect.top())))
+            x2 = min(w, int(math.ceil(rect.right())))
+            y2 = min(h, int(math.ceil(rect.bottom())))
+            
+            if x1 >= x2 or y1 >= y2: # Check for zero-area slice
+                self.reset_3d_labels()
+                return
+
+            # Get Z-Slice
+            z_slice = z_channel[y1:y2, x1:x2]
+            if z_slice.size == 0:
+                self.reset_3d_labels()
+                return
+
+            # Calculate Z-Stats
+            z_min = np.min(z_slice)
+            z_max = np.max(z_slice)
+            z_mean = np.mean(z_slice)
+            self.dialog.rect_z_stats_label.setText(
+                f"Min: {z_min:.2f} | Max: {z_max:.2f} | Mean: {z_mean:.2f} ({z_unit_str})"
+            )
+
+            # Calculate Prismatic Volume
+            pixel_area_2d = scale_x * scale_y
+            volume = np.sum(z_slice) * pixel_area_2d
+            vol_units = f"{area_units.replace('²', '')}² · {z_unit_str}"
+            self.dialog.rect_volume_label.setText(f"{volume:.3f} {vol_units}")
+
+            # Calculate 3D Surface Area
+            dz_dy, dz_dx = np.gradient(z_slice, scale_y, scale_x)
+            multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
+            pixel_areas_3d = pixel_area_2d * multiplier
+            surface_area_3d_meters = np.sum(pixel_areas_3d)
+
+            # Convert to display units (area)
+            if display_units != "m":
+                conv_factor = convert_scale_units(1.0, 'metre', display_units)
+                area_conv_factor = conv_factor * conv_factor
+                surface_area_3d_display = surface_area_3d_meters * area_conv_factor
+            else:
+                surface_area_3d_display = surface_area_3d_meters
+                
+            self.dialog.rect_3d_surface_area_label.setText(f"{surface_area_3d_display:.3f} {area_units}")
+
+            # Calculate Areal Rugosity
+            if area_2d_meters > 0:
+                areal_rugosity = surface_area_3d_meters / area_2d_meters
+                self.dialog.rect_rugosity_label.setText(f"{areal_rugosity:.3f}")
+            else:
+                self.dialog.rect_rugosity_label.setText("N/A")
+
+        except Exception as e:
+            print(f"Error in 3D rect calculation: {e}")
+            self.reset_3d_labels()
 
     def add_rect_to_total(self):
+        """Adds the current 2D rect area to the total."""
         self.total_rect_area += self.current_rect_area
         display_units = self.dialog.rect_units_combo.currentText()
         area_units = f"{display_units}²" if display_units != "px" else "px²"
@@ -702,6 +960,7 @@ class ScaleTool(Tool):
         self.dialog.rect_add_button.setEnabled(False)
         self.dialog.rect_perimeter_label.setText("N/A")
         self.dialog.rect_area_label.setText("N/A")
+        self.reset_3d_labels() # Reset 3D fields too
 
     def clear_rect_total(self):
         self.total_rect_area = 0.0
