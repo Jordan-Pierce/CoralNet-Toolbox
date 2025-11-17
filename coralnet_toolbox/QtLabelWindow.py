@@ -734,6 +734,7 @@ class LabelWindow(QWidget):
         self.reorganize_labels()
         self.update_label_count()
         self.main_window.image_window.update_search_bars()
+        self.update_tooltips()
 
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
         """Add a new label to the window."""
@@ -753,6 +754,7 @@ class LabelWindow(QWidget):
         self.main_window.image_window.update_search_bars()
         self.sync_all_masks_with_labels()
         QApplication.processEvents()
+        self.update_tooltips()
 
         return label
     
@@ -1013,6 +1015,7 @@ class LabelWindow(QWidget):
         label_to_update.update()
         self.reorganize_labels()
         self.sync_all_masks_with_labels()
+        self.update_tooltips()
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
     def merge_labels(self, source_label, target_label):
@@ -1070,6 +1073,7 @@ class LabelWindow(QWidget):
             
         self.sync_all_masks_with_labels()
         self.main_window.image_window.update_search_bars()
+        self.update_tooltips()
 
         # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
@@ -1159,6 +1163,7 @@ class LabelWindow(QWidget):
 
         # Update the search bars to remove the deleted label
         self.main_window.image_window.update_search_bars()
+        self.update_tooltips()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""
@@ -1237,13 +1242,48 @@ class LabelWindow(QWidget):
         for label in self.labels:
             label.link_checkbox.setChecked(new_state)
 
-    def filter_labels(self, filter_text):
-        """Filter labels by text."""
-        filter_text = filter_text.strip().lower()
+    def filter_labels(self):
+        """Filter labels based on the text in the filter bar."""
+        filter_text = self.filter_bar.text().strip().lower()
+        
         for label in self.labels:
-            label.setVisible(
-                filter_text in label.short_label_code.lower() or filter_text in label.long_label_code.lower()
-            )
+            # Show label if filter text is empty or if it matches short or long code
+            should_show = (not filter_text or
+                           filter_text in label.short_label_code.lower() or
+                           filter_text in label.long_label_code.lower())
+            label.setVisible(should_show)
+        
+        # Update the layout after filtering
+        self.reorganize_labels()
+
+    def update_tooltips(self):
+        """Update tooltips for all labels with current annotation counts."""
+        # Get current raster for cached counts
+        current_raster = self.main_window.image_window.current_raster
+        
+        # PRE-COMPUTE total counts across all rasters in one pass
+        total_counts = {}
+        rasters = self.main_window.image_window.raster_manager.rasters.values()
+        
+        for raster in rasters:
+            if hasattr(raster, 'label_counts'):
+                for label_code, count in raster.label_counts.items():
+                    total_counts[label_code] = total_counts.get(label_code, 0) + count
+        
+        # Now update tooltips using pre-computed data
+        for label in self.labels:
+            # Get count for current image from cached raster data
+            current_count = 0
+            if current_raster and hasattr(current_raster, 'label_counts'):
+                current_count = current_raster.label_counts.get(label.short_label_code, 0)
+            
+            # Get total count from pre-computed totals
+            total_count = total_counts.get(label.short_label_code, 0)
+
+            tooltip = f"{label.long_label_code}\n" \
+                      f"Current image: {current_count} annotations\n" \
+                      f"Total project: {total_count} annotations"
+            label.setToolTip(tooltip)
 
 
 class AddLabelDialog(QDialog):

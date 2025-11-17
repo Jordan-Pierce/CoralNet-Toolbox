@@ -331,6 +331,9 @@ class MainWindow(QMainWindow):
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the annotationSelected to the LabelWindow's update_annotation_count
         self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
+        # Connect the annotationCreated and annotationDeleted to update tooltips
+        self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
+        self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
@@ -1921,6 +1924,9 @@ class MainWindow(QMainWindow):
             self.annotation_window.tools['sam'].cancel_working_area()
         if self.annotation_window.selected_tool == 'see_anything':
             self.annotation_window.tools['see_anything'].cancel_working_area()
+        
+        # Update label tooltips with current counts
+        self.label_window.update_tooltips()
             
     def on_image_window_filter_toggled(self, is_expanded):
         """

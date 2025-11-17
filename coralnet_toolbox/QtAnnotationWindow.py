@@ -1141,6 +1141,10 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.stop_progress()
             progress_bar.close()
 
+        # TODO move this to update on demand instead of every load
+        # Update the label window tool tips
+        self.main_window.label_window.update_tooltips()
+        
         QApplication.processEvents()
         self.viewport().update()
 
