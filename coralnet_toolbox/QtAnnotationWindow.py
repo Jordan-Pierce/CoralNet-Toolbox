@@ -645,7 +645,7 @@ class AnnotationWindow(QGraphicsView):
             return
         
         # Load z_channel data if available (deferred loading)
-        if raster.z_channel_path and not raster.z_channel:
+        if raster.z_channel_path and raster.z_channel is None:
             try:
                 raster.load_z_channel_from_file(raster.z_channel_path)
             except Exception as e:
