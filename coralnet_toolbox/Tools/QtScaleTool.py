@@ -2,7 +2,9 @@ import warnings
 import math
 import numpy as np
 
+# --- New Imports for Plotting and Graphics ---
 import pyqtgraph as pg
+# --- End New Imports ---
 
 from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint, QPointF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPixmap, QPainter, QBrush, QFontMetrics, QPolygonF
@@ -11,7 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWi
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
                              QGroupBox, QCheckBox, QButtonGroup, QPushButton,
                              QGraphicsRectItem, QGraphicsItemGroup, QSpacerItem,
-                             QSizePolicy)
+                             QSizePolicy, QScrollArea, QFrame)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -25,67 +27,139 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Helper Class for Elevation Profile Plot
 # ----------------------------------------------------------------------------------------------------------------------
 
-
 class ProfilePlotDialog(QDialog):
-    """A pop-up dialog to display the elevation profile plot using pyqtgraph."""
-    def __init__(self, data_x, data_y, x_label, y_label, parent=None):
+    """
+    A pop-up dialog to display a scrollable list of elevation profile plots
+    using pyqtgraph.
+    """
+    def __init__(self, profiles_list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Elevation Profile")
         self.setWindowIcon(get_icon("scale.png"))
-        self.setMinimumSize(600, 400)
-        
-        # Set a white background for the plot
+        self.setMinimumSize(800, 600)
+
+        # Set a white background for plots
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
 
-        layout = QVBoxLayout(self)
-        self.plot_widget = pg.PlotWidget()
-        self.plot_item = self.plot_widget.getPlotItem()
-        layout.addWidget(self.plot_widget)
+        self.main_layout = QVBoxLayout(self)
         
-        # Store plot data item for easy updates
-        self.plot_data_item = self.plot_item.plot(
-            data_x,
-            data_y,
-            pen=pg.mkPen(color="#E63E00", width=2)
-        )
+        # --- Scroll Area Setup ---
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
         
-        # Set labels and title
-        self.plot_item.setLabel('bottom', x_label)
-        self.plot_item.setLabel('left', y_label)
-        self.plot_item.setTitle("Line Elevation Profile")
-        self.plot_item.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_container_widget = QWidget()
+        self.plot_layout = QVBoxLayout(self.plot_container_widget)
         
-        # Enable mouse interaction
-        self.plot_item.setMouseEnabled(x=True, y=True)
-        self.plot_item.enableAutoRange()
+        self.scroll_area.setWidget(self.plot_container_widget)
+        self.main_layout.addWidget(self.scroll_area)
+        
+        # --- Plot Items Storage ---
+        self.plot_widgets = []
 
-        # Add a close button
+        # Initial build
+        self.rebuild_plots(profiles_list)
+
+        # --- Close Button ---
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        self.main_layout.addWidget(button_box)
         
-    def update_plot(self, data_x, data_y, x_label, y_label):
-        """Clears the axes and plots new data for a real-time update."""
+    def rebuild_plots(self, profiles_list):
+        """Clears and rebuilds all plots in the scroll area."""
+        
+        # 1. Clear all old plot widgets
+        for widget in self.plot_widgets:
+            widget.deleteLater()
+        self.plot_widgets = []
+        
+        if not profiles_list:
+            label = QLabel("No profiles to display. Draw a line and 'Add to Total'.")
+            label.setAlignment(Qt.AlignCenter)
+            self.plot_layout.addWidget(label)
+            self.plot_widgets.append(label)
+            return
+
+        # 2. --- Plot 1: Combined (Non-Normalized) ---
+        if len(profiles_list) > 0:
+            combined_plot_widget = pg.PlotWidget()
+            combined_plot_widget.setMinimumHeight(300)
+            combined_plot_item = combined_plot_widget.getPlotItem()
+            combined_plot_item.setTitle("Combined Profiles")
+            
+            # Use the x-label from the first profile as the representative
+            x_label = profiles_list[0].get("x_label", "Distance")
+            combined_plot_item.setLabel('bottom', x_label)
+            combined_plot_item.setLabel('left', "Elevation / Z-Value")
+            combined_plot_item.showGrid(x=True, y=True, alpha=0.3)
+            combined_plot_item.addLegend()
+            
+            for profile in profiles_list:
+                try:
+                    x_data = np.array(profile["x_data"])
+                    if x_data.size > 0:
+                        combined_plot_item.plot(
+                            profile["x_data"],  # Use original x_data
+                            profile["y_data"],
+                            pen=profile["color"],
+                            name=profile["name"]
+                        )
+                except Exception as e:
+                    print(f"Error plotting combined profile '{profile['name']}': {e}")
+
+            self.plot_layout.addWidget(combined_plot_widget)
+            self.plot_widgets.append(combined_plot_widget)
+
+        # 3. --- Separator ---
+        separator_label = QLabel("Individual Profiles")
+        separator_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        separator_label.setAlignment(Qt.AlignCenter)
+        self.plot_layout.addWidget(separator_label)
+        self.plot_widgets.append(separator_label)
+        
+        separator_line = QFrame()
+        separator_line.setFrameShape(QFrame.HLine)
+        separator_line.setFrameShadow(QFrame.Sunken)
+        self.plot_layout.addWidget(separator_line)
+        self.plot_widgets.append(separator_line)
+
+        # 4. --- Plots 2...N: Individual Plots ---
+        for profile in profiles_list:
+            try:
+                ind_plot_widget = pg.PlotWidget()
+                ind_plot_widget.setMinimumHeight(250)
+                ind_plot_item = ind_plot_widget.getPlotItem()
+                ind_plot_item.setTitle(profile["name"])
+                ind_plot_item.setLabel('bottom', profile["x_label"])
+                ind_plot_item.setLabel('left', profile["y_label"])
+                ind_plot_item.showGrid(x=True, y=True, alpha=0.3)
+                
+                ind_plot_item.plot(
+                    profile["x_data"],
+                    profile["y_data"],
+                    pen=profile["color"]
+                )
+                ind_plot_item.enableAutoRange()
+                
+                self.plot_layout.addWidget(ind_plot_widget)
+                self.plot_widgets.append(ind_plot_widget)
+            except Exception as e:
+                print(f"Error plotting individual profile '{profile['name']}': {e}")
+                
+        # Add a spacer at the bottom
+        spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        self.plot_layout.addSpacerItem(spacer)
+
+    def update_plot(self, profiles_list):
+        """Clears and rebuilds all plots with new data."""
         try:
-            # Update the data of the existing plot item
-            self.plot_data_item.setData(data_x, data_y)
-            
-            # Update labels
-            self.plot_item.setLabel('bottom', x_label)
-            self.plot_item.setLabel('left', y_label)
-            
-            # Re-enable autorange to fit the new data
-            self.plot_item.enableAutoRange()
-            
+            self.rebuild_plots(profiles_list)
         except Exception as e:
             print(f"Error updating plot: {e}")
-            
 
 # ----------------------------------------------------------------------------------------------------------------------
 # ScaleToolDialog Class
 # ----------------------------------------------------------------------------------------------------------------------
-
 
 class ScaleToolDialog(QDialog):
     """
@@ -187,7 +261,7 @@ class ScaleToolDialog(QDialog):
             "background-color: #D9534F; color: white; font-weight: bold;"
         )
         self.scale_layout.addRow(self.remove_all_button)
-
+        
         # --- Add Image Options GroupBox ---
         self.scale_layout.addRow(self.options_group_box)
 
@@ -273,7 +347,7 @@ class ScaleToolDialog(QDialog):
         self.rect_volume_label = QLabel("N/A")
         self.rect_rugosity_label = QLabel("N/A")
         
-        self.rect_3d_layout.addRow("Z-Stats:", self.rect_z_stats_label)
+        self.rect_3d_layout.addRow("Z-Stats (Min/Max/Mean):", self.rect_z_stats_label)
         self.rect_3d_layout.addRow("3D Surface Area:", self.rect_3d_surface_area_label)
         self.rect_3d_layout.addRow("Prismatic Volume:", self.rect_volume_label)
         self.rect_3d_layout.addRow("Areal Rugosity:", self.rect_rugosity_label)
@@ -443,12 +517,30 @@ class ScaleTool(Tool):
         self.start_point = None
         self.end_point = None
         self.pixel_length = 0.0
-        self.profile_plot_data = None # Store data for the plot
         
+        # --- Profile Data Management ---
+        self.current_profile_data = None # Stores dict for the line *being drawn*
+        self.accumulated_profiles = []   # Stores list of dicts for *saved* lines
+        self.profile_plot_dialog = None  # Reference to pop-up
+        
+        # Color cycle for plots and lines
+        self.color_cycle_pens = [
+            pg.mkPen(color='#E63E00', width=3), # Bright Orange (Current)
+            pg.mkPen(color='#1f77b4', width=2), # Matplotlib Blue
+            pg.mkPen(color='#2ca02c', width=2), # Matplotlib Green
+            pg.mkPen(color='#d62728', width=2), # Matplotlib Red
+            pg.mkPen(color='#9467bd', width=2), # Matplotlib Purple
+            pg.mkPen(color='#8c564b', width=2), # Matplotlib Brown
+            pg.mkPen(color='#e377c2', width=2), # Matplotlib Pink
+            pg.mkPen(color='#7f7f7f', width=2), # Matplotlib Gray
+        ]
+        self.current_color_index = 0 # Index for *accumulated* lines
+        
+        # Base pen for the *current* line (orange)
+        self.base_pen = QPen(self.color_cycle_pens[0].color(), 4, Qt.DashLine)
+        self.base_pen.setCosmetic(True)
+
         # --- Graphics Items ---
-        self.base_pen = QPen(QColor(230, 62, 0, 255), 4, Qt.DashLine)
-        self.base_pen.setCosmetic(True)  # Ensures line is visible at all zoom levels
-        
         # Line (for Set Scale and Measure Line)
         self.preview_line = QGraphicsLineItem()
         self.preview_line.setPen(self.base_pen)
@@ -461,8 +553,6 @@ class ScaleTool(Tool):
         
         self.wireframe_grid_lines = []
         grid_size = 5 # Must match the grid_size in _update_wireframe_graphic
-        # We need (grid_size * (grid_size-1)) horizontal lines
-        # AND (grid_size * (grid_size-1)) vertical lines
         num_lines_needed = (grid_size * (grid_size - 1)) * 2 # (5 * 4) * 2 = 40 lines
         
         for _ in range(num_lines_needed): 
@@ -485,7 +575,6 @@ class ScaleTool(Tool):
         # --- Accumulated Graphics ---
         self.accumulated_lines = []
         self.accumulated_rects = []
-        self.profile_plot_dialog = None # Reference to pop-up
 
     def get_current_scale(self):
         """Helper to get current raster scale. Returns (scale, units)."""
@@ -551,7 +640,7 @@ class ScaleTool(Tool):
         self.dialog.line_slope_label.setText("N/A")
         self.dialog.line_rugosity_label.setText("N/A")
         self.dialog.line_profile_button.setEnabled(False)
-        self.profile_plot_data = None
+        self.current_profile_data = None
         # Rect Tab
         self.dialog.rect_z_stats_label.setText("N/A")
         self.dialog.rect_3d_surface_area_label.setText("N/A")
@@ -604,6 +693,11 @@ class ScaleTool(Tool):
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
         
+        # Clear profile data
+        self.accumulated_profiles.clear()
+        self.current_profile_data = None
+        self.current_color_index = 0
+        
         self.is_drawing = False
         
         # Close profile plot dialog if it's open
@@ -629,6 +723,13 @@ class ScaleTool(Tool):
         for rect in self.accumulated_rects:
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
+        
+        # Clear profile data
+        self.accumulated_profiles.clear()
+        self.current_profile_data = None
+        self.current_color_index = 0
+        if self.profile_plot_dialog:
+            self.profile_plot_dialog.update_plot([])
         
         # Reset totals when switching tabs
         self.total_line_length = 0.0
@@ -680,10 +781,11 @@ class ScaleTool(Tool):
         self.dialog.line_add_button.setEnabled(False)
         self.dialog.rect_add_button.setEnabled(False)
         
-        # Close profile plot
+        # Close profile plot - but DO NOT clear accumulated data here
+        # self.clear_line_total() handles that
         if self.profile_plot_dialog:
-            self.profile_plot_dialog.reject()
-            self.profile_plot_dialog = None
+            # Just update it to show only accumulated lines
+            self.profile_plot_dialog.update_plot(self.accumulated_profiles)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() != Qt.LeftButton:
@@ -806,7 +908,7 @@ class ScaleTool(Tool):
 
         # Check for z-data. If none, just draw 2D rect and return
         _, z_channel, _, _, _ = self.get_current_z_data()
-        if z_channel is None:
+        if z_channel is None or not self.is_drawing: # Don't draw grid if not drawing
             # Hide all grid lines
             for line in self.wireframe_grid_lines:
                 line.hide()
@@ -876,20 +978,23 @@ class ScaleTool(Tool):
 
     def _show_elevation_profile(self):
         """Shows the pop-up dialog with the elevation profile."""
-        if not self.profile_plot_data:
+        
+        # Combine accumulated plots with the current (unsaved) plot
+        all_plots_to_show = self.accumulated_profiles.copy()
+        if self.current_profile_data:
+            all_plots_to_show.append(self.current_profile_data)
+
+        if not all_plots_to_show:
             QMessageBox.warning(self.dialog, "No Data", "No profile data to display.")
             return
             
         try:
-            # Unpack data
-            data_x, data_y, x_label, y_label = self.profile_plot_data
-            
             # Close existing dialog
             if self.profile_plot_dialog:
                 self.profile_plot_dialog.reject()
             
             # Create and show new dialog
-            self.profile_plot_dialog = ProfilePlotDialog(data_x, data_y, x_label, y_label, self.dialog)
+            self.profile_plot_dialog = ProfilePlotDialog(all_plots_to_show, self.dialog)
             self.profile_plot_dialog.show()
         except Exception as e:
             QMessageBox.critical(self.dialog, "Plot Error", f"Could not display plot: {e}")
@@ -911,7 +1016,7 @@ class ScaleTool(Tool):
         display_units = self.dialog.line_units_combo.currentText()
         
         # --- 2. 2D Calculations ---
-        length_2d_meters = self.pixel_length * scale_x # Assume square pixels
+        length_2d_meters = self.pixel_length * scale_x  # Assume square pixels
         
         # Convert to display units
         if display_units != "m":
@@ -986,7 +1091,7 @@ class ScaleTool(Tool):
                 # Get segment components in real-world units (meters)
                 dx_m = (x_b - x_a) * scale_x
                 dy_m = (y_b - y_a) * scale_y
-                dz = z_b - z_a # Already in z-units
+                dz = z_b - z_a  # Already in z-units
                 
                 # Add 3D segment length
                 total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz**2)
@@ -1001,10 +1106,11 @@ class ScaleTool(Tool):
                 length_3d_display = convert_scale_units(total_3d_length, 'metre', display_units)
                 # Also convert plot x-axis
                 conv_factor = convert_scale_units(1.0, 'metre', display_units)
-                profile_data_x = [x * conv_factor for x in profile_data_x]
+                plot_x_data = [x * conv_factor for x in profile_data_x]
                 plot_x_label = f"Distance ({display_units})"
             else:
                 length_3d_display = total_3d_length
+                plot_x_data = profile_data_x
                 plot_x_label = "Distance (m)"
             
             self.dialog.line_3d_length_label.setText(f"{length_3d_display:.3f} {display_units}")
@@ -1018,53 +1124,95 @@ class ScaleTool(Tool):
                 
             # Store data for plot
             plot_y_label = f"Elevation ({z_unit_str})"
-            self.profile_plot_data = (profile_data_x, profile_data_y, plot_x_label, plot_y_label)
+            self.current_profile_data = {
+                "name": "Current Line",
+                "color": self.color_cycle_pens[0], # Always orange for current
+                "x_data": plot_x_data,
+                "y_data": profile_data_y,
+                "x_label": plot_x_label,
+                "y_label": plot_y_label
+            }
 
             if final_calc:
                 self.dialog.line_profile_button.setEnabled(True)
                 
-                # --- Real-time update logic ---
+                # --- Update plot ONLY on final click ---
                 # Check if the plot dialog is already open and visible
                 if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
                     # If it is, update it directly
-                    self.profile_plot_dialog.update_plot(
-                        profile_data_x, profile_data_y, plot_x_label, plot_y_label
-                    )
-                
+                    all_plots = self.accumulated_profiles.copy()
+                    all_plots.append(self.current_profile_data)
+                    self.profile_plot_dialog.update_plot(all_plots)
+                    
         except Exception as e:
             print(f"Error in 3D line calculation: {e}")
             self.reset_3d_labels()
 
     def add_line_to_total(self):
-        """Adds the current 2D line length to the total."""
+        """Adds the current 2D line length and profile to the total."""
+        
+        # 1. Check if there is a line to add
+        if not self.current_profile_data:
+            return
+            
+        # 2. Add 2D length to total
         self.total_line_length += self.current_line_length
         display_units = self.dialog.line_units_combo.currentText()
-            
         self.dialog.line_total_length_label.setText(f"{self.total_line_length:.3f} {display_units}")
         
-        # Create a permanent line item to keep visible
+        # 3. Get next color and name for the saved profile
+        # We skip index 0 (orange) for saved lines
+        color_index = (self.current_color_index % (len(self.color_cycle_pens) - 1)) + 1
+        pen_to_use = self.color_cycle_pens[color_index]
+        qcolor_to_use = pen_to_use.color()
+        name_to_use = f"Line {self.current_color_index + 1}"
+        
+        # 4. Create the permanent line graphic on the map
+        perm_pen = QPen(qcolor_to_use, 2, Qt.SolidLine)
+        perm_pen.setCosmetic(True)
         perm_line = QGraphicsLineItem(self.preview_line.line())
-        perm_line.setPen(self.preview_line.pen())
+        perm_line.setPen(perm_pen)
         perm_line.setZValue(99)  # Slightly below preview
         self.annotation_window.scene.addItem(perm_line)
         self.accumulated_lines.append(perm_line)
         
-        self.current_line_length = 0.0  # Reset current
-        self.dialog.line_add_button.setEnabled(False)
-        self.dialog.line_length_label.setText("N/A")
-        self.reset_3d_labels() # Reset 3D fields too
+        # 5. Promote the "current" profile to "accumulated"
+        self.current_profile_data["name"] = name_to_use
+        self.current_profile_data["color"] = pen_to_use
+        self.accumulated_profiles.append(self.current_profile_data)
+        
+        # 6. Increment color index
+        self.current_color_index += 1
+        
+        # 7. Stop the current drawing (this hides preview_line,
+        #    resets UI, and updates the plot)
+        self.stop_current_drawing()
+        
+        # 8. Update plot dialog if it's open
+        if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
+            self.profile_plot_dialog.update_plot(self.accumulated_profiles)
 
     def clear_line_total(self):
+        # 1. Reset 2D total
         self.total_line_length = 0.0
         display_units = self.dialog.line_units_combo.currentText()
         self.dialog.line_total_length_label.setText(f"0.0 {display_units}")
         
-        # Remove accumulated lines
+        # 2. Remove accumulated graphics from map
         for line in self.accumulated_lines:
             self.annotation_window.scene.removeItem(line)
         self.accumulated_lines.clear()
         
+        # 3. Clear profile data
+        self.accumulated_profiles.clear()
+        self.current_color_index = 0
+        
+        # 4. Stop any current drawing
         self.stop_current_drawing()
+        
+        # 5. Update plot if open
+        if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
+            self.profile_plot_dialog.update_plot([])
 
     def calculate_rect_measurement(self, final_calc=False):
         """Calculates and displays rect perimeter and area."""
