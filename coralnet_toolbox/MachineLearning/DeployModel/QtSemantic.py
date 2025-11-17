@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _reconstruct_semantic_mask(results, model_class_names, project_class_mapping, mask_annotation_map):
+def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_annotation_map):
     """
     Converts an Ultralytics Results object (instance format) back into a
     single semantic mask (H, W) with internal class IDs.
@@ -54,15 +54,16 @@ def _reconstruct_semantic_mask(results, model_class_names, project_class_mapping
         if model_class_name.lower() == 'background':
             continue
         
-        # 2. Find the corresponding Label object from the project (e.g., 'coral-a')
-        label = project_class_mapping.get(model_class_name)
-        if not label:
-            continue  # Skip if this class isn't mapped in the project
+        label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
+        if not label_obj:
+            # This label isn't in the project (e.g., it was deleted). Skip it.
+            continue
         
-        # 3. Find the internal ID for this label in the MaskAnnotation (e.g., 3)
-        mask_class_id = mask_annotation_map.get(label['id'])
+        mask_class_id = mask_annotation_map.get(label_obj.id)
         if not mask_class_id:
-            continue  # Skip if this label isn't in the mask's map
+            # This should not happen if sync_label_map was called correctly,
+            # but it's a good safeguard.
+            continue
             
         # 4. Apply this class ID to the semantic mask
         instance_mask = masks[i]  # (H, W)
@@ -189,7 +190,7 @@ class Semantic(Base):
             image_paths = [self.annotation_window.current_image_path]
 
         # Get project labels for mask annotation creation
-        project_labels = list(self.class_mapping.values())
+        project_labels = self.main_window.label_window.labels
         # Get full list of model class names for _reconstruct_semantic_mask
         model_class_names = ['background'] + self.class_names 
 
@@ -214,7 +215,8 @@ class Semantic(Base):
                     raster.get_mask_annotation(project_labels)
                     
                 mask_annotation = raster.mask_annotation
-                
+                # This call ensures the mask is synced with the live labels
+                mask_annotation.sync_label_map(project_labels)
                 # Get the mapping from Label UUID -> internal mask class ID (once)
                 mask_annotation_map = mask_annotation.label_id_to_class_id_map
                 
@@ -281,9 +283,9 @@ class Semantic(Base):
                         # --- 3c. Reconstruct Small Mask ---
                         reconstructed_mask = _reconstruct_semantic_mask(
                             results_obj,
-                            model_class_names,      # List of model class names
-                            self.class_mapping,         # Project's map {'Coral-A': LabelObj}
-                            mask_annotation_map         # Mask's map {LabelObj.id: 2}
+                            model_class_names,                            # List of model class names
+                            self.main_window.label_window,                # Live project labels
+                            mask_annotation_map                           # Mask's map {LabelObj.id: 2}
                         )
                         
                         # --- 3d. Update Main Annotation (Streaming) ---
