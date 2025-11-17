@@ -460,6 +460,12 @@ class ScaleToolDialog(QDialog):
 
         self.update_checkboxes()
 
+        # Reset locked flags and enable combos
+        self.line_total_locked = False
+        self.rect_total_locked = False
+        self.line_units_combo.setEnabled(True)
+        self.rect_units_combo.setEnabled(True)
+
     def update_checkboxes(self):
         """Clear the checkboxes states."""
         # Temporarily disable exclusivity to allow unchecking all checkboxes
@@ -582,6 +588,10 @@ class ScaleTool(Tool):
         # --- Accumulated Graphics ---
         self.accumulated_lines = []
         self.accumulated_rects = []
+
+        # --- Total Locked Flags ---
+        self.line_total_locked = False
+        self.rect_total_locked = False
 
     def get_current_scale(self):
         """Helper to get current raster scale. Returns (scale, units)."""
@@ -722,31 +732,6 @@ class ScaleTool(Tool):
         
         # Check for Z-Data to enable/disable 3D groups
         self.get_current_z_data()
-        
-        # Clear accumulated graphics when switching tabs
-        for line in self.accumulated_lines:
-            self.annotation_window.scene.removeItem(line)
-        self.accumulated_lines.clear()
-        for rect in self.accumulated_rects:
-            self.annotation_window.scene.removeItem(rect)
-        self.accumulated_rects.clear()
-        
-        # Clear profile data
-        self.accumulated_profiles.clear()
-        self.current_profile_data = None
-        self.current_color_index = 0
-        if self.profile_plot_dialog:
-            self.profile_plot_dialog.update_plot([])
-        
-        # Reset totals when switching tabs
-        self.total_line_length = 0.0
-        line_units = self.dialog.line_units_combo.currentText()
-        self.dialog.line_total_length_label.setText(f"0.0 {line_units}")
-        
-        self.total_rect_area = 0.0
-        rect_units = self.dialog.rect_units_combo.currentText()
-        area_units = f"{rect_units}²" if rect_units != "px" else "px²"
-        self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
         
         # Enable "Set Scale" button ONLY on the first tab
         if index == 0:
