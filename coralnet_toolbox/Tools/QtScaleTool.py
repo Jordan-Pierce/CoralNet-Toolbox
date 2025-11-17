@@ -129,6 +129,13 @@ class ProfilePlotDialog(QDialog):
                 ind_plot_widget = pg.PlotWidget()
                 ind_plot_widget.setMinimumHeight(250)
                 ind_plot_item = ind_plot_widget.getPlotItem()
+                
+                title = profile["name"]
+                stats_str = profile.get("stats_str")  # Get the pre-formatted string
+                if stats_str:
+                    title += f"  ({stats_str})"
+                ind_plot_item.setTitle(title)
+                    
                 ind_plot_item.setTitle(profile["name"])
                 ind_plot_item.setLabel('bottom', profile["x_label"])
                 ind_plot_item.setLabel('left', profile["y_label"])
@@ -1124,13 +1131,18 @@ class ScaleTool(Tool):
                 
             # Store data for plot
             plot_y_label = f"Elevation ({z_unit_str})"
+            stats_str = f"3D-Len: {length_3d_display:.2f}{display_units} | "
+            stats_str += f"ΔZ: {delta_z:.2f}{z_unit_str} | "
+            stats_str += f"Rugosity: {linear_rugosity:.3f}"
+            
             self.current_profile_data = {
                 "name": "Current Line",
-                "color": self.color_cycle_pens[0], # Always orange for current
+                "color": self.color_cycle_pens[0],  # Always orange for current
                 "x_data": plot_x_data,
                 "y_data": profile_data_y,
                 "x_label": plot_x_label,
-                "y_label": plot_y_label
+                "y_label": plot_y_label,
+                "stats_str": stats_str 
             }
 
             if final_calc:
@@ -1168,7 +1180,7 @@ class ScaleTool(Tool):
         name_to_use = f"Line {self.current_color_index + 1}"
         
         # 4. Create the permanent line graphic on the map
-        perm_pen = QPen(qcolor_to_use, 2, Qt.SolidLine)
+        perm_pen = QPen(qcolor_to_use, 4, Qt.SolidLine)
         perm_pen.setCosmetic(True)
         perm_line = QGraphicsLineItem(self.preview_line.line())
         perm_line.setPen(perm_pen)
