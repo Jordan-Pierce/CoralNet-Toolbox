@@ -1008,7 +1008,7 @@ class LabelWindow(QWidget):
                 annotation.update_label(label_to_update)
 
         # Also, force the mask annotation to re-render to show the new color (only in mask editing mode).
-        if self.annotation_window.current_mask_annotation:  # and self.annotation_window._is_in_mask_editing_mode():
+        if self.annotation_window.current_mask_annotation: 
             self.annotation_window.current_mask_annotation.update_graphics_item()
 
         # Force a repaint of the label widget itself and reorganize the grid
@@ -1025,6 +1025,9 @@ class LabelWindow(QWidget):
         2. Scrubs the source_label from ALL machine_confidence dictionaries in the project.
         3. Deletes the source label.
         """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         print(f"Merging label '{source_label.short_label_code}' into '{target_label.short_label_code}'.")
         
         # Iterate through ALL rasters to update every existing mask.
@@ -1077,8 +1080,11 @@ class LabelWindow(QWidget):
 
         # After the merge, refresh the view of the currently displayed mask (only in mask editing mode).
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:  # and self.annotation_window._is_in_mask_editing_mode():
+        if current_mask:  
             current_mask.update_graphics_item()
+            
+        # Return cursor to normal
+        QApplication.restoreOverrideCursor()
 
     def delete_label(self, label):
         """Delete the specified label and its associated annotations after confirmation."""
@@ -1109,13 +1115,34 @@ class LabelWindow(QWidget):
             if result == QMessageBox.No:
                 return
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Get a list of all VECTOR annotations that will be deleted
+        vector_annotations_to_delete = [
+            anno for anno in self.annotation_window.annotations_dict.values() 
+            if anno.label.id == label.id and hasattr(anno, 'get_polygon')
+        ]
+
         # Iterate through ALL rasters in the project to update every existing mask.
         for raster in self.main_window.image_window.raster_manager.rasters.values():
             # Only act on masks that have already been created (lazy-loading).
             if raster.mask_annotation is not None:
                 mask_anno = raster.mask_annotation
                 
-                # Get the class ID using the fast, direct lookup.
+                # 1. Clear pixels from VECTOR annotations being deleted
+                #    This finds all pixels under these polygons (locked or not)
+                #    and sets them to 0, removing the lock.
+                raster_vector_annos = [
+                    anno for anno in vector_annotations_to_delete 
+                    if anno.image_path == raster.image_path
+                ]
+                if raster_vector_annos:
+                    mask_anno.clear_pixels_for_annotations(raster_vector_annos)
+
+                # 2. Clear pixels from SEMANTIC mask for this class
+                #    This finds all remaining semantic pixels (locked or not)
+                #    and sets them to 0.
                 class_id_to_clear = mask_anno.label_id_to_class_id_map.get(label.id)
                 if class_id_to_clear:
                     mask_anno.clear_pixels_for_class(class_id_to_clear)
@@ -1123,9 +1150,9 @@ class LabelWindow(QWidget):
                     mask_anno.class_id_to_label_map.pop(class_id_to_clear, None)
                     mask_anno.label_id_to_class_id_map.pop(label.id, None)
 
-        # If the currently visible mask was affected, refresh its view (only in mask editing mode).
+        # If the currently visible mask was affected, refresh its view.
         current_mask = self.annotation_window.current_mask_annotation
-        if current_mask:  # and self.annotation_window._is_in_mask_editing_mode():
+        if current_mask:
             current_mask.update_graphics_item()
 
         # Store affected image paths before deletion to update them later
@@ -1164,6 +1191,9 @@ class LabelWindow(QWidget):
         # Update the search bars to remove the deleted label
         self.main_window.image_window.update_search_bars()
         self.update_tooltips()
+        
+        # Return cursor to normal
+        QApplication.restoreOverrideCursor()
 
     def cycle_labels(self, direction):
         """Cycle through VISIBLE labels in the specified direction (1 for down/next, -1 for up/previous)."""

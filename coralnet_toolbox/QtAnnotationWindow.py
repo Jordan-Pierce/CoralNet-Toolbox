@@ -1172,6 +1172,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the Z-value to be above the base image but below annotations
         if mask_annotation.graphics_item:
             mask_annotation.graphics_item.setZValue(-5)
+            
+        # Update the mask graphic item
+        mask_annotation.update_graphics_item()
 
         # Update the view
         self.viewport().update()
