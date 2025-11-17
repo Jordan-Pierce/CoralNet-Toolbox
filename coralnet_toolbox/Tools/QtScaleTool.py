@@ -2,29 +2,71 @@ import warnings
 import math
 import numpy as np
 
-from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint
-from PyQt5.QtGui import QMouseEvent, QPen, QColor
+# --- New Imports for Plotting and Graphics ---
+import matplotlib
+matplotlib.use('Qt5Agg') # Set backend for Qt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+# --- End New Imports ---
+
+from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint, QPointF
+from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPixmap, QPainter, QBrush, QFontMetrics, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWidget,
                              QFormLayout, QDoubleSpinBox, QComboBox, QLabel,
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
                              QGroupBox, QCheckBox, QButtonGroup, QPushButton,
-                             QGraphicsRectItem)
+                             QGraphicsRectItem, QGraphicsItemGroup, QSpacerItem,
+                             QSizePolicy)
 
 from coralnet_toolbox.Tools.QtTool import Tool
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
-
 from coralnet_toolbox.utilities import convert_scale_units
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Helper Class for Elevation Profile Plot
 # ----------------------------------------------------------------------------------------------------------------------
 
+class MatplotlibCanvas(FigureCanvas):
+    """Helper class for embedding a matplotlib figure in a Qt widget."""
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super().__init__(fig)
+        self.setParent(parent)
+
+class ProfilePlotDialog(QDialog):
+    """A pop-up dialog to display the elevation profile plot."""
+    def __init__(self, data_x, data_y, x_label, y_label, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Elevation Profile")
+        self.setWindowIcon(get_icon("scale.png"))
+        self.setMinimumSize(600, 400)
+
+        layout = QVBoxLayout(self)
+        self.canvas = MatplotlibCanvas(self, width=6, height=4, dpi=100)
+        layout.addWidget(self.canvas)
+
+        # Plot the data
+        self.canvas.axes.plot(data_x, data_y, color="#E63E00")
+        self.canvas.axes.set_xlabel(x_label)
+        self.canvas.axes.set_ylabel(y_label)
+        self.canvas.axes.set_title("Line Elevation Profile")
+        self.canvas.axes.grid(True, linestyle='--', alpha=0.6)
+        self.canvas.figure.tight_layout()
+
+        # Add a close button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ScaleToolDialog Class
+# ----------------------------------------------------------------------------------------------------------------------
 
 class ScaleToolDialog(QDialog):
     """
@@ -46,6 +88,9 @@ class ScaleToolDialog(QDialog):
         self.setModal(False) 
 
         self.main_layout = QVBoxLayout(self)
+
+        # --- Image Options (Must be set up *before* tabs) ---
+        self.setup_options_layout()
 
         # --- Tab Widget ---
         self.tab_widget = QTabWidget()
@@ -71,10 +116,6 @@ class ScaleToolDialog(QDialog):
         self.current_scale_status_label = QLabel("Scale: N/A")
         self.current_scale_status_label.setToolTip("Current scale loaded from the image.")
         self.main_layout.addWidget(self.current_scale_status_label)
-
-        # --- Image Options (Now outside the tabs) ---
-        self.setup_options_layout()  
-        self.main_layout.addWidget(self.options_group_box)
 
         # --- Dialog Buttons (Now outside the tabs) ---
         self.button_box = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
@@ -128,6 +169,9 @@ class ScaleToolDialog(QDialog):
         )
         self.scale_layout.addRow(self.remove_all_button)
 
+        # --- Add Image Options GroupBox ---
+        self.scale_layout.addRow(self.options_group_box)
+
     def setup_line_tab(self, tab_widget):
         """Populates the 'Measure Line' tab."""
         layout = QFormLayout(tab_widget)
@@ -165,6 +209,12 @@ class ScaleToolDialog(QDialog):
         self.line_3d_layout.addRow("ΔZ (Elevation Change):", self.line_delta_z_label)
         self.line_3d_layout.addRow("Slope / Grade:", self.line_slope_label)
         self.line_3d_layout.addRow("Linear Rugosity:", self.line_rugosity_label)
+        
+        # --- New Visual Elements ---
+        self.line_profile_button = QPushButton("Show Elevation Profile")
+        self.line_profile_button.setEnabled(False)
+        self.line_3d_layout.addRow(self.line_profile_button)
+        # --- End New ---
         
         self.line_3d_group.setEnabled(False) # Disabled by default
         layout.addRow(self.line_3d_group)
@@ -215,7 +265,6 @@ class ScaleToolDialog(QDialog):
     def setup_options_layout(self):
         """
         Set up the layout with image options.
-        (Copied and adapted from QtBase.py)
         """
         # Create a group box for image options
         self.options_group_box = QGroupBox("Image Options")
@@ -250,7 +299,6 @@ class ScaleToolDialog(QDialog):
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
-        (Copied and adapted from QtBase.py)
         
         :return: List of selected image paths
         """
@@ -296,6 +344,7 @@ class ScaleToolDialog(QDialog):
         self.line_delta_z_label.setText("N/A")
         self.line_slope_label.setText("N/A")
         self.line_rugosity_label.setText("N/A")
+        self.line_profile_button.setEnabled(False)
         
         # Reset Rect Tab
         self.rect_perimeter_label.setText("N/A")
@@ -332,6 +381,9 @@ class ScaleToolDialog(QDialog):
         self.tool.deactivate()
         event.accept()
 
+# ----------------------------------------------------------------------------------------------------------------------
+# ScaleTool Class
+# ----------------------------------------------------------------------------------------------------------------------
 
 class ScaleTool(Tool):
     """
@@ -364,25 +416,43 @@ class ScaleTool(Tool):
         self.dialog.remove_current_button.clicked.connect(self.remove_scale_current)
         self.dialog.remove_all_button.clicked.connect(self.remove_scale_all)
 
+        # --- New Button Connection ---
+        self.dialog.line_profile_button.clicked.connect(self._show_elevation_profile)
+
         # --- Drawing State ---
         self.is_drawing = False
         self.start_point = None
         self.end_point = None
         self.pixel_length = 0.0
+        self.profile_plot_data = None # Store data for the plot
         
         # --- Graphics Items ---
-        pen = QPen(QColor(230, 62, 0, 255), 4, Qt.DashLine)
-        pen.setCosmetic(True)  # Ensures line is visible at all zoom levels
+        self.base_pen = QPen(QColor(230, 62, 0, 255), 4, Qt.DashLine)
+        self.base_pen.setCosmetic(True)  # Ensures line is visible at all zoom levels
         
         # Line (for Set Scale and Measure Line)
         self.preview_line = QGraphicsLineItem()
-        self.preview_line.setPen(pen)
+        self.preview_line.setPen(self.base_pen)
         self.preview_line.setZValue(100)  # Draw on top
         
         # Rectangle
-        self.preview_rect = QGraphicsRectItem()
-        self.preview_rect.setPen(pen)
-        self.preview_rect.setZValue(100)
+        self.preview_wireframe = QGraphicsItemGroup()
+        self.preview_wireframe_base = QGraphicsRectItem(parent=self.preview_wireframe)
+        self.preview_wireframe_base.setPen(self.base_pen)
+        
+        self.wireframe_grid_lines = []
+        grid_size = 5 # Must match the grid_size in _update_wireframe_graphic
+        # We need (grid_size * (grid_size-1)) horizontal lines
+        # AND (grid_size * (grid_size-1)) vertical lines
+        num_lines_needed = (grid_size * (grid_size - 1)) * 2 # (5 * 4) * 2 = 40 lines
+        
+        for _ in range(num_lines_needed): 
+            line = QGraphicsLineItem(parent=self.preview_wireframe)
+            pen = QPen(QColor(230, 62, 0, 100), 1, Qt.DotLine)
+            pen.setCosmetic(True)
+            line.setPen(pen)
+            self.wireframe_grid_lines.append(line)
+        self.preview_wireframe.setZValue(100)
         
         self.show_crosshair = True  # Enable crosshair for precise measurements
         
@@ -396,6 +466,7 @@ class ScaleTool(Tool):
         # --- Accumulated Graphics ---
         self.accumulated_lines = []
         self.accumulated_rects = []
+        self.profile_plot_dialog = None # Reference to pop-up
 
     def get_current_scale(self):
         """Helper to get current raster scale. Returns (scale, units)."""
@@ -460,6 +531,8 @@ class ScaleTool(Tool):
         self.dialog.line_delta_z_label.setText("N/A")
         self.dialog.line_slope_label.setText("N/A")
         self.dialog.line_rugosity_label.setText("N/A")
+        self.dialog.line_profile_button.setEnabled(False)
+        self.profile_plot_data = None
         # Rect Tab
         self.dialog.rect_z_stats_label.setText("N/A")
         self.dialog.rect_3d_surface_area_label.setText("N/A")
@@ -474,8 +547,8 @@ class ScaleTool(Tool):
         # Add all preview items to scene
         if not self.preview_line.scene():
             self.annotation_window.scene.addItem(self.preview_line)
-        if not self.preview_rect.scene():
-            self.annotation_window.scene.addItem(self.preview_rect)
+        if not self.preview_wireframe.scene():
+            self.annotation_window.scene.addItem(self.preview_wireframe)
         
         self.stop_current_drawing()  # Resets all drawing
         self.dialog.reset_fields()
@@ -502,7 +575,7 @@ class ScaleTool(Tool):
         super().deactivate()
         self.dialog.hide()
         self.preview_line.hide()
-        self.preview_rect.hide()
+        self.preview_wireframe.hide()
         
         # Clean up accumulated graphics
         for line in self.accumulated_lines:
@@ -513,6 +586,11 @@ class ScaleTool(Tool):
         self.accumulated_rects.clear()
         
         self.is_drawing = False
+        
+        # Close profile plot dialog if it's open
+        if self.profile_plot_dialog:
+            self.profile_plot_dialog.reject()
+            self.profile_plot_dialog = None
         
         # Untoggle all tools when closing the scale tool
         self.main_window.untoggle_all_tools()
@@ -546,9 +624,17 @@ class ScaleTool(Tool):
         # Enable "Set Scale" button ONLY on the first tab
         if index == 0:
             self.dialog.set_scale_button.setEnabled(True)
-        else:
+            self.preview_wireframe.hide() # Hide rect
+            self.preview_line.show() # Show line
+        elif index == 1:
             self.dialog.set_scale_button.setEnabled(False)
-
+            self.preview_wireframe.hide() # Hide rect
+            self.preview_line.show() # Show line
+        elif index == 2:
+            self.dialog.set_scale_button.setEnabled(False)
+            self.preview_line.hide() # Hide line
+            self.preview_wireframe.show() # Show rect
+            
     def stop_current_drawing(self):
         """Force stop all drawing, hide previews, and reset points."""
         self.is_drawing = False
@@ -556,7 +642,7 @@ class ScaleTool(Tool):
         self.end_point = None
         
         self.preview_line.hide()
-        self.preview_rect.hide()
+        self.preview_wireframe.hide()
         
         # Reset labels
         self.dialog.pixel_length_label.setText("Draw a line on the image")
@@ -574,6 +660,11 @@ class ScaleTool(Tool):
         # Disable 'Add' buttons
         self.dialog.line_add_button.setEnabled(False)
         self.dialog.rect_add_button.setEnabled(False)
+        
+        # Close profile plot
+        if self.profile_plot_dialog:
+            self.profile_plot_dialog.reject()
+            self.profile_plot_dialog = None
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() != Qt.LeftButton:
@@ -596,6 +687,7 @@ class ScaleTool(Tool):
                     self.dialog.pixel_length_label.setText("Drawing...")
                 else:
                     self.dialog.line_length_label.setText("Drawing...")
+                    self.reset_3d_labels() # Clear old graphics
             else:
                 # Finish drawing
                 self.is_drawing = False
@@ -612,7 +704,7 @@ class ScaleTool(Tool):
                 if self.current_mode == 0:
                     self.dialog.pixel_length_label.setText(f"{self.pixel_length:.2f} px")
                 else:
-                    self.calculate_line_measurement(final_calc=True) # <-- Changed
+                    self.calculate_line_measurement(final_calc=True) # <-- Final calc
 
         # --- Mode 2: Measure Rectangle ---
         elif self.current_mode == 2:
@@ -621,16 +713,17 @@ class ScaleTool(Tool):
                 self.start_point = scene_pos
                 self.end_point = self.start_point
                 self.is_drawing = True
-                self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
-                self.preview_rect.show()
+                self._update_wireframe_graphic()
+                self.preview_wireframe.show()
                 self.dialog.rect_area_label.setText("Drawing...")
                 self.dialog.rect_perimeter_label.setText("Drawing...")
+                self.reset_3d_labels() # Clear old graphics
             else:
                 # Finish drawing
                 self.is_drawing = False
                 self.end_point = scene_pos
-                self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
-                self.calculate_rect_measurement(final_calc=True) # <-- Changed
+                self._update_wireframe_graphic()
+                self.calculate_rect_measurement(final_calc=True) # <-- Final calc
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
@@ -649,10 +742,10 @@ class ScaleTool(Tool):
             return
             
         scene_pos = self.annotation_window.mapToScene(event.pos())
+        self.end_point = scene_pos
 
         # --- Mode 0: Set Scale OR Mode 1: Measure Line ---
         if self.current_mode == 0 or self.current_mode == 1:
-            self.end_point = scene_pos
             line = QLineF(self.start_point, self.end_point)
             self.pixel_length = line.length()
             self.preview_line.setLine(line)
@@ -661,14 +754,13 @@ class ScaleTool(Tool):
                 self.dialog.pixel_length_label.setText(f"{self.pixel_length:.2f} px")
             else:
                 # Live update for line length
-                self.calculate_line_measurement(final_calc=False) # <-- Changed
+                self.calculate_line_measurement(final_calc=False) # <-- Live calc
 
         # --- Mode 2: Measure Rectangle ---
         elif self.current_mode == 2:
-            self.end_point = scene_pos
-            self.preview_rect.setRect(QRectF(self.start_point, self.end_point).normalized())
+            self._update_wireframe_graphic()
             # Live update for rect
-            self.calculate_rect_measurement(final_calc=False) # <-- Changed
+            self.calculate_rect_measurement(final_calc=False) # <-- Live calc
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         pass
@@ -685,6 +777,103 @@ class ScaleTool(Tool):
         # --- Cancel (Escape) ---
         if event.key() == Qt.Key_Escape:
             self.stop_current_drawing()
+            
+    # --- New Graphic & Plotting Methods ---
+
+    def _update_wireframe_graphic(self):
+        """Updates the 3D wireframe grid being drawn."""
+        rect = QRectF(self.start_point, self.end_point).normalized()
+        self.preview_wireframe_base.setRect(rect)
+
+        # Check for z-data. If none, just draw 2D rect and return
+        _, z_channel, _, _, _ = self.get_current_z_data()
+        if z_channel is None:
+            # Hide all grid lines
+            for line in self.wireframe_grid_lines:
+                line.hide()
+            return
+        
+        try:
+            h, w = z_channel.shape
+            grid_size = 5 # 5x5 grid
+            line_idx = 0
+
+            # Generate grid points
+            x_points = np.linspace(rect.left(), rect.right(), grid_size)
+            y_points = np.linspace(rect.top(), rect.bottom(), grid_size)
+            
+            # Get Z values for all grid points (vectorized)
+            x_coords = np.clip(np.round(x_points).astype(int), 0, w - 1)
+            y_coords = np.clip(np.round(y_points).astype(int), 0, h - 1)
+            
+            # Create a meshgrid for indexing
+            xx, yy = np.meshgrid(x_coords, y_coords)
+            z_grid = z_channel[yy, xx]
+            
+            # Simple Z scaling for visualization
+            z_min, z_max = np.min(z_grid), np.max(z_grid)
+            z_range = (z_max - z_min) if (z_max - z_min) > 0 else 1.0
+            z_scale = -rect.height() / (z_range * 2.0) # Visual scale
+            
+            # Apply visual offset
+            z_offsets = (z_grid - z_min) * z_scale
+            
+            # Create 3D points
+            points_3d = []
+            for i in range(grid_size):
+                row = []
+                for j in range(grid_size):
+                    offset = z_offsets[i, j]
+                    row.append(QPointF(x_points[j] + offset, y_points[i] + offset))
+                points_3d.append(row)
+
+            # Draw horizontal grid lines
+            for i in range(grid_size):
+                for j in range(grid_size - 1):
+                    p1 = points_3d[i][j]
+                    p2 = points_3d[i][j+1]
+                    self.wireframe_grid_lines[line_idx].setLine(QLineF(p1, p2))
+                    self.wireframe_grid_lines[line_idx].show()
+                    line_idx += 1
+
+            # Draw vertical grid lines
+            for j in range(grid_size):
+                for i in range(grid_size - 1):
+                    p1 = points_3d[i][j]
+                    p2 = points_3d[i+1][j]
+                    self.wireframe_grid_lines[line_idx].setLine(QLineF(p1, p2))
+                    self.wireframe_grid_lines[line_idx].show()
+                    line_idx += 1
+            
+            # Hide unused lines
+            for i in range(line_idx, len(self.wireframe_grid_lines)):
+                self.wireframe_grid_lines[i].hide()
+
+        except Exception as e:
+            print(f"Error updating wireframe: {e}")
+            # On error, just draw 2D rect
+            for line in self.wireframe_grid_lines:
+                line.hide()
+
+    def _show_elevation_profile(self):
+        """Shows the pop-up dialog with the elevation profile."""
+        if not self.profile_plot_data:
+            QMessageBox.warning(self.dialog, "No Data", "No profile data to display.")
+            return
+            
+        try:
+            # Unpack data
+            data_x, data_y, x_label, y_label = self.profile_plot_data
+            
+            # Close existing dialog
+            if self.profile_plot_dialog:
+                self.profile_plot_dialog.reject()
+            
+            # Create and show new dialog
+            self.profile_plot_dialog = ProfilePlotDialog(data_x, data_y, x_label, y_label, self.dialog)
+            self.profile_plot_dialog.show()
+        except Exception as e:
+            QMessageBox.critical(self.dialog, "Plot Error", f"Could not display plot: {e}")
 
     # --- Calculation and Accumulation Methods ---
 
@@ -756,7 +945,15 @@ class ScaleTool(Tool):
             x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
             y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
             
+            profile_data_x = [] # For plot
+            profile_data_y = [] # For plot
+            
             total_3d_length = 0.0
+            dist_2d_so_far = 0.0
+            
+            profile_data_x.append(0.0)
+            z_a = z_channel[min(max(0, int(y_samples[0])), h-1), min(max(0, int(x_samples[0])), w-1)]
+            profile_data_y.append(z_a)
             
             for i in range(num_samples - 1):
                 # Get segment start/end points (pixel coords)
@@ -774,12 +971,22 @@ class ScaleTool(Tool):
                 
                 # Add 3D segment length
                 total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz**2)
+                
+                # Add data for plot
+                dist_2d_so_far += math.sqrt(dx_m**2 + dy_m**2)
+                profile_data_x.append(dist_2d_so_far)
+                profile_data_y.append(z_b)
 
             # Convert 3D length to display units
             if display_units != "m":
                 length_3d_display = convert_scale_units(total_3d_length, 'metre', display_units)
+                # Also convert plot x-axis
+                conv_factor = convert_scale_units(1.0, 'metre', display_units)
+                profile_data_x = [x * conv_factor for x in profile_data_x]
+                plot_x_label = f"Distance ({display_units})"
             else:
                 length_3d_display = total_3d_length
+                plot_x_label = "Distance (m)"
             
             self.dialog.line_3d_length_label.setText(f"{length_3d_display:.3f} {display_units}")
 
@@ -789,6 +996,12 @@ class ScaleTool(Tool):
                 self.dialog.line_rugosity_label.setText(f"{linear_rugosity:.3f}")
             else:
                 self.dialog.line_rugosity_label.setText("N/A")
+                
+            # Store data for plot
+            plot_y_label = f"Elevation ({z_unit_str})"
+            self.profile_plot_data = (profile_data_x, profile_data_y, plot_x_label, plot_y_label)
+            if final_calc:
+                self.dialog.line_profile_button.setEnabled(True)
                 
         except Exception as e:
             print(f"Error in 3D line calculation: {e}")
@@ -936,7 +1149,7 @@ class ScaleTool(Tool):
                 self.dialog.rect_rugosity_label.setText(f"{areal_rugosity:.3f}")
             else:
                 self.dialog.rect_rugosity_label.setText("N/A")
-
+                
         except Exception as e:
             print(f"Error in 3D rect calculation: {e}")
             self.reset_3d_labels()
@@ -950,8 +1163,9 @@ class ScaleTool(Tool):
         self.dialog.rect_total_area_label.setText(f"{self.total_rect_area:.3f} {area_units}")
         
         # Create a permanent rect item to keep visible
-        perm_rect = QGraphicsRectItem(self.preview_rect.rect())
-        perm_rect.setPen(self.preview_rect.pen())
+        # We only add the base rect, not the full wireframe
+        perm_rect = QGraphicsRectItem(self.preview_wireframe_base.rect())
+        perm_rect.setPen(self.base_pen)
         perm_rect.setZValue(99)  # Slightly below preview
         self.annotation_window.scene.addItem(perm_rect)
         self.accumulated_rects.append(perm_rect)
