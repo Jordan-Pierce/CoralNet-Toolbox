@@ -643,7 +643,14 @@ class AnnotationWindow(QGraphicsView):
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
             return
-            
+        
+        # Load z_channel data if available (deferred loading)
+        if raster.z_channel_path and not raster.z_channel:
+            try:
+                raster.load_z_channel_from_file(raster.z_channel_path)
+            except Exception as e:
+                print(f"Warning: Could not load z-channel for {image_path}: {str(e)}")
+
         # Get low-res thumbnail first for a preview
         low_res_qimage = raster.get_thumbnail(longest_edge=256)
         if low_res_qimage is None or low_res_qimage.isNull():

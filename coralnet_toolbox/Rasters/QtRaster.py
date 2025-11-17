@@ -98,11 +98,14 @@ class Raster(QObject):
         self.scale_y: Optional[float] = None
         self.scale_units: Optional[str] = None
         
+        # Depth/elevation channel information
+        self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
+        self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
+        self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
+        
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
         self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
-        self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
-        self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -309,6 +312,7 @@ class Raster(QObject):
                              f"({self.height}, {self.width})")
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
+        self.z_unit = 'meters'  # Default to meters for now
         
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
         """
@@ -341,6 +345,7 @@ class Raster(QObject):
         """Remove the depth/elevation channel data and path."""
         self.z_channel = None
         self.z_channel_path = None
+        self.z_unit = None
         
     def load_z_channel_from_file(self, z_channel_path: str):
         """
@@ -827,6 +832,10 @@ class Raster(QObject):
         # Include z_channel path if available
         if self.z_channel_path is not None:
             raster_data['z_channel_path'] = self.z_channel_path
+            
+        # Include z_unit if available
+        if self.z_unit is not None:
+            raster_data['z_unit'] = self.z_unit
         
         if self.z_channel is not None:
             raster_data['has_z_channel'] = True
@@ -904,13 +913,12 @@ class Raster(QObject):
         # Load z_channel path if available and attempt to load the z-channel data
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
-            raster.set_z_channel_path(z_channel_path)
-            # Automatically attempt to load z-channel data from the path
-            if os.path.exists(z_channel_path):
-                try:
-                    raster.load_z_channel_from_file(z_channel_path)
-                except Exception as e:
-                    print(f"Warning: Could not load z-channel from {z_channel_path}: {str(e)}")
+            raster.set_z_channel_path(z_channel_path, auto_load=False)  # Defer loading
+            
+        # Load z_unit if available
+        z_unit = raster_dict.get('z_unit')
+        if z_unit:
+            raster.z_unit = z_unit
         
         return raster
     
@@ -966,15 +974,15 @@ class Raster(QObject):
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
         
-        # Update z_channel path and data if available
+        # Update z_channel path if available but don't load the data yet
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
-            self.set_z_channel_path(z_channel_path, auto_load=True)
-        
-        # Update z_channel path if available
-        z_channel_path = raster_dict.get('z_channel_path')
-        if z_channel_path:
-            self.set_z_channel_path(z_channel_path)
+            self.set_z_channel_path(z_channel_path, auto_load=False)  # Defer loading
+            
+        # Update z_unit if available
+        z_unit = raster_dict.get('z_unit')
+        if z_unit:
+            self.z_unit = z_unit
         
         # Note: z_channel data is not loaded from dictionary as it's typically stored separately
         
@@ -1003,6 +1011,7 @@ class Raster(QObject):
         self.extrinsics = None
         self.z_channel = None
         self.z_channel_path = None
+        self.z_unit = None
         
         # Force garbage collection
         gc.collect()
