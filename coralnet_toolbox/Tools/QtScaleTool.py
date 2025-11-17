@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWi
                              QFormLayout, QDoubleSpinBox, QComboBox, QLabel,
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
                              QGroupBox, QCheckBox, QButtonGroup, QPushButton,
-                             QGraphicsRectItem, QGraphicsItemGroup, QSpacerItem,
+                             QGraphicsRectItem, QGraphicsItemGroup, QGraphicsEllipseItem, QSpacerItem,
                              QSizePolicy, QScrollArea, QFrame)
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -36,7 +36,7 @@ class ProfilePlotDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Elevation Profile")
         self.setWindowIcon(get_icon("scale.png"))
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(800, 700)
 
         # Set a white background for plots
         pg.setConfigOption('background', 'w')
@@ -83,13 +83,12 @@ class ProfilePlotDialog(QDialog):
         # 2. --- Plot 1: Combined (Non-Normalized) ---
         if len(profiles_list) > 0:
             combined_plot_widget = pg.PlotWidget()
-            combined_plot_widget.setMinimumHeight(300)
+            combined_plot_widget.setMinimumHeight(350)
+            combined_plot_widget.setMinimumWidth(600)
             combined_plot_item = combined_plot_widget.getPlotItem()
             combined_plot_item.setTitle("Combined Profiles")
             
-            # Use the x-label from the first profile as the representative
-            x_label = profiles_list[0].get("x_label", "Distance")
-            combined_plot_item.setLabel('bottom', x_label)
+            combined_plot_item.setLabel('bottom', '')
             combined_plot_item.setLabel('left', "Elevation / Z-Value")
             combined_plot_item.showGrid(x=True, y=True, alpha=0.3)
             combined_plot_item.addLegend()
@@ -104,8 +103,29 @@ class ProfilePlotDialog(QDialog):
                             pen=profile["color"],
                             name=profile["name"]
                         )
+                        # Add start and end points
+                        combined_plot_item.plot([profile["x_data"][0]], 
+                                                [profile["y_data"][0]], 
+                                                pen=None, symbol='o', symbolBrush='w', symbolPen='k', symbolSize=8)
+                        
+                        combined_plot_item.plot([profile["x_data"][-1]], 
+                                                [profile["y_data"][-1]], 
+                                                pen=None, symbol='o', symbolBrush='k', symbolPen='k', symbolSize=8)
                 except Exception as e:
                     print(f"Error plotting combined profile '{profile['name']}': {e}")
+
+            combined_plot_item.enableAutoRange()
+            
+            # Zoom out a bit more
+            x_range = combined_plot_item.getAxis('bottom').range
+            y_range = combined_plot_item.getAxis('left').range
+            x_center = (x_range[0] + x_range[1]) / 2
+            x_span = x_range[1] - x_range[0]
+            y_center = (y_range[0] + y_range[1]) / 2
+            y_span = y_range[1] - y_range[0]
+            zoom_factor = 1.2  # Zoom out by 20%
+            combined_plot_item.setXRange(x_center - x_span * zoom_factor / 2, x_center + x_span * zoom_factor / 2)
+            combined_plot_item.setYRange(y_center - y_span * zoom_factor / 2, y_center + y_span * zoom_factor / 2)
 
             self.plot_layout.addWidget(combined_plot_widget)
             self.plot_widgets.append(combined_plot_widget)
@@ -127,7 +147,8 @@ class ProfilePlotDialog(QDialog):
         for profile in profiles_list:
             try:
                 ind_plot_widget = pg.PlotWidget()
-                ind_plot_widget.setMinimumHeight(250)
+                ind_plot_widget.setMinimumHeight(300)
+                ind_plot_widget.setMinimumWidth(600)
                 ind_plot_item = ind_plot_widget.getPlotItem()
                 
                 title = profile["name"]
@@ -136,8 +157,7 @@ class ProfilePlotDialog(QDialog):
                     title += f"  ({stats_str})"
                 ind_plot_item.setTitle(title)
                     
-                ind_plot_item.setTitle(profile["name"])
-                ind_plot_item.setLabel('bottom', profile["x_label"])
+                ind_plot_item.setLabel('bottom', '')
                 ind_plot_item.setLabel('left', profile["y_label"])
                 ind_plot_item.showGrid(x=True, y=True, alpha=0.3)
                 
@@ -146,7 +166,27 @@ class ProfilePlotDialog(QDialog):
                     profile["y_data"],
                     pen=profile["color"]
                 )
+                # Add start and end points
+                ind_plot_item.plot([profile["x_data"][0]], 
+                                   [profile["y_data"][0]], 
+                                   pen=None, symbol='o', symbolBrush='w', symbolPen='k', symbolSize=8)
+                
+                ind_plot_item.plot([profile["x_data"][-1]], 
+                                   [profile["y_data"][-1]], 
+                                   pen=None, symbol='o', symbolBrush='k', symbolPen='k', symbolSize=8)
+                
                 ind_plot_item.enableAutoRange()
+                
+                # Zoom out a bit more
+                x_range = ind_plot_item.getAxis('bottom').range
+                y_range = ind_plot_item.getAxis('left').range
+                x_center = (x_range[0] + x_range[1]) / 2
+                x_span = x_range[1] - x_range[0]
+                y_center = (y_range[0] + y_range[1]) / 2
+                y_span = y_range[1] - y_range[0]
+                zoom_factor = 1.2  # Zoom out by 20%
+                ind_plot_item.setXRange(x_center - x_span * zoom_factor / 2, x_center + x_span * zoom_factor / 2)
+                ind_plot_item.setYRange(y_center - y_span * zoom_factor / 2, y_center + y_span * zoom_factor / 2)
                 
                 self.plot_layout.addWidget(ind_plot_widget)
                 self.plot_widgets.append(ind_plot_widget)
@@ -538,14 +578,14 @@ class ScaleTool(Tool):
         
         # Color cycle for plots and lines
         self.color_cycle_pens = [
-            pg.mkPen(color='#E63E00', width=3), # Bright Orange (Current)
-            pg.mkPen(color='#1f77b4', width=2), # Matplotlib Blue
-            pg.mkPen(color='#2ca02c', width=2), # Matplotlib Green
-            pg.mkPen(color='#d62728', width=2), # Matplotlib Red
-            pg.mkPen(color='#9467bd', width=2), # Matplotlib Purple
-            pg.mkPen(color='#8c564b', width=2), # Matplotlib Brown
-            pg.mkPen(color='#e377c2', width=2), # Matplotlib Pink
-            pg.mkPen(color='#7f7f7f', width=2), # Matplotlib Gray
+            pg.mkPen(color='#E63E00', width=3),  # Bright Orange (Current)
+            pg.mkPen(color='#1f77b4', width=2),  # Matplotlib Blue
+            pg.mkPen(color='#2ca02c', width=2),  # Matplotlib Green
+            pg.mkPen(color='#d62728', width=2),  # Matplotlib Red
+            pg.mkPen(color='#9467bd', width=2),  # Matplotlib Purple
+            pg.mkPen(color='#8c564b', width=2),  # Matplotlib Brown
+            pg.mkPen(color='#e377c2', width=2),  # Matplotlib Pink
+            pg.mkPen(color='#7f7f7f', width=2),  # Matplotlib Gray
         ]
         self.current_color_index = 0 # Index for *accumulated* lines
         
@@ -588,6 +628,7 @@ class ScaleTool(Tool):
         # --- Accumulated Graphics ---
         self.accumulated_lines = []
         self.accumulated_rects = []
+        self.accumulated_points = []
 
         # --- Total Locked Flags ---
         self.line_total_locked = False
@@ -709,6 +750,9 @@ class ScaleTool(Tool):
         for rect in self.accumulated_rects:
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
+        for point in self.accumulated_points:
+            self.annotation_window.scene.removeItem(point)
+        self.accumulated_points.clear()
         
         # Clear profile data
         self.accumulated_profiles.clear()
@@ -754,7 +798,9 @@ class ScaleTool(Tool):
         self.end_point = None
         
         self.preview_line.hide()
+        self.preview_line.setLine(QLineF())  # Clear the line geometry
         self.preview_wireframe.hide()
+        self.preview_wireframe_base.setRect(QRectF())  # Clear the rect geometry
         
         # Reset labels
         self.dialog.pixel_length_label.setText("Draw a line on the image")
@@ -1178,6 +1224,29 @@ class ScaleTool(Tool):
         self.annotation_window.scene.addItem(perm_line)
         self.accumulated_lines.append(perm_line)
         
+        # Add start and end points
+        start_point = perm_line.line().p1()
+        end_point = perm_line.line().p2()
+        radius = 4  # 8 pixel diameter
+        
+        # White start point
+        start_ellipse = QGraphicsEllipseItem(start_point.x() - radius, start_point.y() - radius, 
+                                             2 * radius, 2 * radius)
+        start_ellipse.setBrush(QBrush(Qt.white))
+        start_ellipse.setPen(QPen(Qt.black, 1))
+        start_ellipse.setZValue(99)
+        self.annotation_window.scene.addItem(start_ellipse)
+        self.accumulated_points.append(start_ellipse)
+        
+        # Black end point
+        end_ellipse = QGraphicsEllipseItem(end_point.x() - radius, end_point.y() - radius, 
+                                           2 * radius, 2 * radius)
+        end_ellipse.setBrush(QBrush(Qt.black))
+        end_ellipse.setPen(QPen(Qt.black, 1))
+        end_ellipse.setZValue(99)
+        self.annotation_window.scene.addItem(end_ellipse)
+        self.accumulated_points.append(end_ellipse)
+        
         # 5. Promote the "current" profile to "accumulated"
         self.current_profile_data["name"] = name_to_use
         self.current_profile_data["color"] = pen_to_use
@@ -1208,6 +1277,9 @@ class ScaleTool(Tool):
         for line in self.accumulated_lines:
             self.annotation_window.scene.removeItem(line)
         self.accumulated_lines.clear()
+        for point in self.accumulated_points:
+            self.annotation_window.scene.removeItem(point)
+        self.accumulated_points.clear()
         
         # 3. Clear profile data
         self.accumulated_profiles.clear()
