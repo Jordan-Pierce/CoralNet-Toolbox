@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self.hide_icon = get_icon("hide.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
+        self.z_icon = get_icon("z.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -1070,6 +1071,21 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+        
+        # Z button and Z label
+        self.z_action = QAction(self.z_icon, "", self)
+        self.z_action.setCheckable(True)
+        self.z_action.setChecked(False)
+        self.z_action.setToolTip("Open Depth Dialog")
+        self.z_action.triggered.connect(self.open_depth_dialog)
+        
+        # Create button to hold the Z action
+        self.z_button = QToolButton()
+        self.z_button.setDefaultAction(self.z_action)
+        
+        # Z label for depth information
+        self.z_label = QLabel("Z: 0")
+        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1157,6 +1173,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.scale_unit_dropdown)
         self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
         self.status_bar_layout.addWidget(self.scaled_view_dims_label)
+        self.status_bar_layout.addWidget(self.z_button)
+        self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
@@ -2373,6 +2391,11 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_depth_dialog(self):
+        """Open the Depth Dialog"""
+        # TODO: Implement depth dialog functionality
+        pass
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
