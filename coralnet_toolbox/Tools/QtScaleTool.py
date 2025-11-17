@@ -2,13 +2,7 @@ import warnings
 import math
 import numpy as np
 
-# --- New Imports for Plotting and Graphics ---
-import matplotlib
-matplotlib.use('Qt5Agg') # Set backend for Qt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-# --- End New Imports ---
+import pyqtgraph as pg
 
 from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint, QPointF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPixmap, QPainter, QBrush, QFontMetrics, QPolygonF
@@ -31,33 +25,40 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Helper Class for Elevation Profile Plot
 # ----------------------------------------------------------------------------------------------------------------------
 
-class MatplotlibCanvas(FigureCanvas):
-    """Helper class for embedding a matplotlib figure in a Qt widget."""
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
-        super().__init__(fig)
-        self.setParent(parent)
 
 class ProfilePlotDialog(QDialog):
-    """A pop-up dialog to display the elevation profile plot."""
+    """A pop-up dialog to display the elevation profile plot using pyqtgraph."""
     def __init__(self, data_x, data_y, x_label, y_label, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Elevation Profile")
         self.setWindowIcon(get_icon("scale.png"))
         self.setMinimumSize(600, 400)
+        
+        # Set a white background for the plot
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', 'k')
 
         layout = QVBoxLayout(self)
-        self.canvas = MatplotlibCanvas(self, width=6, height=4, dpi=100)
-        layout.addWidget(self.canvas)
-
-        # Plot the data
-        self.canvas.axes.plot(data_x, data_y, color="#E63E00")
-        self.canvas.axes.set_xlabel(x_label)
-        self.canvas.axes.set_ylabel(y_label)
-        self.canvas.axes.set_title("Line Elevation Profile")
-        self.canvas.axes.grid(True, linestyle='--', alpha=0.6)
-        self.canvas.figure.tight_layout()
+        self.plot_widget = pg.PlotWidget()
+        self.plot_item = self.plot_widget.getPlotItem()
+        layout.addWidget(self.plot_widget)
+        
+        # Store plot data item for easy updates
+        self.plot_data_item = self.plot_item.plot(
+            data_x,
+            data_y,
+            pen=pg.mkPen(color="#E63E00", width=2)
+        )
+        
+        # Set labels and title
+        self.plot_item.setLabel('bottom', x_label)
+        self.plot_item.setLabel('left', y_label)
+        self.plot_item.setTitle("Line Elevation Profile")
+        self.plot_item.showGrid(x=True, y=True, alpha=0.3)
+        
+        # Enable mouse interaction
+        self.plot_item.setMouseEnabled(x=True, y=True)
+        self.plot_item.enableAutoRange()
 
         # Add a close button
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
@@ -67,25 +68,24 @@ class ProfilePlotDialog(QDialog):
     def update_plot(self, data_x, data_y, x_label, y_label):
         """Clears the axes and plots new data for a real-time update."""
         try:
-            # Clear the old plot
-            self.canvas.axes.cla()
+            # Update the data of the existing plot item
+            self.plot_data_item.setData(data_x, data_y)
             
-            # Plot the new data
-            self.canvas.axes.plot(data_x, data_y, color="#E63E00")
-            self.canvas.axes.set_xlabel(x_label)
-            self.canvas.axes.set_ylabel(y_label)
-            self.canvas.axes.set_title("Line Elevation Profile")
-            self.canvas.axes.grid(True, linestyle='--', alpha=0.6)
-            self.canvas.figure.tight_layout()
+            # Update labels
+            self.plot_item.setLabel('bottom', x_label)
+            self.plot_item.setLabel('left', y_label)
             
-            # Redraw the canvas
-            self.canvas.draw()
+            # Re-enable autorange to fit the new data
+            self.plot_item.enableAutoRange()
+            
         except Exception as e:
             print(f"Error updating plot: {e}")
+            
 
 # ----------------------------------------------------------------------------------------------------------------------
 # ScaleToolDialog Class
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class ScaleToolDialog(QDialog):
     """
