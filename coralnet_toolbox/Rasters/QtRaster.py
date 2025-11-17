@@ -24,6 +24,7 @@ from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import load_z_channel_from_file
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -332,6 +333,33 @@ class Raster(QObject):
         """Remove the depth/elevation channel data and path."""
         self.z_channel = None
         self.z_channel_path = None
+        
+    def load_z_channel_from_file(self, z_channel_path: str):
+        """
+        Load z_channel data from a file path using rasterio.
+        
+        The z_channel data will be either:
+        - float32: Actual depth/height values (e.g., meters, feet, etc.)
+        - uint8: Relative depth/height values (0-255 range)
+        
+        Args:
+            z_channel_path (str): Path to the depth/height/DEM file
+            
+        Returns:
+            bool: True if loading was successful, False otherwise
+        """
+        z_data, z_path = load_z_channel_from_file(
+            z_channel_path, 
+            target_width=self.width, 
+            target_height=self.height
+        )
+        
+        if z_data is not None:
+            self.add_z_channel(z_data, z_path)
+            return True
+        else:
+            print(f"Failed to load z-channel from: {z_channel_path}")
+            return False
     
     @property
     def rasterio_src(self):
