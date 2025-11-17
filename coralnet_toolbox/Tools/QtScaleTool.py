@@ -1230,8 +1230,10 @@ class ScaleTool(Tool):
         radius = 4  # 8 pixel diameter
         
         # White start point
-        start_ellipse = QGraphicsEllipseItem(start_point.x() - radius, start_point.y() - radius, 
+        start_ellipse = QGraphicsEllipseItem(start_point.x() - radius, 
+                                             start_point.y() - radius, 
                                              2 * radius, 2 * radius)
+        
         start_ellipse.setBrush(QBrush(Qt.white))
         start_ellipse.setPen(QPen(Qt.black, 1))
         start_ellipse.setZValue(99)
@@ -1239,8 +1241,10 @@ class ScaleTool(Tool):
         self.accumulated_points.append(start_ellipse)
         
         # Black end point
-        end_ellipse = QGraphicsEllipseItem(end_point.x() - radius, end_point.y() - radius, 
+        end_ellipse = QGraphicsEllipseItem(end_point.x() - radius,
+                                           end_point.y() - radius, 
                                            2 * radius, 2 * radius)
+        
         end_ellipse.setBrush(QBrush(Qt.black))
         end_ellipse.setPen(QPen(Qt.black, 1))
         end_ellipse.setZValue(99)
