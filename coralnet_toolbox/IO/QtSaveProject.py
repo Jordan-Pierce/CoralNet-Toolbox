@@ -140,25 +140,8 @@ class SaveProject(QDialog):
             for image_path in self.image_window.raster_manager.image_paths:
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster:
-                    # Get work areas for this raster
-                    work_areas_list = [wa.to_dict() for wa in raster.get_work_areas()]
-
-                    image_data = {
-                        'path': image_path,
-                        'state': {
-                            'checkbox_state': raster.checkbox_state
-                        },
-                        'work_areas': work_areas_list
-                    }
-
-                    # Include scale information if available
-                    if raster.scale_x is not None and raster.scale_y is not None and raster.scale_units is not None:
-                        image_data['scale'] = {
-                            'scale_x': raster.scale_x,
-                            'scale_y': raster.scale_y,
-                            'scale_units': raster.scale_units
-                        }
-
+                    # Use the raster's to_dict method
+                    image_data = raster.to_dict()
                     export_images.append(image_data)
                 progress_bar.update_progress()
 

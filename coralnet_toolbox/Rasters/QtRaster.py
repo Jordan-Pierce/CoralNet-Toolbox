@@ -17,6 +17,8 @@ from PyQt5.QtCore import QObject
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 
+from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
@@ -94,6 +96,12 @@ class Raster(QObject):
         self.scale_x: Optional[float] = None
         self.scale_y: Optional[float] = None
         self.scale_units: Optional[str] = None
+        
+        # Camera calibration information
+        self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
+        self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
+        self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
+        self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -229,7 +237,101 @@ class Raster(QObject):
         # Remove from metadata if keys exist
         self.metadata.pop('scale_x', None)
         self.metadata.pop('scale_y', None)
-        self.metadata.pop('original_crs', None) # Also remove derived crs
+        self.metadata.pop('original_crs', None)  # Also remove derived crs
+    
+    def add_intrinsics(self, intrinsics: np.ndarray):
+        """
+        Add or update camera intrinsic parameters.
+        
+        Args:
+            intrinsics (np.ndarray): Camera intrinsic matrix (typically 3x3 or 3x4)
+                                    Standard format for camera calibration matrix
+        """
+        if not isinstance(intrinsics, np.ndarray):
+            raise ValueError("Intrinsics must be a numpy array")
+        self.intrinsics = intrinsics.copy()
+        
+    def update_intrinsics(self, intrinsics: np.ndarray):
+        """
+        Update camera intrinsic parameters.
+        
+        Args:
+            intrinsics (np.ndarray): New camera intrinsic matrix
+        """
+        self.add_intrinsics(intrinsics)  # Same validation as add
+        
+    def remove_intrinsics(self):
+        """Remove all camera intrinsic parameters."""
+        self.intrinsics = None
+        
+    def add_extrinsics(self, extrinsics: np.ndarray):
+        """
+        Add or update camera extrinsic parameters.
+        
+        Args:
+            extrinsics (np.ndarray): Camera extrinsic matrix (typically 4x4 transformation matrix
+                                    or 3x4 [R|T] matrix combining rotation and translation)
+        """
+        if not isinstance(extrinsics, np.ndarray):
+            raise ValueError("Extrinsics must be a numpy array")
+        self.extrinsics = extrinsics.copy()
+        
+    def update_extrinsics(self, extrinsics: np.ndarray):
+        """
+        Update camera extrinsic parameters.
+        
+        Args:
+            extrinsics (np.ndarray): New camera extrinsic matrix
+        """
+        self.add_extrinsics(extrinsics)  # Same validation as add
+        
+    def remove_extrinsics(self):
+        """Remove all camera extrinsic parameters."""
+        self.extrinsics = None
+        
+    def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
+        """
+        Add or update depth/elevation channel data.
+        
+        Args:
+            z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
+            z_path (str, optional): Path to the z_channel file if saved separately
+        """
+        if not isinstance(z_data, np.ndarray):
+            raise ValueError("Z channel data must be a numpy array")
+        if z_data.ndim != 2:
+            raise ValueError("Z channel data must be a 2D array")
+        if z_data.dtype not in [np.float32, np.uint8]:
+            raise ValueError("Z channel data must be float32 or uint8 dtype")
+        if z_data.shape != (self.height, self.width):
+            raise ValueError(f"Z channel dimensions {z_data.shape} must match image dimensions "
+                             f"({self.height}, {self.width})")
+        self.z_channel = z_data.copy()
+        self.z_channel_path = z_path
+        
+    def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
+        """
+        Update the depth/elevation channel data.
+        
+        Args:
+            z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
+            z_path (str, optional): Path to the z_channel file if saved separately
+        """
+        self.add_z_channel(z_data, z_path)  # Same validation as add
+        
+    def set_z_channel_path(self, z_path: str):
+        """
+        Set the path to the z_channel file.
+        
+        Args:
+            z_path (str): Path to the z_channel file
+        """
+        self.z_channel_path = z_path
+        
+    def remove_z_channel(self):
+        """Remove the depth/elevation channel data and path."""
+        self.z_channel = None
+        self.z_channel_path = None
     
     @property
     def rasterio_src(self):
@@ -625,6 +727,182 @@ class Raster(QObject):
         if self.mask_annotation:
             self.mask_annotation.remove_from_scene()
             self.mask_annotation = None
+    
+    def to_dict(self):
+        """
+        Convert the raster to a dictionary for project saving.
+        
+        Returns:
+            dict: Dictionary representation compatible with project format
+        """
+        # Get work areas as dictionaries
+        work_areas_list = [wa.to_dict() for wa in self.get_work_areas()]
+        
+        raster_data = {
+            'path': self.image_path,
+            'state': {
+                'checkbox_state': self.checkbox_state
+            },
+            'work_areas': work_areas_list
+        }
+        
+        # Include scale information if available
+        if self.scale_x is not None and self.scale_y is not None and self.scale_units is not None:
+            raster_data['scale'] = {
+                'scale_x': self.scale_x,
+                'scale_y': self.scale_y,
+                'scale_units': self.scale_units
+            }
+        
+        # Include camera calibration information if available
+        if self.intrinsics is not None:
+            raster_data['intrinsics'] = self.intrinsics.tolist()  # Convert numpy array to list for JSON
+            
+        if self.extrinsics is not None:
+            raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
+        
+        # Include z_channel path if available
+        if self.z_channel_path is not None:
+            raster_data['z_channel_path'] = self.z_channel_path
+        
+        if self.z_channel is not None:
+            raster_data['has_z_channel'] = True
+            # Optionally store basic info about the z_channel
+            raster_data['z_channel_info'] = {
+                'shape': self.z_channel.shape,
+                'dtype': str(self.z_channel.dtype),
+                'min': float(np.min(self.z_channel)),
+                'max': float(np.max(self.z_channel)),
+                'mean': float(np.mean(self.z_channel))
+            }
+            
+        return raster_data
+    
+    @classmethod
+    def from_dict(cls, raster_dict):
+        """
+        Create a Raster instance from a dictionary (from project loading).
+        
+        Args:
+            raster_dict (dict): Dictionary containing raster data
+            
+        Returns:
+            Raster: A new Raster instance with loaded properties
+        """
+        # Create the raster with the image path
+        image_path = raster_dict['path']
+        raster = cls(image_path)
+        
+        # Load state information
+        state = raster_dict.get('state', {})
+        raster.checkbox_state = state.get('checkbox_state', False)
+        
+        # Load work areas
+        work_areas_list = raster_dict.get('work_areas', [])
+        for work_area_data in work_areas_list:
+            try:
+                from coralnet_toolbox.QtWorkArea import WorkArea
+                work_area = WorkArea.from_dict(work_area_data, image_path)
+                raster.add_work_area(work_area)
+            except Exception as e:
+                print(f"Error loading work area for {image_path}: {str(e)}")
+        
+        # Load scale information if available
+        scale_data = raster_dict.get('scale')
+        if scale_data:
+            try:
+                raster.update_scale(
+                    scale_data['scale_x'], 
+                    scale_data['scale_y'], 
+                    scale_data['scale_units']
+                )
+            except Exception as e:
+                print(f"Error loading scale information for {image_path}: {str(e)}")
+        
+        # Load camera calibration information if available
+        intrinsics_data = raster_dict.get('intrinsics')
+        if intrinsics_data:
+            try:
+                # Convert list back to numpy array
+                intrinsics_array = np.array(intrinsics_data)
+                raster.add_intrinsics(intrinsics_array)
+            except Exception as e:
+                print(f"Error loading intrinsics for {image_path}: {str(e)}")
+                
+        extrinsics_data = raster_dict.get('extrinsics')
+        if extrinsics_data:
+            try:
+                # Convert list back to numpy array
+                extrinsics_array = np.array(extrinsics_data)
+                raster.add_extrinsics(extrinsics_array)
+            except Exception as e:
+                print(f"Error loading extrinsics for {image_path}: {str(e)}")
+        
+        # Load z_channel path if available
+        z_channel_path = raster_dict.get('z_channel_path')
+        if z_channel_path:
+            raster.set_z_channel_path(z_channel_path)
+        
+        return raster
+    
+    def update_from_dict(self, raster_dict):
+        """
+        Update this raster instance with data from a dictionary (from project loading).
+        This is useful when the raster already exists and you want to update its properties.
+        
+        Args:
+            raster_dict (dict): Dictionary containing raster data
+        """
+        # Update state information
+        state = raster_dict.get('state', {})
+        self.checkbox_state = state.get('checkbox_state', False)
+        
+        # Update work areas
+        work_areas_list = raster_dict.get('work_areas', [])
+        for work_area_data in work_areas_list:
+            try:
+                work_area = WorkArea.from_dict(work_area_data, self.image_path)
+                self.add_work_area(work_area)
+            except Exception as e:
+                print(f"Error loading work area for {self.image_path}: {str(e)}")
+        
+        # Update scale information if available (overriding any auto-detected scale)
+        scale_data = raster_dict.get('scale')
+        if scale_data:
+            try:
+                self.update_scale(
+                    scale_data['scale_x'], 
+                    scale_data['scale_y'], 
+                    scale_data['scale_units']
+                )
+            except Exception as e:
+                print(f"Error loading scale information for {self.image_path}: {str(e)}")
+        
+        # Update camera calibration information if available
+        intrinsics_data = raster_dict.get('intrinsics')
+        if intrinsics_data:
+            try:
+                # Convert list back to numpy array
+                intrinsics_array = np.array(intrinsics_data)
+                self.add_intrinsics(intrinsics_array)
+            except Exception as e:
+                print(f"Error loading intrinsics for {self.image_path}: {str(e)}")
+                
+        extrinsics_data = raster_dict.get('extrinsics')
+        if extrinsics_data:
+            try:
+                # Convert list back to numpy array
+                extrinsics_array = np.array(extrinsics_data)
+                self.add_extrinsics(extrinsics_array)
+            except Exception as e:
+                print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
+        
+        # Update z_channel path if available
+        z_channel_path = raster_dict.get('z_channel_path')
+        if z_channel_path:
+            self.set_z_channel_path(z_channel_path)
+        
+        # Note: z_channel data is not loaded from dictionary as it's typically stored separately
         
     def cleanup(self):
         """Release all resources associated with this raster."""
@@ -632,7 +910,7 @@ class Raster(QObject):
         if self._rasterio_src is not None:
             try:
                 self._rasterio_src.close()
-            except:
+            except Exception:
                 pass
             self._rasterio_src = None
             
@@ -645,6 +923,12 @@ class Raster(QObject):
         self.work_areas = []
         # Clear mask annotation if it exists
         self.delete_mask_annotation()
+        
+        # Clear camera calibration and z channel data
+        self.intrinsics = None
+        self.extrinsics = None
+        self.z_channel = None
+        self.z_channel_path = None
         
         # Force garbage collection
         gc.collect()

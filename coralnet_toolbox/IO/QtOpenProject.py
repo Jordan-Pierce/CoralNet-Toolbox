@@ -199,20 +199,8 @@ class OpenProject(QDialog):
 
                 if is_new_format and path in image_data_map:
                     data = image_data_map[path]
-                    state = data.get('state', {})
-                    work_areas_list = data.get('work_areas', [])
-                    raster.checkbox_state = state.get('checkbox_state', False)
-                    for work_area_data in work_areas_list:
-                        try:
-                            work_area = WorkArea.from_dict(work_area_data, path)
-                            raster.add_work_area(work_area)
-                        except Exception as e:
-                            print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
-
-                    # Set scale from JSON if available, overriding any extracted scale
-                    scale_data = data.get('scale')
-                    if scale_data:
-                        raster.update_scale(scale_data['scale_x'], scale_data['scale_y'], scale_data['scale_units'])
+                    # Use the raster's update_from_dict method
+                    raster.update_from_dict(data)
                 
                 progress_bar.update_progress()
 
@@ -310,7 +298,7 @@ class OpenProject(QDialog):
                         updated_path = True
                     else:
                         print(f"Warning: Image not found: {image_path}")
-                        skipped_count += total_annotations - len(all_new_annotations) # Approximate skipped
+                        skipped_count += total_annotations - len(all_new_annotations)  # Approximate skipped
                         continue
                 
                 for annotation_dict in image_annotations:
