@@ -1089,7 +1089,7 @@ class MainWindow(QMainWindow):
         self.z_button.setDefaultAction(self.z_action)
         
         # Z label for depth information
-        self.z_label = QLabel("Z: 0")
+        self.z_label = QLabel("Z: -----")
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Patch Annotation Size
@@ -2092,17 +2092,9 @@ class MainWindow(QMainWindow):
                     self.z_label.setEnabled(True)
                     
                 except (IndexError, ValueError):
-                    # Handle any array access errors
-                    self.z_label.setText("Z: --")
-                    self.z_label.setEnabled(False)
-            else:
-                # Mouse is outside image bounds
-                self.z_label.setText("Z: --")
-                self.z_label.setEnabled(False)
-        else:
-            # No z-channel data available
-            self.z_label.setText("Z: --") 
-            self.z_label.setEnabled(False)
+                    pass
+                    # self.z_label.setText("Z: -----")
+                    # self.z_label.setEnabled(False)
             
     def on_scale_unit_changed(self, to_unit):
         """
