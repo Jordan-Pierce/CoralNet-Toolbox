@@ -1157,6 +1157,11 @@ class ScaleTool(Tool):
         display_units = self.dialog.line_units_combo.currentText()
         self.dialog.line_total_length_label.setText(f"{self.total_line_length:.3f} {display_units}")
         
+        # Lock the units combo if not already locked
+        if not self.line_total_locked:
+            self.line_total_locked = True
+            self.dialog.line_units_combo.setEnabled(False)
+        
         # 3. Get next color and name for the saved profile
         # We skip index 0 (orange) for saved lines
         color_index = (self.current_color_index % (len(self.color_cycle_pens) - 1)) + 1
@@ -1194,6 +1199,10 @@ class ScaleTool(Tool):
         self.total_line_length = 0.0
         display_units = self.dialog.line_units_combo.currentText()
         self.dialog.line_total_length_label.setText(f"0.0 {display_units}")
+        
+        # Unlock the units combo
+        self.line_total_locked = False
+        self.dialog.line_units_combo.setEnabled(True)
         
         # 2. Remove accumulated graphics from map
         for line in self.accumulated_lines:
@@ -1335,6 +1344,11 @@ class ScaleTool(Tool):
         
         self.dialog.rect_total_area_label.setText(f"{self.total_rect_area:.3f} {area_units}")
         
+        # Lock the units combo if not already locked
+        if not self.rect_total_locked:
+            self.rect_total_locked = True
+            self.dialog.rect_units_combo.setEnabled(False)
+        
         # Create a permanent rect item to keep visible
         # We only add the base rect, not the full wireframe
         perm_rect = QGraphicsRectItem(self.preview_wireframe_base.rect())
@@ -1354,6 +1368,10 @@ class ScaleTool(Tool):
         display_units = self.dialog.rect_units_combo.currentText()
         area_units = f"{display_units}²" if display_units != "px" else "px²"
         self.dialog.rect_total_area_label.setText(f"0.0 {area_units}")
+        
+        # Unlock the units combo
+        self.rect_total_locked = False
+        self.dialog.rect_units_combo.setEnabled(True)
         
         # Remove accumulated rects
         for rect in self.accumulated_rects:
@@ -1469,6 +1487,10 @@ class ScaleTool(Tool):
                                 f"Successfully applied new scale ({scale_text}) "
                                 f"to {success_count} image(s).")
         
+        # Clear accumulated measurements since scale changed
+        self.clear_line_total()
+        self.clear_rect_total()
+        
         # Refresh the confidence window to update the tooltip, just in case
         if self.main_window.confidence_window.annotation:
             self.main_window.confidence_window.refresh_display()
@@ -1502,6 +1524,10 @@ class ScaleTool(Tool):
             # Update UI
             self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
             self.main_window.update_view_dimensions(raster.width, raster.height)
+            
+            # Clear accumulated measurements since scale changed
+            self.clear_line_total()
+            self.clear_rect_total()
 
             # Refresh the confidence window to update the tooltip
             if self.main_window.confidence_window.annotation:
@@ -1570,3 +1596,7 @@ class ScaleTool(Tool):
                     self.main_window.confidence_window.refresh_display()
 
             QMessageBox.information(self.dialog, "Success", "Scale data has been removed from all images.")
+            
+            # Clear accumulated measurements since scale changed
+            self.clear_line_total()
+            self.clear_rect_total()
