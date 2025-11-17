@@ -1082,12 +1082,13 @@ class MainWindow(QMainWindow):
         self.z_action.setCheckable(True)
         self.z_action.setChecked(False)
         self.z_action.setToolTip("Open Depth Dialog")
-        self.z_action.triggered.connect(self.open_depth_dialog)
-        
+        # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
+
         # Create button to hold the Z action
         self.z_button = QToolButton()
         self.z_button.setDefaultAction(self.z_action)
-        
+        self.z_button.setEnabled(False)  # TODO Make the button not clickable
+
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
