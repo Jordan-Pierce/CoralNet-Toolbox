@@ -9,6 +9,7 @@ import requests
 
 from packaging import version
 
+import numpy as np
 import torch
 
 from PyQt5 import sip
@@ -218,6 +219,10 @@ class MainWindow(QMainWindow):
 
         # Set the default scale unit
         self.current_unit_scale = 'm'
+
+        # Store current mouse position for z-channel lookup
+        self.current_mouse_x = 0
+        self.current_mouse_y = 0
 
         # Create windows
         self.annotation_window = AnnotationWindow(self)
@@ -1975,6 +1980,18 @@ class MainWindow(QMainWindow):
         """Update the mouse position label in the status bar"""
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
         
+        # Store current mouse position for z-channel lookup
+        self.current_mouse_x = x
+        self.current_mouse_y = y
+        
+        # Update z-channel value at new mouse position
+        raster = None
+        if self.annotation_window.current_image_path:
+            raster = self.image_window.raster_manager.get_raster(
+                self.annotation_window.current_image_path
+            )
+        self.update_z_value_at_mouse_position(raster)
+        
     def update_image_dimensions(self, width, height):
         """Update the image dimensions label in the status bar"""
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
@@ -2046,6 +2063,45 @@ class MainWindow(QMainWindow):
             self.scaled_view_dims_label.setText("0 x 0")
             self.scaled_view_dims_label.setEnabled(False)
             self.scale_unit_dropdown.setEnabled(False)
+            
+        # Update z_label with z-channel value at current mouse position
+        self.update_z_value_at_mouse_position(raster)
+    
+    def update_z_value_at_mouse_position(self, raster):
+        """Update the z_label with z-channel value at current mouse position"""
+        if raster and raster.z_channel is not None:
+            # Check if mouse coordinates are within image bounds
+            if (0 <= self.current_mouse_x < raster.width and 
+                0 <= self.current_mouse_y < raster.height):
+                
+                try:
+                    # Get z-channel value at mouse position
+                    # Note: z_channel is stored as (height, width) array
+                    z_value = raster.z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
+                    
+                    # Format the display based on data type
+                    if raster.z_channel.dtype == np.float32:
+                        # For float32, show with appropriate decimal places
+                        self.z_label.setText(f"Z: {z_value:.3f}")
+                    else:
+                        # For uint8 or other integer types, show as integer
+                        self.z_label.setText(f"Z: {int(z_value)}")
+                    
+                    # Enable the z_label since we have valid data
+                    self.z_label.setEnabled(True)
+                    
+                except (IndexError, ValueError):
+                    # Handle any array access errors
+                    self.z_label.setText("Z: --")
+                    self.z_label.setEnabled(False)
+            else:
+                # Mouse is outside image bounds
+                self.z_label.setText("Z: --")
+                self.z_label.setEnabled(False)
+        else:
+            # No z-channel data available
+            self.z_label.setText("Z: --") 
+            self.z_label.setEnabled(False)
             
     def on_scale_unit_changed(self, to_unit):
         """

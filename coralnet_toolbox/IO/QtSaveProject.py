@@ -1,7 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -17,6 +15,7 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -33,7 +32,7 @@ class SaveProject(QDialog):
 
         self.current_project_path = self.main_window.current_project_path
 
-        self.setWindowTitle("Save Project (Ctrl + Shift + S)")
+        self.setWindowTitle("Save Project (Ctrl + S)")
         self.resize(600, 100)
 
         # Setup the save file layout
