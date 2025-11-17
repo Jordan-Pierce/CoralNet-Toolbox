@@ -63,6 +63,25 @@ class ProfilePlotDialog(QDialog):
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+        
+    def update_plot(self, data_x, data_y, x_label, y_label):
+        """Clears the axes and plots new data for a real-time update."""
+        try:
+            # Clear the old plot
+            self.canvas.axes.cla()
+            
+            # Plot the new data
+            self.canvas.axes.plot(data_x, data_y, color="#E63E00")
+            self.canvas.axes.set_xlabel(x_label)
+            self.canvas.axes.set_ylabel(y_label)
+            self.canvas.axes.set_title("Line Elevation Profile")
+            self.canvas.axes.grid(True, linestyle='--', alpha=0.6)
+            self.canvas.figure.tight_layout()
+            
+            # Redraw the canvas
+            self.canvas.draw()
+        except Exception as e:
+            print(f"Error updating plot: {e}")
 
 # ----------------------------------------------------------------------------------------------------------------------
 # ScaleToolDialog Class
@@ -254,7 +273,7 @@ class ScaleToolDialog(QDialog):
         self.rect_volume_label = QLabel("N/A")
         self.rect_rugosity_label = QLabel("N/A")
         
-        self.rect_3d_layout.addRow("Z-Stats (Min/Max/Mean):", self.rect_z_stats_label)
+        self.rect_3d_layout.addRow("Z-Stats:", self.rect_z_stats_label)
         self.rect_3d_layout.addRow("3D Surface Area:", self.rect_3d_surface_area_label)
         self.rect_3d_layout.addRow("Prismatic Volume:", self.rect_volume_label)
         self.rect_3d_layout.addRow("Areal Rugosity:", self.rect_rugosity_label)
@@ -1000,8 +1019,17 @@ class ScaleTool(Tool):
             # Store data for plot
             plot_y_label = f"Elevation ({z_unit_str})"
             self.profile_plot_data = (profile_data_x, profile_data_y, plot_x_label, plot_y_label)
+
             if final_calc:
                 self.dialog.line_profile_button.setEnabled(True)
+                
+                # --- Real-time update logic ---
+                # Check if the plot dialog is already open and visible
+                if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
+                    # If it is, update it directly
+                    self.profile_plot_dialog.update_plot(
+                        profile_data_x, profile_data_y, plot_x_label, plot_y_label
+                    )
                 
         except Exception as e:
             print(f"Error in 3D line calculation: {e}")
