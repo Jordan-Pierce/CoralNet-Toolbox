@@ -2069,7 +2069,7 @@ class MainWindow(QMainWindow):
     
     def update_z_value_at_mouse_position(self, raster):
         """Update the z_label with z-channel value at current mouse position"""
-        if raster and raster.z_channel is not None:
+        if raster and raster.z_channel_lazy is not None:
             # Check if mouse coordinates are within image bounds
             if (0 <= self.current_mouse_x < raster.width and 
                 0 <= self.current_mouse_y < raster.height):
@@ -2077,10 +2077,11 @@ class MainWindow(QMainWindow):
                 try:
                     # Get z-channel value at mouse position
                     # Note: z_channel is stored as (height, width) array
-                    z_value = raster.z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
+                    z_channel = raster.z_channel_lazy
+                    z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
                     
                     # Format the display based on data type
-                    if raster.z_channel.dtype == np.float32:
+                    if z_channel.dtype == np.float32:
                         # For float32, show with appropriate decimal places
                         self.z_label.setText(f"Z: {z_value:.3f}")
                     else:

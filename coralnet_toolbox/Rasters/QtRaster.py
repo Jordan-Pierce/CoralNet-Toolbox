@@ -320,14 +320,22 @@ class Raster(QObject):
         """
         self.add_z_channel(z_data, z_path)  # Same validation as add
         
-    def set_z_channel_path(self, z_path: str):
+    def set_z_channel_path(self, z_path: str, auto_load: bool = True):
         """
-        Set the path to the z_channel file.
+        Set the path to the z_channel file and optionally auto-load it.
         
         Args:
             z_path (str): Path to the z_channel file
+            auto_load (bool): Whether to automatically attempt loading the z-channel data
         """
         self.z_channel_path = z_path
+        
+        # Automatically attempt to load z-channel data if requested and file exists
+        if auto_load and z_path and os.path.exists(z_path):
+            try:
+                self.load_z_channel_from_file(z_path)
+            except Exception as e:
+                print(f"Warning: Could not auto-load z-channel from {z_path}: {str(e)}")
         
     def remove_z_channel(self):
         """Remove the depth/elevation channel data and path."""
@@ -365,6 +373,33 @@ class Raster(QObject):
     def rasterio_src(self):
         """Get the rasterio dataset"""
         return self._rasterio_src
+    
+    @property
+    def z_channel_lazy(self):
+        """
+        Get the z_channel with lazy loading.
+        If z_channel is None but z_channel_path exists, attempt to load it.
+        
+        Returns:
+            numpy.ndarray or None: The z-channel data, or None if not available
+        """
+        # If z_channel is already loaded, return it
+        if self.z_channel is not None:
+            return self.z_channel
+            
+        # If we have a path but no loaded data, try to load it
+        if self.z_channel_path and os.path.exists(self.z_channel_path):
+            try:
+                print(f"Lazy loading z-channel from: {self.z_channel_path}")
+                if self.load_z_channel_from_file(self.z_channel_path):
+                    return self.z_channel
+                else:
+                    print(f"Failed to lazy load z-channel from: {self.z_channel_path}")
+            except Exception as e:
+                print(f"Error during lazy loading of z-channel: {str(e)}")
+        
+        # Return None if no z-channel is available
+        return None
         
     def get_qimage(self) -> Optional[QImage]:
         """
@@ -866,10 +901,16 @@ class Raster(QObject):
             except Exception as e:
                 print(f"Error loading extrinsics for {image_path}: {str(e)}")
         
-        # Load z_channel path if available
+        # Load z_channel path if available and attempt to load the z-channel data
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
             raster.set_z_channel_path(z_channel_path)
+            # Automatically attempt to load z-channel data from the path
+            if os.path.exists(z_channel_path):
+                try:
+                    raster.load_z_channel_from_file(z_channel_path)
+                except Exception as e:
+                    print(f"Warning: Could not load z-channel from {z_channel_path}: {str(e)}")
         
         return raster
     
@@ -924,6 +965,11 @@ class Raster(QObject):
                 self.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
+        
+        # Update z_channel path and data if available
+        z_channel_path = raster_dict.get('z_channel_path')
+        if z_channel_path:
+            self.set_z_channel_path(z_channel_path, auto_load=True)
         
         # Update z_channel path if available
         z_channel_path = raster_dict.get('z_channel_path')
