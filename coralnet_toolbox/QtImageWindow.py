@@ -1255,6 +1255,10 @@ class ImageWindow(QWidget):
             progress_bar.show()
             progress_bar.start_progress(len(image_paths))
             
+            # Temporarily disconnect raster manager signals to avoid triggering filters on each removal
+            self.raster_manager.rasterAdded.disconnect(self.on_raster_added)
+            self.raster_manager.rasterRemoved.disconnect(self.on_raster_removed)
+            
             try:
                 # Delete each image
                 for path in image_paths:
@@ -1275,11 +1279,16 @@ class ImageWindow(QWidget):
                     self.annotation_window.clear_scene()
                     
             finally:
+                # Restore signals
+                self.raster_manager.rasterAdded.connect(self.on_raster_added)
+                self.raster_manager.rasterRemoved.connect(self.on_raster_removed)
+                
                 # Close progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
                 
-            # Update UI
+            # Update search bars and reapply filters once after all deletions
+            self.update_search_bars()
             self.filter_images()
 
 

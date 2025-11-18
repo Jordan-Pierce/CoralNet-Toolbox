@@ -6,6 +6,7 @@ from .QtPolygonTool import PolygonTool
 from .QtBrushTool import BrushTool
 from .QtEraseTool import EraseTool
 from .QtFillTool import FillTool
+from .QtDropperTool import DropperTool
 
 from .QtSAMTool import SAMTool
 from .QtSeeAnythingTool import SeeAnythingTool
@@ -28,6 +29,7 @@ __all__ = [
     'BrushTool',
     'EraseTool',
     'FillTool',
+    'DropperTool',
     'SAMTool',
     'SeeAnythingTool',
     'SelectTool',

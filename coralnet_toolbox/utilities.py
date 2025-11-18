@@ -600,6 +600,92 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
+    """
+    Load a depth map / height map / DEM from file using rasterio.
+    
+    The z_channel data will be either:
+    - float32: Actual depth/height values (e.g., meters, feet, etc.)
+    - uint8: Relative depth/height values (0-255 range)
+    
+    Args:
+        z_channel_path (str): Path to the depth/height/DEM file
+        target_width (int, optional): Target width to match raster dimensions
+        target_height (int, optional): Target height to match raster dimensions
+        
+    Returns:
+        tuple: (z_data, z_path) where z_data is a 2D numpy array (float32 or uint8)
+               and z_path is the file path, or (None, None) if loading fails
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(z_channel_path):
+            print(f"Z-channel file does not exist: {z_channel_path}")
+            return None, None
+            
+        # Open the z-channel file with rasterio
+        with rasterio.open(z_channel_path) as src:
+            # Validate it's a single band file
+            if src.count != 1:
+                print(f"Z-channel file must be single band, found {src.count} bands: {z_channel_path}")
+                return None, None
+            
+            # Read the single band
+            z_data = src.read(1)
+            
+            # Check if we need to resize to match target dimensions
+            if target_width is not None and target_height is not None:
+                if z_data.shape != (target_height, target_width):
+                    # Resample to match target dimensions
+                    window = Window(0, 0, src.width, src.height)
+                    z_data = src.read(1,
+                                      window=window,
+                                      out_shape=(target_height, target_width),
+                                      resampling=rasterio.enums.Resampling.bilinear)
+                    print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
+            
+            # Handle data type conversion
+            if z_data.dtype == np.uint8:
+                # Already uint8, no conversion needed
+                pass
+            elif z_data.dtype in [np.float32, np.float64]:
+                # Keep as float32 for actual depth/height values
+                z_data = z_data.astype(np.float32)
+            elif z_data.dtype in [np.int8, np.int16, np.int32, np.uint16, np.uint32]:
+                # Convert integer types to float32 for better precision
+                z_data = z_data.astype(np.float32)
+            else:
+                print(f"Warning: Unsupported z-channel data type {z_data.dtype}, converting to float32")
+                z_data = z_data.astype(np.float32)
+                
+            # Handle NaN values if present (convert to 0)
+            if np.issubdtype(z_data.dtype, np.floating):
+                nan_count = np.sum(np.isnan(z_data))
+                if nan_count > 0:
+                    z_data = np.nan_to_num(z_data, nan=0.0)
+                    print(f"Replaced {nan_count} NaN values with 0")
+            
+            # Final validation - ensure 2D array
+            if z_data.ndim != 2:
+                print(f"Z-channel data must be 2D, found {z_data.ndim}D")
+                return None, None
+                
+            # Final data type check
+            if z_data.dtype not in [np.float32, np.uint8]:
+                print(f"Z-channel data type {z_data.dtype} not supported, must be float32 or uint8")
+                return None, None
+                
+            print(f"Successfully loaded z-channel: {z_data.shape}, dtype: {z_data.dtype}, "
+                  f"range: [{np.min(z_data):.2f}, {np.max(z_data):.2f}]")
+                  
+            return z_data, z_channel_path
+            
+    except Exception as e:
+        print(f"Error loading z-channel from {z_channel_path}: {str(e)}")
+        traceback.print_exc()
+        return None, None
+
+
 def convert_scale_units(value, from_unit, to_unit):
     """
     Convert a value from one unit to another. Supports common metric and imperial units.
@@ -622,7 +708,11 @@ def convert_scale_units(value, from_unit, to_unit):
         'mm': 0.001,
         'cm': 0.01,
         'km': 1000.0,
+        'in': 0.0254,
+        'ft': 0.3048,
         'foot': 0.3048,
+        'yd': 0.9144,
+        'mi': 1609.344,
         'us survey foot': 1200 / 3937,
     }
 
@@ -633,7 +723,11 @@ def convert_scale_units(value, from_unit, to_unit):
         'metre': 1.0,
         'm': 1.0,
         'km': 0.001,
+        'in': 1 / 0.0254,
+        'ft': 1 / 0.3048,
         'foot': 1 / 0.3048,
+        'yd': 1 / 0.9144,
+        'mi': 1 / 1609.344,
         'us survey foot': 3937 / 1200,
     }
 

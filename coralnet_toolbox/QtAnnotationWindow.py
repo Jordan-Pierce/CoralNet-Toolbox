@@ -22,6 +22,7 @@ from coralnet_toolbox.Tools import (
     BrushTool,
     EraseTool,
     FillTool,
+    DropperTool,
     SAMTool,
     SeeAnythingTool,
     SelectTool,
@@ -173,11 +174,12 @@ class AnnotationWindow(QGraphicsView):
             "scale": ScaleTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
-            "erase": EraseTool(self)
+            "erase": EraseTool(self),
+            "dropper": DropperTool(self)
         }
 
         # Defines which tools trigger mask mode
-        self.mask_tools = {"brush", "fill", "erase"}
+        self.mask_tools = {"brush", "fill", "erase", "dropper"}
 
         # Initialize the action stack for undo/redo
         self.action_stack = ActionStack()
@@ -641,7 +643,14 @@ class AnnotationWindow(QGraphicsView):
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
             return
-            
+        
+        # Load z_channel data if available (deferred loading)
+        if raster.z_channel_path and raster.z_channel is None:
+            try:
+                raster.load_z_channel_from_file(raster.z_channel_path)
+            except Exception as e:
+                print(f"Warning: Could not load z-channel for {image_path}: {str(e)}")
+
         # Get low-res thumbnail first for a preview
         low_res_qimage = raster.get_thumbnail(longest_edge=256)
         if low_res_qimage is None or low_res_qimage.isNull():
@@ -1139,6 +1148,9 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.stop_progress()
             progress_bar.close()
 
+        # Update the label window tool tips (this might need to be optimized later)
+        self.main_window.label_window.update_tooltips()
+        
         QApplication.processEvents()
         self.viewport().update()
 
@@ -1160,6 +1172,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the Z-value to be above the base image but below annotations
         if mask_annotation.graphics_item:
             mask_annotation.graphics_item.setZValue(-5)
+            
+        # Update the mask graphic item
+        mask_annotation.update_graphics_item()
 
         # Update the view
         self.viewport().update()

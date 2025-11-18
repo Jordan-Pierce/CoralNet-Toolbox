@@ -2,9 +2,11 @@ import os
 import uuid
 import warnings
 
+import cv2
+import math
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen, QBrush
+from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsScene, QGraphicsItemGroup)
@@ -132,6 +134,172 @@ class Annotation(QObject):
             except (NotImplementedError, TypeError):
                 return None
         return None
+    
+    def _get_raster_slice_and_mask(self, full_raster_data: np.ndarray):
+        """
+        A helper method to extract a small slice of raster data (e.g., z-channel)
+        and a corresponding boolean mask for the annotation's exact shape.
+
+        Args:
+            full_raster_data (np.ndarray): The full 2D raster data (e.g., z_channel).
+
+        Returns:
+            tuple (np.ndarray, np.ndarray):
+                - data_slice: A 2D numpy array slice from the input data.
+                - mask: A 2D boolean numpy array of the same shape as data_slice,
+                        with True values inside the annotation's polygon.
+        """
+        # 1. Check for valid input
+        if full_raster_data is None or full_raster_data.ndim != 2:
+            dtype = full_raster_data.dtype if full_raster_data is not None else np.float32
+            return np.array([[]], dtype=dtype), np.array([[]], dtype=bool)
+
+        # 2. Get bounding box (as QPointF)
+        top_left = self.get_bounding_box_top_left()
+        bottom_right = self.get_bounding_box_bottom_right()
+
+        if top_left is None or bottom_right is None:
+            return np.array([[]], dtype=full_raster_data.dtype), np.array([[]], dtype=bool)
+
+        # 3. Convert to integer pixel indices, ensuring we stay within raster bounds
+        h, w = full_raster_data.shape
+        x1 = max(0, int(math.floor(top_left.x())))
+        y1 = max(0, int(math.floor(top_left.y())))
+        x2 = min(w, int(math.ceil(bottom_right.x())))
+        y2 = min(h, int(math.ceil(bottom_right.y())))
+
+        # Check for invalid or zero-area slice
+        if x1 >= x2 or y1 >= y2:
+            return np.array([[]], dtype=full_raster_data.dtype), np.array([[]], dtype=bool)
+
+        # 4. Slice the data
+        data_slice = full_raster_data[y1:y2, x1:x2]
+
+        # 5. Create the empty mask
+        slice_h, slice_w = data_slice.shape
+        mask = np.zeros((slice_h, slice_w), dtype=np.uint8)  # Use uint8 for cv2
+
+        # 6. Get the polygon
+        polygon = self.get_polygon()  # This is a QPolygonF
+        if polygon is None or polygon.isEmpty():
+            return data_slice, np.zeros_like(data_slice, dtype=bool)  # Return slice, but empty mask
+
+        # 7. Translate polygon points
+        # Convert QPolygonF to numpy array
+        points = []
+        for i in range(polygon.count()):
+            p = polygon.at(i)
+            points.append([p.x(), p.y()])
+        np_points = np.array(points)
+
+        # Translate points to be relative to the slice's origin (x1, y1)
+        translated_points = np_points - np.array([x1, y1])
+
+        # 8. Draw the polygon mask
+        # cv2.fillPoly needs points in int32 format
+        cv2.fillPoly(mask, [translated_points.astype(np.int32)], color=1)
+
+        # 9. Return slice and boolean mask
+        return data_slice, mask.astype(bool)
+
+    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float) -> float | None:
+        """
+        Calculates the 'volume' under the annotation relative to a Z=0 plane.
+        Requires the full z_channel (depth/elevation) data and scale factors.
+
+        Args:
+            z_channel (np.ndarray): The full 2D z_channel data from the Raster.
+            scale_x (float): The horizontal scale (e.g., meters per pixel).
+            scale_y (float): The vertical scale (e.g., meters per pixel).
+
+        Returns:
+            float | None: The calculated volume, 0.0 for zero area, or None on input error.
+        """
+        # 1. Check for valid inputs
+        if z_channel is None or scale_x is None or scale_y is None:
+            return None
+
+        try:
+            # 2. Get the sliced data and mask
+            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+
+            # 3. Check for valid data
+            if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
+                return 0.0  # No area, so volume is 0
+
+            # 4. Select Z-values inside the mask
+            z_values_inside = z_slice[mask]
+
+            # 5. Calculate 2D pixel area
+            pixel_area_2d = scale_x * scale_y
+
+            # 6. Calculate total volume
+            # This is the sum of (pixel_area * pixel_height)
+            total_volume = np.sum(z_values_inside) * pixel_area_2d
+
+            return total_volume
+        except Exception as e:
+            print(f"Error calculating scaled volume for annotation {self.id}: {e}")
+            return None
+
+    def get_scaled_surface_area(self, z_channel: np.ndarray, scale_x: float, scale_y: float) -> float | None:
+        """
+        Calculates the 3D surface area of the annotation using gradients.
+        Requires the full z_channel (depth/elevation) data and scale factors.
+        If z_channel is not provided, falls back to 2D scaled area.
+
+        Args:
+            z_channel (np.ndarray): The full 2D z_channel data from the Raster.
+            scale_x (float): The horizontal scale (e.g., meters per pixel).
+            scale_y (float): The vertical scale (e.g., meters per pixel).
+
+        Returns:
+            float | None: The calculated 3D surface area, 2D area as fallback, or None on error.
+        """
+        # 1. Check for scale. If no scale, we can't do anything.
+        if scale_x is None or scale_y is None:
+            return None
+
+        # 2. Fallback to 2D area if Z-channel is missing
+        if z_channel is None:
+            scaled_area_data = self.get_scaled_area()
+            if scaled_area_data:
+                return scaled_area_data[0]  # Return just the value
+            else:
+                return None  # No scale, no 2D area, no 3D area
+
+        try:
+            # 3. Get the sliced data and mask
+            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+
+            # 4. Check for valid data
+            if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
+                return 0.0  # No area, so surface area is 0
+
+            # 5. Calculate 2D pixel area
+            pixel_area_2d = scale_x * scale_y
+
+            # 6. Calculate gradients (slope) of the *small slice*
+            # We must pass the scale to np.gradient for correct unit calculation
+            dz_dy, dz_dx = np.gradient(z_slice, scale_y, scale_x)
+
+            # 7. Calculate the 3D area multiplier for each pixel
+            # This is the surface area of a 3D plane, derived from vector cross product
+            # Area = sqrt(1 + (dz/dx)^2 + (dz/dy)^2) * dx * dy
+            multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
+
+            # 8. Calculate the 3D surface area for *all* pixels in the slice
+            pixel_areas_3d = pixel_area_2d * multiplier
+
+            # 9. Select only the 3D areas *inside* the polygon and sum them
+            total_surface_area = np.sum(pixel_areas_3d[mask])
+
+            return total_surface_area
+        except Exception as e:
+            print(f"Error calculating scaled surface area for annotation {self.id}: {e}")
+            # Fallback to 2D area on error
+            scaled_area_data = self.get_scaled_area()
+            return scaled_area_data[0] if scaled_area_data else None
 
     def get_polygon(self):
         """Get the polygon representation of this annotation."""

@@ -699,14 +699,21 @@ class EmbeddingSettingsWidget(QGroupBox):
         settings_layout = QFormLayout()
 
         self.embedding_technique_combo = QComboBox()
-        self.embedding_technique_combo.addItems(["PCA", "TSNE", "UMAP"])
+        self.embedding_technique_combo.addItems(["PCA", "LDA", "TSNE", "UMAP"])
         self.embedding_technique_combo.currentTextChanged.connect(self._update_parameter_sliders)
+        self.embedding_technique_combo.currentTextChanged.connect(self._update_pca_combo_state)
         settings_layout.addRow("Technique:", self.embedding_technique_combo)
 
         # New Dimensions ComboBox
         self.dimensions_combo = QComboBox()
         self.dimensions_combo.addItems(["2D", "3D"])
         settings_layout.addRow("Dimensions:", self.dimensions_combo)
+
+        # Perform PCA before combo
+        self.pca_before_combo = QComboBox()
+        self.pca_before_combo.addItems(["True", "False"])
+        self.pca_before_combo.setCurrentText("True")
+        settings_layout.addRow("Perform PCA before:", self.pca_before_combo)
 
         # Slider 1
         self.param1_label = QLabel("Parameter 1:")
@@ -753,7 +760,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param1_label.setText("n_neighbors:")
             self.param1_slider.setRange(2, 150)
             self.param1_slider.setValue(15)
-            self.param1_value_label.setText("15") # Manually update label
+            self.param1_value_label.setText("15")  # Manually update label
 
             # Enable Row 2 for min_dist
             self.param2_label.setEnabled(True)
@@ -762,7 +769,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param2_label.setText("min_dist:")
             self.param2_slider.setRange(0, 99)
             self.param2_slider.setValue(10)
-            self.param2_value_label.setText(f"{10/100.0:.2f}") # Manually update label
+            self.param2_value_label.setText(f"{10/100.0:.2f}")  # Manually update label
             self.param2_slider.valueChanged.connect(lambda v: self.param2_value_label.setText(f"{v/100.0:.2f}"))
 
         elif technique == "TSNE":
@@ -773,7 +780,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param1_label.setText("Perplexity:")
             self.param1_slider.setRange(5, 50)
             self.param1_slider.setValue(30)
-            self.param1_value_label.setText("30") # Manually update label
+            self.param1_value_label.setText("30")  # Manually update label
 
             # Enable Row 2 for Early Exaggeration
             self.param2_label.setEnabled(True)
@@ -782,7 +789,7 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param2_label.setText("Exaggeration:")
             self.param2_slider.setRange(50, 600)  # Represents 5.0 to 60.0
             self.param2_slider.setValue(120)      # Represents 12.0
-            self.param2_value_label.setText(f"{120/10.0:.1f}") # Manually update label
+            self.param2_value_label.setText(f"{120/10.0:.1f}")  # Manually update label
             self.param2_slider.valueChanged.connect(lambda v: self.param2_value_label.setText(f"{v/10.0:.1f}"))
 
         elif technique == "PCA":
@@ -801,11 +808,35 @@ class EmbeddingSettingsWidget(QGroupBox):
             self.param2_slider.setValue(self.param2_slider.minimum())
             self.param2_value_label.setText(str(self.param2_slider.minimum()))
 
+        elif technique == "LDA":
+            # Disable both rows for LDA (no parameters)
+            self.param1_label.setEnabled(False)
+            self.param1_slider.setEnabled(False)
+            self.param1_value_label.setEnabled(False)
+            self.param1_label.setText(" ")
+            self.param1_slider.setValue(self.param1_slider.minimum())
+            self.param1_value_label.setText(str(self.param1_slider.minimum()))
+
+            self.param2_label.setEnabled(False)
+            self.param2_slider.setEnabled(False)
+            self.param2_value_label.setEnabled(False)
+            self.param2_label.setText(" ")
+            self.param2_slider.setValue(self.param2_slider.minimum())
+            self.param2_value_label.setText(str(self.param2_slider.minimum()))
+
+    def _update_pca_combo_state(self):
+        """Enable/disable PCA combo based on selected technique."""
+        is_pca_selected = self.embedding_technique_combo.currentText() == "PCA"
+        self.pca_before_combo.setEnabled(not is_pca_selected)
+        if is_pca_selected:
+            self.pca_before_combo.setCurrentText("False")
+
     def get_embedding_parameters(self):
         """Returns a dictionary of the current embedding parameters."""
         params = {
             'technique': self.embedding_technique_combo.currentText(),
-            'dimensions': 3 if self.dimensions_combo.currentText() == "3D" else 2
+            'dimensions': 3 if self.dimensions_combo.currentText() == "3D" else 2,
+            'perform_pca_before': self.pca_before_combo.currentText() == "True"
         }
         if params['technique'] == 'UMAP':
             params['n_neighbors'] = self.param1_slider.value()

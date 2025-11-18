@@ -503,7 +503,42 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Perimeter:</b> {perimeter:.2f} pixels")
         except (NotImplementedError, AttributeError):
             pass  # No perimeter method available
+                
+        # Get the raster to access z_channel and scale
+        raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
         
+        if raster:
+            # Lazily load the z_channel
+            z_channel = raster.z_channel_lazy
+            scale_x = raster.scale_x
+            scale_y = raster.scale_y
+            scale_units = raster.scale_units
+            z_unit = raster.z_unit
+            
+            # Check if all required data is available
+            if z_channel is not None and scale_x is not None and scale_y is not None and scale_units is not None:
+                try:
+                    # --- Volume Calculation ---
+                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y)
+                    if volume is not None:
+                        # Standardize units for display
+                        scale_unit_base = 'm' if scale_units == 'metre' else scale_units
+                        z_unit_base = z_unit if z_unit else 'z-units'
+                        
+                        tooltip_parts.append(f"<b>Volume:</b> {volume:.2f} {scale_unit_base}² · {z_unit_base}")
+                    
+                    # --- 3D Surface Area Calculation ---
+                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y)
+                    if surface_area is not None:
+                        # Standardize units for display
+                        scale_unit_base = 'm' if scale_units == 'metre' else scale_units
+                        
+                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area:.2f} {scale_unit_base}²")
+                
+                except Exception as e:
+                    print(f"Error calculating 3D metrics for tooltip: {e}")
+                    # Don't add to tooltip if calculation fails
+                
         # Additional data
         if hasattr(annotation, 'data') and annotation.data:
             data_items = []

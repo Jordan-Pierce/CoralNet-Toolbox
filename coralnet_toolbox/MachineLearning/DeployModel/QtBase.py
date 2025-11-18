@@ -240,7 +240,7 @@ class Base(QDialog):
             # Clear the class mapping
             self.class_mapping = {}
 
-            if ".bin" in file_path:
+            if ".bin" in file_path:  # TODO remove this
                 # OpenVINO is a directory
                 file_path = os.path.dirname(file_path)
 
@@ -273,7 +273,7 @@ class Base(QDialog):
         """
         try:
             with open(file_path, 'r') as f:
-                self.class_mapping = json.load(f)
+                self.class_mapping = json.load(f)  # maybe remove background? Already done in Semantic and works?
             self.label_area.append("Class mapping file selected")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
@@ -319,9 +319,12 @@ class Base(QDialog):
         """
         if self.class_mapping:
             for label in self.class_mapping.values():
-                self.label_window.add_label_if_not_exists(label['short_label_code'], 
-                                                          label['long_label_code'],
-                                                          QColor(*label.get('color', [255, 255, 255])))
+                self.label_window.add_label_if_not_exists(
+                    label['short_label_code'], 
+                    label['long_label_code'],
+                    QColor(*label.get('color', [255, 255, 255])),
+                    label_id=label.get('id')
+                )
 
     def handle_missing_class_mapping(self):
         """

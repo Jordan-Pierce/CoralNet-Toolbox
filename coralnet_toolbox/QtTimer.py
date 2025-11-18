@@ -211,9 +211,20 @@ class TimerGroupBox(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addWidget(self.timer_widget)
 
+        # Make the group box checkable for collapsing
+        self.setCheckable(True)
+        self.setChecked(True)
+        self.toggled.connect(self.on_toggled)
+
+    def on_toggled(self, checked):
+        """Handle the toggle event to show/hide the timer widget."""
+        self.timer_widget.setVisible(checked)
+
     def to_dict(self):
         """Serialize the timer group box data to a dictionary."""
-        return self.timer_widget.to_dict()
+        data = self.timer_widget.to_dict()
+        data['checked'] = self.isChecked()
+        return data
 
     @classmethod
     def from_dict(cls, data):
@@ -236,5 +247,8 @@ class TimerGroupBox(QGroupBox):
         # Create new timer widget with deserialized data
         instance.timer_widget = TimerWidget.from_dict(data)
         layout.addWidget(instance.timer_widget)
+        
+        # Set the checked state
+        instance.setChecked(data.get('checked', True))
         
         return instance
