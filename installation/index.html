@@ -377,10 +377,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#cuda" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📦 Install
+        ⚡ CUDA
       
     </span>
   </a>
@@ -388,10 +388,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cuda" class="md-nav__link">
+  <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ⚡ CUDA
+        📦 Install
       
     </span>
   </a>
@@ -611,10 +611,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#cuda" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📦 Install
+        ⚡ CUDA
       
     </span>
   </a>
@@ -622,10 +622,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cuda" class="md-nav__link">
+  <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ⚡ CUDA
+        📦 Install
       
     </span>
   </a>
@@ -713,41 +713,21 @@
 <span class="normal">2</span>
 <span class="normal">3</span>
 <span class="normal">4</span>
-<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
+<span class="normal">5</span>
+<span class="normal">6</span>
+<span class="normal">7</span>
+<span class="normal">8</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
 
 <span class="c1"># Create and activate an environment</span>
 conda<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span>coralnet10<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.10<span class="w"> </span>-y
 conda<span class="w"> </span>activate<span class="w"> </span>coralnet10
-</code></pre></div></td></tr></table></div></p>
-<h3 id="install">📦 Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h3>
-<p>Once this has finished, install the <code>toolbox</code> using <code>uv</code>: </p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
 
 <span class="c1"># Install uv first</span>
 pip<span class="w"> </span>install<span class="w"> </span>uv
-
-<span class="c1"># Install with uv</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
-</code></pre></div></td></tr></table></div>
-<p>Although fast, <code>uv</code> is still relatively new; if this fails, simply fall back to using <code>pip</code>:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Install</span>
-pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
-</code></pre></div></td></tr></table></div>
+</code></pre></div></td></tr></table></div></p>
 <h3 id="cuda">⚡ CUDA<a class="headerlink" href="#cuda" title="Permanent link">&para;</a></h3>
-<p>If you have <code>CUDA</code>, you can install the versions of <code>cuda-nvcc</code> and <code>cudatoolkit</code> that you
-need, and then install the corresponding versions of <code>torch</code> and <code>torchvision</code>. Below is an example of how that can be
-done using <code>CUDA</code> version 12.9:
+<p>If you have <code>CUDA</code>, you can install the versions of <code>cuda-nvcc</code> and <code>cudatoolkit</code> that you need, and then install the corresponding versions of <code>torch</code> and <code>torchvision</code>. Below is an example of how that can be done using <code>CUDA</code> version 
+12.9:
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
 <span class="normal">2</span>
 <span class="normal">3</span>
@@ -762,15 +742,29 @@ conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-12
 conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-12.9.0::cuda-toolkit<span class="w"> </span>-y
 
 <span class="c1"># Example for torch w/ CUDA 12.9</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu129<span class="w"> </span>--upgrade
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu129
 </code></pre></div></td></tr></table></div></p>
-<p>If <code>CUDA</code> is installed on your computer, and <code>torch</code> was built with it properly, you should see a <code>🐇</code> icon in the
-<code>toolbox</code> instead of a <code>🐢</code>; if you have multiple <code>CUDA</code> devices available, you should see a <code>🚀</code> icon,
-and if you're using a Mac with <code>Metal</code>, you should see an <code>🍎</code> icon (click on the icon to see the device information).</p>
-<p>See here for more details on versions for the following:
-- <a href="https://anaconda.org/nvidia/cuda-nvcc"><code>cuda-nvcc</code></a>
-- <a href="https://anaconda.org/nvidia/cuda-toolkit"><code>cudatoolkit</code></a>
-- <a href="https://pytorch.org/get-started/locally/"><code>torch</code></a></p>
+<h3 id="install">📦 Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h3>
+<p>Once this has finished, install the <code>toolbox</code> using <code>uv</code>: </p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
+
+<span class="c1"># Install with uv</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
+</code></pre></div></td></tr></table></div>
+<blockquote>
+<p>Although fast, <code>uv</code> is still relatively new; if this fails, simply fall back to using <code>pip</code>:</p>
+</blockquote>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
+
+<span class="c1"># Install</span>
+pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
+</code></pre></div></td></tr></table></div>
 <h3 id="run">▶️ Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h3>
 <p>Finally, you can run the <code>toolbox</code> from the command line:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
@@ -781,6 +775,13 @@ and if you're using a Mac with <code>Metal</code>, you should see an <code>🍎<
 <span class="c1"># Run</span>
 coralnet-toolbox
 </code></pre></div></td></tr></table></div>
+<p>If <code>CUDA</code> is installed on your computer, and <code>torch</code> was built with it properly, you should see a <code>🐇</code> icon in the
+<code>toolbox</code> instead of a <code>🐢</code>; if you have multiple <code>CUDA</code> devices available, you should see a <code>🚀</code> icon,
+and if you're using a Mac with <code>Metal</code>, you should see an <code>🍎</code> icon (click on the icon to see the device information).</p>
+<p>See here for more details on versions for the following:
+- <a href="https://anaconda.org/nvidia/cuda-nvcc"><code>cuda-nvcc</code></a>
+- <a href="https://anaconda.org/nvidia/cuda-toolkit"><code>cudatoolkit</code></a>
+- <a href="https://pytorch.org/get-started/locally/"><code>torch</code></a></p>
 <h3 id="how-to-upgrade"><strong>How to Upgrade</strong><a class="headerlink" href="#how-to-upgrade" title="Permanent link">&para;</a></h3>
 <p>When opening the <code>toolbox</code>, you will be notified if there is an update available, and you have the <em>option</em> to do so, 
 if you so choose. To upgrade, run the following command from your terminal:</p>
@@ -790,7 +791,9 @@ if you so choose. To upgrade, run the following command from your terminal:</p>
 
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>coralnet-toolbox<span class="o">==[</span>enter_newest_version_here<span class="o">]</span>
 </code></pre></div></td></tr></table></div>
+<blockquote>
 <p>Again, fall back to using just <code>pip</code> and not <code>uv</code> if this fails.</p>
+</blockquote>
 <h2 id="github-repository">GitHub Repository<a class="headerlink" href="#github-repository" title="Permanent link">&para;</a></h2>
 <p>If you prefer to clone the repository and run the <code>toolbox</code> from the source code, you can do so with the following:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
@@ -836,15 +839,15 @@ conda<span class="w"> </span>install<span class="w"> </span>git<span class="w"> 
 git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
 <span class="nb">cd</span><span class="w"> </span>CoralNet-Toolbox
 
-<span class="c1"># Install the latest</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
-
 <span class="c1"># Install CUDA requirements (if applicable)</span>
 conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-12.9.0::cuda-nvcc<span class="w"> </span>-y
 conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-12.9.0::cuda-toolkit<span class="w"> </span>-y
 
 <span class="c1"># Example for torch w/ CUDA 12.9</span>
 pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu118<span class="w"> </span>--upgrade
+
+<span class="c1"># Install the latest</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
 
 <span class="c1"># Run</span>
 coralnet-toolbox
@@ -916,7 +919,7 @@ docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </sp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2025 05:06:02 UTC"><span class="timeago" datetime="2025-10-29T05:06:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2025 05:06:02 UTC">2025-10-29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2025 22:03:02 UTC"><span class="timeago" datetime="2025-11-13T22:03:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2025 22:03:02 UTC">2025-11-13</span>
   </span>
 
     
