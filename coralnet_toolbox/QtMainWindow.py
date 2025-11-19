@@ -1,7 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import re
 import ctypes
@@ -55,6 +53,7 @@ from coralnet_toolbox.IO import (
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
+    ImportSquidleAnnotations,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -132,6 +131,9 @@ from coralnet_toolbox.BreakTime import (
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.Icons import get_icon
+
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -243,6 +245,7 @@ class MainWindow(QMainWindow):
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
+        self.import_squidle_annotations = ImportSquidleAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -406,6 +409,10 @@ class MainWindow(QMainWindow):
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
+        # Import Squidle Annotations
+        self.import_squidle_annotations_action = QAction("Squidle (JSON)", self)
+        self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
+        self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
