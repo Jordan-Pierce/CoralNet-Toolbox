@@ -139,11 +139,26 @@ class ImportSquidleAnnotations:
         progress_bar.show()
         progress_bar.start_progress(total_ops)
 
-        new_annotations = []
         images_to_update = set()
         skipped_count = 0
 
         try:
+            # PHASE 1: Import all labels first (batch)
+            unique_labels = {}
+            for record in all_records:
+                label_code = record.get("label.name", "Review")
+                if label_code not in unique_labels:
+                    label_obj = self.label_window.add_label_if_not_exists(
+                        label_code,
+                        label_code,
+                        None,
+                        None
+                    )
+                    if label_obj:
+                        unique_labels[label_code] = label_obj
+            
+            # PHASE 2: Create all annotation objects in memory first
+            new_annotations = []
             for record in all_records:
                 try:
                     # 1. Link to Image
@@ -168,21 +183,10 @@ class ImportSquidleAnnotations:
 
                     images_to_update.add(image_path)
 
-                    # 2. Process Label
-                    # Squidle: label.name
+                    # 2. Get label (already created in phase 1)
                     label_code = record.get("label.name", "Review")
-                    # label_id = record.get("label.id", "-1")
+                    label_obj = unique_labels.get(label_code)
                     
-                    # Create label if it doesn't exist (auto-assign color)
-                    # Note: Squidle doesn't always provide color in export, so we let LabelWindow generate one
-                    label_obj = self.label_window.add_label_if_not_exists(
-                        label_code,  # Short code
-                        label_code,  # Long code
-                        None,        # Let system pick color
-                        None         # ID
-                    )
-                    
-                    # Validate label was created successfully
                     if not label_obj:
                         skipped_count += 1
                         progress_bar.update_progress()
@@ -253,22 +257,8 @@ class ImportSquidleAnnotations:
 
                         # Filter and store relevant Squidle metadata
                         # Only keep essential fields to avoid serialization issues
-                        annotation.data = {
-                            k: record.get(k)
-                            for k in [
-                                "id",
-                                "point.x",
-                                "point.y",
-                                "point.polygon",
-                                "label.name",
-                                "label.id",
-                                "needs_review",
-                                "point.media.key",
-                                "annotation_time",
-                                "annotator",
-                            ]
-                            if k in record
-                        }
+                        annotation.data = record
+                        annotation.data['point.polygon']  = []  # Remove polygon offsets to reduce size
 
                         new_annotations.append(annotation)
 
@@ -280,11 +270,11 @@ class ImportSquidleAnnotations:
                 
                 progress_bar.update_progress()
 
-            # 6. Batch Add to Project
+            # PHASE 3: Batch Add to Project
             if new_annotations:
                 self.annotation_window.add_annotations(new_annotations)
 
-            # 7. Update UI
+            # PHASE 4: Update UI
             for path in images_to_update:
                 self.image_window.update_image_annotations(path)
 
@@ -292,7 +282,7 @@ class ImportSquidleAnnotations:
 
             msg = f"Successfully imported {len(new_annotations)} annotations."
             if skipped_count > 0:
-                msg += f"\n\nSkipped {skipped_count} records (image not found or invalid data)."
+                msg += f"\n\nSkipped {skipped_count} records (images not found)."
             
             QMessageBox.information(self.annotation_window, "Import Complete", msg)
 

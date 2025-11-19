@@ -998,7 +998,6 @@ class LabelWindow(QWidget):
         # Update the label object's properties
         label_to_update.short_label_code = new_short
         label_to_update.long_label_code = new_long
-        label_to_update.setToolTip(new_long)  # Update tooltip
         label_to_update.update_label_color(new_color)  # This already updates color and emits signal
 
         # Update all annotations that use this label to reflect the new color/properties
@@ -1015,6 +1014,18 @@ class LabelWindow(QWidget):
         label_to_update.update()
         self.reorganize_labels()
         self.sync_all_masks_with_labels()
+        
+        # Update tooltip immediately to reflect the new properties
+        rgb = label_to_update.color.getRgb()
+        rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        tooltip = f"{label_to_update.long_label_code}\n" \
+                  f"Current image: 0 annotations\n" \
+                  f"Total project: 0 annotations\n" \
+                  f"Color: {rgb_text}\n" \
+                  f"ID: {label_to_update.id}"
+        label_to_update.setToolTip(tooltip)
+        
+        # Then update all tooltips for complete counts
         self.update_tooltips()
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
@@ -1309,10 +1320,16 @@ class LabelWindow(QWidget):
             
             # Get total count from pre-computed totals
             total_count = total_counts.get(label.short_label_code, 0)
+            
+            # Get RGB color values
+            rgb = label.color.getRgb()
+            rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
 
             tooltip = f"{label.long_label_code}\n" \
                       f"Current image: {current_count} annotations\n" \
-                      f"Total project: {total_count} annotations"
+                      f"Total project: {total_count} annotations\n" \
+                      f"Color: {rgb_text}\n" \
+                      f"ID: {label.id}"
             label.setToolTip(tooltip)
 
 
