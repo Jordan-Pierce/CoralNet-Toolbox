@@ -506,18 +506,20 @@ class AnnotationWindow(QGraphicsView):
         else:
             visible = annotation.label.is_visible
         
+        # Always update transparency for vector annotations (regardless of visibility)
+        if not hasattr(annotation, 'mask_data'):  # Vector annotations only
+            slider_value = self.main_window.get_transparency_value()
+            annotation.update_transparency(slider_value)
+        
+        # Set visibility state
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency based on the global slider value
-            if not hasattr(annotation, 'mask_data'):  # Vector annotations only
-                slider_value = self.main_window.get_transparency_value()
-                annotation.update_transparency(slider_value)
             # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
-            # Hide the annotation
+            # Hide the annotation (but transparency is already updated above)
             annotation.set_visibility(False)
-            
+                
     def set_label_visibility(self, visible):
         """Set the visibility for all labels."""
         # Block signals for batch update

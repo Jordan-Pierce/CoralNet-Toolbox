@@ -2123,16 +2123,12 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
-        """Update the transparency for all visible annotations."""
+        """Update the transparency for all annotations in the current image."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         # Clamp the transparency value to valid range
         transparency = max(0, min(255, value))
-        
-        # Get all visible labels
-        visible_labels = self.label_window.get_visible_labels()
-        visible_label_ids = {label.id for label in visible_labels}
         
         # Update transparency slider position
         if self.transparency_slider.value() != transparency:
@@ -2140,15 +2136,12 @@ class MainWindow(QMainWindow):
             self.transparency_slider.blockSignals(True)
             self.transparency_slider.setValue(transparency)
             self.transparency_slider.blockSignals(False)
-    
-        # Update transparency for all visible vector annotations
-        # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
-        # Mask annotations are handled separately through the raster system
+
+        # Update transparency for ALL vector annotations in the current image
+        # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
         for annotation in self.annotation_window.get_image_annotations():
-            # Only update transparency for annotations with visible labels
-            if annotation.label.id in visible_label_ids:
-                annotation.update_transparency(transparency)
-    
+            annotation.update_transparency(transparency)
+
         try:
             # Handle mask annotation updates
             mask = self.annotation_window.current_mask_annotation
