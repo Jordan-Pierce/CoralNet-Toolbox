@@ -798,23 +798,26 @@ class LabelWindow(QWidget):
                         if ann.graphics_item is None or ann.graphics_item.scene() is None
                     ]
                     
-                    # If there are unloaded annotations, crop and load them
+                    # If there are unloaded annotations, use load_annotations to handle them
                     if unloaded_annotations:
-                        # Crop the unloaded annotations (creates cropped images)
-                        self.annotation_window.crop_annotations(
-                            current_image_path,
-                            unloaded_annotations,
-                            return_annotations=False,
-                            verbose=False
+                        # Temporarily restore cursor and unblock signals for load_annotations
+                        QApplication.restoreOverrideCursor()
+                        self.annotation_window.blockSignals(False)
+                        
+                        # Reuse the existing load_annotations method which handles cropping 
+                        # and loading with progress bars
+                        self.annotation_window.load_annotations(
+                            image_path=current_image_path,
+                            annotations=unloaded_annotations
                         )
                         
-                        # Load each annotation into the scene
-                        for annotation in unloaded_annotations:
-                            self.annotation_window.load_annotation(annotation)
-                    
-                    # Show all annotations with this label in the current image
-                    for annotation in all_label_annotations:
-                        self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
+                        # Restore busy cursor and block signals again for the rest of the operation
+                        QApplication.setOverrideCursor(Qt.WaitCursor)
+                        self.annotation_window.blockSignals(True)
+                    else:
+                        # Just show already-loaded annotations
+                        for annotation in all_label_annotations:
+                            self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
             else:
                 # Label is being hidden - hide all annotations with this label (across all images)
                 for annotation in self.annotation_window.annotations_dict.values():

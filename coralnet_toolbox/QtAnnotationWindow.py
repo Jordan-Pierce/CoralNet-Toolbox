@@ -1256,7 +1256,7 @@ class AnnotationWindow(QGraphicsView):
         The single, primary method for adding an annotation.
 
         It adds the annotation to data structures and connects signals. It will only create
-        graphics and cropped images if the annotation's image is currently displayed.
+        graphics and cropped images if the annotation's image is currently displayed AND its label is visible.
         """
         if annotation is None:
             return
@@ -1281,8 +1281,8 @@ class AnnotationWindow(QGraphicsView):
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
 
-        # --- Conditional UI Logic (runs only if the image is visible) ---
-        if annotation.image_path == self.current_image_path:
+        # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
+        if annotation.image_path == self.current_image_path and annotation.label.is_visible:
             # Create graphics item for display in the scene
             if not annotation.graphics_item:
                 annotation.create_graphics_item(self.scene)
@@ -1290,14 +1290,16 @@ class AnnotationWindow(QGraphicsView):
             # Create a cropped image for the confidence window
             if not annotation.cropped_image and self.rasterio_image:
                 annotation.create_cropped_image(self.rasterio_image)
+                
+            # Set the visibility based on the current UI state (will respect label checkbox)
+            self.set_annotation_visibility(annotation)
+            
+            # Update the confidence window with the new annotation (only when visible)
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # --- Finalization ---
-        # Set the visibility based on the current UI state
-        self.set_annotation_visibility(annotation)
-        # Update the annotation count in the ImageWindow table
+        # Update the annotation count in the ImageWindow table (always, regardless of visibility)
         self.main_window.image_window.update_image_annotations(annotation.image_path)
-        # Update the confidence window with the new annotation
-        self.main_window.confidence_window.display_cropped_image(annotation)
 
         # If requested, record this single addition as an undo-able action
         if record_action:
