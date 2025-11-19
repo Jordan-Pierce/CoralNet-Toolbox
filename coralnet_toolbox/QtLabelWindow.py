@@ -98,6 +98,7 @@ class Label(QWidget):
     colorChanged = pyqtSignal(QColor)
     selected = pyqtSignal(object)
     label_deleted = pyqtSignal(object)
+    visibilityChanged = pyqtSignal(bool)  # Signal emitted when visibility checkbox is toggled
 
     def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, pen_width=2):
         """Initialize the Label widget."""
@@ -123,14 +124,15 @@ class Label(QWidget):
         self.display_widget = LabelDisplay(self)
         self.display_widget.selected.connect(self._handle_selection)
 
-        # 2. The checkbox
-        self.link_checkbox = QCheckBox()
-        self.link_checkbox.setChecked(True)
-        self.link_checkbox.setToolTip("Link this label's transparency to the slider")
+        # 2. The visibility checkbox - controls whether annotations of this label are shown
+        self.visibility_checkbox = QCheckBox()
+        self.visibility_checkbox.setChecked(True)
+        self.visibility_checkbox.setToolTip("Show/hide annotations for this label")
+        self.visibility_checkbox.stateChanged.connect(self._on_visibility_changed)
         
         # Add widgets to the layout
         layout.addWidget(self.display_widget)
-        layout.addWidget(self.link_checkbox)
+        layout.addWidget(self.visibility_checkbox)
 
         # --- Animation Properties ---
         self.animation_manager = None
@@ -212,9 +214,16 @@ class Label(QWidget):
             return False
 
     @property
-    def is_linked(self):
-        """Returns True if the checkbox is checked, False otherwise."""
-        return self.link_checkbox.isChecked()
+    def is_visible(self):
+        """Returns True if the visibility checkbox is checked, False otherwise."""
+        return self.visibility_checkbox.isChecked()
+    
+    def _on_visibility_changed(self, state):
+        """Handle visibility checkbox state changes."""
+        # State is 0 (unchecked), 1 (partially checked), or 2 (checked)
+        # We only care about fully checked (2) or unchecked (0)
+        is_visible = state == 2
+        self.visibilityChanged.emit(is_visible)
 
     def select(self):
         """Programmatically select the label."""
@@ -745,6 +754,7 @@ class LabelWindow(QWidget):
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
+        label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.append(label)
         self.set_active_label(label)
         # Update in LabelWindow
@@ -758,9 +768,91 @@ class LabelWindow(QWidget):
 
         return label
     
+    def _on_label_visibility_changed(self, is_visible):
+        """Handle label visibility checkbox changes to show/hide related annotations."""
+        # Get the label that emitted the signal
+        sender = self.sender()
+        if not sender or not isinstance(sender, Label):
+            return
+        
+        label = sender
+        current_image_path = self.annotation_window.current_image_path
+        
+        # Make cursor busy for batch update
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.annotation_window.blockSignals(True)
+        
+        try:
+            if is_visible:
+                # Label is becoming visible
+                if current_image_path:
+                    # Get all annotations with this label for the current image
+                    all_label_annotations = [
+                        ann for ann in self.annotation_window.annotations_dict.values()
+                        if ann.image_path == current_image_path and ann.label.id == label.id
+                    ]
+                    
+                    # Find annotations that don't have graphics items loaded (truly unloaded)
+                    unloaded_annotations = [
+                        ann for ann in all_label_annotations
+                        if ann.graphics_item is None or ann.graphics_item.scene() is None
+                    ]
+                    
+                    # If there are unloaded annotations, crop and load them
+                    if unloaded_annotations:
+                        # Crop the unloaded annotations (creates cropped images)
+                        self.annotation_window.crop_annotations(
+                            current_image_path,
+                            unloaded_annotations,
+                            return_annotations=False,
+                            verbose=False
+                        )
+                        
+                        # Load each annotation into the scene
+                        for annotation in unloaded_annotations:
+                            self.annotation_window.load_annotation(annotation)
+                    
+                    # Show all annotations with this label in the current image
+                    for annotation in all_label_annotations:
+                        self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
+            else:
+                # Label is being hidden - hide all annotations with this label (across all images)
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if annotation.label.id == label.id:
+                        self.annotation_window.set_annotation_visibility(annotation, force_visibility=False)
+            
+            # Update mask annotation visibility if it exists
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                # Get current visible label IDs from the mask
+                current_visible_ids = mask.visible_label_ids.copy()
+                
+                if is_visible:
+                    # Add this label to visible set
+                    current_visible_ids.add(label.id)
+                else:
+                    # Remove this label from visible set
+                    current_visible_ids.discard(label.id)
+                
+                # Update the mask
+                mask.update_visible_labels(current_visible_ids)
+        
+        finally:
+            # Restore cursor and unblock signals
+            QApplication.restoreOverrideCursor()
+            self.annotation_window.blockSignals(False)
+        
+        # Use update_scene() which includes QApplication.processEvents()
+        # This ensures the scene is properly refreshed with all changes
+        self.annotation_window.update_scene()
+    
     def get_linked_labels(self):
-        """Get a list of all labels whose transparency checkbox is checked."""
-        return [label for label in self.labels if label.is_linked]
+        """Get a list of all labels whose visibility checkbox is checked."""
+        return [label for label in self.labels if label.is_visible]
+    
+    def get_visible_labels(self):
+        """Get a list of all labels whose visibility checkbox is checked."""
+        return [label for label in self.labels if label.is_visible]
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
@@ -1270,18 +1362,18 @@ class LabelWindow(QWidget):
         self.label_lock_button.setChecked(False)
 
     def toggle_all_labels(self):
-        """Toggle all label checkboxes: check all if not all checked, uncheck all if all checked."""
+        """Toggle all label visibility checkboxes: check all if not all checked, uncheck all if all checked."""
         if not self.labels:
             return
         
-        # Check if all labels are currently checked
-        all_checked = all(label.is_linked for label in self.labels)
+        # Check if all labels are currently visible
+        all_visible = all(label.is_visible for label in self.labels)
         
-        # Toggle: if all checked, uncheck all; otherwise check all
-        new_state = not all_checked
+        # Toggle: if all visible, hide all; otherwise show all
+        new_state = not all_visible
         
         for label in self.labels:
-            label.link_checkbox.setChecked(new_state)
+            label.visibility_checkbox.setChecked(new_state)
 
     def filter_labels(self):
         """Filter labels based on the text in the filter bar."""

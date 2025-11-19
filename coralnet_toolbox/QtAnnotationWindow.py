@@ -493,32 +493,26 @@ class AnnotationWindow(QGraphicsView):
             self.annotationSizeChanged.emit(self.annotation_size)
             
     def set_annotation_visibility(self, annotation, force_visibility=None):
-        """Set the visibility of an annotation and update its graphics item.
+        """Set the visibility of an annotation and update its graphics item based on its label's visibility.
         
         Args:
             annotation: The annotation to update
-            force_visibility: If provided, force this visibility state regardless of hide button.
-                            If None, use hide button state.
+            force_visibility: If provided, force this visibility state regardless of label checkbox.
+                            If None, use the label's visibility checkbox state.
         """
-        # Determine visibility based on force_visibility or hide button state
+        # Determine visibility based on force_visibility or the label's visibility checkbox state
         if force_visibility is not None:
             visible = force_visibility
         else:
-            visible = not self.main_window.hide_action.isChecked()
+            visible = annotation.label.is_visible
         
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency based on whether the label is "linked"
+            # Update transparency based on the global slider value
             if not hasattr(annotation, 'mask_data'):  # Vector annotations only
-                linked_labels = self.main_window.label_window.get_linked_labels()
-                if annotation.label in linked_labels:
-                    # If linked, use the global slider value
-                    slider_value = self.main_window.get_transparency_value()
-                    annotation.update_transparency(slider_value)
-                else:
-                    # If not linked, use the label's own stored transparency
-                    annotation.update_transparency(annotation.label.transparency)
+                slider_value = self.main_window.get_transparency_value()
+                annotation.update_transparency(slider_value)
             # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
             # Hide the annotation
@@ -537,9 +531,9 @@ class AnnotationWindow(QGraphicsView):
             mask = self.current_mask_annotation
             if mask:
                 if visible:
-                    # Show mask by making all linked labels visible
-                    linked_labels = self.main_window.label_window.get_linked_labels()
-                    visible_label_ids = {label.id for label in linked_labels}
+                    # Show mask by making all visible labels visible
+                    visible_labels = self.main_window.label_window.get_visible_labels()
+                    visible_label_ids = {label.id for label in visible_labels}
                     mask.update_visible_labels(visible_label_ids) 
                 else:
                     # Hide mask by clearing all visible labels
@@ -1085,18 +1079,13 @@ class AnnotationWindow(QGraphicsView):
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
 
-        # Get the set of currently linked labels from the LabelWindow
-        linked_labels = self.main_window.label_window.get_linked_labels()
-        
-        # If this annotation's label is linked, update its transparency
-        # to match the global slider value before creating its graphics.
-        if annotation.label in linked_labels:
-            current_slider_value = self.main_window.get_transparency_value()
-            annotation.update_transparency(current_slider_value)
+        # Update transparency to match the global slider value
+        current_slider_value = self.main_window.get_transparency_value()
+        annotation.update_transparency(current_slider_value)
 
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)
-        # Set the visibility based on the hide button state
+        # Set the visibility based on the label's visibility checkbox
         self.set_annotation_visibility(annotation)
         
         # Connect essential update signals
@@ -1111,21 +1100,40 @@ class AnnotationWindow(QGraphicsView):
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
-        # Then crop annotations (if image_path and annotations are provided, they are used)
-        annotations = self.crop_annotations(image_path, annotations)
-
+        # Get raw annotations (if image_path and annotations are provided, they are used)
+        if annotations is None:
+            annotations = self.get_image_annotations(image_path or self.current_image_path)
+        
         if not len(annotations):
             return
+        
+        # Get visible labels to filter annotations (lazy-loading approach)
+        visible_labels = self.main_window.label_window.get_visible_labels()
+        visible_label_ids = {label.id for label in visible_labels}
+        
+        # Filter annotations to only load those with visible labels BEFORE cropping
+        annotations_to_load = [ann for ann in annotations if ann.label.id in visible_label_ids]
+        
+        if not len(annotations_to_load):
+            return
+        
+        # Crop only the visible annotations (this shows the progress bar)
+        annotations_to_load = self.crop_annotations(
+            image_path or self.current_image_path,
+            annotations_to_load,
+            return_annotations=True,
+            verbose=True
+        )
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(annotations))
+        progress_bar.start_progress(len(annotations_to_load))
 
         try:
             # Load each annotation and update progress
-            for idx, annotation in enumerate(annotations):
+            for idx, annotation in enumerate(annotations_to_load):
                 if progress_bar.wasCanceled():
                     break
 
@@ -1133,11 +1141,11 @@ class AnnotationWindow(QGraphicsView):
                 self.load_annotation(annotation)
 
                 # Update every 10% of the annotations (or for each item if total is small)
-                if len(annotations) > 10:
-                    if idx % (len(annotations) // 10) == 0:
-                        progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
+                if len(annotations_to_load) > 10:
+                    if idx % (len(annotations_to_load) // 10) == 0:
+                        progress_bar.update_progress_percentage((idx / len(annotations_to_load)) * 100)
                 else:
-                    progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
+                    progress_bar.update_progress_percentage((idx / len(annotations_to_load)) * 100)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
