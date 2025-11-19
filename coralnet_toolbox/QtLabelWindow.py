@@ -899,18 +899,18 @@ class LabelWindow(QWidget):
                 raster.mask_annotation.sync_label_map(self.labels)
 
     def set_mask_transparency(self, transparency):
-        """Update the mask annotation's transparency for the current image."""
+        """Update the mask annotation's transparency for all labels (visible or not)."""
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
             # ULTRA-FAST: New render-time transparency approach - no caching needed!
-            # Update transparency for all linked labels
+            # Update transparency for all linked labels (regardless of visibility)
             linked_labels = self.get_linked_labels()
             if linked_labels:
                 for label in linked_labels:
-                    if label.id in mask.visible_label_ids:
-                        # Update the label's transparency - now instant!
-                        label.update_transparency(transparency)
+                    # Update transparency for ALL labels in the mask, not just visible ones
+                    # This ensures transparency is correct when labels are toggled on later
+                    label.update_transparency(transparency)
                 # Single call to update the mask - transparency applied at render time
                 mask.update_transparency(transparency)
             else:
