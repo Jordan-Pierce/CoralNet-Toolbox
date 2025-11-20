@@ -1,6 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import gc
 import os
@@ -19,7 +17,11 @@ from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results.MapResults import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Common import ThresholdsWidget
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

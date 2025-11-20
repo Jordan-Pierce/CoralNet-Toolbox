@@ -13,7 +13,6 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSpinBox, QVBoxLayout, QGroupBox)
 
-from coralnet_toolbox.Common import ThresholdsWidget
 
 from x_segment_anything import SamPredictor
 from x_segment_anything import sam_model_registry
@@ -25,6 +24,8 @@ from ultralytics.utils import ops
 from coralnet_toolbox.Results import ConvertResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_numpy

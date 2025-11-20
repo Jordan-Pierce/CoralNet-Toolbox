@@ -21,15 +21,17 @@ from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog
                              QFormLayout, QComboBox, QSpinBox, QPushButton,
                              QHBoxLayout)
 
-from coralnet_toolbox.Common import ThresholdsWidget
-from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.QtImageWindow import ImageWindow
+
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.QtImageWindow import ImageWindow
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
 

@@ -16,8 +16,9 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.Results import ResultsProcessor
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.Common import ThresholdsWidget
+
+from coralnet_toolbox.utilities import pixmap_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)

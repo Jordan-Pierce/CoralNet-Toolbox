@@ -14,17 +14,19 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QVBoxLayout, QGroupBox)
 
-from coralnet_toolbox.Common import ThresholdsWidget
-from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import ConvertResults
 from coralnet_toolbox.Results import MapResults
 
-from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.utilities import rasterio_to_numpy
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
+
+from coralnet_toolbox.utilities import rasterio_open
+from coralnet_toolbox.utilities import rasterio_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

@@ -16,11 +16,12 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBo
                              QLabel, QMessageBox, QPushButton, QSpinBox,
                              QVBoxLayout, QGroupBox)
 
-from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
 

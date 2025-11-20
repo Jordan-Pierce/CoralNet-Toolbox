@@ -10,12 +10,13 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox)
 
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.MachineLearning.SMP import SemanticModel 
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)

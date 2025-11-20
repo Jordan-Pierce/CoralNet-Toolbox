@@ -11,12 +11,14 @@ from ultralytics import YOLO
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
-                             QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
+                             QLabel, QLineEdit, QPushButton, QFileDialog, 
                              QWidget, QListWidget, QListWidgetItem, QFrame,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
 from coralnet_toolbox.MachineLearning.VideoInference.QtVideoWidget import VideoRegionWidget
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -53,11 +55,6 @@ class Base(QDialog):
         self.model_path = ""
         
         self.task = None                            # Task parameter, modified in subclasses
-        
-        self.uncertainty_thresh = 0.30
-        self.iou_thresh = 0.20
-        self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
                  
         self.video_region_widget = None             # Initialized in setup_video_layout
 
@@ -147,54 +144,34 @@ class Base(QDialog):
         btn_widget.setLayout(btn_layout)
         form_layout.addRow(QLabel(""), btn_widget)
 
-        # Parameter sliders (IoU, uncertainty, area)
-        self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_thresh_slider.setRange(0, 100)
-        self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
-        self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_thresh_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        uncertainty_layout = QHBoxLayout()
-        uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
-        uncertainty_layout.addWidget(self.uncertainty_thresh_label)
-        uncertainty_widget = QWidget()
-        uncertainty_widget.setLayout(uncertainty_layout)
-        form_layout.addRow(QLabel("Uncertainty Threshold:"), uncertainty_widget)
-
-        self.iou_thresh_slider = QSlider(Qt.Horizontal)
-        self.iou_thresh_slider.setRange(0, 100)
-        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_thresh_label = QLabel(f"{self.iou_thresh:.2f}")
-        iou_layout = QHBoxLayout()
-        iou_layout.addWidget(self.iou_thresh_slider)
-        iou_layout.addWidget(self.iou_thresh_label)
-        iou_widget = QWidget()
-        iou_widget.setLayout(iou_layout)
-        form_layout.addRow(QLabel("IoU Threshold:"), iou_widget)
-
-        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_min_slider.setRange(0, 100)
-        self.area_threshold_min_slider.setValue(int(self.area_thresh_min * 100))
-        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_min_label = QLabel(f"{self.area_thresh_min:.2f}")
-        area_min_layout = QHBoxLayout()
-        area_min_layout.addWidget(self.area_threshold_min_slider)
-        area_min_layout.addWidget(self.area_threshold_min_label)
-        area_min_widget = QWidget()
-        area_min_widget.setLayout(area_min_layout)
-        form_layout.addRow(QLabel("Area Threshold Min:"), area_min_widget)
-
-        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_max_slider.setRange(0, 100)
-        self.area_threshold_max_slider.setValue(int(self.area_thresh_max * 100))
-        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_max_label = QLabel(f"{self.area_thresh_max:.2f}")
-        area_max_layout = QHBoxLayout()
-        area_max_layout.addWidget(self.area_threshold_max_slider)
-        area_max_layout.addWidget(self.area_threshold_max_label)
-        area_max_widget = QWidget()
-        area_max_widget.setLayout(area_max_layout)
-        form_layout.addRow(QLabel("Area Threshold Max:"), area_max_widget)
+        # Add ThresholdsWidget for all threshold controls
+        self.thresholds_widget = ThresholdsWidget(
+            self.main_window,
+            show_max_detections=False,
+            show_uncertainty=True,
+            show_iou=True,
+            show_area=True,
+            title="Thresholds"
+        )
+        form_layout.addRow(self.thresholds_widget)
+        
+        # Connect threshold changes to update inference parameters
+        if hasattr(self.thresholds_widget, 'uncertainty_threshold_slider'):
+            self.thresholds_widget.uncertainty_threshold_slider.valueChanged.connect(
+                lambda: self.update_inference_parameters()
+            )
+        if hasattr(self.thresholds_widget, 'iou_threshold_slider'):
+            self.thresholds_widget.iou_threshold_slider.valueChanged.connect(
+                lambda: self.update_inference_parameters()
+            )
+        if hasattr(self.thresholds_widget, 'area_threshold_min_slider'):
+            self.thresholds_widget.area_threshold_min_slider.valueChanged.connect(
+                lambda: self.update_inference_parameters()
+            )
+        if hasattr(self.thresholds_widget, 'area_threshold_max_slider'):
+            self.thresholds_widget.area_threshold_max_slider.valueChanged.connect(
+                lambda: self.update_inference_parameters()
+            )
         
         # Add annotators section (child class specific)
         self.add_annotators_to_form(form_layout)
@@ -346,65 +323,15 @@ class Base(QDialog):
 
     def initialize_thresholds(self):
         """Initialize all threshold sliders with current values."""
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def initialize_uncertainty_threshold(self):
-        """Initialize the confidence threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_thresh_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def initialize_iou_threshold(self):
-        """Initialize the IOU threshold slider with the current value"""
-        current_value = self.main_window.get_iou_thresh()
-        self.iou_thresh_slider.setValue(int(current_value * 100))
-        self.iou_thresh = current_value
-
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_min_slider.setValue(int(current_min * 100))
-        self.area_threshold_max_slider.setValue(int(current_max * 100))
-        self.area_thresh_min = current_min
-        self.area_thresh_max = current_max
-
-    def update_uncertainty_label(self, value):
-        """Update confidence threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_thresh_label.setText(f"{value:.2f}")
-        self.update_inference_parameters()
-
-    def update_iou_label(self, value):
-        """Update IoU threshold and label"""
-        value = value / 100.0
-        self.iou_thresh = value
-        self.main_window.update_iou_thresh(value)
-        self.iou_thresh_label.setText(f"{value:.2f}")
-        self.update_inference_parameters()
-
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val = self.area_threshold_min_slider.value()
-        max_val = self.area_threshold_max_slider.value()
-        if min_val > max_val:
-            min_val = max_val
-            self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_min_label.setText(f"{self.area_thresh_min:.2f}")
-        self.area_threshold_max_label.setText(f"{self.area_thresh_max:.2f}")
-        self.update_inference_parameters()
+        self.thresholds_widget.initialize_thresholds()
 
     def update_inference_parameters(self):
         """Update inference parameters in the video region widget."""
         self.video_region_widget.inference_engine.set_inference_params(
-            self.uncertainty_thresh,
-            self.iou_thresh,
-            self.area_thresh_min,
-            self.area_thresh_max
+            self.thresholds_widget.get_uncertainty_thresh(),
+            self.thresholds_widget.get_iou_thresh(),
+            self.thresholds_widget.get_area_thresh_min(),
+            self.thresholds_widget.get_area_thresh_max()
         )
         
     def populate_class_filter(self):
