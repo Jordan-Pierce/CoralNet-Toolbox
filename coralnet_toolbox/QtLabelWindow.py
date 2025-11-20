@@ -736,6 +736,7 @@ class LabelWindow(QWidget):
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
+        label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.insert(0, label)
         # Do not set active by default
         # Update in LabelWindow
@@ -1375,8 +1376,75 @@ class LabelWindow(QWidget):
         # Toggle: if all visible, hide all; otherwise show all
         new_state = not all_visible
         
-        for label in self.labels:
-            label.visibility_checkbox.setChecked(new_state)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        
+        try:
+            # Temporarily disconnect signals to prevent individual label processing
+            for label in self.labels:
+                label.visibility_checkbox.blockSignals(True)
+            
+            # Update all checkboxes without triggering signals
+            for label in self.labels:
+                label.visibility_checkbox.setChecked(new_state)
+            
+            # Reconnect signals
+            for label in self.labels:
+                label.visibility_checkbox.blockSignals(False)
+            
+            # Now perform a single batch update
+            current_image_path = self.annotation_window.current_image_path
+            
+            if new_state:
+                # Showing all labels - load all annotations at once
+                if current_image_path:
+                    # Get ALL annotations for current image that need loading
+                    all_annotations_for_image = [
+                        ann for ann in self.annotation_window.annotations_dict.values()
+                        if ann.image_path == current_image_path
+                    ]
+                    
+                    # Find unloaded annotations
+                    unloaded_annotations = [
+                        ann for ann in all_annotations_for_image
+                        if ann.graphics_item is None or ann.graphics_item.scene() is None
+                    ]
+                    
+                    # Load them all at once with progress bar
+                    if unloaded_annotations:
+                        QApplication.restoreOverrideCursor()
+                        self.annotation_window.load_annotations(
+                            image_path=current_image_path,
+                            annotations=unloaded_annotations
+                        )
+                        QApplication.setOverrideCursor(Qt.WaitCursor)
+                    else:
+                        # Just show already-loaded annotations
+                        for annotation in all_annotations_for_image:
+                            self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
+                
+                # Update mask to show all labels
+                mask = self.annotation_window.current_mask_annotation
+                if mask:
+                    all_label_ids = {label.id for label in self.labels}
+                    mask.update_visible_labels(all_label_ids)
+            else:
+                # Hiding all labels - hide all annotations
+                for annotation in self.annotation_window.annotations_dict.values():
+                    self.annotation_window.set_annotation_visibility(annotation, force_visibility=False)
+                
+                # Update mask to hide all labels
+                mask = self.annotation_window.current_mask_annotation
+                if mask:
+                    mask.update_visible_labels(set())
+            
+            # Update the scene once
+            self.annotation_window.update_scene()
+            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def filter_labels(self):
         """Filter labels based on the text in the filter bar."""

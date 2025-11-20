@@ -585,6 +585,11 @@ class AnnotationWindow(QGraphicsView):
         # Clean up
         self.unselect_annotations()
 
+        # Nullify graphics_item references for all annotations to prevent stale references
+        for annotation in self.annotations_dict.values():
+            if hasattr(annotation, 'graphics_item'):
+                annotation.graphics_item = None
+
         # Clear the previous scene and delete its items
         if self.scene:
             for item in self.scene.items():
@@ -615,6 +620,9 @@ class AnnotationWindow(QGraphicsView):
 
     def set_image(self, image_path):
         """Set and display an image at the given path using a staged load for instant feedback."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Calculate GDIs for Windows if needed
         self.main_window.check_windows_gdi_count()
         
@@ -633,11 +641,13 @@ class AnnotationWindow(QGraphicsView):
 
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
+            QApplication.restoreOverrideCursor()
             return
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
+            QApplication.restoreOverrideCursor()
             return
         
         # Load z_channel data if available (deferred loading)
@@ -655,6 +665,7 @@ class AnnotationWindow(QGraphicsView):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} thumbnail could not be loaded."
             )
+            QApplication.restoreOverrideCursor()
             return
             
         low_res_pixmap = QPixmap.fromImage(low_res_qimage)
@@ -679,6 +690,7 @@ class AnnotationWindow(QGraphicsView):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} full resolution could not be loaded."
             )
+            QApplication.restoreOverrideCursor()
             return  # Failed to load full res, but preview is still visible
 
         # Convert and set the QPixmap
@@ -714,6 +726,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
@@ -1102,24 +1117,33 @@ class AnnotationWindow(QGraphicsView):
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
-        # Get raw annotations (if image_path and annotations are provided, they are used)
+        # Determine if we were given an explicit list of annotations to load
+        explicit_annotations_provided = annotations is not None
+    
+        # Get raw annotations (if not explicitly provided)
         if annotations is None:
             annotations = self.get_image_annotations(image_path or self.current_image_path)
         
         if not len(annotations):
             return
         
-        # Get visible labels to filter annotations (lazy-loading approach)
-        visible_labels = self.main_window.label_window.get_visible_labels()
-        visible_label_ids = {label.id for label in visible_labels}
-        
-        # Filter annotations to only load those with visible labels BEFORE cropping
-        annotations_to_load = [ann for ann in annotations if ann.label.id in visible_label_ids]
-        
+        # Only filter by visibility if we're loading all annotations for an image
+        # (not when a specific list of annotations was provided by the caller)
+        if not explicit_annotations_provided:
+            # Get visible labels to filter annotations (lazy-loading approach)
+            visible_labels = self.main_window.label_window.get_visible_labels()
+            visible_label_ids = {label.id for label in visible_labels}
+            
+            # Filter annotations to only load those with visible labels BEFORE cropping
+            annotations_to_load = [ann for ann in annotations if ann.label.id in visible_label_ids]
+        else:
+            # Explicit annotations list provided - trust the caller's filtering
+            annotations_to_load = annotations
+    
         if not len(annotations_to_load):
             return
-        
-        # Crop only the visible annotations (this shows the progress bar)
+    
+        # Crop only the annotations (this shows the progress bar)
         annotations_to_load = self.crop_annotations(
             image_path or self.current_image_path,
             annotations_to_load,
