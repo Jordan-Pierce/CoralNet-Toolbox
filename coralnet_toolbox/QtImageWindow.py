@@ -184,6 +184,7 @@ class ImageWindow(QWidget):
     rasterAdded = pyqtSignal(str)  # Path of added raster
     rasterRemoved = pyqtSignal(str)  # Path of removed raster
     filterGroupToggled = pyqtSignal(bool)  # When filter group is toggled
+    zChannelRemoved = pyqtSignal(str)  # Path of raster with removed z-channel
 
     def __init__(self, main_window):
         """Initialize the ImageWindow widget."""
@@ -1131,7 +1132,17 @@ class ImageWindow(QWidget):
 
         context_menu.addSeparator()
 
-        # Add existing delete actions
+        # Add remove z-channel action
+        remove_z_channel_action = context_menu.addAction(
+            f"Remove Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        remove_z_channel_action.triggered.connect(
+            lambda: self.remove_z_channel_highlighted_images()
+        )
+
+        context_menu.addSeparator()
+
+        # Add delete actions
         delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
@@ -1141,6 +1152,46 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def remove_z_channel_highlighted_images(self):
+        """Remove z-channel from the highlighted images."""
+        # Get all highlighted paths
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        if not highlighted_paths:
+            return
+        
+        # Confirm removal
+        count = len(highlighted_paths)
+        plural = 's' if count > 1 else ''
+        reply = QMessageBox.question(
+            self,
+            "Confirm Z-Channel Removal",
+            f"Are you sure you want to remove the z-channel from {count} image{plural}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Remove z-channel from each raster
+            for path in highlighted_paths:
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    raster.remove_z_channel()
+                    # Emit signal to update UI
+                    self.raster_manager.rasterUpdated.emit(path)
+                    # Emit signal for z-channel removal
+                    self.zChannelRemoved.emit(path)
+            
+            # If current image is in the list, refresh the annotation window
+            if self.selected_image_path in highlighted_paths:
+                self.annotation_window.update_scene()
+            
+            # Show success message
+            QMessageBox.information(
+                self,
+                "Z-Channel Removed",
+                f"Z-channel removed from {count} image{plural}."
+            )
         
     def delete_highlighted_images(self):
         """Delete the highlighted images."""

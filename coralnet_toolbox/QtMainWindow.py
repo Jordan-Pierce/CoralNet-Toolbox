@@ -354,6 +354,8 @@ class MainWindow(QMainWindow):
         self.image_window.imageChanged.connect(self.handle_image_changed)
         # Connect the filterChanged signal from ImageWindow to expand ConfidenceWindow height
         self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
+        # Connect the zChannelRemoved signal from ImageWindow to update status bar
+        self.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
 
         # ----------------------------------------
         # Create the menu bar
@@ -1976,6 +1978,19 @@ class MainWindow(QMainWindow):
             self.image_layout.setStretch(0, 54)
             self.image_layout.setStretch(1, 66)
 
+    def on_z_channel_removed(self, image_path):
+        """
+        Handle z-channel removal for a raster.
+        
+        Args:
+            image_path (str): Path of the raster with removed z-channel
+        """
+        # If the removed z-channel belongs to the currently displayed image,
+        # clear the z-label in the status bar
+        if image_path == self.annotation_window.current_image_path:
+            self.z_label.setText("Z: -----")
+            self.z_label.setEnabled(False)
+
     def update_project_label(self):
         """Update the project label in the status bar"""
 
@@ -2102,7 +2117,8 @@ class MainWindow(QMainWindow):
                     self.z_label.setEnabled(True)
                     
                 except (IndexError, ValueError):
-                    pass
+                    pass  
+                    # Keeps the last valid z_label value in the status bar
                     # self.z_label.setText("Z: -----")
                     # self.z_label.setEnabled(False)
             
