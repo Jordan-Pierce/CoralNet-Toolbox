@@ -282,9 +282,14 @@ The main window consists of several components:
 - **Delete Label**: Click the "Delete Label" button to delete the selected label
 - **Edit Label**: Click the "Edit Label" button to edit the selected label
 - **Lock Label**: Click the "Lock Label" button to lock the selected label
-- **Enable / Disable Labels**: Enable / disable labels by their checkbox, adjusting 
-  - Select / Unselect *all* labels by pressing the asterisk button
-  - Enabled labels can be hidden / shown, or have their transparency hidden 
+- **Enable / Disable Labels**: Enable / disable labels by their checkbox to control visibility
+  - **Toggle All Button** (asterisk icon): Click to toggle all label checkboxes at once
+    - If all labels are visible, clicking will hide all labels
+    - If any labels are hidden, clicking will show all labels
+    - Operates as a batch operation for improved performance with many labels and annotations
+  - Individual label checkboxes control whether annotations of that label are shown or hidden
+  - Hidden labels retain their data and can be shown again at any time
+  - Transparency changes apply to all labels, visible or hidden
 - **Filter Labels**: Use the filter text box to search for specific labels
 - **Label Count**: Displays the total number of labels in the project
 - **Annotation Count**: Shows information about the current annotations:

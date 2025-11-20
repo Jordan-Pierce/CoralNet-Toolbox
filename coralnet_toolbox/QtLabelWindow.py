@@ -850,10 +850,6 @@ class LabelWindow(QWidget):
         # This ensures the scene is properly refreshed with all changes
         self.annotation_window.update_scene()
     
-    def get_linked_labels(self):
-        """Get a list of all labels whose visibility checkbox is checked."""
-        return [label for label in self.labels if label.is_visible]
-    
     def get_visible_labels(self):
         """Get a list of all labels whose visibility checkbox is checked."""
         return [label for label in self.labels if label.is_visible]
@@ -905,10 +901,10 @@ class LabelWindow(QWidget):
         mask = self.annotation_window.current_mask_annotation
         if mask:
             # ULTRA-FAST: New render-time transparency approach - no caching needed!
-            # Update transparency for all linked labels (regardless of visibility)
-            linked_labels = self.get_linked_labels()
-            if linked_labels:
-                for label in linked_labels:
+            # Update transparency for all visible labels (regardless of visibility)
+            visible_labels = self.get_visible_labels()
+            if visible_labels:
+                for label in visible_labels:
                     # Update transparency for ALL labels in the mask, not just visible ones
                     # This ensures transparency is correct when labels are toggled on later
                     label.update_transparency(transparency)

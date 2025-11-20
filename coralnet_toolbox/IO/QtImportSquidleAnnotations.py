@@ -257,7 +257,7 @@ class ImportSquidleAnnotations:
 
                         # Filter and store relevant Squidle metadata
                         # Only keep essential fields to avoid serialization issues
-                        annotation.data = record
+                        annotation.data = record.copy()
                         annotation.data['point.polygon']  = []  # Remove polygon offsets to reduce size
 
                         new_annotations.append(annotation)
