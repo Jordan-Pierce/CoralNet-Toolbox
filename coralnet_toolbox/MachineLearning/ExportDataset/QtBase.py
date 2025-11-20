@@ -723,6 +723,9 @@ class Base(QDialog):
         """
         if not self.is_ready():
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create the output folder
         output_dir_path = os.path.join(self.output_dir, self.dataset_name)
@@ -734,6 +737,7 @@ class Base(QDialog):
                                          "The output directory already exists. Do you want to merge the datasets?",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.No:
+                QApplication.restoreOverrideCursor()
                 return
 
             # Read the existing class_mapping.json file if it exists
@@ -765,7 +769,10 @@ class Base(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
             
-        super().accept()
+        finally:
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
+            super().accept()
 
     def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")
