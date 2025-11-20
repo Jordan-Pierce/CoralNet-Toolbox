@@ -222,7 +222,7 @@ class DeployPredictorDialog(QDialog):
 
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        group_box = QGroupBox("Use SAM to Create Polygons")
         layout = QFormLayout()
 
         # SAM dropdown

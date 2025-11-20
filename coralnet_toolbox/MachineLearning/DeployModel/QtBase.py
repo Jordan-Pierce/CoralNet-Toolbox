@@ -66,15 +66,15 @@ class Base(QDialog):
         self.setup_parameters_layout()
         # Setup SAM layout
         self.setup_sam_layout()
+        # Setup thresholds layout
+        self.setup_thresholds_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
 
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
+        """Set up the layout and widgets for the info layout."""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
 
@@ -89,9 +89,7 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_labels_layout(self):
-        """
-
-        """
+        """Setup the labels layout"""
         group_box = QGroupBox("Labels")
         layout = QVBoxLayout()
 
@@ -108,11 +106,12 @@ class Base(QDialog):
 
     def setup_sam_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
+    
+    def setup_thresholds_layout(self):
+        raise NotImplementedError("Subclasses must implement this method")
 
     def setup_buttons_layout(self):
-        """
-        Set up the buttons layout in a 2x2 grid
-        """
+        """Set up the buttons layout in a 2x2 grid"""
         # Model controls group
         group_box = QGroupBox("Actions")
         layout = QVBoxLayout()  # Main vertical layout
@@ -148,9 +147,7 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_status_layout(self):
-        """
-
-        """
+        """Setup the status layout"""
         # Create a group box for the status bar
         group_box = QGroupBox("Status")
         layout = QVBoxLayout()

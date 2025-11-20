@@ -110,10 +110,17 @@ class DeployGeneratorDialog(QDialog):
         self.horizontal_layout.addLayout(self.right_panel)
         
         # Add layouts to the left panel
+        # Setup the models layout
         self.setup_models_layout()
+        # Setup the parameters layout
         self.setup_parameters_layout()
+        # Setup the thresholds layout
         self.setup_sam_layout()
+        # Setup model buttons layout
+        self.setup_thresholds_layout()
+        # Setup SAM layout
         self.setup_model_buttons_layout()
+        # Set up status layout
         self.setup_status_layout()
         
         # Add layouts to the right panel
@@ -416,6 +423,30 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
+        group_box.setLayout(layout)
+        self.left_panel.addWidget(group_box)  # Add to left panel
+
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM to Create Polygons")
+        layout = QFormLayout()
+
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+
+        group_box.setLayout(layout)
+        self.left_panel.addWidget(group_box)  # Add to left pane
+        
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section in a group box.
+        """
+        group_box = QGroupBox("Thresholds")
+        layout = QFormLayout()
+
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -462,21 +493,7 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("", self.area_threshold_label)
 
         group_box.setLayout(layout)
-        self.left_panel.addWidget(group_box)  # Add to left panel
-
-    def setup_sam_layout(self):
-        """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM Model for Creating Polygons")
-        layout = QFormLayout()
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-
-        group_box.setLayout(layout)
-        self.left_panel.addWidget(group_box)  # Add to left panel
+        self.left_panel.addWidget(group_box)  # Add to left panell
 
     def setup_model_buttons_layout(self):
         """

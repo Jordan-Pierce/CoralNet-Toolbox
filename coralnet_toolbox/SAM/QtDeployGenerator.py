@@ -76,10 +76,10 @@ class DeployGeneratorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
-        # Setup the detect as layout
-        self.detect_as_layout()
         # Setup the SAM layout
         self.setup_sam_layout()
+        # Setup the thresholds layout
+        self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -148,6 +148,14 @@ class DeployGeneratorDialog(QDialog):
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
 
+        # Sample Label
+        self.detect_as_combo = QComboBox()
+        for label in self.label_window.labels:
+            self.detect_as_combo.addItem(label.short_label_code, label.id)
+        self.detect_as_combo.setCurrentIndex(0)
+        self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
+        layout.addRow("Detect as:", self.detect_as_combo)
+        
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
@@ -173,6 +181,30 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM to Create Polygons")
+        layout = QFormLayout()
+
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section in a group box.
+        """
+        group_box = QGroupBox("Thresholds")
+        layout = QFormLayout()
 
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
@@ -218,36 +250,6 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def detect_as_layout(self):
-        """Detect objects as layout."""
-        group_box = QGroupBox("Detect as: ")
-        layout = QFormLayout()
-
-        # Sample Label
-        self.detect_as_combo = QComboBox()
-        for label in self.label_window.labels:
-            self.detect_as_combo.addItem(label.short_label_code, label.id)
-        self.detect_as_combo.setCurrentIndex(0)
-        self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
-        layout.addRow("Detect as:", self.detect_as_combo)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_sam_layout(self):
-        """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM Model for Creating Polygons")
-        layout = QFormLayout()
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)

@@ -98,7 +98,17 @@ class Semantic(Base):
         """
         Setup parameter control section in a group box.
         """
-        group_box = QGroupBox("Parameters")
+        # Currently no parameters other than thresholds for semantic segmentation
+        pass
+    
+    def setup_sam_layout(self):
+        pass
+
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section in a group box.
+        """
+        group_box = QGroupBox("Thresholds")
         layout = QFormLayout()
 
         # Uncertainty threshold controls
@@ -115,9 +125,6 @@ class Semantic(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-    def setup_sam_layout(self):
-        pass
 
     def load_model(self):
         """

@@ -57,6 +57,30 @@ class Segment(Base):
         self.max_detections_spinbox.setValue(self.max_detect)
         layout.addRow("Max Detections:", self.max_detections_spinbox)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM to Create Polygons")
+        layout = QFormLayout()
+
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section in a group box.
+        """
+        group_box = QGroupBox("Thresholds")
+        layout = QFormLayout()
+
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -101,20 +125,6 @@ class Segment(Base):
         layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_sam_layout(self):
-        """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM Model for Creating Polygons")
-        layout = QFormLayout()
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
