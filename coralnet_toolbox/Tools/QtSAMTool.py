@@ -110,6 +110,10 @@ class SAMTool(Tool):
         self.has_active_prompts = False
         self.cancel_working_area_creation()
         
+        # If output type was Mask, unrasterize annotations to remove lock protection
+        if self.output_type == "Mask":
+            self.annotation_window.unrasterize_annotations()
+
         # Call parent deactivate to ensure crosshair is properly cleared
         super().deactivate()
 
@@ -599,6 +603,7 @@ class SAMTool(Tool):
                     if final_annotation is None:
                         # Mask was updated successfully, just clear prompts
                         self.clear_prompt_graphics()
+                    
                     elif final_annotation:
                         # Copy confidence data from temp annotation if available
                         if hasattr(self.temp_annotation, 'machine_confidence'):
@@ -617,6 +622,7 @@ class SAMTool(Tool):
                     if final_annotation is None:
                         # Mask was updated successfully, just clear prompts
                         self.clear_prompt_graphics()
+
                     elif final_annotation:
                         self.annotation_window.add_annotation_from_tool(final_annotation)
                         self.clear_prompt_graphics() 
