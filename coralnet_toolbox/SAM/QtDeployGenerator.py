@@ -13,9 +13,10 @@ from ultralytics.models.fastsam import FastSAMPredictor
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBoxLayout,
-                             QLabel, QMessageBox, QPushButton, QSlider, QSpinBox,
+                             QLabel, QMessageBox, QPushButton, QSpinBox,
                              QVBoxLayout, QGroupBox)
 
+from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
 
@@ -93,9 +94,7 @@ class DeployGeneratorDialog(QDialog):
             event: The event object.
         """
         super().showEvent(event)
-        self.initialize_uncertainty_threshold()
-        self.initialize_iou_threshold()
-        self.initialize_area_threshold()
+        self.thresholds_widget.initialize_thresholds(self.main_window)
         self.update_detect_as_combo()
 
     def setup_info_layout(self):
@@ -162,12 +161,6 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
         layout.addRow("Task:", self.use_task_dropdown)
 
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detect)
-        layout.addRow("Max Detections:", self.max_detections_spinbox)
-
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
@@ -201,58 +194,18 @@ class DeployGeneratorDialog(QDialog):
 
     def setup_thresholds_layout(self):
         """
-        Setup threshold control section in a group box.
+        Setup threshold control section using ThresholdsWidget.
         """
-        group_box = QGroupBox("Thresholds")
-        layout = QFormLayout()
-
-        # Uncertainty threshold controls
-        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        layout.addRow("", self.uncertainty_threshold_label)
-
-        # IoU threshold controls
-        self.iou_thresh = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider = QSlider(Qt.Horizontal)
-        self.iou_threshold_slider.setRange(0, 100)
-        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.iou_threshold_slider.setTickInterval(10)
-        self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
-        layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        layout.addRow("", self.iou_threshold_label)
-
-        # Area threshold controls
-        min_val, max_val = self.main_window.get_area_thresh()
-        self.area_thresh_min = int(min_val * 100)
-        self.area_thresh_max = int(max_val * 100)
-        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_min_slider.setRange(0, 100)
-        self.area_threshold_min_slider.setValue(self.area_thresh_min)
-        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_min_slider.setTickInterval(10)
-        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_max_slider.setRange(0, 100)
-        self.area_threshold_max_slider.setValue(self.area_thresh_max)
-        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_max_slider.setTickInterval(10)
-        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
-        layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
-        layout.addRow("", self.area_threshold_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        # For SAM Generator: show all parameters including max_detections
+        self.thresholds_widget = ThresholdsWidget(
+            self.main_window,
+            show_max_detections=True,
+            max_detections_value=self.max_detect,
+            show_uncertainty=True,
+            show_iou=True,
+            show_area=True
+        )
+        self.layout.addWidget(self.thresholds_widget)
 
     def setup_buttons_layout(self):
         """
@@ -315,57 +268,6 @@ class DeployGeneratorDialog(QDialog):
             # Deactivate model if one is loaded and we're switching to segment task
             if self.loaded_model:
                 self.deactivate_model()
-
-    def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def initialize_iou_threshold(self):
-        """Initialize the IOU threshold slider with the current value"""
-        current_value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(current_value * 100))
-        self.iou_thresh = current_value
-
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_min_slider.setValue(int(current_min * 100))
-        self.area_threshold_max_slider.setValue(int(current_max * 100))
-        self.area_thresh_min = current_min
-        self.area_thresh_max = current_max
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
-    def update_iou_label(self, value):
-        """Update IoU threshold and label"""
-        value = value / 100.0
-        self.iou_thresh = value
-        self.main_window.update_iou_thresh(value)
-        self.iou_threshold_label.setText(f"{value:.2f}")
-
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val = self.area_threshold_min_slider.value()
-        max_val = self.area_threshold_max_slider.value()
-        if min_val > max_val:
-            min_val = max_val
-            self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-
-    def get_max_detections(self):
-        """Get the maximum number of detections to return."""
-        self.max_detect = self.max_detections_spinbox.value()
-        return self.max_detect
 
     def is_sam_model_deployed(self):
         """
@@ -435,10 +337,10 @@ class DeployGeneratorDialog(QDialog):
                              mode='predict',
                              save=False,
                              retina_masks=self.task == "segment",
-                             max_det=self.get_max_detections(),
+                             max_det=self.thresholds_widget.max_detections_spinbox.value(),
                              imgsz=self.get_imgsz(),
-                             conf=self.main_window.get_uncertainty_thresh(),
-                             iou=self.main_window.get_iou_thresh(),
+                             conf=self.thresholds_widget.get_uncertainty_thresh(),
+                             iou=self.thresholds_widget.get_iou_thresh(),
                              device=self.main_window.device)
 
             # Load the model
@@ -495,10 +397,10 @@ class DeployGeneratorDialog(QDialog):
         results_processor = ResultsProcessor(
             self.main_window,
             self.class_mapping,
-            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            iou_thresh=self.main_window.get_iou_thresh(),
-            min_area_thresh=self.main_window.get_area_thresh_min(),
-            max_area_thresh=self.main_window.get_area_thresh_max()
+            uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh(),
+            iou_thresh=self.thresholds_widget.get_iou_thresh(),
+            min_area_thresh=self.thresholds_widget.get_area_thresh_min(),
+            max_area_thresh=self.thresholds_widget.get_area_thresh_max()
         )
 
         # Make cursor busy
@@ -651,9 +553,9 @@ class DeployGeneratorDialog(QDialog):
         Apply the model to the inputs.
         """
         # Update the model with user parameters
-        self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
-        self.loaded_model.iou = self.main_window.get_iou_thresh()
-        self.loaded_model.max_det = self.get_max_detections()
+        self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
+        self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
+        self.loaded_model.max_det = self.thresholds_widget.max_detections_spinbox.value()
 
         results_list = []
         for input_image in inputs:

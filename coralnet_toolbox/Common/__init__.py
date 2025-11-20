@@ -4,8 +4,10 @@ from .QtMarginInput import MarginInput
 from .QtOverlapInput import OverlapInput
 from .QtTileSizeInput import TileSizeInput
 from .QtUpdateImagePaths import UpdateImagePaths
+from .QtThresholdsWidget import ThresholdsWidget
 
 __all__ = ["MarginInput",
            "OverlapInput",
            "TileSizeInput",
-           "UpdateImagePaths"]
+           "UpdateImagePaths",
+           "ThresholdsWidget"]
