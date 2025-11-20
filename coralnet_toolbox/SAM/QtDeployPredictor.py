@@ -68,6 +68,8 @@ class DeployPredictorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the thresholds layout
+        self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -145,7 +147,7 @@ class DeployPredictorDialog(QDialog):
         
         # Output type dropdown (polygon or rectangle)
         self.output_type_dropdown = QComboBox()
-        self.output_type_dropdown.addItems(["Polygon", "Rectangle"])
+        self.output_type_dropdown.addItems(["Polygon", "Rectangle", "Mask"])
         self.output_type_dropdown.setCurrentIndex(0)  # Default to Polygon
         layout.addRow("Output Type:", self.output_type_dropdown)
         
@@ -169,6 +171,16 @@ class DeployPredictorDialog(QDialog):
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_thresholds_layout(self):
+        """
+        Setup the thresholds layout.
+        """
+        group_box = QGroupBox("Thresholds")
+        layout = QFormLayout()
+        
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -213,7 +225,7 @@ class DeployPredictorDialog(QDialog):
         layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
-
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 

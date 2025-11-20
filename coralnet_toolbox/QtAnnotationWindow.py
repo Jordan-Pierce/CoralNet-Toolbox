@@ -1306,6 +1306,12 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
+        
+        # If this is a MaskAnnotation, update the raster's reference to it
+        if isinstance(annotation, MaskAnnotation):
+            raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
+            if raster:
+                raster.mask_annotation = annotation
 
         # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
         if annotation.image_path == self.current_image_path and annotation.label.is_visible:
