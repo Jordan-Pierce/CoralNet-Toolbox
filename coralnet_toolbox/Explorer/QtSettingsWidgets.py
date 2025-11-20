@@ -689,6 +689,7 @@ class EmbeddingSettingsWidget(QGroupBox):
 
         # Initial call to set the sliders correctly for the default technique
         self._update_parameter_sliders()
+        self._update_pca_combo_state()
 
     def setup_ui(self):
         """Set up the UI with embedding technique parameters."""

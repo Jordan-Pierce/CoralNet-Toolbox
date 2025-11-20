@@ -28,6 +28,7 @@ class ThresholdsWidget(QGroupBox):
         self.main_window = main_window
         
         # Initialize threshold values from main window
+        self.max_detections = main_window.get_max_detections()
         self.uncertainty_thresh = main_window.get_uncertainty_thresh()
         self.iou_thresh = main_window.get_iou_thresh()
         min_val, max_val = main_window.get_area_thresh()
@@ -42,6 +43,8 @@ class ThresholdsWidget(QGroupBox):
             self.max_detections_spinbox = QSpinBox()
             self.max_detections_spinbox.setRange(1, 10000)
             self.max_detections_spinbox.setValue(main_window.get_max_detections())
+            self.max_detections_spinbox.valueChanged.connect(self._update_max_detections)
+            main_window.maxDetectionsChanged.connect(self._on_max_detections_changed)
             layout.addRow("Max Detections:", self.max_detections_spinbox)
         
         # Uncertainty threshold controls
@@ -52,6 +55,7 @@ class ThresholdsWidget(QGroupBox):
             self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
             self.uncertainty_threshold_slider.setTickInterval(10)
             self.uncertainty_threshold_slider.valueChanged.connect(self._update_uncertainty_label)
+            main_window.uncertaintyChanged.connect(self._on_uncertainty_changed)
             self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
             layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
             layout.addRow("", self.uncertainty_threshold_label)
@@ -64,6 +68,7 @@ class ThresholdsWidget(QGroupBox):
             self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
             self.iou_threshold_slider.setTickInterval(10)
             self.iou_threshold_slider.valueChanged.connect(self._update_iou_label)
+            main_window.iouChanged.connect(self._on_iou_changed)
             self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
             layout.addRow("IoU Threshold", self.iou_threshold_slider)
             layout.addRow("", self.iou_threshold_label)
@@ -84,12 +89,20 @@ class ThresholdsWidget(QGroupBox):
             self.area_threshold_max_slider.setTickInterval(10)
             self.area_threshold_max_slider.valueChanged.connect(self._update_area_label)
             
+            # NEW: Connect to MainWindow signal
+            main_window.areaChanged.connect(self._on_area_changed)
+            
             self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
             layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
             layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
             layout.addRow("", self.area_threshold_label)
         
         self.setLayout(layout)
+        
+    def _update_max_detections(self, value):
+        """Update max detections value"""
+        self.max_detections = value
+        self.main_window.update_max_detections(value)
     
     def _update_uncertainty_label(self, value):
         """Update uncertainty threshold and label"""
@@ -125,6 +138,7 @@ class ThresholdsWidget(QGroupBox):
         if hasattr(self, 'max_detections_spinbox'):
             current_value = self.main_window.get_max_detections()
             self.max_detections_spinbox.setValue(current_value)
+            self.max_detections = current_value
         
         if hasattr(self, 'uncertainty_threshold_slider'):
             current_value = self.main_window.get_uncertainty_thresh()
@@ -158,3 +172,42 @@ class ThresholdsWidget(QGroupBox):
     def get_area_thresh_max(self):
         """Get the current maximum area threshold value"""
         return self.area_thresh_max
+    
+    def _on_max_detections_changed(self, value):
+        """Update spinbox when MainWindow changes"""
+        if hasattr(self, 'max_detections_spinbox'):
+            self.max_detections_spinbox.blockSignals(True)  # Prevent recursive signals
+            self.max_detections_spinbox.setValue(value)
+            self.max_detections = value
+            self.max_detections_spinbox.blockSignals(False)
+    
+    def _on_uncertainty_changed(self, value):
+        """Update slider/label when MainWindow changes"""
+        if hasattr(self, 'uncertainty_threshold_slider'):
+            self.uncertainty_threshold_slider.blockSignals(True)
+            self.uncertainty_threshold_slider.setValue(int(value * 100))
+            self.uncertainty_thresh = value
+            self.uncertainty_threshold_label.setText(f"{value:.2f}")
+            self.uncertainty_threshold_slider.blockSignals(False)
+    
+    def _on_iou_changed(self, value):
+        """Update slider/label when MainWindow changes"""
+        if hasattr(self, 'iou_threshold_slider'):
+            self.iou_threshold_slider.blockSignals(True)
+            self.iou_threshold_slider.setValue(int(value * 100))
+            self.iou_thresh = value
+            self.iou_threshold_label.setText(f"{value:.2f}")
+            self.iou_threshold_slider.blockSignals(False)
+    
+    def _on_area_changed(self, min_val, max_val):
+        """Update sliders/label when MainWindow changes"""
+        if hasattr(self, 'area_threshold_min_slider') and hasattr(self, 'area_threshold_max_slider'):
+            self.area_threshold_min_slider.blockSignals(True)
+            self.area_threshold_max_slider.blockSignals(True)
+            self.area_threshold_min_slider.setValue(int(min_val * 100))
+            self.area_threshold_max_slider.setValue(int(max_val * 100))
+            self.area_thresh_min = min_val
+            self.area_thresh_max = max_val
+            self.area_threshold_label.setText(f"{min_val:.2f} - {max_val:.2f}")
+            self.area_threshold_min_slider.blockSignals(False)
+            self.area_threshold_max_slider.blockSignals(False)

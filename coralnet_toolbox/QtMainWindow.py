@@ -143,6 +143,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+    maxDetectionsChanged = pyqtSignal(int)  # Signal to emit the current max detections value
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
@@ -1113,6 +1114,7 @@ class MainWindow(QMainWindow):
         self.max_detections_spinbox = QSpinBox()
         self.max_detections_spinbox.setRange(1, 10000)
         self.max_detections_spinbox.setValue(self.max_detections)
+        self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
         max_detections_layout = QHBoxLayout()
         max_detections_label = QLabel("Max Detections:")
         max_detections_layout.addWidget(max_detections_label)
@@ -2169,11 +2171,14 @@ class MainWindow(QMainWindow):
     
     def get_max_detections(self):
         """Get the current max detections value"""
-        return self.max_detections_spinbox.value()
+        return self.max_detections
     
     def update_max_detections(self, value):
         """Update the max detections value"""
-        self.max_detections_spinbox.setValue(value)
+        if self.max_detections != value:
+            self.max_detections = value
+            self.max_detections_spinbox.setValue(self.max_detections)
+            self.maxDetectionsChanged.emit(value)
         
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
@@ -2190,6 +2195,7 @@ class MainWindow(QMainWindow):
         """Update uncertainty threshold label when slider value changes"""
         self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
         self.uncertainty_value_label.setText(f"{self.uncertainty_thresh:.2f}")
+        self.update_uncertainty_thresh(self.uncertainty_thresh)
 
     def get_iou_thresh(self):
         """Get the current IoU threshold value"""
@@ -2206,6 +2212,7 @@ class MainWindow(QMainWindow):
         """Update IoU threshold label when slider value changes"""
         self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
         self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
+        self.update_iou_thresh(self.iou_thresh)
 
     def get_area_thresh(self):
         """Get the current area threshold values"""
@@ -2238,6 +2245,7 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def open_new_project(self):
         """Confirm user wants to create a new project before closing window."""
