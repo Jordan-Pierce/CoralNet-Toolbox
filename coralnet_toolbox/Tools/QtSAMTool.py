@@ -593,6 +593,7 @@ class SAMTool(Tool):
 
             # If we have active prompts, create a permanent annotation
             elif self.has_active_prompts:
+                
                 # Create the final annotation
                 if self.temp_annotation:
                     # Get the mask tensor that was used for the temp annotation
@@ -610,8 +611,12 @@ class SAMTool(Tool):
                             final_annotation.update_machine_confidence(
                                 self.temp_annotation.machine_confidence
                             )
+                        
+                        # Create the graphics item for the final annotation
+                        final_annotation.create_graphics_item(self.annotation_window.scene)
                         # Add the annotation to the scene
                         self.annotation_window.add_annotation_from_tool(final_annotation)
+                        
                         # Clear all temporary graphics and prompts
                         self.clear_prompt_graphics()
                 else:
@@ -830,7 +835,8 @@ class SAMTool(Tool):
                 self.annotation_window.current_image_path,
                 self.annotation_window.selected_label.id,
                 self.main_window.get_transparency_value()
-            )            
+            )
+            return annotation
         else:
             # Original polygon code
             # Polygonize the mask using the new method to get the exterior and holes
@@ -872,8 +878,7 @@ class SAMTool(Tool):
                 label_id=self.annotation_window.selected_label.id,
                 transparency=self.main_window.get_transparency_value()
             )
-            
-        return annotation
+            return annotation
 
     def cancel_working_area(self):
         """
