@@ -1,9 +1,9 @@
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import pkg_resources
-
+from importlib.resources import files
 from PyQt5.QtGui import QIcon
 
 
@@ -18,7 +18,8 @@ def get_icon_path(icon_name):
     :param icon_name:
     :return:
     """
-    return pkg_resources.resource_filename('coralnet_toolbox', f'Icons/{icon_name}')
+    icon_dir = files('coralnet_toolbox').joinpath('Icons')
+    return str(icon_dir.joinpath(icon_name))
 
 
 def get_icon(icon_name):

@@ -1,7 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import re
 import ctypes
@@ -55,6 +53,7 @@ from coralnet_toolbox.IO import (
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
+    ImportSquidleAnnotations,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -134,6 +133,9 @@ from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.Icons import get_icon
 
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -175,7 +177,6 @@ class MainWindow(QMainWindow):
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
         self.apple_icon = get_icon("apple.png")
-        self.hide_icon = get_icon("hide.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
         self.z_icon = get_icon("z.png")
@@ -243,6 +244,7 @@ class MainWindow(QMainWindow):
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
+        self.import_squidle_annotations = ImportSquidleAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -406,6 +408,10 @@ class MainWindow(QMainWindow):
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
+        # Import Squidle Annotations
+        self.import_squidle_annotations_action = QAction("Squidle (JSON)", self)
+        self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
+        self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
@@ -1050,25 +1056,12 @@ class MainWindow(QMainWindow):
         transparent_icon.setPixmap(self.transparent_icon.pixmap(QSize(16, 16)))
         transparent_icon.setToolTip("Transparent")
 
-        # Hide icon (before transparent icon)
-        self.hide_action = QAction(self.hide_icon, "", self)
-        self.hide_action.setCheckable(True)
-        self.hide_action.setChecked(False)
-        self.hide_action.triggered.connect(self.toggle_annotations_visibility)
-        
-        # Create button to hold the hide action
-        self.hide_button = QToolButton()
-        self.hide_action.setToolTip("Hide Annotations")
-        self.hide_button.setToolTip("Hide Annotations")
-        self.hide_button.setDefaultAction(self.hide_action)
-
         # Right icon (opaque)
         opaque_icon = QLabel()
         opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
         opaque_icon.setToolTip("Opaque")
 
         # Add widgets to the transparency layout
-        transparency_layout.addWidget(self.hide_button)
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
@@ -2121,63 +2114,6 @@ class MainWindow(QMainWindow):
         if self.confidence_window.annotation:
             self.confidence_window.refresh_display()
         
-    def toggle_annotations_visibility(self, hide):
-        """Toggle the visibility of annotations based on the hide button state and linked labels."""
-        # Determine the desired visibility state for linked items
-        is_visible_for_linked = not hide
-
-        # Get the list of all labels that are linked via their checkbox
-        linked_labels = self.label_window.get_linked_labels()
-        linked_label_ids = {label.id for label in linked_labels}
-
-        if not linked_label_ids:
-            return  # Do nothing if no labels are linked
-        
-        # Make cursory busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Block signals to prevent recursive updates
-        self.annotation_window.blockSignals(True)
-        
-        try:
-            # 1. Toggle visibility for all VECTOR annotations associated with the linked labels
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id in linked_label_ids:
-                    self.annotation_window.set_annotation_visibility(annotation, force_visibility=is_visible_for_linked)
-
-            # 2. Update per-label visibility for the MASK annotation
-            mask = self.annotation_window.current_mask_annotation
-            if mask:
-                # Get the mask's current set of visible labels
-                current_mask_visible_ids = mask.visible_label_ids.copy()
-
-                if hide:
-                    # If hiding, remove the linked labels from the visible set
-                    new_mask_visible_ids = current_mask_visible_ids - linked_label_ids
-                else:
-                    # If showing, add the linked labels to the visible set
-                    new_mask_visible_ids = current_mask_visible_ids | linked_label_ids
-                
-                # Pass the new complete set of visible IDs to the mask
-                mask.update_visible_labels(new_mask_visible_ids)
-
-        finally:
-            # Restore cursor
-            QApplication.restoreOverrideCursor()
-            # Unblock signals
-            self.annotation_window.blockSignals(False)
-
-        # Update the button's tooltip
-        if hide:
-            self.hide_action.setToolTip("Show Annotations")
-            self.hide_button.setToolTip("Show Annotations")
-        else:
-            self.hide_action.setToolTip("Hide Annotations")
-            self.hide_button.setToolTip("Hide Annotations")
-            
-        # Refresh the scene to show all changes
-        self.annotation_window.scene.update()
-        self.annotation_window.viewport().update()
-
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
         return self.transparency_slider.value()
@@ -2187,43 +2123,27 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
-        """Update the transparency for all labels and annotations where the checkbox is checked."""
+        """Update the transparency for all annotations in the current image."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         # Clamp the transparency value to valid range
         transparency = max(0, min(255, value))
         
-        # Get all linked labels (those with checkbox checked)
-        linked_labels = self.label_window.get_linked_labels()
-        
-        # Update transparency for linked labels without triggering individual updates
-        for label in linked_labels:
-            # Update the label's transparency value directly without triggering UI updates
-            label.transparency = transparency
-    
         # Update transparency slider position
         if self.transparency_slider.value() != transparency:
             # Temporarily block signals to prevent infinite recursion
             self.transparency_slider.blockSignals(True)
             self.transparency_slider.setValue(transparency)
             self.transparency_slider.blockSignals(False)
-    
-        # Update transparency for ALL vector annotations based on their label's checkbox state
-        # Note: annotations_dict only contains vector annotations (patch, rectangle, polygon)
-        # Mask annotations are handled separately through the raster system
+
+        # Update transparency for ALL vector annotations in the current image
+        # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
         for annotation in self.annotation_window.get_image_annotations():
-            # Update each vector annotation based on its label's checkbox state
-            if annotation.label in linked_labels:
-                # Label is checked - use the slider transparency value
-                annotation.update_transparency(transparency)
-            else:
-                # Label is not checked - use the label's individual transparency value
-                annotation.update_transparency(annotation.label.transparency)
-    
+            annotation.update_transparency(transparency)
+
         try:
-            # Handle mask annotation updates - transparency is just visual so always sync
-            # Transparency changes are now instant with render-time approach!
+            # Handle mask annotation updates
             mask = self.annotation_window.current_mask_annotation
             if mask:
                 self.label_window.set_mask_transparency(transparency)

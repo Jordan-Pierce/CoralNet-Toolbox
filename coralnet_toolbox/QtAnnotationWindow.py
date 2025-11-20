@@ -493,37 +493,33 @@ class AnnotationWindow(QGraphicsView):
             self.annotationSizeChanged.emit(self.annotation_size)
             
     def set_annotation_visibility(self, annotation, force_visibility=None):
-        """Set the visibility of an annotation and update its graphics item.
+        """Set the visibility of an annotation and update its graphics item based on its label's visibility.
         
         Args:
             annotation: The annotation to update
-            force_visibility: If provided, force this visibility state regardless of hide button.
-                            If None, use hide button state.
+            force_visibility: If provided, force this visibility state regardless of label checkbox.
+                            If None, use the label's visibility checkbox state.
         """
-        # Determine visibility based on force_visibility or hide button state
+        # Determine visibility based on force_visibility or the label's visibility checkbox state
         if force_visibility is not None:
             visible = force_visibility
         else:
-            visible = not self.main_window.hide_action.isChecked()
+            visible = annotation.label.is_visible
         
+        # Always update transparency for vector annotations (regardless of visibility)
+        if not hasattr(annotation, 'mask_data'):  # Vector annotations only
+            slider_value = self.main_window.get_transparency_value()
+            annotation.update_transparency(slider_value)
+        
+        # Set visibility state
         if visible:
             # Show the annotation
             annotation.set_visibility(True)
-            # Update transparency based on whether the label is "linked"
-            if not hasattr(annotation, 'mask_data'):  # Vector annotations only
-                linked_labels = self.main_window.label_window.get_linked_labels()
-                if annotation.label in linked_labels:
-                    # If linked, use the global slider value
-                    slider_value = self.main_window.get_transparency_value()
-                    annotation.update_transparency(slider_value)
-                else:
-                    # If not linked, use the label's own stored transparency
-                    annotation.update_transparency(annotation.label.transparency)
             # Note: Mask annotations handle visibility through update_visible_labels() method
         else:
-            # Hide the annotation
+            # Hide the annotation (but transparency is already updated above)
             annotation.set_visibility(False)
-            
+                
     def set_label_visibility(self, visible):
         """Set the visibility for all labels."""
         # Block signals for batch update
@@ -537,9 +533,9 @@ class AnnotationWindow(QGraphicsView):
             mask = self.current_mask_annotation
             if mask:
                 if visible:
-                    # Show mask by making all linked labels visible
-                    linked_labels = self.main_window.label_window.get_linked_labels()
-                    visible_label_ids = {label.id for label in linked_labels}
+                    # Show mask by making all visible labels visible
+                    visible_labels = self.main_window.label_window.get_visible_labels()
+                    visible_label_ids = {label.id for label in visible_labels}
                     mask.update_visible_labels(visible_label_ids) 
                 else:
                     # Hide mask by clearing all visible labels
@@ -589,6 +585,11 @@ class AnnotationWindow(QGraphicsView):
         # Clean up
         self.unselect_annotations()
 
+        # Nullify graphics_item references for all annotations to prevent stale references
+        for annotation in self.annotations_dict.values():
+            if hasattr(annotation, 'graphics_item'):
+                annotation.graphics_item = None
+
         # Clear the previous scene and delete its items
         if self.scene:
             for item in self.scene.items():
@@ -619,6 +620,9 @@ class AnnotationWindow(QGraphicsView):
 
     def set_image(self, image_path):
         """Set and display an image at the given path using a staged load for instant feedback."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Calculate GDIs for Windows if needed
         self.main_window.check_windows_gdi_count()
         
@@ -637,11 +641,13 @@ class AnnotationWindow(QGraphicsView):
 
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.raster_manager.image_paths:
+            QApplication.restoreOverrideCursor()
             return
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if not raster:
+            QApplication.restoreOverrideCursor()
             return
         
         # Load z_channel data if available (deferred loading)
@@ -659,6 +665,7 @@ class AnnotationWindow(QGraphicsView):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} thumbnail could not be loaded."
             )
+            QApplication.restoreOverrideCursor()
             return
             
         low_res_pixmap = QPixmap.fromImage(low_res_qimage)
@@ -683,6 +690,7 @@ class AnnotationWindow(QGraphicsView):
                 "Image Loading Error",
                 f"Image {os.path.basename(image_path)} full resolution could not be loaded."
             )
+            QApplication.restoreOverrideCursor()
             return  # Failed to load full res, but preview is still visible
 
         # Convert and set the QPixmap
@@ -718,6 +726,9 @@ class AnnotationWindow(QGraphicsView):
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def update_current_image_path(self, image_path):
         """Update the current image path being displayed."""
@@ -1085,18 +1096,13 @@ class AnnotationWindow(QGraphicsView):
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
 
-        # Get the set of currently linked labels from the LabelWindow
-        linked_labels = self.main_window.label_window.get_linked_labels()
-        
-        # If this annotation's label is linked, update its transparency
-        # to match the global slider value before creating its graphics.
-        if annotation.label in linked_labels:
-            current_slider_value = self.main_window.get_transparency_value()
-            annotation.update_transparency(current_slider_value)
+        # Update transparency to match the global slider value
+        current_slider_value = self.main_window.get_transparency_value()
+        annotation.update_transparency(current_slider_value)
 
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)
-        # Set the visibility based on the hide button state
+        # Set the visibility based on the label's visibility checkbox
         self.set_annotation_visibility(annotation)
         
         # Connect essential update signals
@@ -1111,21 +1117,49 @@ class AnnotationWindow(QGraphicsView):
         # First load the mask annotation if it exists
         self.load_mask_annotation()
         
-        # Then crop annotations (if image_path and annotations are provided, they are used)
-        annotations = self.crop_annotations(image_path, annotations)
-
+        # Determine if we were given an explicit list of annotations to load
+        explicit_annotations_provided = annotations is not None
+    
+        # Get raw annotations (if not explicitly provided)
+        if annotations is None:
+            annotations = self.get_image_annotations(image_path or self.current_image_path)
+        
         if not len(annotations):
             return
+        
+        # Only filter by visibility if we're loading all annotations for an image
+        # (not when a specific list of annotations was provided by the caller)
+        if not explicit_annotations_provided:
+            # Get visible labels to filter annotations (lazy-loading approach)
+            visible_labels = self.main_window.label_window.get_visible_labels()
+            visible_label_ids = {label.id for label in visible_labels}
+            
+            # Filter annotations to only load those with visible labels BEFORE cropping
+            annotations_to_load = [ann for ann in annotations if ann.label.id in visible_label_ids]
+        else:
+            # Explicit annotations list provided - trust the caller's filtering
+            annotations_to_load = annotations
+    
+        if not len(annotations_to_load):
+            return
+    
+        # Crop only the annotations (this shows the progress bar)
+        annotations_to_load = self.crop_annotations(
+            image_path or self.current_image_path,
+            annotations_to_load,
+            return_annotations=True,
+            verbose=True
+        )
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(annotations))
+        progress_bar.start_progress(len(annotations_to_load))
 
         try:
             # Load each annotation and update progress
-            for idx, annotation in enumerate(annotations):
+            for idx, annotation in enumerate(annotations_to_load):
                 if progress_bar.wasCanceled():
                     break
 
@@ -1133,11 +1167,11 @@ class AnnotationWindow(QGraphicsView):
                 self.load_annotation(annotation)
 
                 # Update every 10% of the annotations (or for each item if total is small)
-                if len(annotations) > 10:
-                    if idx % (len(annotations) // 10) == 0:
-                        progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
+                if len(annotations_to_load) > 10:
+                    if idx % (len(annotations_to_load) // 10) == 0:
+                        progress_bar.update_progress_percentage((idx / len(annotations_to_load)) * 100)
                 else:
-                    progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
+                    progress_bar.update_progress_percentage((idx / len(annotations_to_load)) * 100)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -1248,7 +1282,7 @@ class AnnotationWindow(QGraphicsView):
         The single, primary method for adding an annotation.
 
         It adds the annotation to data structures and connects signals. It will only create
-        graphics and cropped images if the annotation's image is currently displayed.
+        graphics and cropped images if the annotation's image is currently displayed AND its label is visible.
         """
         if annotation is None:
             return
@@ -1273,8 +1307,8 @@ class AnnotationWindow(QGraphicsView):
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
 
-        # --- Conditional UI Logic (runs only if the image is visible) ---
-        if annotation.image_path == self.current_image_path:
+        # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
+        if annotation.image_path == self.current_image_path and annotation.label.is_visible:
             # Create graphics item for display in the scene
             if not annotation.graphics_item:
                 annotation.create_graphics_item(self.scene)
@@ -1282,14 +1316,16 @@ class AnnotationWindow(QGraphicsView):
             # Create a cropped image for the confidence window
             if not annotation.cropped_image and self.rasterio_image:
                 annotation.create_cropped_image(self.rasterio_image)
+                
+            # Set the visibility based on the current UI state (will respect label checkbox)
+            self.set_annotation_visibility(annotation)
+            
+            # Update the confidence window with the new annotation (only when visible)
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # --- Finalization ---
-        # Set the visibility based on the current UI state
-        self.set_annotation_visibility(annotation)
-        # Update the annotation count in the ImageWindow table
+        # Update the annotation count in the ImageWindow table (always, regardless of visibility)
         self.main_window.image_window.update_image_annotations(annotation.image_path)
-        # Update the confidence window with the new annotation
-        self.main_window.confidence_window.display_cropped_image(annotation)
 
         # If requested, record this single addition as an undo-able action
         if record_action:

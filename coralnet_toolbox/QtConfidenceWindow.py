@@ -597,8 +597,14 @@ class ConfidenceWindow(QWidget):
         icon_label.setPixmap(self.top_k_icons[str(top_k)])
         icon_label.setFixedSize(14, 14)
 
-        class_label = QLabel(label.short_label_code)
+        # Truncate the label text to 10 characters and add "..." if longer
+        label_text = label.short_label_code
+        if len(label_text) > 10:
+            label_text = label_text[:10] + "..."
+        
+        class_label = QLabel(label_text)
         class_label.setFixedWidth(80)
+        class_label.setToolTip(label.short_label_code)  # Show full text on hover
 
         # Use the actual confidence value for the bar's visual fill
         bar_widget = ConfidenceBar(self, label, bar_confidence)

@@ -98,6 +98,7 @@ class Label(QWidget):
     colorChanged = pyqtSignal(QColor)
     selected = pyqtSignal(object)
     label_deleted = pyqtSignal(object)
+    visibilityChanged = pyqtSignal(bool)  # Signal emitted when visibility checkbox is toggled
 
     def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, pen_width=2):
         """Initialize the Label widget."""
@@ -123,14 +124,15 @@ class Label(QWidget):
         self.display_widget = LabelDisplay(self)
         self.display_widget.selected.connect(self._handle_selection)
 
-        # 2. The checkbox
-        self.link_checkbox = QCheckBox()
-        self.link_checkbox.setChecked(True)
-        self.link_checkbox.setToolTip("Link this label's transparency to the slider")
+        # 2. The visibility checkbox - controls whether annotations of this label are shown
+        self.visibility_checkbox = QCheckBox()
+        self.visibility_checkbox.setChecked(True)
+        self.visibility_checkbox.setToolTip("Show/hide annotations for this label")
+        self.visibility_checkbox.stateChanged.connect(self._on_visibility_changed)
         
         # Add widgets to the layout
         layout.addWidget(self.display_widget)
-        layout.addWidget(self.link_checkbox)
+        layout.addWidget(self.visibility_checkbox)
 
         # --- Animation Properties ---
         self.animation_manager = None
@@ -212,9 +214,16 @@ class Label(QWidget):
             return False
 
     @property
-    def is_linked(self):
-        """Returns True if the checkbox is checked, False otherwise."""
-        return self.link_checkbox.isChecked()
+    def is_visible(self):
+        """Returns True if the visibility checkbox is checked, False otherwise."""
+        return self.visibility_checkbox.isChecked()
+    
+    def _on_visibility_changed(self, state):
+        """Handle visibility checkbox state changes."""
+        # State is 0 (unchecked), 1 (partially checked), or 2 (checked)
+        # We only care about fully checked (2) or unchecked (0)
+        is_visible = state == 2
+        self.visibilityChanged.emit(is_visible)
 
     def select(self):
         """Programmatically select the label."""
@@ -727,6 +736,7 @@ class LabelWindow(QWidget):
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
+        label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.insert(0, label)
         # Do not set active by default
         # Update in LabelWindow
@@ -745,6 +755,7 @@ class LabelWindow(QWidget):
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
+        label.visibilityChanged.connect(self._on_label_visibility_changed)
         self.labels.append(label)
         self.set_active_label(label)
         # Update in LabelWindow
@@ -758,9 +769,90 @@ class LabelWindow(QWidget):
 
         return label
     
-    def get_linked_labels(self):
-        """Get a list of all labels whose transparency checkbox is checked."""
-        return [label for label in self.labels if label.is_linked]
+    def _on_label_visibility_changed(self, is_visible):
+        """Handle label visibility checkbox changes to show/hide related annotations."""
+        # Get the label that emitted the signal
+        sender = self.sender()
+        if not sender or not isinstance(sender, Label):
+            return
+        
+        label = sender
+        current_image_path = self.annotation_window.current_image_path
+        
+        # Make cursor busy for batch update
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.annotation_window.blockSignals(True)
+        
+        try:
+            if is_visible:
+                # Label is becoming visible
+                if current_image_path:
+                    # Get all annotations with this label for the current image
+                    all_label_annotations = [
+                        ann for ann in self.annotation_window.annotations_dict.values()
+                        if ann.image_path == current_image_path and ann.label.id == label.id
+                    ]
+                    
+                    # Find annotations that don't have graphics items loaded (truly unloaded)
+                    unloaded_annotations = [
+                        ann for ann in all_label_annotations
+                        if ann.graphics_item is None or ann.graphics_item.scene() is None
+                    ]
+                    
+                    # If there are unloaded annotations, use load_annotations to handle them
+                    if unloaded_annotations:
+                        # Temporarily restore cursor and unblock signals for load_annotations
+                        QApplication.restoreOverrideCursor()
+                        self.annotation_window.blockSignals(False)
+                        
+                        # Reuse the existing load_annotations method which handles cropping 
+                        # and loading with progress bars
+                        self.annotation_window.load_annotations(
+                            image_path=current_image_path,
+                            annotations=unloaded_annotations
+                        )
+                        
+                        # Restore busy cursor and block signals again for the rest of the operation
+                        QApplication.setOverrideCursor(Qt.WaitCursor)
+                        self.annotation_window.blockSignals(True)
+                    else:
+                        # Just show already-loaded annotations
+                        for annotation in all_label_annotations:
+                            self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
+            else:
+                # Label is being hidden - hide all annotations with this label (across all images)
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if annotation.label.id == label.id:
+                        self.annotation_window.set_annotation_visibility(annotation, force_visibility=False)
+            
+            # Update mask annotation visibility if it exists
+            mask = self.annotation_window.current_mask_annotation
+            if mask:
+                # Get current visible label IDs from the mask
+                current_visible_ids = mask.visible_label_ids.copy()
+                
+                if is_visible:
+                    # Add this label to visible set
+                    current_visible_ids.add(label.id)
+                else:
+                    # Remove this label from visible set
+                    current_visible_ids.discard(label.id)
+                
+                # Update the mask
+                mask.update_visible_labels(current_visible_ids)
+        
+        finally:
+            # Restore cursor and unblock signals
+            QApplication.restoreOverrideCursor()
+            self.annotation_window.blockSignals(False)
+        
+        # Use update_scene() which includes QApplication.processEvents()
+        # This ensures the scene is properly refreshed with all changes
+        self.annotation_window.update_scene()
+    
+    def get_visible_labels(self):
+        """Get a list of all labels whose visibility checkbox is checked."""
+        return [label for label in self.labels if label.is_visible]
 
     def set_active_label(self, selected_label):
         """Set the currently active label, updating UI and emitting signals."""
@@ -804,18 +896,18 @@ class LabelWindow(QWidget):
                 raster.mask_annotation.sync_label_map(self.labels)
 
     def set_mask_transparency(self, transparency):
-        """Update the mask annotation's transparency for the current image."""
+        """Update the mask annotation's transparency for all labels (visible or not)."""
         transparency = max(0, min(255, transparency))  # Clamp to valid range
         mask = self.annotation_window.current_mask_annotation
         if mask:
             # ULTRA-FAST: New render-time transparency approach - no caching needed!
-            # Update transparency for all linked labels
-            linked_labels = self.get_linked_labels()
-            if linked_labels:
-                for label in linked_labels:
-                    if label.id in mask.visible_label_ids:
-                        # Update the label's transparency - now instant!
-                        label.update_transparency(transparency)
+            # Update transparency for all visible labels (regardless of visibility)
+            visible_labels = self.get_visible_labels()
+            if visible_labels:
+                for label in visible_labels:
+                    # Update transparency for ALL labels in the mask, not just visible ones
+                    # This ensures transparency is correct when labels are toggled on later
+                    label.update_transparency(transparency)
                 # Single call to update the mask - transparency applied at render time
                 mask.update_transparency(transparency)
             else:
@@ -998,7 +1090,6 @@ class LabelWindow(QWidget):
         # Update the label object's properties
         label_to_update.short_label_code = new_short
         label_to_update.long_label_code = new_long
-        label_to_update.setToolTip(new_long)  # Update tooltip
         label_to_update.update_label_color(new_color)  # This already updates color and emits signal
 
         # Update all annotations that use this label to reflect the new color/properties
@@ -1015,6 +1106,18 @@ class LabelWindow(QWidget):
         label_to_update.update()
         self.reorganize_labels()
         self.sync_all_masks_with_labels()
+        
+        # Update tooltip immediately to reflect the new properties
+        rgb = label_to_update.color.getRgb()
+        rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        tooltip = f"{label_to_update.long_label_code}\n" \
+                  f"Current image: 0 annotations\n" \
+                  f"Total project: 0 annotations\n" \
+                  f"Color: {rgb_text}\n" \
+                  f"ID: {label_to_update.id}"
+        label_to_update.setToolTip(tooltip)
+        
+        # Then update all tooltips for complete counts
         self.update_tooltips()
         print(f"Note: Label '{label_to_update.id}' updated successfully.")
 
@@ -1259,18 +1362,85 @@ class LabelWindow(QWidget):
         self.label_lock_button.setChecked(False)
 
     def toggle_all_labels(self):
-        """Toggle all label checkboxes: check all if not all checked, uncheck all if all checked."""
+        """Toggle all label visibility checkboxes: check all if not all checked, uncheck all if all checked."""
         if not self.labels:
             return
         
-        # Check if all labels are currently checked
-        all_checked = all(label.is_linked for label in self.labels)
+        # Check if all labels are currently visible
+        all_visible = all(label.is_visible for label in self.labels)
         
-        # Toggle: if all checked, uncheck all; otherwise check all
-        new_state = not all_checked
+        # Toggle: if all visible, hide all; otherwise show all
+        new_state = not all_visible
         
-        for label in self.labels:
-            label.link_checkbox.setChecked(new_state)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        
+        try:
+            # Temporarily disconnect signals to prevent individual label processing
+            for label in self.labels:
+                label.visibility_checkbox.blockSignals(True)
+            
+            # Update all checkboxes without triggering signals
+            for label in self.labels:
+                label.visibility_checkbox.setChecked(new_state)
+            
+            # Reconnect signals
+            for label in self.labels:
+                label.visibility_checkbox.blockSignals(False)
+            
+            # Now perform a single batch update
+            current_image_path = self.annotation_window.current_image_path
+            
+            if new_state:
+                # Showing all labels - load all annotations at once
+                if current_image_path:
+                    # Get ALL annotations for current image that need loading
+                    all_annotations_for_image = [
+                        ann for ann in self.annotation_window.annotations_dict.values()
+                        if ann.image_path == current_image_path
+                    ]
+                    
+                    # Find unloaded annotations
+                    unloaded_annotations = [
+                        ann for ann in all_annotations_for_image
+                        if ann.graphics_item is None or ann.graphics_item.scene() is None
+                    ]
+                    
+                    # Load them all at once with progress bar
+                    if unloaded_annotations:
+                        QApplication.restoreOverrideCursor()
+                        self.annotation_window.load_annotations(
+                            image_path=current_image_path,
+                            annotations=unloaded_annotations
+                        )
+                        QApplication.setOverrideCursor(Qt.WaitCursor)
+                    else:
+                        # Just show already-loaded annotations
+                        for annotation in all_annotations_for_image:
+                            self.annotation_window.set_annotation_visibility(annotation, force_visibility=True)
+                
+                # Update mask to show all labels
+                mask = self.annotation_window.current_mask_annotation
+                if mask:
+                    all_label_ids = {label.id for label in self.labels}
+                    mask.update_visible_labels(all_label_ids)
+            else:
+                # Hiding all labels - hide all annotations
+                for annotation in self.annotation_window.annotations_dict.values():
+                    self.annotation_window.set_annotation_visibility(annotation, force_visibility=False)
+                
+                # Update mask to hide all labels
+                mask = self.annotation_window.current_mask_annotation
+                if mask:
+                    mask.update_visible_labels(set())
+            
+            # Update the scene once
+            self.annotation_window.update_scene()
+            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def filter_labels(self):
         """Filter labels based on the text in the filter bar."""
@@ -1309,10 +1479,16 @@ class LabelWindow(QWidget):
             
             # Get total count from pre-computed totals
             total_count = total_counts.get(label.short_label_code, 0)
+            
+            # Get RGB color values
+            rgb = label.color.getRgb()
+            rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
 
             tooltip = f"{label.long_label_code}\n" \
                       f"Current image: {current_count} annotations\n" \
-                      f"Total project: {total_count} annotations"
+                      f"Total project: {total_count} annotations\n" \
+                      f"Color: {rgb_text}\n" \
+                      f"ID: {label.id}"
             label.setToolTip(tooltip)
 
 

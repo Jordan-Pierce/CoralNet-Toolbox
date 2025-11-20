@@ -95,8 +95,16 @@ class FillTool(Tool):
         # Call the fill_region method on the MaskAnnotation object
         mask_annotation.fill_region(scene_pos, new_class_id)
         
+        # Call the fill_region method on the MaskAnnotation object
+        mask_annotation.fill_region(scene_pos, new_class_id)
+
+        # Ensure the label is visible in the mask (even if checkbox is unchecked)
+        if selected_label_id not in mask_annotation.visible_label_ids:
+            mask_annotation.visible_label_ids.add(selected_label_id)
+            mask_annotation.update_graphics_item()
+
         # Update the display to reflect changes
         self.annotation_window.update_scene()
         
-        # Restore cursor
+        # Restore the cursor
         QApplication.restoreOverrideCursor()
