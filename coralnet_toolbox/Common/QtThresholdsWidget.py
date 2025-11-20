@@ -13,7 +13,6 @@ class ThresholdsWidget(QGroupBox):
     
     :param main_window: MainWindow object to sync threshold values
     :param show_max_detections: Whether to show the max detections spinbox
-    :param max_detections_value: Initial value for max detections (default: 300)
     :param show_uncertainty: Whether to show the uncertainty threshold slider
     :param show_iou: Whether to show the IoU threshold slider
     :param show_area: Whether to show the area threshold sliders (min and max)
@@ -21,7 +20,7 @@ class ThresholdsWidget(QGroupBox):
     :param parent: Parent widget
     """
     
-    def __init__(self, main_window, show_max_detections=False, max_detections_value=300,
+    def __init__(self, main_window, show_max_detections=False,
                  show_uncertainty=True, show_iou=False, show_area=False, 
                  title="Thresholds", parent=None):
         super().__init__(title, parent)
@@ -42,7 +41,7 @@ class ThresholdsWidget(QGroupBox):
         if show_max_detections:
             self.max_detections_spinbox = QSpinBox()
             self.max_detections_spinbox.setRange(1, 10000)
-            self.max_detections_spinbox.setValue(max_detections_value)
+            self.max_detections_spinbox.setValue(main_window.get_max_detections())
             layout.addRow("Max Detections:", self.max_detections_spinbox)
         
         # Uncertainty threshold controls
@@ -123,6 +122,10 @@ class ThresholdsWidget(QGroupBox):
         Initialize threshold sliders with current values from main window.
         This should be called in the parent dialog's showEvent.
         """
+        if hasattr(self, 'max_detections_spinbox'):
+            current_value = self.main_window.get_max_detections()
+            self.max_detections_spinbox.setValue(current_value)
+        
         if hasattr(self, 'uncertainty_threshold_slider'):
             current_value = self.main_window.get_uncertainty_thresh()
             self.uncertainty_threshold_slider.setValue(int(current_value * 100))

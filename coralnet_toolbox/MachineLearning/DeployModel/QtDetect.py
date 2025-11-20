@@ -73,7 +73,6 @@ class Detect(Base):
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=True,
-            max_detections_value=self.max_detect,
             show_uncertainty=True,
             show_iou=True,
             show_area=True

@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
         self.scaled_view_height_m = 0.0
 
         # Set the default uncertainty threshold and IoU threshold
+        self.max_detections = 500
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
@@ -1107,6 +1108,19 @@ class MainWindow(QMainWindow):
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
+
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detections)
+        max_detections_layout = QHBoxLayout()
+        max_detections_label = QLabel("Max Detections:")
+        max_detections_layout.addWidget(max_detections_label)
+        max_detections_layout.addWidget(self.max_detections_spinbox)
+        max_detections_layout.addStretch()
+        max_detections_widget = QWidget()
+        max_detections_widget.setLayout(max_detections_layout)
+        self.parameters_section.add_widget(max_detections_widget, "Max Detections")
 
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
@@ -2152,6 +2166,14 @@ class MainWindow(QMainWindow):
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
+    
+    def get_max_detections(self):
+        """Get the current max detections value"""
+        return self.max_detections_spinbox.value()
+    
+    def update_max_detections(self, value):
+        """Update the max detections value"""
+        self.max_detections_spinbox.setValue(value)
         
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
