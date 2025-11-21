@@ -172,25 +172,32 @@ class ZPairingWidget(QWidget):
         self.setWindowIcon(get_icon("z.png"))
         self.resize(1050, 600)
         
-        self.image_files = sorted(image_files)
-        # Smart sort z_files to align with image order
-        self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
-        self.mapping = {}  # {image_path: {"z_path": path_or_none, "units": unit_str, "status": status_string}}
+        # Set busy cursor while loading and matching
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Broadened suffixes to cover DEMs, Height maps, etc.
-        self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']
-        
-        # Main layout
-        self.main_layout = QVBoxLayout(self)
-        
-        # Setup UI sections
-        self.setup_info_layout()
-        self.setup_pairing_layout()
-        self.setup_buttons_layout()
-        
-        # Auto-match and populate
-        self.run_auto_match()
-        self.populate_ui()
+        try:
+            self.image_files = sorted(image_files)
+            # Smart sort z_files to align with image order
+            self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
+            self.mapping = {}  # {image_path: {"z_path": path_or_none, "units": unit_str, "status": status_string}}
+            
+            # Broadened suffixes to cover DEMs, Height maps, etc.
+            self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']
+            
+            # Main layout
+            self.main_layout = QVBoxLayout(self)
+            
+            # Setup UI sections
+            self.setup_info_layout()
+            self.setup_pairing_layout()
+            self.setup_buttons_layout()
+            
+            # Auto-match and populate
+            self.run_auto_match()
+            self.populate_ui()
+        finally:
+            # Restore normal cursor when dialog is ready to show
+            QApplication.restoreOverrideCursor()
 
     def _smart_sort_z_files(self, z_files, image_files):
         """
