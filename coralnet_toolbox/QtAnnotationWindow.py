@@ -8,7 +8,7 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
                              QMessageBox, QGraphicsPixmapItem)
 
@@ -171,6 +171,12 @@ class AnnotationWindow(QGraphicsView):
         self.z_data_min = None  # Minimum value of raw Z-data
         self.z_data_max = None  # Maximum value of raw Z-data
         self.z_data_shape = None  # Shape of Z-data array
+        
+        # Debounce timer for dynamic range updates (prevents lag during zoom)
+        self.dynamic_range_timer = QTimer()
+        self.dynamic_range_timer.setSingleShot(True)
+        self.dynamic_range_timer.timeout.connect(self.update_dynamic_range)
+        self.dynamic_range_update_delay = 100  # milliseconds
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
@@ -237,8 +243,8 @@ class AnnotationWindow(QGraphicsView):
 
         self.viewChanged.emit(*self.get_image_dimensions())
         
-        # Update dynamic Z-range if enabled and Z-data is available
-        self.update_dynamic_range()
+        # Debounce dynamic Z-range update during zoom (prevents stuttering)
+        self.schedule_dynamic_range_update()
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press events for the active tool."""        
@@ -298,8 +304,8 @@ class AnnotationWindow(QGraphicsView):
         self.toggle_cursor_annotation()
         self.drag_start_pos = None
         
-        # Update dynamic Z-range after panning completes
-        self.update_dynamic_range()
+        # Update dynamic Z-range after panning completes (debounced)
+        self.schedule_dynamic_range_update()
         
         super().mouseReleaseEvent(event)
 
@@ -942,6 +948,19 @@ class AnnotationWindow(QGraphicsView):
             # Reset failure is non-critical
             import traceback
             traceback.print_exc()
+
+    def schedule_dynamic_range_update(self):
+        """
+        Schedule a dynamic range update with debouncing.
+        This prevents rapid updates during zoom/pan operations that would cause stuttering.
+        Multiple calls within the debounce window are consolidated into a single update.
+        """
+        if not self.dynamic_z_scaling:
+            return
+        
+        # Restart the timer (cancels any pending update and schedules a new one)
+        self.dynamic_range_timer.stop()
+        self.dynamic_range_timer.start(self.dynamic_range_update_delay)
 
     def update_dynamic_range(self):
         """
