@@ -7,9 +7,14 @@ from PyQt5.QtGui import QColor, QIcon, QDrag, QPixmap, QPainter
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QLabel, QPushButton, QListWidget, 
                              QAbstractItemView, QFileDialog, QSplitter, QMessageBox,
-                             QGroupBox, QFormLayout, QScrollArea, QMenu)
+                             QGroupBox, QFormLayout, QScrollArea, QMenu, QComboBox)
 
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.utilities import (
+    detect_z_channel_units_from_file,
+    normalize_z_unit,
+    get_standard_z_units
+)
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -38,20 +43,23 @@ class ZDropTable(QTableWidget):
     """
     fileDropped = pyqtSignal(int, str)  # row, filepath
     clearMapping = pyqtSignal(list)  # list of rows
+    setBulkUnits = pyqtSignal(list)  # list of rows (for bulk units operation)
 
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DropOnly)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.setColumnCount(3)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setColumnCount(4)
         
-        # Updated Headers to "Z Channel"
-        self.setHorizontalHeaderLabels(["Image Source", "Z Channel", "Status"])
+        # Updated Headers to include Units column
+        self.setHorizontalHeaderLabels(["Image Source", "Z Channel", "Z Units", "Status"])
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.setColumnWidth(2, 100)
+        self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.setColumnWidth(3, 100)
         
         # Enable context menu
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -84,17 +92,33 @@ class ZDropTable(QTableWidget):
     def show_context_menu(self, position):
         """Show context menu for row operations."""
         selected_rows = sorted(set(index.row() for index in self.selectedIndexes()))
+        print(f"[ZDropTable.show_context_menu] Selected rows: {selected_rows}")
         
         if selected_rows:
             menu = QMenu(self)
+            
+            # Set units action
+            if len(selected_rows) == 1:
+                units_action = menu.addAction("Set Z-Channel Units")
+            else:
+                units_action = menu.addAction(f"Set Z-Channel Units for {len(selected_rows)} rows")
+            
+            menu.addSeparator()
+            
+            # Clear mapping action
             if len(selected_rows) == 1:
                 clear_action = menu.addAction("Clear Z-Channel Mapping")
             else:
                 clear_action = menu.addAction(f"Clear Z-Channel Mapping ({len(selected_rows)} rows)")
             
             action = menu.exec_(self.mapToGlobal(position))
+            print(f"[ZDropTable.show_context_menu] User selected action: {action.text() if action else 'None'}")
             if action == clear_action:
+                print(f"[ZDropTable.show_context_menu] Emitting clearMapping with rows: {selected_rows}")
                 self.clearMapping.emit(selected_rows)
+            elif action == units_action:
+                print(f"[ZDropTable.show_context_menu] Emitting setBulkUnits with rows: {selected_rows}")
+                self.setBulkUnits.emit(selected_rows)
 
 
 class DraggableList(QListWidget):
@@ -150,12 +174,12 @@ class ZPairingWidget(QWidget):
         
         self.setWindowTitle("Z-Channel Import")
         self.setWindowIcon(get_icon("z.png"))
-        self.resize(950, 600)
+        self.resize(1050, 600)
         
         self.image_files = sorted(image_files)
         # Smart sort z_files to align with image order
         self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
-        self.mapping = {}  # {image_path: {"z_path": path_or_none, "status": status_string}}
+        self.mapping = {}  # {image_path: {"z_path": path_or_none, "units": unit_str, "status": status_string}}
         
         # Broadened suffixes to cover DEMs, Height maps, etc.
         self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']
@@ -242,7 +266,9 @@ class ZPairingWidget(QWidget):
             "suffixes, or fuzzy matching.<br><br>"
             "<b>Manual Correction:</b> Drag z-channel files from the right panel onto table rows "
             "to override automatic matches or fill missing ones. Select multiple files with Ctrl/Shift "
-            "click to batch-map in order."
+            "click to batch-map in order.<br><br>"
+            "<b>Units:</b> Double-click on a Z Units cell to change units, or select multiple rows and "
+            "right-click to set units for all selected rows at once."
         )
         
         info_label = QLabel(info_text)
@@ -273,6 +299,7 @@ class ZPairingWidget(QWidget):
         self.table.fileDropped.connect(self.handle_manual_drop)
         self.table.cellDoubleClicked.connect(self.handle_cell_click)
         self.table.clearMapping.connect(self.handle_clear_mapping)
+        self.table.setBulkUnits.connect(self.show_bulk_units_dialog)
         pairing_scroll.setWidget(self.table)
         
         pairing_layout.addWidget(pairing_scroll)
@@ -323,6 +350,7 @@ class ZPairingWidget(QWidget):
     def run_auto_match(self):
         """
         Automatically pair images with z-channel files using heuristic matching.
+        Also attempts to detect units from matched z-channel files.
         
         Matching priority:
         1. Exact name match (same filename without extension)
@@ -333,6 +361,7 @@ class ZPairingWidget(QWidget):
             img_name = os.path.splitext(os.path.basename(img))[0].lower()
             best_match = None
             match_type = "Missing"
+            detected_units = None
             
             # 1. Exact Name Match
             for zf in self.z_files:
@@ -373,10 +402,19 @@ class ZPairingWidget(QWidget):
                     full_path = next(p for p in self.z_files if os.path.basename(p) == match_name)
                     best_match = full_path
                     match_type = "Review (Fuzzy)"
+            
+            # Detect units from matched z-channel file
+            if best_match:
+                detected_units, confidence = detect_z_channel_units_from_file(best_match)
+                if detected_units:
+                    detected_units = normalize_z_unit(detected_units)
+                    if confidence == 'high':
+                        match_type += " ✓"
 
-            # Store the mapping
+            # Store the mapping with units
             self.mapping[img] = {
                 "z_path": best_match,
+                "units": detected_units,
                 "status": match_type
             }
 
@@ -387,6 +425,7 @@ class ZPairingWidget(QWidget):
         for r, img_path in enumerate(self.image_files):
             match_data = self.mapping[img_path]
             z_path = match_data["z_path"]
+            units = match_data.get("units", None)
             status = match_data["status"]
 
             # Column 0: Image Name
@@ -401,10 +440,19 @@ class ZPairingWidget(QWidget):
                 item_z.setToolTip(z_path)
             self.table.setItem(r, 1, item_z)
             
-            # Column 2: Status
+            # Column 2: Z Units (with dropdown for user selection)
+            units_display = units if units else "? (Select)"
+            item_units = QTableWidgetItem(units_display)
+            item_units.setToolTip("Click to edit units")
+            self.table.setItem(r, 2, item_units)
+            
+            # Column 3: Status
             item_status = QTableWidgetItem(status)
             item_status.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(r, 2, item_status)
+            self.table.setItem(r, 3, item_status)
+            
+            # Color code the row based on match status
+            self.update_row_color(r, status)
             
             # Color code the row based on match status
             self.update_row_color(r, status)
@@ -440,8 +488,14 @@ class ZPairingWidget(QWidget):
         """
         img_path = self.image_files[row]
         
+        # Detect units from the manually dropped file
+        detected_units, confidence = detect_z_channel_units_from_file(z_path)
+        if detected_units:
+            detected_units = normalize_z_unit(detected_units)
+        
         # Update mapping data
         self.mapping[img_path]["z_path"] = z_path
+        self.mapping[img_path]["units"] = detected_units
         self.mapping[img_path]["status"] = "Manual Fix"
         
         # Update table display
@@ -449,7 +503,11 @@ class ZPairingWidget(QWidget):
         item_z.setText(os.path.basename(z_path))
         item_z.setToolTip(z_path)
         
-        item_status = self.table.item(row, 2)
+        item_units = self.table.item(row, 2)
+        units_display = detected_units if detected_units else "? (Select)"
+        item_units.setText(units_display)
+        
+        item_status = self.table.item(row, 3)
         item_status.setText("Manual Fix")
         
         # Update row color to indicate successful match
@@ -467,6 +525,7 @@ class ZPairingWidget(QWidget):
             
             # Clear mapping data
             self.mapping[img_path]["z_path"] = None
+            self.mapping[img_path]["units"] = None
             self.mapping[img_path]["status"] = "Missing"
             
             # Update table display
@@ -474,7 +533,11 @@ class ZPairingWidget(QWidget):
             item_z.setText("None (Drag Here)")
             item_z.setToolTip("")
             
-            item_status = self.table.item(row, 2)
+            item_units = self.table.item(row, 2)
+            item_units.setText("? (Select)")
+            item_units.setToolTip("Click to edit units")
+            
+            item_status = self.table.item(row, 3)
             item_status.setText("Missing")
             
             # Update row color to indicate missing match
@@ -482,7 +545,7 @@ class ZPairingWidget(QWidget):
 
     def handle_cell_click(self, row, col):
         """
-        Handle double-click on z-path cell to browse for file.
+        Handle double-click on z-path cell to browse for file or units cell to edit.
         
         Args:
             row (int): Table row index
@@ -492,20 +555,90 @@ class ZPairingWidget(QWidget):
             fname, _ = QFileDialog.getOpenFileName(self, "Select Z-Channel File")
             if fname:
                 self.handle_manual_drop(row, fname)
+        elif col == 2:  # Z Units Column
+            self.show_units_dialog(row)
+
+    def show_units_dialog(self, row):
+        """
+        Show a dialog to allow user to select z-channel units for a single row.
+        Units selection is dropdown-only (no custom text entry).
+        
+        Args:
+            row (int): Table row index
+        """
+        from PyQt5.QtWidgets import QInputDialog
+        
+        img_path = self.image_files[row]
+        standard_units = get_standard_z_units()
+        unit_names = [display for display, _ in standard_units]
+        unit_values = [norm for _, norm in standard_units]
+        
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Select Z-Channel Units",
+            f"Units for {os.path.basename(img_path)}:",
+            unit_names,
+            editable=False
+        )
+        
+        if ok:
+            idx = unit_names.index(selected)
+            selected_unit = unit_values[idx]
+            
+            # Update mapping and table
+            self.mapping[img_path]["units"] = selected_unit
+            item_units = self.table.item(row, 2)
+            item_units.setText(selected_unit if selected_unit else "? (Select)")
+    
+    def show_bulk_units_dialog(self, rows):
+        """
+        Show a dialog to set z-channel units for multiple rows at once.
+        
+        Args:
+            rows (list): List of table row indices
+        """
+        from PyQt5.QtWidgets import QInputDialog
+        
+        standard_units = get_standard_z_units()
+        unit_names = [display for display, _ in standard_units]
+        unit_values = [norm for _, norm in standard_units]
+        
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Set Z-Channel Units for Multiple Rows",
+            f"Set units for {len(rows)} selected row{'s' if len(rows) > 1 else ''}:",
+            unit_names,
+            editable=False
+        )
+        
+        if ok:
+            idx = unit_names.index(selected)
+            selected_unit = unit_values[idx]
+            
+            # Apply to all selected rows
+            for row in rows:
+                img_path = self.image_files[row]
+                self.mapping[img_path]["units"] = selected_unit
+                item_units = self.table.item(row, 2)
+                item_units.setText(selected_unit if selected_unit else "? (Select)")
 
     def finalize_mapping(self):
         """
         Finalize the mapping and emit confirmation signal.
         
         Warns user if there are unmatched images.
+        Emits full mapping dict with z_path and units.
         """
         final_dict = {}
         missing_count = 0
         
-        # Build final mapping with only paired images
+        # Build final mapping with only paired images, preserving units
         for img, data in self.mapping.items():
             if data["z_path"]:
-                final_dict[img] = data["z_path"]
+                final_dict[img] = {
+                    "z_path": data["z_path"],
+                    "units": data.get("units", None)
+                }
             else:
                 missing_count += 1
         

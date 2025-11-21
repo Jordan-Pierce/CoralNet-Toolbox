@@ -600,6 +600,66 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
+def convert_scale_units(value, from_unit, to_unit):
+    """
+    Convert a value from one unit to another. Supports common metric and imperial units.
+
+    Args:
+        value (float): The value to convert.
+        from_unit (str): The unit to convert from (e.g., 'metre', 'm', 'cm', 'foot', 'us survey foot').
+        to_unit (str): The unit to convert to (e.g., 'mm', 'cm', 'm', 'km').
+
+    Returns:
+        float: The converted value.
+    """
+    from_unit = from_unit.lower()
+    to_unit = to_unit.lower()
+
+    # Conversion factors to meters
+    to_meters = {
+        'metre': 1.0,
+        'm': 1.0,
+        'mm': 0.001,
+        'cm': 0.01,
+        'km': 1000.0,
+        'in': 0.0254,
+        'ft': 0.3048,
+        'foot': 0.3048,
+        'yd': 0.9144,
+        'mi': 1609.344,
+        'us survey foot': 1200 / 3937,
+    }
+
+    # Conversion factors from meters
+    from_meters = {
+        'mm': 1000.0,
+        'cm': 100.0,
+        'metre': 1.0,
+        'm': 1.0,
+        'km': 0.001,
+        'in': 1 / 0.0254,
+        'ft': 1 / 0.3048,
+        'foot': 1 / 0.3048,
+        'yd': 1 / 0.9144,
+        'mi': 1 / 1609.344,
+        'us survey foot': 3937 / 1200,
+    }
+
+    if from_unit not in to_meters:
+        # If from_unit is unknown, return original value as a fallback
+        return value
+
+    # Convert from_unit to meters
+    value_in_meters = value * to_meters[from_unit]
+
+    if to_unit not in from_meters:
+        # If to_unit is unknown, return value in meters as a fallback
+        return value_in_meters
+
+    # Convert from meters to to_unit
+    return value_in_meters * from_meters[to_unit]
+
+
 def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
     """
     Load a depth map / height map / DEM from file using rasterio.
@@ -684,66 +744,115 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
         print(f"Error loading z-channel from {z_channel_path}: {str(e)}")
         traceback.print_exc()
         return None, None
+    
 
-
-def convert_scale_units(value, from_unit, to_unit):
+def detect_z_channel_units_from_file(z_channel_path):
     """
-    Convert a value from one unit to another. Supports common metric and imperial units.
-
+    Attempt to detect z-channel units from GeoTIFF metadata (CRS).
+    
     Args:
-        value (float): The value to convert.
-        from_unit (str): The unit to convert from (e.g., 'metre', 'm', 'cm', 'foot', 'us survey foot').
-        to_unit (str): The unit to convert to (e.g., 'mm', 'cm', 'm', 'km').
-
+        z_channel_path (str): Path to the z-channel file
+        
     Returns:
-        float: The converted value.
+        tuple: (units_str, confidence) where confidence is 'high', 'medium', or None
+               Examples: ('metres', 'high'), ('feet', 'high'), (None, None)
     """
-    from_unit = from_unit.lower()
-    to_unit = to_unit.lower()
+    try:
+        if not os.path.exists(z_channel_path):
+            return None, None
+            
+        with rasterio.open(z_channel_path) as src:
+            # Try to get CRS information
+            if src.crs is not None:
+                try:
+                    # Get the linear units from the CRS
+                    linear_units = src.crs.linear_units
+                    if linear_units:
+                        # rasterio returns units as lowercase string (e.g., 'metre', 'foot')
+                        return linear_units.lower(), 'high'
+                except Exception as e:
+                    print(f"Warning: Could not extract linear units from CRS: {e}")
+                    return None, None
+            
+            # If no CRS, return None
+            return None, None
+            
+    except Exception as e:
+        print(f"Error detecting z-channel units from {z_channel_path}: {e}")
+        return None, None
 
-    # Conversion factors to meters
-    to_meters = {
-        'metre': 1.0,
-        'm': 1.0,
-        'mm': 0.001,
-        'cm': 0.01,
-        'km': 1000.0,
-        'in': 0.0254,
-        'ft': 0.3048,
-        'foot': 0.3048,
-        'yd': 0.9144,
-        'mi': 1609.344,
-        'us survey foot': 1200 / 3937,
+
+def normalize_z_unit(unit_str):
+    """
+    Normalize a z-unit string to a standard format.
+    
+    Args:
+        unit_str (str): Unit string to normalize (e.g., 'metre', 'm', 'foot', 'ft')
+        
+    Returns:
+        str: Normalized unit string (e.g., 'metres', 'feet', 'centimetres', 'pixels')
+    """
+    if unit_str is None:
+        return None
+        
+    unit_str = unit_str.lower().strip()
+    
+    # Map various spellings to normalized forms
+    unit_map = {
+        # Metric
+        'metre': 'metres',
+        'm': 'metres',
+        'meter': 'metres',
+        'meters': 'metres',
+        'mm': 'millimetres',
+        'millimeter': 'millimetres',
+        'millimeters': 'millimetres',
+        'cm': 'centimetres',
+        'centimeter': 'centimetres',
+        'centimeters': 'centimetres',
+        'km': 'kilometres',
+        'kilometer': 'kilometres',
+        'kilometers': 'kilometres',
+        
+        # Imperial
+        'ft': 'feet',
+        'foot': 'feet',
+        'in': 'inches',
+        'inch': 'inches',
+        'yd': 'yards',
+        'yard': 'yards',
+        'mi': 'miles',
+        'mile': 'miles',
+        'us survey foot': 'us survey feet',
+        
+        # Special
+        'pixel': 'pixels',
+        'px': 'pixels',
+        'pix': 'pixels',
     }
+    
+    return unit_map.get(unit_str, unit_str)
 
-    # Conversion factors from meters
-    from_meters = {
-        'mm': 1000.0,
-        'cm': 100.0,
-        'metre': 1.0,
-        'm': 1.0,
-        'km': 0.001,
-        'in': 1 / 0.0254,
-        'ft': 1 / 0.3048,
-        'foot': 1 / 0.3048,
-        'yd': 1 / 0.9144,
-        'mi': 1 / 1609.344,
-        'us survey foot': 3937 / 1200,
-    }
 
-    if from_unit not in to_meters:
-        # If from_unit is unknown, return original value as a fallback
-        return value
-
-    # Convert from_unit to meters
-    value_in_meters = value * to_meters[from_unit]
-
-    if to_unit not in from_meters:
-        # If to_unit is unknown, return value in meters as a fallback
-        return value_in_meters
-
-    # Convert from meters to to_unit
-    return value_in_meters * from_meters[to_unit]
+def get_standard_z_units():
+    """
+    Get a list of standard z-channel units for UI selection.
+    
+    Returns:
+        list: List of (display_name, normalized_name) tuples
+    """
+    return [
+        ('Metres', 'metres'),
+        ('Centimetres', 'centimetres'),
+        ('Millimetres', 'millimetres'),
+        ('Kilometres', 'kilometres'),
+        ('Feet', 'feet'),
+        ('Inches', 'inches'),
+        ('Yards', 'yards'),
+        ('Miles', 'miles'),
+        ('US Survey Feet', 'us survey feet'),
+        ('Pixels', 'pixels'),
+    ]
     
 
 def simplify_polygon(xy_points, simplify_tolerance=0.1):

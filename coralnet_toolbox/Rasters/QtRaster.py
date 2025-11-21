@@ -297,6 +297,9 @@ class Raster(QObject):
         """
         Add or update depth/elevation channel data.
         
+        Note: z_unit should be set separately via load_z_channel_from_file() or manually.
+        This method does not modify z_unit.
+        
         Args:
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
@@ -312,7 +315,7 @@ class Raster(QObject):
                              f"({self.height}, {self.width})")
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
-        self.z_unit = 'meters'  # Default to meters for now
+        # Note: z_unit is NOT set here; it should be set before calling add_z_channel()
         
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
         """
@@ -347,7 +350,7 @@ class Raster(QObject):
         self.z_channel_path = None
         self.z_unit = None
         
-    def load_z_channel_from_file(self, z_channel_path: str):
+    def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
         """
         Load z_channel data from a file path using rasterio.
         
@@ -357,10 +360,17 @@ class Raster(QObject):
         
         Args:
             z_channel_path (str): Path to the depth/height/DEM file
+            z_unit (str, optional): Unit of measurement for z-channel data
+                                   If not provided, will attempt to detect from file
             
         Returns:
             bool: True if loading was successful, False otherwise
         """
+        from coralnet_toolbox.utilities import (
+            detect_z_channel_units_from_file,
+            normalize_z_unit
+        )
+        
         z_data, z_path = load_z_channel_from_file(
             z_channel_path, 
             target_width=self.width, 
@@ -368,6 +378,17 @@ class Raster(QObject):
         )
         
         if z_data is not None:
+            # Determine units for the z-channel
+            if z_unit is None:
+                # Try to detect from file
+                detected_unit, _ = detect_z_channel_units_from_file(z_channel_path)
+                z_unit = normalize_z_unit(detected_unit) if detected_unit else None
+            else:
+                # Normalize provided unit
+                z_unit = normalize_z_unit(z_unit)
+            
+            # Store unit in z_channel object before adding
+            self.z_unit = z_unit
             self.add_z_channel(z_data, z_path)
             return True
         else:

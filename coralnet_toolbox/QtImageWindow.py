@@ -1218,18 +1218,27 @@ class ImageWindow(QWidget):
         """Handle confirmed z-channel mapping from ZPairingWidget.
         
         Args:
-            mapping (dict): {image_path: z_channel_path}
+            mapping (dict): {image_path: {"z_path": z_channel_path, "units": unit_str}}
         """
         if not mapping:
             return
         
         # Apply the z-channel to each raster
-        for image_path, z_channel_path in mapping.items():
+        for image_path, z_info in mapping.items():
+            # Extract z_path and units from mapping
+            if isinstance(z_info, dict):
+                z_channel_path = z_info.get("z_path")
+                z_unit = z_info.get("units")
+            else:
+                # Fallback for old-style mappings (just paths)
+                z_channel_path = z_info
+                z_unit = None
+            
             raster = self.raster_manager.get_raster(image_path)
             if raster:
                 try:
-                    # Load z-channel from file
-                    raster.load_z_channel_from_file(z_channel_path)
+                    # Load z-channel from file with units
+                    raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
                     # Emit signal to update UI
                     self.raster_manager.rasterUpdated.emit(image_path)
                 except Exception as e:
