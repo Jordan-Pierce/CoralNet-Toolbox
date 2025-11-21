@@ -1172,12 +1172,29 @@ class ImageWindow(QWidget):
         if not highlighted_paths:
             return
         
+        # Build intelligent filters based on image basenames
+        image_basenames = [os.path.splitext(os.path.basename(path))[0] for path in highlighted_paths]
+        unique_basenames = sorted(set(image_basenames))
+        
+        filter_strings = ["Image Files (*.tif *.tiff *.png *.bmp *.jp2 *.jpg *.jpeg)"]
+        
+        # Add a combined filter for all selected image basenames
+        if unique_basenames:
+            # Create a single filter that matches all selected basenames
+            basename_patterns = " ".join([f"{bn}.*" for bn in unique_basenames])
+            num_images = len(unique_basenames)
+            filter_label = f"Selected Images ({num_images})" if num_images > 1 else f"{unique_basenames[0]} Files"
+            filter_strings.append(f"{filter_label} ({basename_patterns})")
+        
+        filter_strings.append("All Files (*)")
+        combined_filter = ";;".join(filter_strings)
+        
         # Open file dialog to select z-channel files
         z_files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Z-Channel Files",
             "",
-            "Image Files (*.tif *.tiff *.png *.bmp *.jp2 *.jpg *.jpeg);;All Files (*)"
+            combined_filter
         )
         
         if not z_files:
