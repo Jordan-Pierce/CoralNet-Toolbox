@@ -600,92 +600,6 @@ def scale_pixmap(pixmap, max_size):
     return scaled_pixmap
 
 
-def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
-    """
-    Load a depth map / height map / DEM from file using rasterio.
-    
-    The z_channel data will be either:
-    - float32: Actual depth/height values (e.g., meters, feet, etc.)
-    - uint8: Relative depth/height values (0-255 range)
-    
-    Args:
-        z_channel_path (str): Path to the depth/height/DEM file
-        target_width (int, optional): Target width to match raster dimensions
-        target_height (int, optional): Target height to match raster dimensions
-        
-    Returns:
-        tuple: (z_data, z_path) where z_data is a 2D numpy array (float32 or uint8)
-               and z_path is the file path, or (None, None) if loading fails
-    """
-    try:
-        # Check if file exists
-        if not os.path.exists(z_channel_path):
-            print(f"Z-channel file does not exist: {z_channel_path}")
-            return None, None
-            
-        # Open the z-channel file with rasterio
-        with rasterio.open(z_channel_path) as src:
-            # Validate it's a single band file
-            if src.count != 1:
-                print(f"Z-channel file must be single band, found {src.count} bands: {z_channel_path}")
-                return None, None
-            
-            # Read the single band
-            z_data = src.read(1)
-            
-            # Check if we need to resize to match target dimensions
-            if target_width is not None and target_height is not None:
-                if z_data.shape != (target_height, target_width):
-                    # Resample to match target dimensions
-                    window = Window(0, 0, src.width, src.height)
-                    z_data = src.read(1,
-                                      window=window,
-                                      out_shape=(target_height, target_width),
-                                      resampling=rasterio.enums.Resampling.bilinear)
-                    print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
-            
-            # Handle data type conversion
-            if z_data.dtype == np.uint8:
-                # Already uint8, no conversion needed
-                pass
-            elif z_data.dtype in [np.float32, np.float64]:
-                # Keep as float32 for actual depth/height values
-                z_data = z_data.astype(np.float32)
-            elif z_data.dtype in [np.int8, np.int16, np.int32, np.uint16, np.uint32]:
-                # Convert integer types to float32 for better precision
-                z_data = z_data.astype(np.float32)
-            else:
-                print(f"Warning: Unsupported z-channel data type {z_data.dtype}, converting to float32")
-                z_data = z_data.astype(np.float32)
-                
-            # Handle NaN values if present (convert to 0)
-            if np.issubdtype(z_data.dtype, np.floating):
-                nan_count = np.sum(np.isnan(z_data))
-                if nan_count > 0:
-                    z_data = np.nan_to_num(z_data, nan=0.0)
-                    print(f"Replaced {nan_count} NaN values with 0")
-            
-            # Final validation - ensure 2D array
-            if z_data.ndim != 2:
-                print(f"Z-channel data must be 2D, found {z_data.ndim}D")
-                return None, None
-                
-            # Final data type check
-            if z_data.dtype not in [np.float32, np.uint8]:
-                print(f"Z-channel data type {z_data.dtype} not supported, must be float32 or uint8")
-                return None, None
-                
-            print(f"Successfully loaded z-channel: {z_data.shape}, dtype: {z_data.dtype}, "
-                  f"range: [{np.min(z_data):.2f}, {np.max(z_data):.2f}]")
-                  
-            return z_data, z_channel_path
-            
-    except Exception as e:
-        print(f"Error loading z-channel from {z_channel_path}: {str(e)}")
-        traceback.print_exc()
-        return None, None
-
-
 def convert_scale_units(value, from_unit, to_unit):
     """
     Convert a value from one unit to another. Supports common metric and imperial units.
@@ -744,6 +658,207 @@ def convert_scale_units(value, from_unit, to_unit):
 
     # Convert from meters to to_unit
     return value_in_meters * from_meters[to_unit]
+
+
+def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
+    """
+    Load a depth map / height map / DEM from file using rasterio.
+    
+    The z_channel data will be either:
+    - float32: Actual depth/height values (e.g., meters, feet, etc.)
+    - uint8: Relative depth/height values (0-255 range)
+    
+    Args:
+        z_channel_path (str): Path to the depth/height/DEM file
+        target_width (int, optional): Target width to match raster dimensions
+        target_height (int, optional): Target height to match raster dimensions
+        
+    Returns:
+        tuple: (z_data, z_path, z_nodata) where z_data is a 2D numpy array (float32 or uint8),
+               z_path is the file path, and z_nodata is the nodata value from the GeoTIFF
+               (or None if no nodata value is defined), or (None, None, None) if loading fails
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(z_channel_path):
+            print(f"Z-channel file does not exist: {z_channel_path}")
+            return None, None, None
+            
+        # Open the z-channel file with rasterio
+        with rasterio.open(z_channel_path) as src:
+            # Validate it's a single band file
+            if src.count != 1:
+                print(f"Z-channel file must be single band, found {src.count} bands: {z_channel_path}")
+                return None, None, None
+            
+            # Extract the nodata value from the rasterio source
+            z_nodata = src.nodata
+            if z_nodata is not None:
+                print(f"Z-channel has nodata value: {z_nodata}")
+            
+            # Read the single band
+            z_data = src.read(1)
+            
+            # Check if we need to resize to match target dimensions
+            if target_width is not None and target_height is not None:
+                if z_data.shape != (target_height, target_width):
+                    # Resample to match target dimensions
+                    window = Window(0, 0, src.width, src.height)
+                    z_data = src.read(1,
+                                      window=window,
+                                      out_shape=(target_height, target_width),
+                                      resampling=rasterio.enums.Resampling.bilinear)
+                    print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
+            
+            # Handle data type conversion
+            if z_data.dtype == np.uint8:
+                # Already uint8, no conversion needed
+                pass
+            elif z_data.dtype in [np.float32, np.float64]:
+                # Keep as float32 for actual depth/height values
+                z_data = z_data.astype(np.float32)
+            elif z_data.dtype in [np.int8, np.int16, np.int32, np.uint16, np.uint32]:
+                # Convert integer types to float32 for better precision
+                z_data = z_data.astype(np.float32)
+            else:
+                print(f"Warning: Unsupported z-channel data type {z_data.dtype}, converting to float32")
+                z_data = z_data.astype(np.float32)
+                
+            # Preserve NaN values in floating-point data (don't convert to 0)
+            # NaN values represent missing or NULL data and will be handled by the UI layer
+            if np.issubdtype(z_data.dtype, np.floating):
+                nan_count = np.sum(np.isnan(z_data))
+                if nan_count > 0:
+                    print(f"Z-channel contains {nan_count} NaN values (NULL/missing data)")
+            
+            # Final validation - ensure 2D array
+            if z_data.ndim != 2:
+                print(f"Z-channel data must be 2D, found {z_data.ndim}D")
+                return None, None, None
+                
+            # Final data type check
+            if z_data.dtype not in [np.float32, np.uint8]:
+                print(f"Z-channel data type {z_data.dtype} not supported, must be float32 or uint8")
+                return None, None, None
+                
+            print(f"Successfully loaded z-channel: {z_data.shape}, dtype: {z_data.dtype}, "
+                  f"range: [{np.min(z_data):.2f}, {np.max(z_data):.2f}]")
+                  
+            return z_data, z_channel_path, z_nodata
+            
+    except Exception as e:
+        print(f"Error loading z-channel from {z_channel_path}: {str(e)}")
+        traceback.print_exc()
+        return None, None, None
+    
+
+def detect_z_channel_units_from_file(z_channel_path):
+    """
+    Attempt to detect z-channel units from GeoTIFF metadata (CRS).
+    
+    Args:
+        z_channel_path (str): Path to the z-channel file
+        
+    Returns:
+        tuple: (units_str, confidence) where confidence is 'high', 'medium', or None
+               Examples: ('metres', 'high'), ('feet', 'high'), (None, None)
+    """
+    try:
+        if not os.path.exists(z_channel_path):
+            return None, None
+            
+        with rasterio.open(z_channel_path) as src:
+            # Try to get CRS information
+            if src.crs is not None:
+                try:
+                    # Get the linear units from the CRS
+                    linear_units = src.crs.linear_units
+                    if linear_units:
+                        # rasterio returns units as lowercase string (e.g., 'metre', 'foot')
+                        return linear_units.lower(), 'high'
+                except Exception as e:
+                    print(f"Warning: Could not extract linear units from CRS: {e}")
+                    return None, None
+            
+            # If no CRS, return None
+            return None, None
+            
+    except Exception as e:
+        print(f"Error detecting z-channel units from {z_channel_path}: {e}")
+        return None, None
+
+
+def normalize_z_unit(unit_str):
+    """
+    Normalize a z-unit string to a standard short-form format.
+    This ensures consistency with scale unit conventions.
+    
+    Args:
+        unit_str (str): Unit string to normalize (e.g., 'metre', 'm', 'foot', 'ft')
+        
+    Returns:
+        str: Normalized unit string in short form (e.g., 'm', 'ft', 'cm', 'px')
+    """
+    if unit_str is None:
+        return None
+        
+    unit_str = unit_str.lower().strip()
+    
+    # Map various spellings to normalized short forms
+    unit_map = {
+        # Metric - to short form
+        'metre': 'm',
+        'meter': 'm',
+        'meters': 'm',
+        'metres': 'm',
+        'mm': 'mm',
+        'millimeter': 'mm',
+        'millimeters': 'mm',
+        'millimetres': 'mm',
+        'cm': 'cm',
+        'centimeter': 'cm',
+        'centimeters': 'cm',
+        'centimetres': 'cm',
+        'km': 'km',
+        'kilometer': 'km',
+        'kilometers': 'km',
+        'kilometres': 'km',
+        
+        # Imperial - to short form
+        'ft': 'ft',
+        'foot': 'ft',
+        'feet': 'ft',
+        'in': 'in',
+        'inch': 'in',
+        'inches': 'in',
+        'yd': 'yd',
+        'yard': 'yd',
+        'yards': 'yd',
+        'mi': 'mi',
+        'mile': 'mi',
+        'miles': 'mi',
+        'us survey foot': 'ft',
+        'us survey feet': 'ft',
+        
+        # Special - to short form
+        'pixel': 'px',
+        'pixels': 'px',
+        'px': 'px',
+        'pix': 'px',
+    }
+    
+    return unit_map.get(unit_str, unit_str)
+
+
+def get_standard_z_units():
+    """
+    Get a list of standard z-channel units for UI selection.
+    Returns short-form units matching scale unit conventions.
+    
+    Returns:
+        list: List of unit abbreviations ('mm', 'cm', 'm', etc.)
+    """
+    return ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px']
     
 
 def simplify_polygon(xy_points, simplify_tolerance=0.1):

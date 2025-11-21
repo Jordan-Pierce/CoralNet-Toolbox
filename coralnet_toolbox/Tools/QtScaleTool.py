@@ -1077,6 +1077,10 @@ class ScaleTool(Tool):
         try:
             h, w = z_channel.shape
             z_unit_str = z_unit if z_unit else 'z-units'
+            
+            # Convert z_unit to meters for 3D calculations
+            # This ensures all spatial dimensions are in the same unit (meters)
+            z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
 
             # Get Z start/end
             p1 = QPoint(int(self.start_point.x()), int(self.start_point.y()))
@@ -1094,45 +1098,46 @@ class ScaleTool(Tool):
             delta_z = z_end - z_start
             self.dialog.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
             
-            # Calculate Slope
+            # Calculate Slope (convert delta_z to meters for meaningful percentage)
             if length_2d_meters > 0:
-                slope = (delta_z / length_2d_meters) * 100.0
+                delta_z_meters = delta_z * z_to_meters_factor
+                slope = (delta_z_meters / length_2d_meters) * 100.0
                 self.dialog.line_slope_label.setText(f"{slope:.2f} %")
             else:
                 self.dialog.line_slope_label.setText("N/A")
 
             # --- 3D Length & Linear Rugosity ---
             # "Walk" the line
-            num_samples = max(2, int(self.pixel_length / 2)) # Sample every 2 pixels
+            num_samples = max(2, int(self.pixel_length / 2))  # Sample every 2 pixels
             x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
             y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
             
-            profile_data_x = [] # For plot
-            profile_data_y = [] # For plot
+            profile_data_x = []  # For plot
+            profile_data_y = []  # For plot
             
             total_3d_length = 0.0
             dist_2d_so_far = 0.0
             
             profile_data_x.append(0.0)
-            z_a = z_channel[min(max(0, int(y_samples[0])), h-1), min(max(0, int(x_samples[0])), w-1)]
+            z_a = z_channel[min(max(0, int(y_samples[0])), h - 1), min(max(0, int(x_samples[0])), w - 1)]
             profile_data_y.append(z_a)
             
             for i in range(num_samples - 1):
                 # Get segment start/end points (pixel coords)
                 x_a, y_a = x_samples[i], y_samples[i]
-                x_b, y_b = x_samples[i+1], y_samples[i+1]
+                x_b, y_b = x_samples[i + 1], y_samples[i + 1]
                 
                 # Get Z values (clamped)
-                z_a = z_channel[min(max(0, int(y_a)), h-1), min(max(0, int(x_a)), w-1)]
-                z_b = z_channel[min(max(0, int(y_b)), h-1), min(max(0, int(x_b)), w-1)]
+                z_a = z_channel[min(max(0, int(y_a)), h - 1), min(max(0, int(x_a)), w - 1)]
+                z_b = z_channel[min(max(0, int(y_b)), h - 1), min(max(0, int(x_b)), w - 1)]
                 
                 # Get segment components in real-world units (meters)
                 dx_m = (x_b - x_a) * scale_x
                 dy_m = (y_b - y_a) * scale_y
-                dz = z_b - z_a  # Already in z-units
+                dz_meters = (z_b - z_a) * z_to_meters_factor  # Convert z-units to meters
                 
-                # Add 3D segment length
-                total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz**2)
+                # Add 3D segment length (all components now in meters)
+                total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz_meters**2)
                 
                 # Add data for plot
                 dist_2d_so_far += math.sqrt(dx_m**2 + dy_m**2)
@@ -1355,13 +1360,16 @@ class ScaleTool(Tool):
             h, w = z_channel.shape
             z_unit_str = z_unit if z_unit else 'z-units'
             
+            # Convert z_unit to meters for 3D calculations
+            z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
+            
             # Get integer bounds for slicing, clamped to raster dims
             x1 = max(0, int(math.floor(rect.left())))
             y1 = max(0, int(math.floor(rect.top())))
             x2 = min(w, int(math.ceil(rect.right())))
             y2 = min(h, int(math.ceil(rect.bottom())))
             
-            if x1 >= x2 or y1 >= y2: # Check for zero-area slice
+            if x1 >= x2 or y1 >= y2:  # Check for zero-area slice
                 self.reset_3d_labels()
                 return
 
@@ -1371,7 +1379,7 @@ class ScaleTool(Tool):
                 self.reset_3d_labels()
                 return
 
-            # Calculate Z-Stats
+            # Calculate Z-Stats (in original z-units)
             z_min = np.min(z_slice)
             z_max = np.max(z_slice)
             z_mean = np.mean(z_slice)
@@ -1386,7 +1394,11 @@ class ScaleTool(Tool):
             self.dialog.rect_volume_label.setText(f"{volume:.3f} {vol_units}")
 
             # Calculate 3D Surface Area
-            dz_dy, dz_dx = np.gradient(z_slice, scale_y, scale_x)
+            # Convert z_slice to meters to maintain dimensional consistency
+            z_slice_meters = z_slice * z_to_meters_factor
+            
+            # Calculate gradients with proper spacing (all in meters now)
+            dz_dy, dz_dx = np.gradient(z_slice_meters, scale_y, scale_x)
             multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
             pixel_areas_3d = pixel_area_2d * multiplier
             surface_area_3d_meters = np.sum(pixel_areas_3d)
@@ -1530,7 +1542,7 @@ class ScaleTool(Tool):
                 raster = self.main_window.image_window.raster_manager.get_raster(path)
                 if raster:
                     # We assume square pixels from this tool
-                    raster.update_scale(new_scale, new_scale, 'metre')
+                    raster.update_scale(new_scale, new_scale, 'm')
                     
                     # Update all annotations for this image with the new scale
                     self.annotation_window.set_annotations_scale(path)

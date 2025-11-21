@@ -102,6 +102,7 @@ class Raster(QObject):
         self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
         self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
+        self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
         
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
@@ -167,10 +168,10 @@ class Raster(QObject):
                     source_units = crs.linear_units.lower()
 
                     # Convert scale to meters per pixel
-                    scale_x_meters = convert_scale_units(scale_x, source_units, 'metre')
-                    scale_y_meters = convert_scale_units(scale_y, source_units, 'metre')
+                    scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
+                    scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
 
-                    self.update_scale(scale_x_meters, scale_y_meters, 'metre')
+                    self.update_scale(scale_x_meters, scale_y_meters, 'm')
 
                 elif getattr(crs, "is_geographic", False):
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
@@ -190,7 +191,7 @@ class Raster(QObject):
                         # Now, the transform's components are in meters
                         scale_x = abs(transform.a)
                         scale_y = abs(transform.e)
-                        scale_units = 'metre'  # EPSG:3857 units are meters
+                        scale_units = 'm'  # EPSG:3857 units are meters
 
                         self.update_scale(scale_x, scale_y, scale_units)
 
@@ -220,7 +221,7 @@ class Raster(QObject):
         Args:
             scale_x (float): The horizontal scale (e.g., meters per pixel)
             scale_y (float): The vertical scale (e.g., meters per pixel)
-            units (str): The name of the units (e.g., 'metre', 'cm')
+            units (str): The name of the units (e.g., 'm', 'cm')
         """
         self.scale_x = scale_x
         self.scale_y = scale_y
@@ -297,6 +298,9 @@ class Raster(QObject):
         """
         Add or update depth/elevation channel data.
         
+        Note: z_unit should be set separately via load_z_channel_from_file() or manually.
+        This method does not modify z_unit.
+        
         Args:
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
@@ -312,7 +316,7 @@ class Raster(QObject):
                              f"({self.height}, {self.width})")
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
-        self.z_unit = 'meters'  # Default to meters for now
+        # Note: z_unit is NOT set here; it should be set before calling add_z_channel()
         
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
         """
@@ -346,8 +350,9 @@ class Raster(QObject):
         self.z_channel = None
         self.z_channel_path = None
         self.z_unit = None
+        self.z_nodata = None
         
-    def load_z_channel_from_file(self, z_channel_path: str):
+    def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
         """
         Load z_channel data from a file path using rasterio.
         
@@ -357,17 +362,36 @@ class Raster(QObject):
         
         Args:
             z_channel_path (str): Path to the depth/height/DEM file
+            z_unit (str, optional): Unit of measurement for z-channel data
+                                   If not provided, will attempt to detect from file
             
         Returns:
             bool: True if loading was successful, False otherwise
         """
-        z_data, z_path = load_z_channel_from_file(
+        from coralnet_toolbox.utilities import (
+            detect_z_channel_units_from_file,
+            normalize_z_unit
+        )
+        
+        z_data, z_path, z_nodata = load_z_channel_from_file(
             z_channel_path, 
             target_width=self.width, 
             target_height=self.height
         )
         
         if z_data is not None:
+            # Determine units for the z-channel
+            if z_unit is None:
+                # Try to detect from file
+                detected_unit, _ = detect_z_channel_units_from_file(z_channel_path)
+                z_unit = normalize_z_unit(detected_unit) if detected_unit else None
+            else:
+                # Normalize provided unit
+                z_unit = normalize_z_unit(z_unit)
+            
+            # Store unit and nodata value before adding z_channel
+            self.z_unit = z_unit
+            self.z_nodata = z_nodata
             self.add_z_channel(z_data, z_path)
             return True
         else:

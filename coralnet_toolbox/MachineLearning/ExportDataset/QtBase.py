@@ -648,8 +648,8 @@ class Base(QDialog):
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
             # Set cell colors based on the counts and ratios
-            red = QColor(255, 0, 0)
-            green = QColor(0, 255, 0)
+            red = QColor(255, 220, 220)
+            green = QColor(220, 255, 220)
 
             if include_checkbox.isChecked():
                 self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
@@ -723,6 +723,9 @@ class Base(QDialog):
         """
         if not self.is_ready():
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create the output folder
         output_dir_path = os.path.join(self.output_dir, self.dataset_name)
@@ -734,6 +737,7 @@ class Base(QDialog):
                                          "The output directory already exists. Do you want to merge the datasets?",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.No:
+                QApplication.restoreOverrideCursor()
                 return
 
             # Read the existing class_mapping.json file if it exists
@@ -765,7 +769,10 @@ class Base(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
             
-        super().accept()
+        finally:
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
+            super().accept()
 
     def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")

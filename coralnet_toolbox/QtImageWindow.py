@@ -9,12 +9,15 @@ from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelec
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
-                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem)
+                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem, QFileDialog)
 
 from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
-from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
 
+from coralnet_toolbox.Common.QtZChannelImport import ZPairingWidget
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -184,6 +187,7 @@ class ImageWindow(QWidget):
     rasterAdded = pyqtSignal(str)  # Path of added raster
     rasterRemoved = pyqtSignal(str)  # Path of removed raster
     filterGroupToggled = pyqtSignal(bool)  # When filter group is toggled
+    zChannelRemoved = pyqtSignal(str)  # Path of raster with removed z-channel
 
     def __init__(self, main_window):
         """Initialize the ImageWindow widget."""
@@ -649,6 +653,11 @@ class ImageWindow(QWidget):
     def on_raster_updated(self, path):
         """Handler for when a raster is updated."""
         self.update_current_image_index_label()
+        
+        # If this raster is currently being displayed, refresh the z-channel visualization
+        # (this handles the case where a z-channel is newly imported for the current image)
+        if path == self.annotation_window.current_image_path:
+            self.annotation_window.refresh_z_channel_visualization()
         
     def on_filtering_started(self):
         """Handler for when filtering starts."""
@@ -1131,7 +1140,25 @@ class ImageWindow(QWidget):
 
         context_menu.addSeparator()
 
-        # Add existing delete actions
+        # Add import z-channel action
+        import_z_channel_action = context_menu.addAction(
+            f"Import Z-Channel for {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        import_z_channel_action.triggered.connect(
+            lambda: self.import_z_channel_highlighted_images()
+        )
+
+        # Add remove z-channel action
+        remove_z_channel_action = context_menu.addAction(
+            f"Remove Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        remove_z_channel_action.triggered.connect(
+            lambda: self.remove_z_channel_highlighted_images()
+        )
+
+        context_menu.addSeparator()
+
+        # Add delete actions
         delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
@@ -1141,6 +1168,193 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def import_z_channel_highlighted_images(self):
+        """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""
+        # Get all highlighted paths
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        if not highlighted_paths:
+            return
+        
+        # Build intelligent filters based on image basenames
+        image_basenames = [os.path.splitext(os.path.basename(path))[0] for path in highlighted_paths]
+        unique_basenames = sorted(set(image_basenames))
+        
+        filter_strings = ["Image Files (*.tif *.tiff *.png *.bmp *.jp2 *.jpg *.jpeg)"]
+        
+        # Add a combined filter for all selected image basenames
+        if unique_basenames:
+            # Create a single filter that matches all selected basenames
+            basename_patterns = " ".join([f"{bn}.*" for bn in unique_basenames])
+            num_images = len(unique_basenames)
+            filter_label = f"Selected Images ({num_images})" if num_images > 1 else f"{unique_basenames[0]} Files"
+            filter_strings.append(f"{filter_label} ({basename_patterns})")
+        
+        filter_strings.append("All Files (*)")
+        combined_filter = ";;".join(filter_strings)
+        
+        # Open file dialog to select z-channel files
+        z_files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Z-Channel Files",
+            "",
+            combined_filter
+        )
+        
+        if not z_files:
+            return
+        
+        # Create and show ZPairingWidget with highlighted image paths and selected z-files
+        # Sort both lists for consistent ordering
+        image_paths = sorted(highlighted_paths)
+        z_channel_files = sorted(z_files)
+        
+        # Create the pairing widget and keep a reference to prevent garbage collection
+        self.pairing_widget = ZPairingWidget(image_paths, z_channel_files)
+        
+        # Connect the mapping_confirmed signal to handle the confirmed mapping
+        self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
+        
+        # Show the widget
+        self.pairing_widget.show()
+    
+    def on_z_channel_mapping_confirmed(self, mapping):
+        """Handle confirmed z-channel mapping from ZPairingWidget.
+        
+        Args:
+            mapping (dict): {image_path: {"z_path": z_channel_path, "units": unit_str}}
+        """
+        if not mapping:
+            return
+        
+        successful_count = 0
+        failed_count = 0
+        failed_images = []
+        
+        # Show progress bar and set busy cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Importing Z-Channels")
+        progress_bar.show()
+        progress_bar.start_progress(len(mapping))
+        
+        try:
+            # Apply the z-channel to each raster
+            for image_path, z_info in mapping.items():
+                # Extract z_path and units from mapping
+                if isinstance(z_info, dict):
+                    z_channel_path = z_info.get("z_path")
+                    z_unit = z_info.get("units")
+                else:
+                    # Fallback for old-style mappings (just paths)
+                    z_channel_path = z_info
+                    z_unit = None
+                
+                raster = self.raster_manager.get_raster(image_path)
+                if raster:
+                    try:
+                        # Load z-channel from file with units
+                        success = raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
+                        if success:
+                            successful_count += 1
+                            # Emit signal to update UI
+                            self.raster_manager.rasterUpdated.emit(image_path)
+                        else:
+                            failed_count += 1
+                            failed_images.append(os.path.basename(image_path))
+                    except Exception as e:
+                        failed_count += 1
+                        failed_images.append(os.path.basename(image_path))
+                        print(f"Exception loading z-channel for {image_path}: {str(e)}")
+                
+                # Update progress
+                progress_bar.update_progress()
+            
+            # Show appropriate message based on results
+            if failed_count > 0:
+                # Show warning if there were any failures
+                failed_list = "\n".join(f"  • {img}" for img in failed_images[:10])
+                if len(failed_images) > 10:
+                    failed_list += f"\n  ... and {len(failed_images) - 10} more"
+                
+                message = (
+                    f"Z-Channel Import Results:\n\n"
+                    f"✓ Successfully loaded: {successful_count}\n"
+                    f"✗ Failed to load: {failed_count}\n\n"
+                    f"Failed images:\n{failed_list}"
+                )
+                QMessageBox.warning(
+                    self,
+                    "Z-Channel Import - Partial Success",
+                    message
+                )
+            elif successful_count > 0:
+                # Show success message only if all loaded successfully
+                QMessageBox.information(
+                    self,
+                    "Z-Channel Imported",
+                    f"Z-channel imported for {successful_count} image{'s' if successful_count > 1 else ''}."
+                )
+        finally:
+            # Restore cursor and close progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
+        
+    def remove_z_channel_highlighted_images(self):
+        """Remove z-channel from the highlighted images."""
+        # Get all highlighted paths
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        if not highlighted_paths:
+            return
+        
+        # Confirm removal
+        count = len(highlighted_paths)
+        plural = 's' if count > 1 else ''
+        reply = QMessageBox.question(
+            self,
+            "Confirm Z-Channel Removal",
+            f"Are you sure you want to remove the z-channel from {count} image{plural}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Show progress bar and set busy cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self, title="Removing Z-Channels")
+            progress_bar.show()
+            progress_bar.start_progress(len(highlighted_paths))
+            
+            try:
+                # Remove z-channel from each raster
+                for path in highlighted_paths:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster:
+                        raster.remove_z_channel()
+                        # Emit signal to update UI
+                        self.raster_manager.rasterUpdated.emit(path)
+                        # Emit signal for z-channel removal
+                        self.zChannelRemoved.emit(path)
+                    
+                    # Update progress
+                    progress_bar.update_progress()
+                
+                # If current image is in the list, refresh the annotation window
+                if self.selected_image_path in highlighted_paths:
+                    self.annotation_window.update_scene()
+                
+                # Show success message
+                QMessageBox.information(
+                    self,
+                    "Z-Channel Removed",
+                    f"Z-channel removed from {count} image{plural}."
+                )
+            finally:
+                # Restore cursor and close progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+                QApplication.restoreOverrideCursor()
         
     def delete_highlighted_images(self):
         """Delete the highlighted images."""
@@ -1160,10 +1374,15 @@ class ImageWindow(QWidget):
         )
         
         if reply == QMessageBox.Yes:
-            # Untoggle tools
-            self.main_window.untoggle_all_tools()
-            # Delete images
-            self.delete_images(highlighted_paths)
+            # Set busy cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                # Untoggle tools
+                self.main_window.untoggle_all_tools()
+                # Delete images
+                self.delete_images(highlighted_paths)
+            finally:
+                QApplication.restoreOverrideCursor()
             
     def delete_highlighted_images_annotations(self):
         """Delete annotations for the highlighted images."""

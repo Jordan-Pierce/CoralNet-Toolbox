@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectIte
 
 from coralnet_toolbox.QtLabelWindow import Label
 
+from coralnet_toolbox.utilities import convert_scale_units
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -106,9 +108,7 @@ class Annotation(QObject):
             try:
                 pixel_area = self.get_area()
                 scaled_area = pixel_area * (self.scale_x * self.scale_y)
-                # Standardize 'metre' to 'm' for display
-                units = 'm' if self.scale_units == 'metre' else self.scale_units
-                return scaled_area, units
+                return scaled_area, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
         return None
@@ -128,9 +128,7 @@ class Annotation(QObject):
                 # Use scale_x as the primary factor.
                 # Our ScaleTool sets x and y to be the same.
                 scaled_perimeter = pixel_perimeter * self.scale_x
-                # Standardize 'metre' to 'm' for display
-                units = 'm' if self.scale_units == 'metre' else self.scale_units
-                return scaled_perimeter, units
+                return scaled_perimeter, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
         return None
@@ -202,7 +200,7 @@ class Annotation(QObject):
         # 9. Return slice and boolean mask
         return data_slice, mask.astype(bool)
 
-    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float) -> float | None:
+    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float, z_unit: str = None) -> float | None:
         """
         Calculates the 'volume' under the annotation relative to a Z=0 plane.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -211,9 +209,11 @@ class Annotation(QObject):
             z_channel (np.ndarray): The full 2D z_channel data from the Raster.
             scale_x (float): The horizontal scale (e.g., meters per pixel).
             scale_y (float): The vertical scale (e.g., meters per pixel).
+            z_unit (str, optional): The unit of the z_channel data (e.g., 'mm', 'cm', 'ft'). 
+                                   If provided, z-values will be converted to meters.
 
         Returns:
-            float | None: The calculated volume, 0.0 for zero area, or None on input error.
+            float | None: The calculated volume in cubic meters, 0.0 for zero area, or None on input error.
         """
         # 1. Check for valid inputs
         if z_channel is None or scale_x is None or scale_y is None:
@@ -227,13 +227,21 @@ class Annotation(QObject):
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
                 return 0.0  # No area, so volume is 0
 
-            # 4. Select Z-values inside the mask
-            z_values_inside = z_slice[mask]
+            # 4. Convert z_slice to meters if necessary
+            # This ensures all dimensions are in the same unit (meters)
+            if z_unit:
+                z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre')
+                z_slice_meters = z_slice * z_to_meters_factor
+            else:
+                z_slice_meters = z_slice  # Assume already in meters if no unit provided
 
-            # 5. Calculate 2D pixel area
+            # 5. Select Z-values inside the mask (now in meters)
+            z_values_inside = z_slice_meters[mask]
+
+            # 6. Calculate 2D pixel area (in square meters)
             pixel_area_2d = scale_x * scale_y
 
-            # 6. Calculate total volume
+            # 7. Calculate total volume (in cubic meters)
             # This is the sum of (pixel_area * pixel_height)
             total_volume = np.sum(z_values_inside) * pixel_area_2d
 
@@ -242,7 +250,8 @@ class Annotation(QObject):
             print(f"Error calculating scaled volume for annotation {self.id}: {e}")
             return None
 
-    def get_scaled_surface_area(self, z_channel: np.ndarray, scale_x: float, scale_y: float) -> float | None:
+    def get_scaled_surface_area(self, z_channel: np.ndarray, scale_x: float, 
+                               scale_y: float, z_unit: str = None) -> float | None:
         """
         Calculates the 3D surface area of the annotation using gradients.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -252,9 +261,12 @@ class Annotation(QObject):
             z_channel (np.ndarray): The full 2D z_channel data from the Raster.
             scale_x (float): The horizontal scale (e.g., meters per pixel).
             scale_y (float): The vertical scale (e.g., meters per pixel).
+            z_unit (str, optional): The unit of the z_channel data (e.g., 'mm', 'cm', 'ft'). 
+                                   If provided, z-values will be converted to meters.
 
         Returns:
-            float | None: The calculated 3D surface area, 2D area as fallback, or None on error.
+            float | None: The calculated 3D surface area in square meters, 2D area as fallback, 
+                         or None on error.
         """
         # 1. Check for scale. If no scale, we can't do anything.
         if scale_x is None or scale_y is None:
@@ -276,22 +288,31 @@ class Annotation(QObject):
             if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
                 return 0.0  # No area, so surface area is 0
 
-            # 5. Calculate 2D pixel area
+            # 5. Convert z_slice to meters if necessary
+            # This ensures all dimensions are in the same unit (meters)
+            if z_unit:
+                from coralnet_toolbox.utilities import convert_scale_units
+                z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre')
+                z_slice_meters = z_slice * z_to_meters_factor
+            else:
+                z_slice_meters = z_slice  # Assume already in meters if no unit provided
+
+            # 6. Calculate 2D pixel area (in square meters)
             pixel_area_2d = scale_x * scale_y
 
-            # 6. Calculate gradients (slope) of the *small slice*
-            # We must pass the scale to np.gradient for correct unit calculation
-            dz_dy, dz_dx = np.gradient(z_slice, scale_y, scale_x)
+            # 7. Calculate gradients (slope) of the slice with proper spacing
+            # All dimensions now in meters for dimensional consistency
+            dz_dy, dz_dx = np.gradient(z_slice_meters, scale_y, scale_x)
 
-            # 7. Calculate the 3D area multiplier for each pixel
+            # 8. Calculate the 3D area multiplier for each pixel
             # This is the surface area of a 3D plane, derived from vector cross product
             # Area = sqrt(1 + (dz/dx)^2 + (dz/dy)^2) * dx * dy
             multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
 
-            # 8. Calculate the 3D surface area for *all* pixels in the slice
+            # 9. Calculate the 3D surface area for *all* pixels in the slice
             pixel_areas_3d = pixel_area_2d * multiplier
 
-            # 9. Select only the 3D areas *inside* the polygon and sum them
+            # 10. Select only the 3D areas *inside* the polygon and sum them
             total_surface_area = np.sum(pixel_areas_3d[mask])
 
             return total_surface_area

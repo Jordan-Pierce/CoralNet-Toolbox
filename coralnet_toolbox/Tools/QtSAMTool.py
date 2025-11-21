@@ -10,6 +10,7 @@ from coralnet_toolbox.Tools.QtTool import Tool
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 
@@ -75,6 +76,10 @@ class SAMTool(Tool):
         self.creating_working_area = False
         self.working_area_start = None
         self.working_area_temp_graphics = None
+        
+        # Output settings - synced from dialog
+        self.output_type = "Polygon"  # Default value, will be synced from dialog
+        self.allow_holes = False  # Default value, will be synced from dialog
 
     def activate(self):
         """
@@ -83,6 +88,16 @@ class SAMTool(Tool):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
+        # Sync settings from dialog when tool is activated
+        self.sync_settings_from_dialog()
+
+    def sync_settings_from_dialog(self):
+        """
+        Synchronize output_type and allow_holes from the dialog to local attributes.
+        """
+        if self.sam_dialog:
+            self.output_type = self.sam_dialog.get_output_type()
+            self.allow_holes = self.sam_dialog.get_allow_holes()
 
     def deactivate(self):
         """
@@ -95,6 +110,10 @@ class SAMTool(Tool):
         self.has_active_prompts = False
         self.cancel_working_area_creation()
         
+        # If output type was Mask, unrasterize annotations to remove lock protection
+        if self.output_type == "Mask":
+            self.annotation_window.unrasterize_annotations()
+
         # Call parent deactivate to ensure crosshair is properly cleared
         super().deactivate()
 
@@ -291,6 +310,10 @@ class SAMTool(Tool):
     def create_temp_annotation(self, scene_pos=None):
         """
         Create and display a temporary annotation based on current prompts.
+        
+        Note: Temporary annotations use Polygon or Rectangle (not Mask) for performance.
+        If user selected Mask output type, temp annotations show as Polygon.
+        The final output type is applied when the user accepts the annotation.
 
         Args:
             scene_pos (QPointF): Current scene position for hover point
@@ -351,16 +374,17 @@ class SAMTool(Tool):
             top1_index = np.argmax(results.boxes.conf)
             mask_tensor = results[top1_index].masks.data
 
-            # Check which output type is selected and get allow_holes settings
-            output_type = self.sam_dialog.get_output_type()
-            allow_holes = self.sam_dialog.get_allow_holes()
+            # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
+            # Save the desired output type and temporarily override it if needed
+            saved_output_type = self.output_type
+            if self.output_type == "Mask":
+                self.output_type = "Polygon"
             
-            # Create annotation using the helper method
-            self.temp_annotation = self.create_annotation_from_mask(
-                mask_tensor,
-                output_type,
-                allow_holes
-            )
+            # Create temporary annotation (Rectangle or Polygon, never Mask)
+            self.temp_annotation = self.create_annotation_from_mask(mask_tensor)
+            
+            # Restore the desired output type for final annotation
+            self.output_type = saved_output_type
             
             if not self.temp_annotation:
                 QApplication.restoreOverrideCursor()
@@ -569,51 +593,42 @@ class SAMTool(Tool):
 
             # If we have active prompts, create a permanent annotation
             elif self.has_active_prompts:
+                
                 # Create the final annotation
                 if self.temp_annotation:
-                    # Check if temp_annotation is a PolygonAnnotation or RectangleAnnotation
-                    if isinstance(self.temp_annotation, PolygonAnnotation):
-                        # For polygon annotations, use the points and holes
-                        final_annotation = PolygonAnnotation(
-                            self.points,
-                            self.temp_annotation.label.short_label_code,
-                            self.temp_annotation.label.long_label_code,
-                            self.temp_annotation.label.color,
-                            self.temp_annotation.image_path,
-                            self.temp_annotation.label.id,
-                            self.main_window.get_transparency_value(),
-                            holes=self.temp_annotation.holes
-                        )
-                    elif isinstance(self.temp_annotation, RectangleAnnotation):
-                        # For rectangle annotations, use the top_left and bottom_right
-                        final_annotation = RectangleAnnotation(
-                            self.temp_annotation.top_left,
-                            self.temp_annotation.bottom_right,
-                            self.temp_annotation.label.short_label_code,
-                            self.temp_annotation.label.long_label_code,
-                            self.temp_annotation.label.color,
-                            self.temp_annotation.image_path,
-                            self.temp_annotation.label.id,
-                            self.main_window.get_transparency_value()
-                        )
-
-                    # Copy confidence data
-                    final_annotation.update_machine_confidence(
-                        self.temp_annotation.machine_confidence
-                    )
-
-                    # Create the graphics item for the final annotation
-                    final_annotation.create_graphics_item(self.annotation_window.scene)
-
-                    # Add the annotation to the scene
-                    self.annotation_window.add_annotation_from_tool(final_annotation)
-
-                    # Clear all temporary graphics and prompts
-                    self.clear_prompt_graphics()
+                    # Get the mask tensor that was used for the temp annotation
+                    # We need to re-predict with the final output type
+                    final_annotation = self.create_annotation(True)
+                    
+                    # For Mask output type, create_annotation returns None after updating the raster mask
+                    if final_annotation is None:
+                        # Mask was updated successfully, just clear prompts
+                        self.clear_prompt_graphics()
+                    
+                    elif final_annotation:
+                        # Copy confidence data from temp annotation if available
+                        if hasattr(self.temp_annotation, 'machine_confidence'):
+                            final_annotation.update_machine_confidence(
+                                self.temp_annotation.machine_confidence
+                            )
+                        
+                        # Create the graphics item for the final annotation
+                        final_annotation.create_graphics_item(self.annotation_window.scene)
+                        # Add the annotation to the scene
+                        self.annotation_window.add_annotation_from_tool(final_annotation)
+                        
+                        # Clear all temporary graphics and prompts
+                        self.clear_prompt_graphics()
                 else:
                     # If no temp annotation, create one from current prompts without hover point
                     final_annotation = self.create_annotation(True)
-                    if final_annotation:
+                    
+                    # For Mask output type, create_annotation returns None after updating the raster mask
+                    if final_annotation is None:
+                        # Mask was updated successfully, just clear prompts
+                        self.clear_prompt_graphics()
+
+                    elif final_annotation:
                         self.annotation_window.add_annotation_from_tool(final_annotation)
                         self.clear_prompt_graphics() 
             # If no active prompts, cancel the working area
@@ -709,17 +724,13 @@ class SAMTool(Tool):
         top1_index = np.argmax(results.boxes.conf)
         mask_tensor = results[top1_index].masks.data
 
-        # Check which output type is selected and get allow_holes settings
-        output_type = self.sam_dialog.get_output_type()
-        allow_holes = self.sam_dialog.get_allow_holes()
+        # Sync latest settings from dialog before creating annotation
+        self.sync_settings_from_dialog()
         
-        # Create annotation using the helper method
-        annotation = self.create_annotation_from_mask(
-            mask_tensor,
-            output_type,
-            allow_holes
-        )
+        # Create annotation using the helper method with local attributes
+        annotation = self.create_annotation_from_mask(mask_tensor)
         
+        # If annotation is None, it might be a Mask update (not a new annotation)
         if not annotation:
             QApplication.restoreOverrideCursor()
             return None
@@ -731,31 +742,72 @@ class SAMTool(Tool):
         confidence = float(results.boxes.conf[top1_index])
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
-        # Create cropped image
-        if hasattr(self.annotation_window, 'rasterio_image'):
-            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+        # Create cropped image only for vector annotations (Polygon/Rectangle), not Mask
+        if not isinstance(annotation, MaskAnnotation):
+            if hasattr(self.annotation_window, 'rasterio_image'):
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
         return annotation
 
-    def create_annotation_from_mask(self, mask_tensor, output_type, allow_holes=True):
+    def create_annotation_from_mask(self, mask_tensor):
         """
-        Create annotation (Rectangle or Polygon) from a mask tensor.
+        Create annotation (Rectangle, Polygon, or Mask) from a mask tensor.
+        
+        Uses self.output_type and self.allow_holes attributes to determine
+        the annotation type and whether to include holes.
+        
+        For Mask output: Updates the existing raster mask annotation instead of creating a new one.
+        For Rectangle/Polygon: Creates and returns a new annotation object.
         
         Args:
             mask_tensor: The tensor containing the mask data
-            output_type (str): "Rectangle" or "Polygon"
-            allow_holes (bool): Whether to include holes in polygon annotations
         
         Returns:
-            Annotation object or None if creation fails
+            Annotation object or None if creation fails (except for Mask which returns None after updating)
         """
         if not self.working_area:
             return None
             
-        if output_type == "Rectangle":
+        if self.output_type == "Mask":         
+            # Convert mask tensor to numpy array
+            mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
+            
+            # Get the working area information
+            working_area_top_left = self.working_area.rect.topLeft()
+            wa_x, wa_y = int(working_area_top_left.x()), int(working_area_top_left.y())
+            wa_height, wa_width = mask_np.shape
+            
+            # Get the existing mask annotation from the raster (lazy-loads if needed)
+            mask_annotation = self.annotation_window.current_mask_annotation
+            if not mask_annotation:
+                return None
+            
+            # Get the label and its class ID
+            label = self.annotation_window.selected_label
+            class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
+            if class_id is None:
+                return None
+            
+            # Create a prediction mask (full-size, initialized with zeros)
+            prediction_mask = np.zeros_like(mask_annotation.mask_data)
+            
+            # Place the SAM prediction into the full mask at the working area position
+            prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = np.where(
+                mask_np > 0,
+                class_id,
+                0
+            )
+            
+            # Update the existing mask annotation with the prediction
+            mask_annotation.update_mask_with_prediction_mask(prediction_mask)
+            
+            # Return None to indicate this is not a new annotation object to add
+            return None
+            
+        elif self.output_type == "Rectangle":
             # For rectangle output, just get the bounding box of the mask
             # Find the bounding rectangle of the mask
             y_indices, x_indices = np.where(mask_tensor.cpu().numpy()[0] > 0)
@@ -784,6 +836,7 @@ class SAMTool(Tool):
                 self.annotation_window.selected_label.id,
                 self.main_window.get_transparency_value()
             )
+            return annotation
         else:
             # Original polygon code
             # Polygonize the mask using the new method to get the exterior and holes
@@ -803,7 +856,7 @@ class SAMTool(Tool):
             
             # Simplify, offset, and convert each hole only if allowed
             final_holes = []
-            if allow_holes:
+            if self.allow_holes:
                 for hole_coords in holes_coords_list:
                     simplified_hole = simplify_polygon(hole_coords, 0.1)
                     if len(simplified_hole) >= 3:
@@ -825,8 +878,7 @@ class SAMTool(Tool):
                 label_id=self.annotation_window.selected_label.id,
                 transparency=self.main_window.get_transparency_value()
             )
-            
-        return annotation
+            return annotation
 
     def cancel_working_area(self):
         """

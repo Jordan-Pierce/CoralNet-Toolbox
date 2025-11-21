@@ -7,7 +7,7 @@ from copy import deepcopy
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout, QSlider)
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -15,6 +15,8 @@ from ultralytics import YOLO
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.Results import ResultsProcessor
+
+from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
@@ -40,32 +42,32 @@ class Classify(Base):
             event: The event object.
         """
         super().showEvent(event)
-        self.initialize_uncertainty_threshold()
+        # Initialize thresholds in the widget
+        self.thresholds_widget.initialize_thresholds()
 
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
         """
-        group_box = QGroupBox("Parameters")
-        layout = QFormLayout()
-
-        # Uncertainty threshold controls
-        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        layout.addRow("", self.uncertainty_threshold_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
+        # Currently no parameters other than thresholds for classification
+        pass
+    
     def setup_sam_layout(self):
         pass
+
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section using the reusable ThresholdsWidget.
+        """
+        # Create the thresholds widget with only uncertainty threshold enabled
+        self.thresholds_widget = ThresholdsWidget(
+            self.main_window,
+            show_max_detections=False,
+            show_uncertainty=True,
+            show_iou=False,
+            show_area=False
+        )
+        self.layout.addWidget(self.thresholds_widget)
 
     def load_model(self):
         """
@@ -166,7 +168,7 @@ class Classify(Base):
             if not self.BATCH_SIZE:
                 # Predict the classification results
                 results = self.loaded_model(images_np,
-                                            conf=self.main_window.get_uncertainty_thresh(),
+                                            conf=self.thresholds_widget.get_uncertainty_thresh(),
                                             device=self.main_window.device,
                                             half=True,
                                             stream=True)
@@ -175,7 +177,7 @@ class Classify(Base):
                 results = []
                 for _ in range(len(images_np)):
                     result = self.loaded_model(images_np[_],
-                                               conf=self.main_window.get_uncertainty_thresh(),
+                                               conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                device=self.main_window.device,
                                                half=True)
                     if result:  # Ensure the result list is not empty
@@ -184,7 +186,7 @@ class Classify(Base):
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh())
+                                                 uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh())
 
             # Process the classification results using the valid inputs
             # Pass the progress_bar parameter to avoid creating nested progress bars

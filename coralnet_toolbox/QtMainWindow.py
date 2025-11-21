@@ -143,6 +143,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+    maxDetectionsChanged = pyqtSignal(int)  # Signal to emit the current max detections value
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
@@ -180,6 +181,7 @@ class MainWindow(QMainWindow):
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
         self.z_icon = get_icon("z.png")
+        self.dynamic_icon = get_icon("dynamic.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -213,6 +215,7 @@ class MainWindow(QMainWindow):
         self.scaled_view_height_m = 0.0
 
         # Set the default uncertainty threshold and IoU threshold
+        self.max_detections = 500
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
@@ -220,6 +223,12 @@ class MainWindow(QMainWindow):
 
         # Set the default scale unit
         self.current_unit_scale = 'm'
+        # Set the default z-channel unit
+        self.current_unit_z = 'm'
+        
+        # Cache the raw z-value at current mouse position to enable re-conversion
+        # when user changes z-unit dropdown, without needing to re-read from raster
+        self.current_z_value = None
 
         # Store current mouse position for z-channel lookup
         self.current_mouse_x = 0
@@ -352,6 +361,12 @@ class MainWindow(QMainWindow):
         self.image_window.imageChanged.connect(self.handle_image_changed)
         # Connect the filterChanged signal from ImageWindow to expand ConfidenceWindow height
         self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
+        # Connect the zChannelRemoved signal from ImageWindow to update status bar
+        self.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
+        # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
+        self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
+        # Connect the imageLoaded signal from ImageWindow to check z-channel status
+        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
 
         # ----------------------------------------
         # Create the menu bar
@@ -1040,7 +1055,7 @@ class MainWindow(QMainWindow):
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.scale_unit_dropdown.setFixedWidth(60)
-        self.scale_unit_dropdown.setEnabled(False)      # Disabled by default
+        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -1069,22 +1084,46 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+
+        # Z unit dropdown
+        self.z_unit_dropdown = QComboBox()
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
+        self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
+        self.z_unit_dropdown.setFixedWidth(60)
+        self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z label for depth information
+        self.z_label = QLabel("Z: -----")
+        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
+
+        # Z colormap dropdown for visualization
+        self.z_colormap_dropdown = QComboBox()
+        self.z_colormap_dropdown.addItems([
+            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'
+        ])
+        self.z_colormap_dropdown.setCurrentText('None')
+        self.z_colormap_dropdown.setFixedWidth(100)
+        self.z_colormap_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
+
+        # Z dynamic scaling button
+        self.z_dynamic_button = QToolButton()
+        self.z_dynamic_button.setCheckable(True)
+        self.z_dynamic_button.setChecked(False)
+        self.z_dynamic_button.setIcon(self.dynamic_icon)
+        self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
+        self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
         
         # Z button and Z label
         self.z_action = QAction(self.z_icon, "", self)
-        self.z_action.setCheckable(True)
+        self.z_action.setCheckable(False)  # TODO
         self.z_action.setChecked(False)
-        self.z_action.setToolTip("Open Depth Dialog")
+        self.z_action.setToolTip("Depth Estimation (In Progress)")
         # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
 
         # Create button to hold the Z action
         self.z_button = QToolButton()
         self.z_button.setDefaultAction(self.z_action)
-        self.z_button.setEnabled(False)  # TODO Make the button not clickable
-
-        # Z label for depth information
-        self.z_label = QLabel("Z: -----")
-        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1107,6 +1146,20 @@ class MainWindow(QMainWindow):
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
+
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detections)
+        self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
+        max_detections_layout = QHBoxLayout()
+        max_detections_label = QLabel("Max Detections:")
+        max_detections_layout.addWidget(max_detections_label)
+        max_detections_layout.addWidget(self.max_detections_spinbox)
+        max_detections_layout.addStretch()
+        max_detections_widget = QWidget()
+        max_detections_widget.setLayout(max_detections_layout)
+        self.parameters_section.add_widget(max_detections_widget, "Max Detections")
 
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
@@ -1172,9 +1225,11 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.scale_unit_dropdown)
         self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
         self.status_bar_layout.addWidget(self.scaled_view_dims_label)
-        self.status_bar_layout.addWidget(self.z_button)
+        self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
-        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(self.z_colormap_dropdown)
+        self.status_bar_layout.addWidget(self.z_dynamic_button)
+        self.status_bar_layout.addWidget(self.z_button)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
@@ -1240,6 +1295,9 @@ class MainWindow(QMainWindow):
         # Update the scaled view dimensions label
         # --------------------------------------------------
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
+        self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
+        self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -1959,6 +2017,51 @@ class MainWindow(QMainWindow):
             # and more to confidence_window.
             self.image_layout.setStretch(0, 54)
             self.image_layout.setStretch(1, 66)
+            
+    def on_image_loaded_check_z_channel(self, image_path):
+        """
+        Check if the newly loaded image has a z-channel.
+        If it doesn't, disable all z-channel UI elements.
+        
+        Args:
+            image_path (str): Path of the loaded image
+        """
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        if raster and raster.z_channel is None:
+            # Image has no z-channel, disable UI elements
+            self.z_label.setText("Z: -----")
+            self.z_label.setEnabled(False)
+            self.z_unit_dropdown.setEnabled(False)
+            self.z_colormap_dropdown.setEnabled(False)
+            self.z_dynamic_button.setEnabled(False)
+            self.z_colormap_dropdown.setCurrentText("None")
+        elif raster and raster.z_channel is not None:
+            # Image has z-channel, enable UI elements
+            self.z_label.setEnabled(True)
+            self.z_unit_dropdown.setEnabled(True)
+            self.z_colormap_dropdown.setEnabled(True)
+            # Only enable dynamic button if colormap is not set to "None"
+            if self.z_colormap_dropdown.currentText() != "None":
+                self.z_dynamic_button.setEnabled(True)
+            else:
+                self.z_dynamic_button.setEnabled(False)
+
+    def on_z_channel_removed(self, image_path):
+        """
+        Handle z-channel removal for a raster.
+        
+        Args:
+            image_path (str): Path of the raster with removed z-channel
+        """
+        # If the removed z-channel belongs to the currently displayed image,
+        # clear the z-label in the status bar and disable the dropdown
+        if image_path == self.annotation_window.current_image_path:
+            self.z_label.setText("Z: -----")
+            self.z_label.setEnabled(False)
+            self.z_unit_dropdown.setEnabled(False)
+            self.z_colormap_dropdown.setEnabled(False)
+            self.z_dynamic_button.setEnabled(False)
+            self.z_colormap_dropdown.setCurrentText("None")
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2062,33 +2165,59 @@ class MainWindow(QMainWindow):
         self.update_z_value_at_mouse_position(raster)
     
     def update_z_value_at_mouse_position(self, raster):
-        """Update the z_label with z-channel value at current mouse position"""
+        """Update the z_label with z-channel value at current mouse position."""
         if raster and raster.z_channel_lazy is not None:
             # Check if mouse coordinates are within image bounds
             if (0 <= self.current_mouse_x < raster.width and 
                 0 <= self.current_mouse_y < raster.height):
                 
                 try:
-                    # Get z-channel value at mouse position
-                    # Note: z_channel is stored as (height, width) array
+                    # Get z-channel value at mouse position (stored as height, width array)
                     z_channel = raster.z_channel_lazy
                     z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
                     
-                    # Format the display based on data type
-                    if z_channel.dtype == np.float32:
-                        # For float32, show with appropriate decimal places
-                        self.z_label.setText(f"Z: {z_value:.3f}")
-                    else:
-                        # For uint8 or other integer types, show as integer
-                        self.z_label.setText(f"Z: {int(z_value)}")
+                    # Check if the value is NaN (only possible for float types)
+                    # Use try-except to handle both float and integer types safely
+                    is_nan = False
+                    try:
+                        is_nan = np.isnan(z_value)
+                    except (TypeError, ValueError):
+                        # isnan() fails on integer types, which is expected
+                        is_nan = False
                     
-                    # Enable the z_label since we have valid data
+                    # Check if the value matches the nodata value
+                    is_nodata = (raster.z_nodata is not None and float(z_value) == float(raster.z_nodata))
+                    
+                    if is_nan or is_nodata:
+                        self.z_label.setText("Z: ----")
+                    else:
+                        # Cache the raw z-value for re-conversion if unit dropdown changes
+                        self.current_z_value = z_value
+                        
+                        # Get the original unit from the raster
+                        original_unit = raster.z_unit if raster.z_unit else 'm'
+                        
+                        # Convert to selected unit if different from original
+                        display_value = z_value
+                        if self.current_unit_z != original_unit:
+                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                        
+                        # Format the display based on data type
+                        if z_channel.dtype == np.float32:
+                            self.z_label.setText(f"Z: {display_value:.3f}")
+                        else:
+                            self.z_label.setText(f"Z: {int(display_value)}")
+                    
+                    # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
+                    self.z_unit_dropdown.setEnabled(True)
+                    self.z_colormap_dropdown.setEnabled(True)
+                    # Only enable dynamic button if colormap is not set to "None"
+                    if self.z_colormap_dropdown.currentText() != "None":
+                        self.z_dynamic_button.setEnabled(True)
                     
                 except (IndexError, ValueError):
                     pass
-                    # self.z_label.setText("Z: -----")
-                    # self.z_label.setEnabled(False)
             
     def on_scale_unit_changed(self, to_unit):
         """
@@ -2099,8 +2228,8 @@ class MainWindow(QMainWindow):
             return
 
         # Convert the stored meter values
-        converted_height = convert_scale_units(self.scaled_view_height_m, 'metre', to_unit)
-        converted_width = convert_scale_units(self.scaled_view_width_m, 'metre', to_unit)
+        converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
+        converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
 
         # Update the dimensions label
         self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
@@ -2113,6 +2242,56 @@ class MainWindow(QMainWindow):
         # change that can happen *while* an annotation is displayed.
         if self.confidence_window.annotation:
             self.confidence_window.refresh_display()
+    
+    def on_z_unit_changed(self, selected_unit):
+        """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
+        # Update the selected unit
+        self.current_unit_z = selected_unit
+        
+        # Re-convert and display the cached z-value in the new unit
+        if self.current_z_value is not None:
+            try:
+                # Get the current raster to fetch original unit and data type info
+                raster = self.image_window.raster_manager.get_raster(self.image_window.selected_image_path)
+                if raster and raster.z_channel_lazy is not None:
+                    original_unit = raster.z_unit if raster.z_unit else 'm'
+                    z_channel = raster.z_channel_lazy
+                    
+                    # Convert from original unit to selected unit
+                    converted_value = convert_scale_units(
+                        self.current_z_value, 
+                        original_unit, 
+                        selected_unit
+                    )
+                    
+                    # Format the display based on data type
+                    if z_channel.dtype == np.float32:
+                        self.z_label.setText(f"Z: {converted_value:.3f}")
+                    else:
+                        self.z_label.setText(f"Z: {int(converted_value)}")
+            except Exception:
+                pass  # If conversion fails, keep last value displayed
+        
+        # Refresh the confidence window if an annotation is selected
+        if self.confidence_window.annotation:
+            self.confidence_window.refresh_display()
+        
+    def on_z_colormap_changed(self, colormap_name):
+        """Handle z-colormap dropdown changes by updating the annotation window."""
+        self.annotation_window.update_z_colormap(colormap_name)
+        
+        # Disable the dynamic range button if colormap is set to "None"
+        if colormap_name == "None":
+            self.z_dynamic_button.setEnabled(False)
+            self.z_dynamic_button.setChecked(False)
+        else:
+            # Enable the dynamic range button if a valid colormap is selected and Z data is available
+            if self.annotation_window.z_data_raw is not None:
+                self.z_dynamic_button.setEnabled(True)
+    
+    def on_z_dynamic_toggled(self, checked):
+        """Handle z-dynamic scaling button toggle."""
+        self.annotation_window.toggle_dynamic_z_scaling(checked)
         
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
@@ -2152,6 +2331,17 @@ class MainWindow(QMainWindow):
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
+    
+    def get_max_detections(self):
+        """Get the current max detections value"""
+        return self.max_detections
+    
+    def update_max_detections(self, value):
+        """Update the max detections value"""
+        if self.max_detections != value:
+            self.max_detections = value
+            self.max_detections_spinbox.setValue(self.max_detections)
+            self.maxDetectionsChanged.emit(value)
         
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
@@ -2168,6 +2358,7 @@ class MainWindow(QMainWindow):
         """Update uncertainty threshold label when slider value changes"""
         self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
         self.uncertainty_value_label.setText(f"{self.uncertainty_thresh:.2f}")
+        self.update_uncertainty_thresh(self.uncertainty_thresh)
 
     def get_iou_thresh(self):
         """Get the current IoU threshold value"""
@@ -2184,6 +2375,7 @@ class MainWindow(QMainWindow):
         """Update IoU threshold label when slider value changes"""
         self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
         self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
+        self.update_iou_thresh(self.iou_thresh)
 
     def get_area_thresh(self):
         """Get the current area threshold values"""
@@ -2216,6 +2408,7 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def open_new_project(self):
         """Confirm user wants to create a new project before closing window."""

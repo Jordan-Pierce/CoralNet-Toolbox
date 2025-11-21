@@ -66,15 +66,15 @@ class Base(QDialog):
         self.setup_parameters_layout()
         # Setup SAM layout
         self.setup_sam_layout()
+        # Setup thresholds layout
+        self.setup_thresholds_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
 
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
+        """Set up the layout and widgets for the info layout."""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
 
@@ -89,9 +89,7 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_labels_layout(self):
-        """
-
-        """
+        """Setup the labels layout"""
         group_box = QGroupBox("Labels")
         layout = QVBoxLayout()
 
@@ -108,11 +106,12 @@ class Base(QDialog):
 
     def setup_sam_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
+    
+    def setup_thresholds_layout(self):
+        raise NotImplementedError("Subclasses must implement this method")
 
     def setup_buttons_layout(self):
-        """
-        Set up the buttons layout in a 2x2 grid
-        """
+        """Set up the buttons layout in a 2x2 grid"""
         # Model controls group
         group_box = QGroupBox("Actions")
         layout = QVBoxLayout()  # Main vertical layout
@@ -148,9 +147,7 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_status_layout(self):
-        """
-
-        """
+        """Setup the status layout"""
         # Create a group box for the status bar
         group_box = QGroupBox("Status")
         layout = QVBoxLayout()
@@ -161,52 +158,6 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-
-    def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def initialize_iou_threshold(self):
-        """Initialize the IOU threshold slider with the current value"""
-        current_value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(current_value * 100))
-        self.iou_thresh = current_value
-
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_min_slider.setValue(int(current_min * 100))
-        self.area_threshold_max_slider.setValue(int(current_max * 100))
-        self.area_thresh_min = current_min
-        self.area_thresh_max = current_max
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
-    def update_iou_label(self, value):
-        """Update IoU threshold and label"""
-        value = value / 100.0
-        self.iou_thresh = value
-        self.main_window.update_iou_thresh(value)
-        self.iou_threshold_label.setText(f"{value:.2f}")
-
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val = self.area_threshold_min_slider.value()
-        max_val = self.area_threshold_max_slider.value()
-        if min_val > max_val:
-            min_val = max_val
-            self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
 
     def is_sam_model_deployed(self):
         """

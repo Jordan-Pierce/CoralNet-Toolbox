@@ -1,6 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import gc
 import os
@@ -8,8 +6,7 @@ import os
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
-                             QComboBox, QSlider, QSpinBox)
+from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QComboBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -20,6 +17,11 @@ from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results.MapResults import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Common import ThresholdsWidget
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -34,80 +36,25 @@ class Detect(Base):
 
     def showEvent(self, event):
         """
-        Handle the show event to update label options and sync uncertainty threshold.
+        Handle the show event to update label options and sync thresholds.
 
         Args:
             event: The event object.
         """
         super().showEvent(event)
-        self.initialize_uncertainty_threshold()
-        self.initialize_iou_threshold()
-        self.initialize_area_threshold()
+        # Initialize thresholds in the widget
+        self.thresholds_widget.initialize_thresholds()
 
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
         """
-        group_box = QGroupBox("Parameters")
-        layout = QFormLayout()
-
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detect)
-        layout.addRow("Max Detections:", self.max_detections_spinbox)
-
-        # Uncertainty threshold controls
-        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        layout.addRow("", self.uncertainty_threshold_label)
-
-        # IoU threshold controls
-        self.iou_thresh = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider = QSlider(Qt.Horizontal)
-        self.iou_threshold_slider.setRange(0, 100)
-        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.iou_threshold_slider.setTickInterval(10)
-        self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
-        layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        layout.addRow("", self.iou_threshold_label)
-
-        # Area threshold controls
-        min_val, max_val = self.main_window.get_area_thresh()
-        self.area_thresh_min = int(min_val * 100)
-        self.area_thresh_max = int(max_val * 100)
-        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_min_slider.setRange(0, 100)
-        self.area_threshold_min_slider.setValue(self.area_thresh_min)
-        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_min_slider.setTickInterval(10)
-        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_max_slider.setRange(0, 100)
-        self.area_threshold_max_slider.setValue(self.area_thresh_max)
-        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_max_slider.setTickInterval(10)
-        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
-        layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
-        layout.addRow("", self.area_threshold_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
+        # No additional parameters needed - max_detections is in thresholds widget
+        pass
+        
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        group_box = QGroupBox("Use SAM to Create Polygons")
         layout = QFormLayout()
 
         # SAM dropdown
@@ -118,6 +65,20 @@ class Detect(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def setup_thresholds_layout(self):
+        """
+        Setup threshold control section using the reusable ThresholdsWidget.
+        """
+        # Create the thresholds widget with all controls enabled
+        self.thresholds_widget = ThresholdsWidget(
+            self.main_window,
+            show_max_detections=True,
+            show_uncertainty=True,
+            show_iou=True,
+            show_area=True
+        )
+        self.layout.addWidget(self.thresholds_widget)
 
     def update_sam_task_state(self):
         """
@@ -219,10 +180,10 @@ class Detect(Base):
         results_processor = ResultsProcessor(
             self.main_window,
             self.class_mapping,
-            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            iou_thresh=self.main_window.get_iou_thresh(),
-            min_area_thresh=self.main_window.get_area_thresh_min(),
-            max_area_thresh=self.main_window.get_area_thresh_max()
+            uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh(),
+            iou_thresh=self.thresholds_widget.get_iou_thresh(),
+            min_area_thresh=self.thresholds_widget.get_area_thresh_min(),
+            max_area_thresh=self.thresholds_widget.get_area_thresh_max()
         )
 
         # Make cursor busy
@@ -379,9 +340,9 @@ class Detect(Base):
         """
         results_generator = self.loaded_model(inputs,
                                               agnostic_nms=True,
-                                              conf=self.main_window.get_uncertainty_thresh(),
-                                              iou=self.main_window.get_iou_thresh(),
-                                              max_det=self.max_detections_spinbox.value(),
+                                              conf=self.thresholds_widget.get_uncertainty_thresh(),
+                                              iou=self.thresholds_widget.get_iou_thresh(),
+                                              max_det=self.thresholds_widget.get_max_detections(),
                                               device=self.main_window.device,
                                               retina_masks=self.task == "segment",
                                               half=True,
