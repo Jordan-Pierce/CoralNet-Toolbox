@@ -1050,7 +1050,7 @@ class MainWindow(QMainWindow):
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.scale_unit_dropdown.setFixedWidth(60)
-        self.scale_unit_dropdown.setEnabled(False)      # Disabled by default
+        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -1097,8 +1097,7 @@ class MainWindow(QMainWindow):
         
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
-        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd',
-                                       'mi', 'px'])
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.z_unit_dropdown.setFixedWidth(60)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
@@ -1204,8 +1203,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
         self.status_bar_layout.addWidget(self.scaled_view_dims_label)
         self.status_bar_layout.addWidget(self.z_button)
-        self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
+        self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
