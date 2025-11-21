@@ -774,9 +774,11 @@ class AnnotationWindow(QGraphicsView):
         Args:
             raster: The Raster object containing Z-channel data
         """
-        # Clean up old z_item if it exists
+        # Clean up old z_item if it exists (it should already be removed by clear_scene, but be safe)
         if self.z_item is not None:
-            self.scene.removeItem(self.z_item)
+            # Only try to remove if it's actually in this scene
+            if self.z_item.scene() == self.scene:
+                self.scene.removeItem(self.z_item)
             self.z_item = None
         
         # Check if Z-channel data is available
@@ -967,7 +969,9 @@ class AnnotationWindow(QGraphicsView):
             return
         
         if self.z_item is not None:
-            self.scene.removeItem(self.z_item)
+            # Only try to remove if it's actually in this scene
+            if self.z_item.scene() == self.scene:
+                self.scene.removeItem(self.z_item)
             self.z_item = None
         
         # Clear all cached z-channel data

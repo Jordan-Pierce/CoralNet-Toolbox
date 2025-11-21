@@ -674,21 +674,27 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
         target_height (int, optional): Target height to match raster dimensions
         
     Returns:
-        tuple: (z_data, z_path) where z_data is a 2D numpy array (float32 or uint8)
-               and z_path is the file path, or (None, None) if loading fails
+        tuple: (z_data, z_path, z_nodata) where z_data is a 2D numpy array (float32 or uint8),
+               z_path is the file path, and z_nodata is the nodata value from the GeoTIFF
+               (or None if no nodata value is defined), or (None, None, None) if loading fails
     """
     try:
         # Check if file exists
         if not os.path.exists(z_channel_path):
             print(f"Z-channel file does not exist: {z_channel_path}")
-            return None, None
+            return None, None, None
             
         # Open the z-channel file with rasterio
         with rasterio.open(z_channel_path) as src:
             # Validate it's a single band file
             if src.count != 1:
                 print(f"Z-channel file must be single band, found {src.count} bands: {z_channel_path}")
-                return None, None
+                return None, None, None
+            
+            # Extract the nodata value from the rasterio source
+            z_nodata = src.nodata
+            if z_nodata is not None:
+                print(f"Z-channel has nodata value: {z_nodata}")
             
             # Read the single band
             z_data = src.read(1)
@@ -718,32 +724,32 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
                 print(f"Warning: Unsupported z-channel data type {z_data.dtype}, converting to float32")
                 z_data = z_data.astype(np.float32)
                 
-            # Handle NaN values if present (convert to 0)
+            # Preserve NaN values in floating-point data (don't convert to 0)
+            # NaN values represent missing or NULL data and will be handled by the UI layer
             if np.issubdtype(z_data.dtype, np.floating):
                 nan_count = np.sum(np.isnan(z_data))
                 if nan_count > 0:
-                    z_data = np.nan_to_num(z_data, nan=0.0)
-                    print(f"Replaced {nan_count} NaN values with 0")
+                    print(f"Z-channel contains {nan_count} NaN values (NULL/missing data)")
             
             # Final validation - ensure 2D array
             if z_data.ndim != 2:
                 print(f"Z-channel data must be 2D, found {z_data.ndim}D")
-                return None, None
+                return None, None, None
                 
             # Final data type check
             if z_data.dtype not in [np.float32, np.uint8]:
                 print(f"Z-channel data type {z_data.dtype} not supported, must be float32 or uint8")
-                return None, None
+                return None, None, None
                 
             print(f"Successfully loaded z-channel: {z_data.shape}, dtype: {z_data.dtype}, "
                   f"range: [{np.min(z_data):.2f}, {np.max(z_data):.2f}]")
                   
-            return z_data, z_channel_path
+            return z_data, z_channel_path, z_nodata
             
     except Exception as e:
         print(f"Error loading z-channel from {z_channel_path}: {str(e)}")
         traceback.print_exc()
-        return None, None
+        return None, None, None
     
 
 def detect_z_channel_units_from_file(z_channel_path):

@@ -102,6 +102,7 @@ class Raster(QObject):
         self.z_channel: Optional[np.ndarray] = None  # Depth/elevation channel data (float32 or uint8)
         self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
+        self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
         
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
@@ -349,6 +350,7 @@ class Raster(QObject):
         self.z_channel = None
         self.z_channel_path = None
         self.z_unit = None
+        self.z_nodata = None
         
     def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
         """
@@ -371,7 +373,7 @@ class Raster(QObject):
             normalize_z_unit
         )
         
-        z_data, z_path = load_z_channel_from_file(
+        z_data, z_path, z_nodata = load_z_channel_from_file(
             z_channel_path, 
             target_width=self.width, 
             target_height=self.height
@@ -387,8 +389,9 @@ class Raster(QObject):
                 # Normalize provided unit
                 z_unit = normalize_z_unit(z_unit)
             
-            # Store unit in z_channel object before adding
+            # Store unit and nodata value before adding z_channel
             self.z_unit = z_unit
+            self.z_nodata = z_nodata
             self.add_z_channel(z_data, z_path)
             return True
         else:

@@ -503,7 +503,7 @@ class ZPairingWidget(QWidget):
         item_z.setToolTip(z_path)
         
         item_units = self.table.item(row, 2)
-        units_display = detected_units if detected_units else "? (Select)"
+        units_display = detected_units if detected_units else "(Set)"
         item_units.setText(units_display)
         item_units.setTextAlignment(Qt.AlignCenter)
         
@@ -536,7 +536,7 @@ class ZPairingWidget(QWidget):
             item_z.setToolTip("")
             
             item_units = self.table.item(row, 2)
-            item_units.setText("? (Select)")
+            item_units.setText("(Set)")
             item_units.setTextAlignment(Qt.AlignCenter)
             item_units.setToolTip("Click to edit units")
             
@@ -587,7 +587,7 @@ class ZPairingWidget(QWidget):
             # Update mapping and table
             self.mapping[img_path]["units"] = selected
             item_units = self.table.item(row, 2)
-            item_units.setText(selected if selected else "? (Select)")
+            item_units.setText(selected if selected else "(Set)")
     
     def show_bulk_units_dialog(self, rows):
         """
@@ -614,7 +614,7 @@ class ZPairingWidget(QWidget):
                 img_path = self.image_files[row]
                 self.mapping[img_path]["units"] = selected
                 item_units = self.table.item(row, 2)
-                item_units.setText(selected if selected else "? (Select)")
+                item_units.setText(selected if selected else "(Set)")
 
     def finalize_mapping(self):
         """

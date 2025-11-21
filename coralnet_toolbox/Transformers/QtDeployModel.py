@@ -83,12 +83,12 @@ class DeployModelDialog(QDialog):
         self.setup_models_layout()
         # Setup the ontology layout
         self.setup_ontology_layout()
-        # Setup the thresholds layout
-        self.setup_thresholds_layout()
-        # Setup the SAM layout
-        self.setup_sam_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the SAM layout
+        self.setup_sam_layout()
+        # Setup the thresholds layout
+        self.setup_thresholds_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout

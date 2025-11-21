@@ -67,6 +67,8 @@ class DeployPredictorDialog(QDialog):
         self.setup_parameters_layout()
         # Setup the SAM layout
         self.setup_sam_layout()
+        # Setup the thresholds layout
+        self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -161,16 +163,6 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-        # Add ThresholdsWidget for all threshold controls
-        self.thresholds_widget = ThresholdsWidget(
-            self.main_window,
-            show_max_detections=True,
-            show_uncertainty=True,
-            show_iou=True,
-            show_area=True
-        )
-        self.layout.addWidget(self.thresholds_widget)
 
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
@@ -182,6 +174,26 @@ class DeployPredictorDialog(QDialog):
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_thresholds_layout(self):
+        """
+        Setup thresholds control section in a group box.
+        """
+        group_box = QGroupBox("Prediction Thresholds")
+        layout = QVBoxLayout()
+
+        # Add ThresholdsWidget for all threshold controls
+        self.thresholds_widget = ThresholdsWidget(
+            self.main_window,
+            show_max_detections=True,
+            show_uncertainty=True,
+            show_iou=True,
+            show_area=True
+        )
+        layout.addWidget(self.thresholds_widget)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)

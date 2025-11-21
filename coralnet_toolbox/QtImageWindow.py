@@ -1223,6 +1223,10 @@ class ImageWindow(QWidget):
         if not mapping:
             return
         
+        successful_count = 0
+        failed_count = 0
+        failed_images = []
+        
         # Apply the z-channel to each raster
         for image_path, z_info in mapping.items():
             # Extract z_path and units from mapping
@@ -1238,23 +1242,44 @@ class ImageWindow(QWidget):
             if raster:
                 try:
                     # Load z-channel from file with units
-                    raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
-                    # Emit signal to update UI
-                    self.raster_manager.rasterUpdated.emit(image_path)
+                    success = raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
+                    if success:
+                        successful_count += 1
+                        # Emit signal to update UI
+                        self.raster_manager.rasterUpdated.emit(image_path)
+                    else:
+                        failed_count += 1
+                        failed_images.append(os.path.basename(image_path))
                 except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        "Z-Channel Load Error",
-                        f"Failed to load z-channel for {os.path.basename(image_path)}: {str(e)}"
-                    )
+                    failed_count += 1
+                    failed_images.append(os.path.basename(image_path))
+                    print(f"Exception loading z-channel for {image_path}: {str(e)}")
         
-        # Show success message
-        count = len(mapping)
-        QMessageBox.information(
-            self,
-            "Z-Channel Imported",
-            f"Z-channel successfully imported for {count} image{'s' if count > 1 else ''}."
-        )
+        # Show appropriate message based on results
+        if failed_count > 0:
+            # Show warning if there were any failures
+            failed_list = "\n".join(f"  • {img}" for img in failed_images[:10])
+            if len(failed_images) > 10:
+                failed_list += f"\n  ... and {len(failed_images) - 10} more"
+            
+            message = (
+                f"Z-Channel Import Results:\n\n"
+                f"✓ Successfully loaded: {successful_count}\n"
+                f"✗ Failed to load: {failed_count}\n\n"
+                f"Failed images:\n{failed_list}"
+            )
+            QMessageBox.warning(
+                self,
+                "Z-Channel Import - Partial Success",
+                message
+            )
+        elif successful_count > 0:
+            # Show success message only if all loaded successfully
+            QMessageBox.information(
+                self,
+                "Z-Channel Imported",
+                f"Z-channel successfully imported for {successful_count} image{'s' if successful_count > 1 else ''}."
+            )
         
     def remove_z_channel_highlighted_images(self):
         """Remove z-channel from the highlighted images."""

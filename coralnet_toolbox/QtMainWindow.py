@@ -2176,22 +2176,37 @@ class MainWindow(QMainWindow):
                     z_channel = raster.z_channel_lazy
                     z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
                     
-                    # Cache the raw z-value for re-conversion if unit dropdown changes
-                    self.current_z_value = z_value
+                    # Check if the value is NaN (only possible for float types)
+                    # Use try-except to handle both float and integer types safely
+                    is_nan = False
+                    try:
+                        is_nan = np.isnan(z_value)
+                    except (TypeError, ValueError):
+                        # isnan() fails on integer types, which is expected
+                        is_nan = False
                     
-                    # Get the original unit from the raster
-                    original_unit = raster.z_unit if raster.z_unit else 'm'
+                    # Check if the value matches the nodata value
+                    is_nodata = (raster.z_nodata is not None and float(z_value) == float(raster.z_nodata))
                     
-                    # Convert to selected unit if different from original
-                    display_value = z_value
-                    if self.current_unit_z != original_unit:
-                        display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
-                    
-                    # Format the display based on data type
-                    if z_channel.dtype == np.float32:
-                        self.z_label.setText(f"Z: {display_value:.3f}")
+                    if is_nan or is_nodata:
+                        self.z_label.setText("Z: ----")
                     else:
-                        self.z_label.setText(f"Z: {int(display_value)}")
+                        # Cache the raw z-value for re-conversion if unit dropdown changes
+                        self.current_z_value = z_value
+                        
+                        # Get the original unit from the raster
+                        original_unit = raster.z_unit if raster.z_unit else 'm'
+                        
+                        # Convert to selected unit if different from original
+                        display_value = z_value
+                        if self.current_unit_z != original_unit:
+                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                        
+                        # Format the display based on data type
+                        if z_channel.dtype == np.float32:
+                            self.z_label.setText(f"Z: {display_value:.3f}")
+                        else:
+                            self.z_label.setText(f"Z: {int(display_value)}")
                     
                     # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
