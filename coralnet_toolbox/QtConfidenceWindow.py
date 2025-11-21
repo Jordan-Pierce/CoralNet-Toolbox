@@ -513,43 +513,25 @@ class ConfidenceWindow(QWidget):
             scale_x = raster.scale_x
             scale_y = raster.scale_y
             scale_units = raster.scale_units
-            z_unit_original = raster.z_unit
-            
-            # Use the user's selected z-unit from the main window dropdown
-            z_unit_display = self.main_window.current_unit_z
+            z_unit = raster.z_unit
             
             # Check if all required data is available
             if z_channel is not None and scale_x is not None and scale_y is not None and scale_units is not None:
                 try:
                     # --- Volume Calculation ---
-                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y)
+                    # Pass z_unit to ensure proper unit conversion in the calculation
+                    volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit)
                     if volume is not None:
-                        # Convert volume to the selected z-unit if needed
-                        z_unit_display = z_unit_display if z_unit_display else 'z-units'
-                        
-                        # If z_unit differs from display unit, volume scaling needs to account for unit conversion
-                        # e.g., if original is 'mm' but display is 'm', volume in m³ = volume in mm³ / (1000³)
-                        if z_unit_original and z_unit_original != z_unit_display:
-                            # Convert a 1-unit value to get the scaling factor
-                            scaling_factor = convert_scale_units(1.0, z_unit_original, z_unit_display)
-                            volume_converted = volume * (scaling_factor ** 3)
-                        else:
-                            volume_converted = volume
-                        
-                        tooltip_parts.append(f"<b>Volume:</b> {volume_converted:.2f} {scale_units}² · {z_unit_display}")
+                        # Volume is now in cubic meters
+                        vol_units = f"{scale_units}² · m"
+                        tooltip_parts.append(f"<b>Volume:</b> {volume:.2f} {vol_units}")
                     
                     # --- 3D Surface Area Calculation ---
-                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y)
+                    # Pass z_unit to ensure proper unit conversion in the calculation
+                    surface_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit)
                     if surface_area is not None:
-                        # Convert surface area to the selected z-unit if needed
-                        if z_unit_original and z_unit_original != z_unit_display:
-                            # For surface area, scaling factor is squared (area in 2D)
-                            scaling_factor = convert_scale_units(1.0, z_unit_original, z_unit_display)
-                            surface_area_converted = surface_area * (scaling_factor ** 2)
-                        else:
-                            surface_area_converted = surface_area
-                        
-                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area_converted:.2f} {scale_units}²")
+                        # Surface area is now in square meters
+                        tooltip_parts.append(f"<b>3D Surface Area:</b> {surface_area:.2f} {scale_units}²")
                 
                 except Exception as e:
                     print(f"Error calculating 3D metrics for tooltip: {e}")
