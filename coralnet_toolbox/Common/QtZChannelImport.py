@@ -261,10 +261,10 @@ class ZPairingWidget(QWidget):
         layout.setContentsMargins(10, 5, 10, 5)
         
         info_text = (
-            "Import z-channel files (Depth, Height, DEM) and pair them with your images.<br><br>"
+            "Import Z-channel files (Depth, Height, DEM) and pair them with your images.<br><br>"
             "<b>Automatic Matching:</b> The system will attempt to match files using exact names, "
             "suffixes, or fuzzy matching.<br><br>"
-            "<b>Manual Correction:</b> Drag z-channel files from the right panel onto table rows "
+            "<b>Manual Correction:</b> Drag Z-channel files from the right panel onto table rows "
             "to override automatic matches or fill missing ones. Select multiple files with Ctrl/Shift "
             "click to batch-map in order.<br><br>"
             "<b>Units:</b> Double-click on a Z Units cell to change units, or select multiple rows and "
@@ -276,7 +276,7 @@ class ZPairingWidget(QWidget):
         layout.addWidget(info_label)
         
         group_box.setLayout(layout)
-        group_box.setMaximumHeight(100)
+        group_box.setMaximumHeight(150)
         self.main_layout.addWidget(group_box)
 
     def setup_pairing_layout(self):
@@ -320,7 +320,9 @@ class ZPairingWidget(QWidget):
         self.list_widget = DraggableList()
         for z_file in self.z_files:
             self.list_widget.addItem(os.path.basename(z_file))
-            self.list_widget.item(self.list_widget.count() - 1).setData(Qt.UserRole, z_file)
+            item = self.list_widget.item(self.list_widget.count() - 1)
+            item.setTextAlignment(Qt.AlignCenter)
+            item.setData(Qt.UserRole, z_file)
         
         files_scroll.setWidget(self.list_widget)
         files_layout.addWidget(files_scroll)
@@ -430,19 +432,22 @@ class ZPairingWidget(QWidget):
 
             # Column 0: Image Name
             item_img = QTableWidgetItem(os.path.basename(img_path))
+            item_img.setTextAlignment(Qt.AlignCenter)
             item_img.setToolTip(img_path)
             self.table.setItem(r, 0, item_img)
             
             # Column 1: Z Channel
             display_text = os.path.basename(z_path) if z_path else "None (Drag Here)"
             item_z = QTableWidgetItem(display_text)
+            item_z.setTextAlignment(Qt.AlignCenter)
             if z_path:
                 item_z.setToolTip(z_path)
             self.table.setItem(r, 1, item_z)
             
             # Column 2: Z Units (with dropdown for user selection)
-            units_display = units if units else "? (Select)"
+            units_display = units if units else "(Set)"
             item_units = QTableWidgetItem(units_display)
+            item_units.setTextAlignment(Qt.AlignCenter)
             item_units.setToolTip("Click to edit units")
             self.table.setItem(r, 2, item_units)
             
@@ -501,14 +506,17 @@ class ZPairingWidget(QWidget):
         # Update table display
         item_z = self.table.item(row, 1)
         item_z.setText(os.path.basename(z_path))
+        item_z.setTextAlignment(Qt.AlignCenter)
         item_z.setToolTip(z_path)
         
         item_units = self.table.item(row, 2)
         units_display = detected_units if detected_units else "? (Select)"
         item_units.setText(units_display)
+        item_units.setTextAlignment(Qt.AlignCenter)
         
         item_status = self.table.item(row, 3)
         item_status.setText("Manual Fix")
+        item_status.setTextAlignment(Qt.AlignCenter)
         
         # Update row color to indicate successful match
         self.update_row_color(row, "Auto")
@@ -531,14 +539,17 @@ class ZPairingWidget(QWidget):
             # Update table display
             item_z = self.table.item(row, 1)
             item_z.setText("None (Drag Here)")
+            item_z.setTextAlignment(Qt.AlignCenter)
             item_z.setToolTip("")
             
             item_units = self.table.item(row, 2)
             item_units.setText("? (Select)")
+            item_units.setTextAlignment(Qt.AlignCenter)
             item_units.setToolTip("Click to edit units")
             
             item_status = self.table.item(row, 3)
             item_status.setText("Missing")
+            item_status.setTextAlignment(Qt.AlignCenter)
             
             # Update row color to indicate missing match
             self.update_row_color(row, "Missing")
