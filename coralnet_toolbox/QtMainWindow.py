@@ -1116,9 +1116,9 @@ class MainWindow(QMainWindow):
         
         # Z button and Z label
         self.z_action = QAction(self.z_icon, "", self)
-        self.z_action.setCheckable(True)
+        self.z_action.setCheckable(False)  # TODO
         self.z_action.setChecked(False)
-        self.z_action.setToolTip("Depth Anything 3 (Depth Estimation)")
+        self.z_action.setToolTip("Depth Estimation (In Progress)")
         # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
 
         # Create button to hold the Z action
@@ -2040,7 +2040,11 @@ class MainWindow(QMainWindow):
             self.z_label.setEnabled(True)
             self.z_unit_dropdown.setEnabled(True)
             self.z_colormap_dropdown.setEnabled(True)
-            self.z_dynamic_button.setEnabled(True)
+            # Only enable dynamic button if colormap is not set to "None"
+            if self.z_colormap_dropdown.currentText() != "None":
+                self.z_dynamic_button.setEnabled(True)
+            else:
+                self.z_dynamic_button.setEnabled(False)
 
     def on_z_channel_removed(self, image_path):
         """
@@ -2193,7 +2197,9 @@ class MainWindow(QMainWindow):
                     self.z_label.setEnabled(True)
                     self.z_unit_dropdown.setEnabled(True)
                     self.z_colormap_dropdown.setEnabled(True)
-                    self.z_dynamic_button.setEnabled(True)
+                    # Only enable dynamic button if colormap is not set to "None"
+                    if self.z_colormap_dropdown.currentText() != "None":
+                        self.z_dynamic_button.setEnabled(True)
                     
                 except (IndexError, ValueError):
                     pass
@@ -2258,6 +2264,15 @@ class MainWindow(QMainWindow):
     def on_z_colormap_changed(self, colormap_name):
         """Handle z-colormap dropdown changes by updating the annotation window."""
         self.annotation_window.update_z_colormap(colormap_name)
+        
+        # Disable the dynamic range button if colormap is set to "None"
+        if colormap_name == "None":
+            self.z_dynamic_button.setEnabled(False)
+            self.z_dynamic_button.setChecked(False)
+        else:
+            # Enable the dynamic range button if a valid colormap is selected and Z data is available
+            if self.annotation_window.z_data_raw is not None:
+                self.z_dynamic_button.setEnabled(True)
     
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
