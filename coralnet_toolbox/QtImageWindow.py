@@ -654,6 +654,11 @@ class ImageWindow(QWidget):
         """Handler for when a raster is updated."""
         self.update_current_image_index_label()
         
+        # If this raster is currently being displayed, refresh the z-channel visualization
+        # (this handles the case where a z-channel is newly imported for the current image)
+        if path == self.annotation_window.current_image_path:
+            self.annotation_window.refresh_z_channel_visualization()
+        
     def on_filtering_started(self):
         """Handler for when filtering starts."""
         QApplication.setOverrideCursor(Qt.WaitCursor)

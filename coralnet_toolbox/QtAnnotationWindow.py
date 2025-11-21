@@ -1076,7 +1076,23 @@ class AnnotationWindow(QGraphicsView):
             # Call the new sync method instead of just overwriting the map.
             all_current_labels = self.main_window.label_window.labels
             self.current_mask_annotation.sync_label_map(all_current_labels)
-            
+    
+    def refresh_z_channel_visualization(self):
+        """
+        Refresh the Z-channel visualization if it's available for the current image.
+        This is called when a z-channel is newly imported for the currently displayed image.
+        """
+        if self.current_image_path:
+            raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+            if raster and raster.z_channel is not None:
+                # Reload the z-channel visualization
+                self._load_z_channel_visualization(raster)
+                
+                # Apply the current colormap selection to the newly loaded z_item
+                current_colormap = self.main_window.z_colormap_dropdown.currentText()
+                if current_colormap != "None":
+                    self.update_z_colormap(current_colormap)
+    
     @property
     def current_mask_annotation(self) -> Optional[MaskAnnotation]:
         """A helper property to get the MaskAnnotation for the currently active image."""

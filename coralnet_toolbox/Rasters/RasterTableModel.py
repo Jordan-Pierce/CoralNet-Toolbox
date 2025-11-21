@@ -117,6 +117,17 @@ class RasterTableModel(QAbstractTableModel):
                 if raster.scale_x and raster.scale_units:
                     tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {raster.scale_units}/pixel")
 
+                # Add z_channel information if it exists
+                if raster.z_channel is not None:
+                    z_info_parts = ["<b>Z-Channel:</b>"]
+                    if raster.z_unit:
+                        z_info_parts.append(f"Unit: {raster.z_unit}")
+                    if raster.z_channel_path:
+                        z_info_parts.append(f"Path: {raster.z_channel_path}")
+                    if raster.z_nodata is not None:
+                        z_info_parts.append(f"NoData: {raster.z_nodata}")
+                    tooltip_parts.append(" | ".join(z_info_parts))
+
                 tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",
                     f"<b>Predictions:</b> {'Yes' if raster.has_predictions else 'No'}"
