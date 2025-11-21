@@ -195,6 +195,9 @@ class ZPairingWidget(QWidget):
             # Auto-match and populate
             self.run_auto_match()
             self.populate_ui()
+            
+            # Update z-file list colors to show which are in use
+            self.update_z_file_colors()
         finally:
             # Restore normal cursor when dialog is ready to show
             QApplication.restoreOverrideCursor()
@@ -338,16 +341,26 @@ class ZPairingWidget(QWidget):
     def setup_buttons_layout(self):
         """Set up the bottom buttons section."""
         btn_layout = QHBoxLayout()
+        
+        # Left side buttons (Clear All operations)
+        btn_clear_mapping = QPushButton("Clear All Mappings")
+        btn_clear_mapping.clicked.connect(self.clear_all_mappings)
+        btn_layout.addWidget(btn_clear_mapping)
+        
+        btn_clear_units = QPushButton("Clear All Units")
+        btn_clear_units.clicked.connect(self.clear_all_units)
+        btn_layout.addWidget(btn_clear_units)
+        
+        # Add stretch to push right-side buttons to the right
         btn_layout.addStretch()
         
-        # Buttons
+        # Right side buttons (Cancel and Confirm)
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.close)
+        btn_layout.addWidget(btn_cancel)
         
         btn_confirm = QPushButton("Confirm Mapping")
         btn_confirm.clicked.connect(self.finalize_mapping)
-        
-        btn_layout.addWidget(btn_cancel)
         btn_layout.addWidget(btn_confirm)
         
         self.main_layout.addLayout(btn_layout)
@@ -482,6 +495,29 @@ class ZPairingWidget(QWidget):
             
         for c in range(3):
             self.table.item(row, c).setBackground(color)
+    
+    def update_z_file_colors(self):
+        """
+        Update the colors of z-files in the right panel to show which are in use.
+        Files that are matched get a light green background.
+        Files that are unmatched remain white.
+        """
+        # Get all currently mapped z-file paths
+        mapped_z_paths = set()
+        for img_path, data in self.mapping.items():
+            if data["z_path"]:
+                mapped_z_paths.add(data["z_path"])
+        
+        # Update each item in the list
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            z_path = item.data(Qt.UserRole)
+            
+            # Color the item based on whether it's in use
+            if z_path in mapped_z_paths:
+                item.setBackground(COLOR_MATCHED)  # Light green for in-use files
+            else:
+                item.setBackground(Qt.white)  # White for available files
 
     def handle_manual_drop(self, row, z_path):
         """
@@ -520,6 +556,9 @@ class ZPairingWidget(QWidget):
         
         # Update row color to indicate successful match
         self.update_row_color(row, "Auto")
+        
+        # Update z-file list colors to show which files are now in use
+        self.update_z_file_colors()
 
     def handle_clear_mapping(self, rows):
         """
@@ -553,6 +592,9 @@ class ZPairingWidget(QWidget):
             
             # Update row color to indicate missing match
             self.update_row_color(row, "Missing")
+        
+        # Update z-file list colors to show which files are now available
+        self.update_z_file_colors()
 
     def handle_cell_click(self, row, col):
         """
@@ -622,6 +664,41 @@ class ZPairingWidget(QWidget):
                 self.mapping[img_path]["units"] = selected
                 item_units = self.table.item(row, 2)
                 item_units.setText(selected if selected else "(Set)")
+
+    def clear_all_mappings(self):
+        """Clear all z-channel mappings for all rows."""
+        reply = QMessageBox.question(
+            self,
+            "Clear All Mappings",
+            "Are you sure you want to clear all z-channel mappings?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear all rows at once
+            all_rows = list(range(len(self.image_files)))
+            self.handle_clear_mapping(all_rows)
+
+    def clear_all_units(self):
+        """Clear all z-channel units for all rows."""
+        reply = QMessageBox.question(
+            self,
+            "Clear All Units",
+            "Are you sure you want to clear all z-channel units?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear units for all rows
+            for row in range(len(self.image_files)):
+                img_path = self.image_files[row]
+                self.mapping[img_path]["units"] = None
+                
+                item_units = self.table.item(row, 2)
+                item_units.setText("(Set)")
+                item_units.setTextAlignment(Qt.AlignCenter)
 
     def finalize_mapping(self):
         """
