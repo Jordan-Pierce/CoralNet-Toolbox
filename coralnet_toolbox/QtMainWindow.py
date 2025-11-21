@@ -1094,7 +1094,9 @@ class MainWindow(QMainWindow):
 
         # Z colormap dropdown for visualization
         self.z_colormap_dropdown = QComboBox()
-        self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
+        self.z_colormap_dropdown.addItems([
+            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'
+        ])
         self.z_colormap_dropdown.setCurrentText('None')
         self.z_colormap_dropdown.setFixedWidth(100)
         self.z_colormap_dropdown.setEnabled(False)  # Disabled by default until Z data is available
