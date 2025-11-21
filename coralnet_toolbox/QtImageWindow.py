@@ -9,12 +9,15 @@ from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelec
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
-                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem)
+                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem, QFileDialog)
 
 from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
-from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
 
+from coralnet_toolbox.Common.QtZChannelImport import ZPairingWidget
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -1132,6 +1135,14 @@ class ImageWindow(QWidget):
 
         context_menu.addSeparator()
 
+        # Add import z-channel action
+        import_z_channel_action = context_menu.addAction(
+            f"Import Z-Channel for {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        import_z_channel_action.triggered.connect(
+            lambda: self.import_z_channel_highlighted_images()
+        )
+
         # Add remove z-channel action
         remove_z_channel_action = context_menu.addAction(
             f"Remove Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
@@ -1152,6 +1163,72 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def import_z_channel_highlighted_images(self):
+        """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""
+        # Get all highlighted paths
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        if not highlighted_paths:
+            return
+        
+        # Open file dialog to select z-channel files
+        z_files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Z-Channel Files",
+            "",
+            "Image Files (*.tif *.tiff *.png *.bmp *.jp2 *.jpg *.jpeg);;All Files (*)"
+        )
+        
+        if not z_files:
+            return
+        
+        # Create and show ZPairingWidget with highlighted image paths and selected z-files
+        # Sort both lists for consistent ordering
+        image_paths = sorted(highlighted_paths)
+        z_channel_files = sorted(z_files)
+        
+        # Create the pairing widget and keep a reference to prevent garbage collection
+        self.pairing_widget = ZPairingWidget(image_paths, z_channel_files)
+        
+        # Connect the mapping_confirmed signal to handle the confirmed mapping
+        self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
+        
+        # Show the widget
+        self.pairing_widget.show()
+    
+    def on_z_channel_mapping_confirmed(self, mapping):
+        """Handle confirmed z-channel mapping from ZPairingWidget.
+        
+        Args:
+            mapping (dict): {image_path: z_channel_path}
+        """
+        if not mapping:
+            return
+        
+        # Apply the z-channel to each raster
+        for image_path, z_channel_path in mapping.items():
+            raster = self.raster_manager.get_raster(image_path)
+            if raster:
+                try:
+                    # Load z-channel from file
+                    raster.load_z_channel_from_file(z_channel_path)
+                    # Emit signal to update UI
+                    self.raster_manager.rasterUpdated.emit(image_path)
+                except Exception as e:
+                    QMessageBox.warning(
+                        self,
+                        "Z-Channel Load Error",
+                        f"Failed to load z-channel for {os.path.basename(image_path)}: {str(e)}"
+                    )
+        
+        # Show success message
+        count = len(mapping)
+        QMessageBox.information(
+            self,
+            "Z-Channel Imported",
+            f"Z-channel successfully imported for {count} image{'s' if count > 1 else ''}."
+        )
         
     def remove_z_channel_highlighted_images(self):
         """Remove z-channel from the highlighted images."""

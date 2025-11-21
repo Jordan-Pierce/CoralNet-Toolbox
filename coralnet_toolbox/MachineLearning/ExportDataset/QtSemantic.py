@@ -397,8 +397,8 @@ class Semantic(Base):
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
             # Set cell colors based on the counts and ratios
-            red = QColor(255, 0, 0)
-            green = QColor(0, 255, 0)
+            red = QColor(255, 220, 220)
+            green = QColor(220, 255, 220)
 
             if include_checkbox.isChecked():
                 self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
