@@ -732,6 +732,11 @@ class AnnotationWindow(QGraphicsView):
         # Load and display Z-channel if available
         self._load_z_channel_visualization(raster)
         
+        # Apply the current colormap selection to the newly loaded z_item
+        current_colormap = self.main_window.z_colormap_dropdown.currentText()
+        if current_colormap != "None":
+            self.update_z_colormap(current_colormap)
+        
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
