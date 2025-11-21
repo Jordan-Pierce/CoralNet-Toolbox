@@ -851,7 +851,7 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Menu Bar</strong>: Contains import, export, and other actions
 - <strong>Tool Bar</strong>: Contains tools for selection and annotation
 - <strong>Status Bar</strong>: Displays the image size, cursor position, view extent, annotation transparency, and thresholds
-- <strong>Annotation Window</strong>: Displays the image and annotations
+- <strong>Annotation Window</strong>: Displays the image, Z-channel, and annotations
 - <strong>Label Window</strong>: Lists and manages labels
 - <strong>Image Window</strong>: Displays imported images
 - <strong>Confidence Window</strong>: Displays cropped images and confidence charts</p>
@@ -871,9 +871,10 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Import CoralNet Labels (CSV)</strong>: Load label data from a CoralNet CSV file</li>
 <li><strong>Import TagLab Labels (JSON)</strong>: Load label data from a TagLab JSON file</li>
 <li><strong>Import Annotations (JSON)</strong>: Load annotation data from a JSON file</li>
-<li><strong>Import CoralNet Annotations</strong>: Load annotation data from a CoralNet CSV file</li>
-<li><strong>Import TagLab Annotations</strong>: Load annotation data from a TagLab JSON file</li>
-<li><strong>Import Viscore Annotations</strong>: Load annotation data from a Viscore CSV file</li>
+<li><strong>Import CoralNet Annotations (CSV)</strong>: Load annotation data from a CoralNet CSV file</li>
+<li><strong>Import TagLab Annotations (JSON)</strong>: Load annotation data from a TagLab JSON file</li>
+<li><strong>Import Squidle+ Annotations (JSON)</strong>: Load annotation data from a Squidle+ JSON file</li>
+<li><strong>Import Viscore Annotations(CSV)</strong>: Load annotation data from a Viscore CSV file</li>
 <li>
 <p><strong>Import Dataset</strong>: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)</p>
 </li>
@@ -955,10 +956,10 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Tile</strong>:</p>
 </li>
-<li><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code></li>
-<li><strong>Tile Creation</strong>: Pre-compute multiple work areas for selected images</li>
+<li><strong>Tile Manager</strong>: Pre-compute multiple tiles / work areas for selected images</li>
+<li><strong>Tile Batch Inferece</strong>: Apply inference on all imagues with tiles / work areas</li>
 <li>
-<p><strong>Tile Batch Inferece</strong>: Apply inference on all imagues with work areas</p>
+<p><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code></p>
 </li>
 <li>
 <p><strong>CoralNet</strong>: </p>
@@ -1127,6 +1128,12 @@ This guide provides instructions on how to use the application, including key fu
 <p>A semi-transparent preview shows the eraser while drawing.</p>
 </li>
 <li>
+<p><strong>Dropper Tool</strong>: After selecting the tool</p>
+</li>
+<li>
+<p><kbd>Left-click</kbd> on a mask annotation region to select the associated label.</p>
+</li>
+<li>
 <p><strong>Fill Tool</strong>: After selecting the tool</p>
 </li>
 <li>
@@ -1184,8 +1191,13 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Annotation Visibility</strong>: Show / Hide all existing annotations</li>
 <li><strong>Annotation Transparency</strong>: Adjust the annotation transparency</li>
 <li><strong>Scale</strong>: Displays the scale dimensions</li>
-<li>Provides a dropdown to select preferred units (mm, cm, m, km)</li>
+<li>Provides a dropdown to select preferred units (mm, cm, m, km, etc.,)</li>
 <li>Enabled when a scale is set using the Scale Tool or imported from an image</li>
+<li><strong>Z</strong>: Displays the Z-dimension</li>
+<li>Provides a dropdown to select preferred units (mm, cm, m, km etc.,)</li>
+<li>Enabled when a Z-channel for the image is imported</li>
+<li>Select a color map in the dropdown to overlay Z-channel </li>
+<li>Click dynamic range button to enable dynamic recoloring of Z-channel </li>
 <li><strong>Patch Size</strong>: Manipulate Patch Size (only active when using Patch Tool)</li>
 <li><strong>Parameters</strong>: Adjust parameters including uncertainty, IoU, and area thresholds</li>
 </ul>
@@ -1226,8 +1238,14 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows</li>
 <li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows</li>
 <li><strong>Open Context Menu</strong>:</li>
-<li><kbd>Right-Click</kbd> on a single highlighted row: Delete images / annotations for the highlighted row</li>
-<li><kbd>Shift</kbd> + <kbd>Right-Click</kbd> on multiple highlighted rows: Delete images / annotations for highlighted rows</li>
+<li><kbd>Right-Click</kbd> on a single / multiple highlighted row: <ul>
+<li>Check / uncheck highlighted rows</li>
+<li>Import Z-channel for highlighted rows (opens Z-channel import dialog)</li>
+<li>Remove Z-channel for highlighted rows</li>
+<li>Delete annotations for highlighted rows</li>
+<li>Delete images and annotations for highlighted rows</li>
+</ul>
+</li>
 <li><strong>Search / Filter</strong>:</li>
 <li><strong>By Image</strong>: Filter for images by name or sub-string</li>
 <li><strong>By Label</strong>: Filter images by labels they contain</li>
@@ -1264,7 +1282,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Each confidence bar shows the label color and confidence percentage</li>
 <li>Numbered indicators (1-5) show the rank of each prediction</li>
 <li>Hover over confidence bars to see a pointing hand cursor when selection is possible</li>
-<li><strong>Tool Tip</strong>: Hover over the window while an annotation is selected to see its metadata, including (scaled) dimensions</li>
+<li><strong>Tool Tip</strong>: Hover over the window while an annotation is selected to see its metadata</li>
 </ul>
 <h3 id="hotkeys"><a href="https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys">Hotkeys</a><a class="headerlink" href="#hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1320,7 +1338,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2025 00:20:02 UTC"><span class="timeago" datetime="2025-11-20T00:20:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2025 00:20:02 UTC">2025-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2025 06:07:04 UTC"><span class="timeago" datetime="2025-11-21T06:07:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2025 06:07:04 UTC">2025-11-21</span>
   </span>
 
     
