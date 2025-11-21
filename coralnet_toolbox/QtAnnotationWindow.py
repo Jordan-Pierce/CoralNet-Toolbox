@@ -949,6 +949,29 @@ class AnnotationWindow(QGraphicsView):
             import traceback
             traceback.print_exc()
 
+    def clear_z_channel_visualization(self, image_path):
+        """
+        Clear the Z-channel visualization from the scene.
+        Only clears if the removed z-channel belongs to the currently displayed image.
+        
+        Args:
+            image_path (str): Path of the raster with removed z-channel
+        """
+        # Only clear if the removed z-channel belongs to the currently displayed image
+        if image_path != self.current_image_path:
+            return
+        
+        if self.z_item is not None:
+            self.scene.removeItem(self.z_item)
+            self.z_item = None
+        
+        # Clear all cached z-channel data
+        self.z_data_raw = None
+        self.z_data_normalized = None
+        self.z_data_min = None
+        self.z_data_max = None
+        self.z_data_shape = None
+
     def schedule_dynamic_range_update(self):
         """
         Schedule a dynamic range update with debouncing.

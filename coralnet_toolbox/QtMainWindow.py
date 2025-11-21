@@ -363,6 +363,10 @@ class MainWindow(QMainWindow):
         self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
         # Connect the zChannelRemoved signal from ImageWindow to update status bar
         self.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
+        # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
+        self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
+        # Connect the imageLoaded signal from ImageWindow to check z-channel status
+        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
 
         # ----------------------------------------
         # Create the menu bar
@@ -2013,6 +2017,30 @@ class MainWindow(QMainWindow):
             # and more to confidence_window.
             self.image_layout.setStretch(0, 54)
             self.image_layout.setStretch(1, 66)
+            
+    def on_image_loaded_check_z_channel(self, image_path):
+        """
+        Check if the newly loaded image has a z-channel.
+        If it doesn't, disable all z-channel UI elements.
+        
+        Args:
+            image_path (str): Path of the loaded image
+        """
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        if raster and raster.z_channel is None:
+            # Image has no z-channel, disable UI elements
+            self.z_label.setText("Z: -----")
+            self.z_label.setEnabled(False)
+            self.z_unit_dropdown.setEnabled(False)
+            self.z_colormap_dropdown.setEnabled(False)
+            self.z_dynamic_button.setEnabled(False)
+            self.z_colormap_dropdown.setCurrentText("None")
+        elif raster and raster.z_channel is not None:
+            # Image has z-channel, enable UI elements
+            self.z_label.setEnabled(True)
+            self.z_unit_dropdown.setEnabled(True)
+            self.z_colormap_dropdown.setEnabled(True)
+            self.z_dynamic_button.setEnabled(True)
 
     def on_z_channel_removed(self, image_path):
         """
@@ -2029,6 +2057,7 @@ class MainWindow(QMainWindow):
             self.z_unit_dropdown.setEnabled(False)
             self.z_colormap_dropdown.setEnabled(False)
             self.z_dynamic_button.setEnabled(False)
+            self.z_colormap_dropdown.setCurrentText("None")
 
     def update_project_label(self):
         """Update the project label in the status bar"""
