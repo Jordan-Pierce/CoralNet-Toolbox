@@ -901,6 +901,47 @@ class AnnotationWindow(QGraphicsView):
         if enabled and self.z_item is not None:
             # Immediately update to current view range
             self.update_dynamic_range()
+        elif not enabled and self.z_item is not None:
+            # Reset to full range visualization when disabled
+            self._reset_z_channel_to_full_range()
+
+    def _reset_z_channel_to_full_range(self):
+        """
+        Reset the Z-channel visualization to show the full data range (0-255).
+        Used when dynamic scaling is disabled to restore the full-range view.
+        """
+        z_item_valid = self.z_item is not None
+        z_data_valid = self.z_data_normalized is not None
+        raw_data_valid = self.z_data_raw is not None
+        if not (z_item_valid and z_data_valid and raw_data_valid):
+            return
+        
+        try:
+            # Get current colormap name from main window
+            colormap_name = (
+                self.main_window.z_colormap_dropdown.currentText())
+            
+            if colormap_name != 'None':
+                # Apply the colormap to the normalized data (full range)
+                colormap = pg.colormap.get(colormap_name)
+                lut = colormap.getLookupTable(nPts=256)
+                
+                # Apply LUT directly to normalized data without rescaling
+                z_colored = lut[self.z_data_normalized]
+                
+                # Create QImage from RGB data
+                h, w = z_colored.shape[:2]
+                z_copy = np.ascontiguousarray(z_colored)
+                q_img = QImage(z_copy.data, w, h, w * 3,
+                               QImage.Format_RGB888)
+                
+                # Convert to QPixmap and update scene item
+                pixmap = QPixmap.fromImage(q_img)
+                self.z_item.setPixmap(pixmap)
+        except Exception:
+            # Reset failure is non-critical
+            import traceback
+            traceback.print_exc()
 
     def update_dynamic_range(self):
         """

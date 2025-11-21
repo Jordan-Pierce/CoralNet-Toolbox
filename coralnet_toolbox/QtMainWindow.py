@@ -1080,17 +1080,6 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
-        
-        # Z button and Z label
-        self.z_action = QAction(self.z_icon, "", self)
-        self.z_action.setCheckable(True)
-        self.z_action.setChecked(False)
-        self.z_action.setToolTip("Open Depth Dialog")
-        # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
-
-        # Create button to hold the Z action
-        self.z_button = QToolButton()
-        self.z_button.setDefaultAction(self.z_action)
 
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
@@ -1118,6 +1107,17 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z button and Z label
+        self.z_action = QAction(self.z_icon, "", self)
+        self.z_action.setCheckable(True)
+        self.z_action.setChecked(False)
+        self.z_action.setToolTip("Depth Anything 3 (Depth Estimation)")
+        # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
+
+        # Create button to hold the Z action
+        self.z_button = QToolButton()
+        self.z_button.setDefaultAction(self.z_action)
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1219,12 +1219,11 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.scale_unit_dropdown)
         self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
         self.status_bar_layout.addWidget(self.scaled_view_dims_label)
-        self.status_bar_layout.addWidget(self.z_button)
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(self.z_button)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
