@@ -735,6 +735,7 @@ class InferenceEngine:
         self.task = None
         
         # Default inference parameters
+        self.max_detections = 300  # Default max detections
         self.conf = 0.3
         self.iou = 0.2
         self.area_min = 0.0
@@ -797,12 +798,14 @@ class InferenceEngine:
         """Set the selected classes for inference."""
         self.selected_classes = class_indices
         
-    def set_inference_params(self, conf, iou, area_min, area_max):
+    def set_inference_params(self, conf, iou, area_min, area_max, max_detections=None):
         """Set inference parameters for the video region."""
         self.conf = conf
         self.iou = iou
         self.area_min = area_min
         self.area_max = area_max
+        if max_detections is not None:
+            self.max_detections = max_detections
 
     def set_count_criteria(self, count_criteria):
         """Set the criteria for counting objects in regions."""
@@ -819,11 +822,12 @@ class InferenceEngine:
         if self.model is None:
             return sv.Detections.empty()
         
-        # Detect, and filter results based on confidence and IoU
+        # Detect, and filter results based on confidence, IoU, and max detections
         results = self.model(frame, 
                              conf=self.conf, 
                              iou=self.iou, 
                              classes=self.selected_classes,
+                             max_det=self.max_detections,
                              half=True,
                              device=self.device)[0]
         

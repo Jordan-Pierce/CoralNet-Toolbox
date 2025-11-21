@@ -147,7 +147,7 @@ class Base(QDialog):
         # Add ThresholdsWidget for all threshold controls
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
-            show_max_detections=False,
+            show_max_detections=True,
             show_uncertainty=True,
             show_iou=True,
             show_area=True,
@@ -156,6 +156,10 @@ class Base(QDialog):
         form_layout.addRow(self.thresholds_widget)
         
         # Connect threshold changes to update inference parameters
+        if hasattr(self.thresholds_widget, 'max_detections_spinbox'):
+            self.thresholds_widget.max_detections_spinbox.valueChanged.connect(
+                lambda: self.update_inference_parameters()
+            )
         if hasattr(self.thresholds_widget, 'uncertainty_threshold_slider'):
             self.thresholds_widget.uncertainty_threshold_slider.valueChanged.connect(
                 lambda: self.update_inference_parameters()
@@ -331,7 +335,8 @@ class Base(QDialog):
             self.thresholds_widget.get_uncertainty_thresh(),
             self.thresholds_widget.get_iou_thresh(),
             self.thresholds_widget.get_area_thresh_min(),
-            self.thresholds_widget.get_area_thresh_max()
+            self.thresholds_widget.get_area_thresh_max(),
+            self.thresholds_widget.get_max_detections()
         )
         
     def populate_class_filter(self):

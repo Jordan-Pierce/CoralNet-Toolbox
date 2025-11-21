@@ -89,7 +89,6 @@ class ThresholdsWidget(QGroupBox):
             self.area_threshold_max_slider.setTickInterval(10)
             self.area_threshold_max_slider.valueChanged.connect(self._update_area_label)
             
-            # NEW: Connect to MainWindow signal
             main_window.areaChanged.connect(self._on_area_changed)
             
             self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
@@ -156,6 +155,10 @@ class ThresholdsWidget(QGroupBox):
             self.area_threshold_max_slider.setValue(int(current_max * 100))
             self.area_thresh_min = current_min
             self.area_thresh_max = current_max
+    
+    def get_max_detections(self):
+        """Get the current max detections value"""
+        return self.max_detections
     
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
