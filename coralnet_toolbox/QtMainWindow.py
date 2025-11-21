@@ -181,6 +181,7 @@ class MainWindow(QMainWindow):
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
         self.z_icon = get_icon("z.png")
+        self.dynamic_icon = get_icon("dynamic.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -1091,16 +1092,32 @@ class MainWindow(QMainWindow):
         self.z_button = QToolButton()
         self.z_button.setDefaultAction(self.z_action)
 
-        # Z label for depth information
-        self.z_label = QLabel("Z: -----")
-        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
-        
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
         self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.z_unit_dropdown.setFixedWidth(60)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z label for depth information
+        self.z_label = QLabel("Z: -----")
+        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
+
+        # Z colormap dropdown for visualization
+        self.z_colormap_dropdown = QComboBox()
+        self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
+        self.z_colormap_dropdown.setCurrentText('None')
+        self.z_colormap_dropdown.setFixedWidth(100)
+        self.z_colormap_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
+
+        # Z dynamic scaling button
+        self.z_dynamic_button = QToolButton()
+        self.z_dynamic_button.setCheckable(True)
+        self.z_dynamic_button.setChecked(False)
+        self.z_dynamic_button.setIcon(self.dynamic_icon)
+        self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
+        self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1205,6 +1222,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_button)
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
+        self.status_bar_layout.addWidget(self.z_colormap_dropdown)
+        self.status_bar_layout.addWidget(self.z_dynamic_button)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
@@ -1272,6 +1291,8 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
+        self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -2005,6 +2026,8 @@ class MainWindow(QMainWindow):
             self.z_label.setText("Z: -----")
             self.z_label.setEnabled(False)
             self.z_unit_dropdown.setEnabled(False)
+            self.z_colormap_dropdown.setEnabled(False)
+            self.z_dynamic_button.setEnabled(False)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2139,6 +2162,8 @@ class MainWindow(QMainWindow):
                     # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
                     self.z_unit_dropdown.setEnabled(True)
+                    self.z_colormap_dropdown.setEnabled(True)
+                    self.z_dynamic_button.setEnabled(True)
                     
                 except (IndexError, ValueError):
                     pass
@@ -2199,6 +2224,14 @@ class MainWindow(QMainWindow):
         # Refresh the confidence window if an annotation is selected
         if self.confidence_window.annotation:
             self.confidence_window.refresh_display()
+        
+    def on_z_colormap_changed(self, colormap_name):
+        """Handle z-colormap dropdown changes by updating the annotation window."""
+        self.annotation_window.update_z_colormap(colormap_name)
+    
+    def on_z_dynamic_toggled(self, checked):
+        """Handle z-dynamic scaling button toggle."""
+        self.annotation_window.toggle_dynamic_z_scaling(checked)
         
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
