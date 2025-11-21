@@ -92,7 +92,6 @@ class ZDropTable(QTableWidget):
     def show_context_menu(self, position):
         """Show context menu for row operations."""
         selected_rows = sorted(set(index.row() for index in self.selectedIndexes()))
-        print(f"[ZDropTable.show_context_menu] Selected rows: {selected_rows}")
         
         if selected_rows:
             menu = QMenu(self)
@@ -112,12 +111,9 @@ class ZDropTable(QTableWidget):
                 clear_action = menu.addAction(f"Clear Z-Channel Mapping ({len(selected_rows)} rows)")
             
             action = menu.exec_(self.mapToGlobal(position))
-            print(f"[ZDropTable.show_context_menu] User selected action: {action.text() if action else 'None'}")
             if action == clear_action:
-                print(f"[ZDropTable.show_context_menu] Emitting clearMapping with rows: {selected_rows}")
                 self.clearMapping.emit(selected_rows)
             elif action == units_action:
-                print(f"[ZDropTable.show_context_menu] Emitting setBulkUnits with rows: {selected_rows}")
                 self.setBulkUnits.emit(selected_rows)
 
 
