@@ -28,7 +28,7 @@ The main window consists of several components:
 - **Menu Bar**: Contains import, export, and other actions
 - **Tool Bar**: Contains tools for selection and annotation
 - **Status Bar**: Displays the image size, cursor position, view extent, annotation transparency, and thresholds
-- **Annotation Window**: Displays the image and annotations
+- **Annotation Window**: Displays the image, Z-channel, and annotations
 - **Label Window**: Lists and manages labels
 - **Image Window**: Displays imported images
 - **Confidence Window**: Displays cropped images and confidence charts
@@ -45,9 +45,10 @@ The main window consists of several components:
   - **Import CoralNet Labels (CSV)**: Load label data from a CoralNet CSV file
   - **Import TagLab Labels (JSON)**: Load label data from a TagLab JSON file
   - **Import Annotations (JSON)**: Load annotation data from a JSON file
-  - **Import CoralNet Annotations**: Load annotation data from a CoralNet CSV file
-  - **Import TagLab Annotations**: Load annotation data from a TagLab JSON file
-  - **Import Viscore Annotations**: Load annotation data from a Viscore CSV file
+  - **Import CoralNet Annotations (CSV)**: Load annotation data from a CoralNet CSV file
+  - **Import TagLab Annotations (JSON)**: Load annotation data from a TagLab JSON file
+  - **Import Squidle+ Annotations (JSON)**: Load annotation data from a Squidle+ JSON file
+  - **Import Viscore Annotations(CSV)**: Load annotation data from a Viscore CSV file
   - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)
 
 - **Export**:
@@ -109,9 +110,9 @@ The main window consists of several components:
       - Annotations will only be placed within these margins
 
 - **Tile**:
+  - **Tile Manager**: Pre-compute multiple tiles / work areas for selected images
+  - **Tile Batch Inferece**: Apply inference on all imagues with tiles / work areas
   - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`
-  - **Tile Creation**: Pre-compute multiple work areas for selected images
-  - **Tile Batch Inferece**: Apply inference on all imagues with work areas
 
 - **CoralNet**: 
   - **Authenticate**: Authenticate with CoralNet
@@ -227,6 +228,9 @@ The main window consists of several components:
   - Press <kbd>Ctrl</kbd> + (<kbd>Backspace</kbd> or <kbd>Delete</kbd>) to clear the mask annotation on the current image.
   - A semi-transparent preview shows the eraser while drawing.
 
+- **Dropper Tool**: After selecting the tool
+  - <kbd>Left-click</kbd> on a mask annotation region to select the associated label.
+
 - **Fill Tool**: After selecting the tool
   - <kbd>Left-click</kbd> to fill the region under the cursor with the selected label.
 
@@ -267,8 +271,13 @@ The main window consists of several components:
 - **Annotation Visibility**: Show / Hide all existing annotations
 - **Annotation Transparency**: Adjust the annotation transparency
 - **Scale**: Displays the scale dimensions
-  - Provides a dropdown to select preferred units (mm, cm, m, km)
+  - Provides a dropdown to select preferred units (mm, cm, m, km, etc.,)
   - Enabled when a scale is set using the Scale Tool or imported from an image
+- **Z**: Displays the Z-dimension
+  - Provides a dropdown to select preferred units (mm, cm, m, km etc.,)
+  - Enabled when a Z-channel for the image is imported
+  - Select a color map in the dropdown to overlay Z-channel 
+  - Click dynamic range button to enable dynamic recoloring of Z-channel 
 - **Patch Size**: Manipulate Patch Size (only active when using Patch Tool)
 - **Parameters**: Adjust parameters including uncertainty, IoU, and area thresholds
 
@@ -304,8 +313,12 @@ The main window consists of several components:
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows
   - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows
 - **Open Context Menu**:
-  - <kbd>Right-Click</kbd> on a single highlighted row: Delete images / annotations for the highlighted row
-  - <kbd>Shift</kbd> + <kbd>Right-Click</kbd> on multiple highlighted rows: Delete images / annotations for highlighted rows
+  - <kbd>Right-Click</kbd> on a single / multiple highlighted row: 
+    - Check / uncheck highlighted rows
+    - Import Z-channel for highlighted rows (opens Z-channel import dialog)
+    - Remove Z-channel for highlighted rows
+    - Delete annotations for highlighted rows
+    - Delete images and annotations for highlighted rows
 - **Search / Filter**:
   - **By Image**: Filter for images by name or sub-string
   - **By Label**: Filter images by labels they contain
@@ -339,7 +352,7 @@ The main window consists of several components:
   - Each confidence bar shows the label color and confidence percentage
   - Numbered indicators (1-5) show the rank of each prediction
   - Hover over confidence bars to see a pointing hand cursor when selection is possible
-- **Tool Tip**: Hover over the window while an annotation is selected to see its metadata, including (scaled) dimensions
+- **Tool Tip**: Hover over the window while an annotation is selected to see its metadata
 
 ### [Hotkeys](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys)
 
