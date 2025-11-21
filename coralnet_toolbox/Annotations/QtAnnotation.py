@@ -106,9 +106,7 @@ class Annotation(QObject):
             try:
                 pixel_area = self.get_area()
                 scaled_area = pixel_area * (self.scale_x * self.scale_y)
-                # Standardize 'metre' to 'm' for display
-                units = 'm' if self.scale_units == 'metre' else self.scale_units
-                return scaled_area, units
+                return scaled_area, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
         return None
@@ -128,9 +126,7 @@ class Annotation(QObject):
                 # Use scale_x as the primary factor.
                 # Our ScaleTool sets x and y to be the same.
                 scaled_perimeter = pixel_perimeter * self.scale_x
-                # Standardize 'metre' to 'm' for display
-                units = 'm' if self.scale_units == 'metre' else self.scale_units
-                return scaled_perimeter, units
+                return scaled_perimeter, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
         return None

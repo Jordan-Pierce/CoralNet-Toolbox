@@ -1530,7 +1530,7 @@ class ScaleTool(Tool):
                 raster = self.main_window.image_window.raster_manager.get_raster(path)
                 if raster:
                     # We assume square pixels from this tool
-                    raster.update_scale(new_scale, new_scale, 'metre')
+                    raster.update_scale(new_scale, new_scale, 'm')
                     
                     # Update all annotations for this image with the new scale
                     self.annotation_window.set_annotations_scale(path)

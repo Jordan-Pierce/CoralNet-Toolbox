@@ -222,6 +222,12 @@ class MainWindow(QMainWindow):
 
         # Set the default scale unit
         self.current_unit_scale = 'm'
+        # Set the default z-channel unit
+        self.current_unit_z = 'm'
+        
+        # Cache the raw z-value at current mouse position to enable re-conversion
+        # when user changes z-unit dropdown, without needing to re-read from raster
+        self.current_z_value = None
 
         # Store current mouse position for z-channel lookup
         self.current_mouse_x = 0
@@ -1084,11 +1090,18 @@ class MainWindow(QMainWindow):
         # Create button to hold the Z action
         self.z_button = QToolButton()
         self.z_button.setDefaultAction(self.z_action)
-        self.z_button.setEnabled(False)  # TODO Make the button not clickable
 
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z unit dropdown
+        self.z_unit_dropdown = QComboBox()
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd',
+                                       'mi', 'px'])
+        self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
+        self.z_unit_dropdown.setFixedWidth(60)
+        self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1192,6 +1205,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.scaled_view_dims_label)
         self.status_bar_layout.addWidget(self.z_button)
         self.status_bar_layout.addWidget(self.z_label)
+        self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
@@ -1258,6 +1272,7 @@ class MainWindow(QMainWindow):
         # Update the scaled view dimensions label
         # --------------------------------------------------
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
+        self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -1986,10 +2001,11 @@ class MainWindow(QMainWindow):
             image_path (str): Path of the raster with removed z-channel
         """
         # If the removed z-channel belongs to the currently displayed image,
-        # clear the z-label in the status bar
+        # clear the z-label in the status bar and disable the dropdown
         if image_path == self.annotation_window.current_image_path:
             self.z_label.setText("Z: -----")
             self.z_label.setEnabled(False)
+            self.z_unit_dropdown.setEnabled(False)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2093,34 +2109,40 @@ class MainWindow(QMainWindow):
         self.update_z_value_at_mouse_position(raster)
     
     def update_z_value_at_mouse_position(self, raster):
-        """Update the z_label with z-channel value at current mouse position"""
+        """Update the z_label with z-channel value at current mouse position."""
         if raster and raster.z_channel_lazy is not None:
             # Check if mouse coordinates are within image bounds
             if (0 <= self.current_mouse_x < raster.width and 
                 0 <= self.current_mouse_y < raster.height):
                 
                 try:
-                    # Get z-channel value at mouse position
-                    # Note: z_channel is stored as (height, width) array
+                    # Get z-channel value at mouse position (stored as height, width array)
                     z_channel = raster.z_channel_lazy
                     z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
                     
+                    # Cache the raw z-value for re-conversion if unit dropdown changes
+                    self.current_z_value = z_value
+                    
+                    # Get the original unit from the raster
+                    original_unit = raster.z_unit if raster.z_unit else 'm'
+                    
+                    # Convert to selected unit if different from original
+                    display_value = z_value
+                    if self.current_unit_z != original_unit:
+                        display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                    
                     # Format the display based on data type
                     if z_channel.dtype == np.float32:
-                        # For float32, show with appropriate decimal places
-                        self.z_label.setText(f"Z: {z_value:.3f}")
+                        self.z_label.setText(f"Z: {display_value:.3f}")
                     else:
-                        # For uint8 or other integer types, show as integer
-                        self.z_label.setText(f"Z: {int(z_value)}")
+                        self.z_label.setText(f"Z: {int(display_value)}")
                     
-                    # Enable the z_label since we have valid data
+                    # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
+                    self.z_unit_dropdown.setEnabled(True)
                     
                 except (IndexError, ValueError):
-                    pass  
-                    # Keeps the last valid z_label value in the status bar
-                    # self.z_label.setText("Z: -----")
-                    # self.z_label.setEnabled(False)
+                    pass
             
     def on_scale_unit_changed(self, to_unit):
         """
@@ -2131,8 +2153,8 @@ class MainWindow(QMainWindow):
             return
 
         # Convert the stored meter values
-        converted_height = convert_scale_units(self.scaled_view_height_m, 'metre', to_unit)
-        converted_width = convert_scale_units(self.scaled_view_width_m, 'metre', to_unit)
+        converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
+        converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
 
         # Update the dimensions label
         self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
@@ -2143,6 +2165,39 @@ class MainWindow(QMainWindow):
         # Refresh the confidence window if an annotation is selected
         # This is the only refresh needed, as it's the only
         # change that can happen *while* an annotation is displayed.
+        if self.confidence_window.annotation:
+            self.confidence_window.refresh_display()
+    
+    def on_z_unit_changed(self, selected_unit):
+        """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
+        # Update the selected unit
+        self.current_unit_z = selected_unit
+        
+        # Re-convert and display the cached z-value in the new unit
+        if self.current_z_value is not None:
+            try:
+                # Get the current raster to fetch original unit and data type info
+                raster = self.image_window.raster_manager.get_raster(self.image_window.selected_image_path)
+                if raster and raster.z_channel_lazy is not None:
+                    original_unit = raster.z_unit if raster.z_unit else 'm'
+                    z_channel = raster.z_channel_lazy
+                    
+                    # Convert from original unit to selected unit
+                    converted_value = convert_scale_units(
+                        self.current_z_value, 
+                        original_unit, 
+                        selected_unit
+                    )
+                    
+                    # Format the display based on data type
+                    if z_channel.dtype == np.float32:
+                        self.z_label.setText(f"Z: {converted_value:.3f}")
+                    else:
+                        self.z_label.setText(f"Z: {int(converted_value)}")
+            except Exception:
+                pass  # If conversion fails, keep last value displayed
+        
+        # Refresh the confidence window if an annotation is selected
         if self.confidence_window.annotation:
             self.confidence_window.refresh_display()
         

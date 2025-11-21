@@ -570,25 +570,20 @@ class ZPairingWidget(QWidget):
         
         img_path = self.image_files[row]
         standard_units = get_standard_z_units()
-        unit_names = [display for display, _ in standard_units]
-        unit_values = [norm for _, norm in standard_units]
         
         selected, ok = QInputDialog.getItem(
             self,
             "Select Z-Channel Units",
             f"Units for {os.path.basename(img_path)}:",
-            unit_names,
+            standard_units,
             editable=False
         )
         
         if ok:
-            idx = unit_names.index(selected)
-            selected_unit = unit_values[idx]
-            
             # Update mapping and table
-            self.mapping[img_path]["units"] = selected_unit
+            self.mapping[img_path]["units"] = selected
             item_units = self.table.item(row, 2)
-            item_units.setText(selected_unit if selected_unit else "? (Select)")
+            item_units.setText(selected if selected else "? (Select)")
     
     def show_bulk_units_dialog(self, rows):
         """
@@ -600,27 +595,22 @@ class ZPairingWidget(QWidget):
         from PyQt5.QtWidgets import QInputDialog
         
         standard_units = get_standard_z_units()
-        unit_names = [display for display, _ in standard_units]
-        unit_values = [norm for _, norm in standard_units]
         
         selected, ok = QInputDialog.getItem(
             self,
             "Set Z-Channel Units for Multiple Rows",
             f"Set units for {len(rows)} selected row{'s' if len(rows) > 1 else ''}:",
-            unit_names,
+            standard_units,
             editable=False
         )
         
         if ok:
-            idx = unit_names.index(selected)
-            selected_unit = unit_values[idx]
-            
             # Apply to all selected rows
             for row in rows:
                 img_path = self.image_files[row]
-                self.mapping[img_path]["units"] = selected_unit
+                self.mapping[img_path]["units"] = selected
                 item_units = self.table.item(row, 2)
-                item_units.setText(selected_unit if selected_unit else "? (Select)")
+                item_units.setText(selected if selected else "? (Select)")
 
     def finalize_mapping(self):
         """

@@ -115,9 +115,7 @@ class RasterTableModel(QAbstractTableModel):
 
                 # Add scale information if it exists
                 if raster.scale_x and raster.scale_units:
-                    # Standardize 'metre' to 'm'
-                    units = 'm' if raster.scale_units == 'metre' else raster.scale_units
-                    tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {units}/pixel")
+                    tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {raster.scale_units}/pixel")
 
                 tooltip_parts.extend([
                     f"<b>Annotations:</b> {'Yes' if raster.has_annotations else 'No'}",

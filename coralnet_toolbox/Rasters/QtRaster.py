@@ -167,10 +167,10 @@ class Raster(QObject):
                     source_units = crs.linear_units.lower()
 
                     # Convert scale to meters per pixel
-                    scale_x_meters = convert_scale_units(scale_x, source_units, 'metre')
-                    scale_y_meters = convert_scale_units(scale_y, source_units, 'metre')
+                    scale_x_meters = convert_scale_units(scale_x, source_units, 'm')
+                    scale_y_meters = convert_scale_units(scale_y, source_units, 'm')
 
-                    self.update_scale(scale_x_meters, scale_y_meters, 'metre')
+                    self.update_scale(scale_x_meters, scale_y_meters, 'm')
 
                 elif getattr(crs, "is_geographic", False):
                     # Case 2: Geographic. Project to Web Mercator (EPSG:3857) to get meter-based scale.
@@ -190,7 +190,7 @@ class Raster(QObject):
                         # Now, the transform's components are in meters
                         scale_x = abs(transform.a)
                         scale_y = abs(transform.e)
-                        scale_units = 'metre'  # EPSG:3857 units are meters
+                        scale_units = 'm'  # EPSG:3857 units are meters
 
                         self.update_scale(scale_x, scale_y, scale_units)
 
@@ -220,7 +220,7 @@ class Raster(QObject):
         Args:
             scale_x (float): The horizontal scale (e.g., meters per pixel)
             scale_y (float): The vertical scale (e.g., meters per pixel)
-            units (str): The name of the units (e.g., 'metre', 'cm')
+            units (str): The name of the units (e.g., 'm', 'cm')
         """
         self.scale_x = scale_x
         self.scale_y = scale_y

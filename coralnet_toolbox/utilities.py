@@ -784,51 +784,61 @@ def detect_z_channel_units_from_file(z_channel_path):
 
 def normalize_z_unit(unit_str):
     """
-    Normalize a z-unit string to a standard format.
+    Normalize a z-unit string to a standard short-form format.
+    This ensures consistency with scale unit conventions.
     
     Args:
         unit_str (str): Unit string to normalize (e.g., 'metre', 'm', 'foot', 'ft')
         
     Returns:
-        str: Normalized unit string (e.g., 'metres', 'feet', 'centimetres', 'pixels')
+        str: Normalized unit string in short form (e.g., 'm', 'ft', 'cm', 'px')
     """
     if unit_str is None:
         return None
         
     unit_str = unit_str.lower().strip()
     
-    # Map various spellings to normalized forms
+    # Map various spellings to normalized short forms
     unit_map = {
-        # Metric
-        'metre': 'metres',
-        'm': 'metres',
-        'meter': 'metres',
-        'meters': 'metres',
-        'mm': 'millimetres',
-        'millimeter': 'millimetres',
-        'millimeters': 'millimetres',
-        'cm': 'centimetres',
-        'centimeter': 'centimetres',
-        'centimeters': 'centimetres',
-        'km': 'kilometres',
-        'kilometer': 'kilometres',
-        'kilometers': 'kilometres',
+        # Metric - to short form
+        'metre': 'm',
+        'meter': 'm',
+        'meters': 'm',
+        'metres': 'm',
+        'mm': 'mm',
+        'millimeter': 'mm',
+        'millimeters': 'mm',
+        'millimetres': 'mm',
+        'cm': 'cm',
+        'centimeter': 'cm',
+        'centimeters': 'cm',
+        'centimetres': 'cm',
+        'km': 'km',
+        'kilometer': 'km',
+        'kilometers': 'km',
+        'kilometres': 'km',
         
-        # Imperial
-        'ft': 'feet',
-        'foot': 'feet',
-        'in': 'inches',
-        'inch': 'inches',
-        'yd': 'yards',
-        'yard': 'yards',
-        'mi': 'miles',
-        'mile': 'miles',
-        'us survey foot': 'us survey feet',
+        # Imperial - to short form
+        'ft': 'ft',
+        'foot': 'ft',
+        'feet': 'ft',
+        'in': 'in',
+        'inch': 'in',
+        'inches': 'in',
+        'yd': 'yd',
+        'yard': 'yd',
+        'yards': 'yd',
+        'mi': 'mi',
+        'mile': 'mi',
+        'miles': 'mi',
+        'us survey foot': 'ft',
+        'us survey feet': 'ft',
         
-        # Special
-        'pixel': 'pixels',
-        'px': 'pixels',
-        'pix': 'pixels',
+        # Special - to short form
+        'pixel': 'px',
+        'pixels': 'px',
+        'px': 'px',
+        'pix': 'px',
     }
     
     return unit_map.get(unit_str, unit_str)
@@ -837,22 +847,12 @@ def normalize_z_unit(unit_str):
 def get_standard_z_units():
     """
     Get a list of standard z-channel units for UI selection.
+    Returns short-form units matching scale unit conventions.
     
     Returns:
-        list: List of (display_name, normalized_name) tuples
+        list: List of unit abbreviations ('mm', 'cm', 'm', etc.)
     """
-    return [
-        ('Metres', 'metres'),
-        ('Centimetres', 'centimetres'),
-        ('Millimetres', 'millimetres'),
-        ('Kilometres', 'kilometres'),
-        ('Feet', 'feet'),
-        ('Inches', 'inches'),
-        ('Yards', 'yards'),
-        ('Miles', 'miles'),
-        ('US Survey Feet', 'us survey feet'),
-        ('Pixels', 'pixels'),
-    ]
+    return ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px']
     
 
 def simplify_polygon(xy_points, simplify_tolerance=0.1):
