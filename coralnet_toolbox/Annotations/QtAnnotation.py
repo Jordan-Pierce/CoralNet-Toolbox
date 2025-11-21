@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectIte
 
 from coralnet_toolbox.QtLabelWindow import Label
 
+from coralnet_toolbox.utilities import convert_scale_units
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -228,7 +230,6 @@ class Annotation(QObject):
             # 4. Convert z_slice to meters if necessary
             # This ensures all dimensions are in the same unit (meters)
             if z_unit:
-                from coralnet_toolbox.utilities import convert_scale_units
                 z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre')
                 z_slice_meters = z_slice * z_to_meters_factor
             else:

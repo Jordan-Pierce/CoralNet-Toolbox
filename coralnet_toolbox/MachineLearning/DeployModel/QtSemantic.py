@@ -93,7 +93,7 @@ class Semantic(Base):
             event: The event object.
         """
         super().showEvent(event)
-        self.thresholds_widget.initialize_thresholds(self.main_window)
+        self.thresholds_widget.initialize_thresholds()
 
     def setup_parameters_layout(self):
         """

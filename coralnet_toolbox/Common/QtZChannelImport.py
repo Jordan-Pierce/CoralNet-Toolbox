@@ -454,9 +454,6 @@ class ZPairingWidget(QWidget):
             
             # Color code the row based on match status
             self.update_row_color(r, status)
-            
-            # Color code the row based on match status
-            self.update_row_color(r, status)
 
     def update_row_color(self, row, status):
         """

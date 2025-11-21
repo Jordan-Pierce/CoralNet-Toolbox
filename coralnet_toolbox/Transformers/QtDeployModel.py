@@ -103,7 +103,7 @@ class DeployModelDialog(QDialog):
         """
         super().showEvent(event)
         self.update_label_options()
-        self.thresholds_widget.initialize_thresholds(self.main_window)
+        self.thresholds_widget.initialize_thresholds()
 
     def setup_info_layout(self):
         """

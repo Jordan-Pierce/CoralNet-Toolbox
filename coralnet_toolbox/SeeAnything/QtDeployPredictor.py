@@ -80,7 +80,7 @@ class DeployPredictorDialog(QDialog):
             event: The event object.
         """
         super().showEvent(event)
-        self.thresholds_widget.initialize_thresholds(self.main_window)
+        self.thresholds_widget.initialize_thresholds()
 
     def setup_info_layout(self):
         """

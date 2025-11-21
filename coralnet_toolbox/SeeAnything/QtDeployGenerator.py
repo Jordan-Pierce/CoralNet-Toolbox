@@ -194,7 +194,7 @@ class DeployGeneratorDialog(QDialog):
         :param event: Show event
         """
         super().showEvent(event)
-        self.thresholds_widget.initialize_thresholds(self.main_window)
+        self.thresholds_widget.initialize_thresholds()
         
         # Update the device
         self.device = self.main_window.device

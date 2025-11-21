@@ -95,7 +95,7 @@ class DeployGeneratorDialog(QDialog):
             event: The event object.
         """
         super().showEvent(event)
-        self.thresholds_widget.initialize_thresholds(self.main_window)
+        self.thresholds_widget.initialize_thresholds()
         self.update_detect_as_combo()
 
     def setup_info_layout(self):
