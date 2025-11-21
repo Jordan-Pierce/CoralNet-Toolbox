@@ -341,7 +341,7 @@ class Segment(Base):
                                               agnostic_nms=True,
                                               conf=self.thresholds_widget.get_uncertainty_thresh(),
                                               iou=self.thresholds_widget.get_iou_thresh(),
-                                              max_det=self.thresholds_widget.max_detections_spinbox.value(),
+                                              max_det=self.thresholds_widget.get_max_detections(),
                                               device=self.main_window.device,
                                               retina_masks=self.task == "segment",
                                               half=True,

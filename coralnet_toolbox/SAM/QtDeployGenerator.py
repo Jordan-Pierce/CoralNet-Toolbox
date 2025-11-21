@@ -337,7 +337,7 @@ class DeployGeneratorDialog(QDialog):
                              mode='predict',
                              save=False,
                              retina_masks=self.task == "segment",
-                             max_det=self.thresholds_widget.max_detections_spinbox.value(),
+                             max_det=self.thresholds_widget.get_max_detections(),
                              imgsz=self.get_imgsz(),
                              conf=self.thresholds_widget.get_uncertainty_thresh(),
                              iou=self.thresholds_widget.get_iou_thresh(),
@@ -555,7 +555,7 @@ class DeployGeneratorDialog(QDialog):
         # Update the model with user parameters
         self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
         self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
-        self.loaded_model.max_det = self.thresholds_widget.max_detections_spinbox.value()
+        self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
 
         results_list = []
         for input_image in inputs:

@@ -957,7 +957,7 @@ class DeployGeneratorDialog(QDialog):
                 self.task = self.use_task_dropdown.currentText()
                 self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
                 self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
-                self.loaded_model.max_det = self.thresholds_widget.max_detections_spinbox.value()
+                self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
                 
                 # Get the reference information
                 references_dict = self._get_references()
@@ -1361,7 +1361,7 @@ class DeployGeneratorDialog(QDialog):
                                                       imgsz=self.imgsz_spinbox.value(),
                                                       conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                       iou=self.thresholds_widget.get_iou_thresh(),
-                                                      max_det=self.thresholds_widget.max_detections_spinbox.value(),
+                                                      max_det=self.thresholds_widget.get_max_detections(),
                                                       retina_masks=self.task == "segment")
         
         results_list = []

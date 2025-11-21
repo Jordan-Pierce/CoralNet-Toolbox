@@ -455,7 +455,7 @@ class DeployPredictorDialog(QDialog):
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                 iou=self.thresholds_widget.get_iou_thresh(),
-                                                max_det=self.thresholds_widget.max_detections_spinbox.value(),
+                                                max_det=self.thresholds_widget.get_max_detections(),
                                                 retina_masks=self.task == "segment")
 
         except Exception as e:
@@ -531,7 +531,7 @@ class DeployPredictorDialog(QDialog):
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                     iou=self.thresholds_widget.get_iou_thresh(),
-                                                    max_det=self.thresholds_widget.max_detections_spinbox.value(),
+                                                    max_det=self.thresholds_widget.get_max_detections(),
                                                     retina_masks=self.task == "segment")
 
                 results[0].names = {0: refer_label.short_label_code}
