@@ -373,6 +373,7 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.menu_bar = self.menuBar()
 
+        # ========== FILE MENU ==========
         # File menu
         self.file_menu = self.menu_bar.addMenu("File")
 
@@ -516,20 +517,20 @@ class MainWindow(QMainWindow):
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
 
-        # Explorer menu
-        self.explorer_menu = self.menu_bar.addMenu("Explorer")
-        # Open Explorer
-        self.open_explorer_action = QAction("Open Explorer", self)
-        self.open_explorer_action.triggered.connect(self.open_explorer_window)
-        self.explorer_menu.addAction(self.open_explorer_action)
+        # ========== UTILITIES MENU ==========
+        # Utilities menu
+        self.utilities_menu = self.menu_bar.addMenu("Utilities")
         
-        # Sampling Annotations menu
+        # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
-        self.menu_bar.addAction(self.annotation_sampling_action)
+        self.utilities_menu.addAction(self.annotation_sampling_action)
         
-        # Tile menu
-        self.tile_menu = self.menu_bar.addMenu("Tile")
+        # Add a separator
+        self.utilities_menu.addSeparator()
+        
+        # Tile submenu
+        self.tile_menu = self.utilities_menu.addMenu("Tile")
         
         # Tile Creation
         self.tile_manager_action = QAction("Tile Manager", self)
@@ -562,18 +563,56 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
 
-        # CoralNet menu
-        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        # ========== AI-ASSIST MENU ==========
+        # AI-Assist menu
+        self.ai_assist_menu = self.menu_bar.addMenu("AI-Assist")
         
-        # CoralNet Authenticate
-        self.coralnet_authenticate_action = QAction("Authenticate", self)
-        self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
-        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
-        # CoralNet Download
-        self.coralnet_download_action = QAction("Download", self)
-        self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
-        self.coralnet_menu.addAction(self.coralnet_download_action)
+        # SAM submenu
+        self.sam_menu = self.ai_assist_menu.addMenu("SAM")
+        # Deploy Predictor
+        self.sam_deploy_model_action = QAction("Deploy Predictor", self)
+        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
+        self.sam_menu.addAction(self.sam_deploy_model_action)
+        # Deploy Generator
+        self.sam_deploy_generator_action = QAction("Deploy Generator", self)
+        self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
+        self.sam_menu.addAction(self.sam_deploy_generator_action)
+        # Batch Inference
+        self.sam_batch_inference_action = QAction("Batch Inference", self)
+        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
+        self.sam_menu.addAction(self.sam_batch_inference_action)
 
+        # See Anything submenu
+        self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything")
+        # Train Model
+        self.see_anything_train_model_action = QAction("Train Model", self)
+        self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
+        # self.see_anything_menu.addAction(self.see_anything_train_model_action)  TODO Doesn't work
+        # Deploy Predictor
+        self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
+        self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
+        self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
+        # Deploy Generator
+        self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
+        self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
+        self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
+        # Batch Inference
+        self.see_anything_batch_inference_action = QAction("Batch Inference", self)
+        self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
+        self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
+
+        # Transformers submenu
+        self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
+        # Deploy Model
+        self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        self.transformers_menu.addAction(self.transformers_deploy_model_action)
+        # Batch Inference
+        self.transformers_batch_inference_action = QAction("Batch Inference", self)
+        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
+        self.transformers_menu.addAction(self.transformers_batch_inference_action)
+
+        # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
         self.ml_menu = self.menu_bar.addMenu("Machine Learning")
 
@@ -699,57 +738,28 @@ class MainWindow(QMainWindow):
         # Video Inference Segmentation
         self.ml_segment_video_inference_action = QAction("Segment", self)
         self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action) 
+        self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action)
+
+        # ========== CORALNET MENU ==========
+        # CoralNet menu
+        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
         
-        # Transformers menu
-        self.transformers_menu = self.menu_bar.addMenu("Transformers")
-        # Deploy Model
-        self.transformers_deploy_model_action = QAction("Deploy Model", self)
-        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
-        self.transformers_menu.addAction(self.transformers_deploy_model_action)
-        # Batch Inference
-        self.transformers_batch_inference_action = QAction("Batch Inference", self)
-        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
-        self.transformers_menu.addAction(self.transformers_batch_inference_action)
+        # CoralNet Authenticate
+        self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
+        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+        # CoralNet Download
+        self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
+        self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # SAM menu
-        self.sam_menu = self.menu_bar.addMenu("SAM")
-        # Deploy Model submenu
-        self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
-        # Deploy Predictor
-        self.sam_deploy_model_action = QAction("Predictor", self)
-        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
-        self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
-        # Deploy Generator
-        self.sam_deploy_generator_action = QAction("Generator", self)
-        self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
-        self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
-        # Batch Inference
-        self.sam_batch_inference_action = QAction("Batch Inference", self)
-        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
-        self.sam_menu.addAction(self.sam_batch_inference_action)
+        # ========== EXPLORER ACTION ==========
+        # Explorer action
+        self.open_explorer_action = QAction("Explorer", self)
+        self.open_explorer_action.triggered.connect(self.open_explorer_window)
+        self.menu_bar.addAction(self.open_explorer_action)
 
-        # See Anything menu
-        self.see_anything_menu = self.menu_bar.addMenu("See Anything")
-        # Train Model
-        self.see_anything_train_model_action = QAction("Train Model", self)
-        self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
-        # self.see_anything_menu.addAction(self.see_anything_train_model_action)  TODO Doesn't work
-        # Deploy Model submenu
-        self.see_anything_deploy_model_menu = self.see_anything_menu.addMenu("Deploy Model")
-        # Deploy Predictor
-        self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
-        self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
-        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_predictor_action)
-        # Deploy Generator
-        self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
-        self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
-        self.see_anything_deploy_model_menu.addAction(self.see_anything_deploy_generator_action)
-        # Batch Inference
-        self.see_anything_batch_inference_action = QAction("Batch Inference", self)
-        self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
-        self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
-
+        # ========== HELP MENU ==========
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
 
@@ -995,7 +1005,6 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.work_area_tool_action)
         
         self.toolbar.addSeparator()
-        
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
