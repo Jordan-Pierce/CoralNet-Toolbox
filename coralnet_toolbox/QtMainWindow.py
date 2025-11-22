@@ -32,7 +32,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import ExplorerWindow
 
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
-from coralnet_toolbox.BatchInference.QtBase import BatchInferenceDialog
+from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
 
 from coralnet_toolbox.Tile import (
