@@ -339,29 +339,75 @@ class BatchInferenceDialog(QDialog):
                              enable_iou, enable_area):
         """
         Configure which thresholds are enabled/disabled.
-        All thresholds remain visible, but specific ones are disabled.
+        All thresholds remain visible, but specific ones are disabled and greyed out.
         
         :param enable_max_detections: Whether to enable max detections
         :param enable_uncertainty: Whether to enable uncertainty threshold
         :param enable_iou: Whether to enable IoU threshold
         :param enable_area: Whether to enable area threshold
         """
+        # Helper function to get all QLabel widgets from the form layout
+        def get_form_labels_for_widget(widget):
+            """Find and return all QLabel widgets associated with a control in the form layout."""
+            layout = self.thresholds_widget.layout()
+            labels = []
+            if layout and isinstance(layout, QFormLayout):
+                for row in range(layout.rowCount()):
+                    label_item = layout.itemAt(row, QFormLayout.LabelRole)
+                    widget_item = layout.itemAt(row, QFormLayout.FieldRole)
+                    
+                    if widget_item and widget_item.widget() == widget:
+                        if label_item and label_item.widget():
+                            labels.append(label_item.widget())
+            return labels
+        
         # Enable/disable max detections
         if hasattr(self.thresholds_widget, 'max_detections_spinbox'):
-            self.thresholds_widget.max_detections_spinbox.setEnabled(enable_max_detections)
+            spinbox = self.thresholds_widget.max_detections_spinbox
+            spinbox.setEnabled(enable_max_detections)
+            # Find and disable associated labels
+            labels = get_form_labels_for_widget(spinbox)
+            for label in labels:
+                label.setEnabled(enable_max_detections)
         
         # Enable/disable uncertainty threshold
         if hasattr(self.thresholds_widget, 'uncertainty_threshold_slider'):
-            self.thresholds_widget.uncertainty_threshold_slider.setEnabled(enable_uncertainty)
+            slider = self.thresholds_widget.uncertainty_threshold_slider
+            slider.setEnabled(enable_uncertainty)
+            value_label = getattr(self.thresholds_widget, 'uncertainty_threshold_label', None)
+            if value_label:
+                value_label.setEnabled(enable_uncertainty)
+            # Find and disable associated title labels
+            labels = get_form_labels_for_widget(slider)
+            for label in labels:
+                label.setEnabled(enable_uncertainty)
         
         # Enable/disable IoU threshold
         if hasattr(self.thresholds_widget, 'iou_threshold_slider'):
-            self.thresholds_widget.iou_threshold_slider.setEnabled(enable_iou)
+            slider = self.thresholds_widget.iou_threshold_slider
+            slider.setEnabled(enable_iou)
+            value_label = getattr(self.thresholds_widget, 'iou_threshold_label', None)
+            if value_label:
+                value_label.setEnabled(enable_iou)
+            # Find and disable associated title labels
+            labels = get_form_labels_for_widget(slider)
+            for label in labels:
+                label.setEnabled(enable_iou)
         
         # Enable/disable area threshold
         if hasattr(self.thresholds_widget, 'area_threshold_min_slider'):
-            self.thresholds_widget.area_threshold_min_slider.setEnabled(enable_area)
-            self.thresholds_widget.area_threshold_max_slider.setEnabled(enable_area)
+            min_slider = self.thresholds_widget.area_threshold_min_slider
+            max_slider = self.thresholds_widget.area_threshold_max_slider
+            min_slider.setEnabled(enable_area)
+            max_slider.setEnabled(enable_area)
+            value_label = getattr(self.thresholds_widget, 'area_threshold_label', None)
+            if value_label:
+                value_label.setEnabled(enable_area)
+            # Find and disable associated title labels
+            min_labels = get_form_labels_for_widget(min_slider)
+            max_labels = get_form_labels_for_widget(max_slider)
+            for label in min_labels + max_labels:
+                label.setEnabled(enable_area)
 
     def check_model_availability(self):
         """
@@ -421,3 +467,6 @@ class BatchInferenceDialog(QDialog):
         self.annotations = []
         self.prepared_patches = []
         self.image_paths = []
+        
+        # Untoggle all tools in the annotation window
+        self.annotation_window.toolChanged.emit(None)
