@@ -1195,10 +1195,22 @@ class ImageWindow(QWidget):
             )
             return
         
+        # Check if any models are available
+        batch_dialog = self.main_window.batch_inference_dialog
+        batch_dialog.update_model_availability()
+        
+        if not batch_dialog.model_dialogs:
+            QMessageBox.warning(
+                self,
+                "No Models Available",
+                "Please load a model before opening batch inference."
+            )
+            return
+        
         # Update the batch inference dialog with the highlighted images
-        self.main_window.batch_inference_dialog.highlighted_images = highlighted_image_paths
+        batch_dialog.highlighted_images = highlighted_image_paths
         # Show the dialog
-        self.main_window.batch_inference_dialog.exec_()
+        batch_dialog.exec_()
         
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""

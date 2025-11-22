@@ -266,6 +266,13 @@ class BatchInferenceDialog(QDialog):
         if 0 <= index < len(self.model_keys):
             selected_model = self.model_keys[index]
             self.update_thresholds_for_model(selected_model)
+            
+            # Disable inference type dropdown for Classify model
+            if selected_model == "Classify":
+                self.inference_type_combo.setEnabled(False)
+                self.inference_type_combo.setCurrentText("Standard")
+            else:
+                self.inference_type_combo.setEnabled(True)
     
     def on_inference_type_changed(self, inference_type):
         """
