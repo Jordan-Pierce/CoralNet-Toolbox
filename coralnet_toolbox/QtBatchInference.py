@@ -92,6 +92,9 @@ class BatchInferenceDialog(QDialog):
             self.reject()
             return
         
+        # Untoggle all tools in the annotation window
+        self.annotation_window.toolChanged.emit(None)
+        
         if hasattr(self, 'thresholds_widget'):
             self.thresholds_widget.initialize_thresholds()
 
@@ -467,6 +470,11 @@ class BatchInferenceDialog(QDialog):
         self.annotations = []
         self.prepared_patches = []
         self.image_paths = []
+        
+        # Reset inference type to Standard
+        self.inference_type_combo.blockSignals(True)
+        self.inference_type_combo.setCurrentText("Standard")
+        self.inference_type_combo.blockSignals(False)
         
         # Untoggle all tools in the annotation window
         self.annotation_window.toolChanged.emit(None)
