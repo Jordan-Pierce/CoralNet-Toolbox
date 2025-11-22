@@ -1139,6 +1139,16 @@ class ImageWindow(QWidget):
             toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
 
         context_menu.addSeparator()
+        
+        # Add batch inference action
+        batch_inference_action = context_menu.addAction(
+            f"Batch Inference ({count} Highlighted Image{'s' if count > 1 else ''})"
+        )
+        batch_inference_action.triggered.connect(
+            lambda: self.open_batch_inference_dialog(highlighted_paths)
+        )
+        
+        context_menu.addSeparator()
 
         # Add import z-channel action
         import_z_channel_action = context_menu.addAction(
@@ -1168,6 +1178,27 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def open_batch_inference_dialog(self, highlighted_image_paths):
+        """
+        Open the batch inference dialog with the highlighted images.
+        
+        Args:
+            highlighted_image_paths (list): List of image paths to process
+        """
+        # Ensure images are highlighted
+        if not highlighted_image_paths:
+            QMessageBox.warning(
+                self,
+                "No Images Selected",
+                "Please highlight one or more images before opening batch inference."
+            )
+            return
+        
+        # Update the batch inference dialog with the highlighted images
+        self.main_window.batch_inference_dialog.highlighted_images = highlighted_image_paths
+        # Show the dialog
+        self.main_window.batch_inference_dialog.exec_()
         
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""

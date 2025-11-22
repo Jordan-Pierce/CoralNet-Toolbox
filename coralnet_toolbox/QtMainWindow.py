@@ -32,6 +32,8 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.Explorer import ExplorerWindow
 
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
+from coralnet_toolbox.BatchInference.QtBase import BatchInferenceDialog
+
 
 from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
@@ -319,6 +321,9 @@ class MainWindow(QMainWindow):
         # Create dialogs (Transformers)
         self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
         self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
+
+        # Create dialogs (Batch Inference - Consolidated)
+        self.batch_inference_dialog = BatchInferenceDialog(self)
 
         # Create dialogs (Tile)
         self.tile_manager_dialog = TileManagerDialog(self)
