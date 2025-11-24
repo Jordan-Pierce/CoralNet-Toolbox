@@ -85,7 +85,7 @@ class RasterTableModel(QAbstractTableModel):
                 return "\u2713" if raster.checkbox_state else ""
             elif index.column() == self.Z_COL:
                 # Display a dot if z_channel is present
-                return "\u2022" if raster.z_channel is not None else ""
+                return "\u2022" if (raster.z_channel is not None or raster.z_channel_path) else ""
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
