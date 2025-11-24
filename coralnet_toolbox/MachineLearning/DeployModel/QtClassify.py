@@ -202,8 +202,7 @@ class Classify(Base):
 
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,
-                                                 self.class_mapping,
-                                                 uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh())
+                                                 self.class_mapping)
 
             # Process the classification results using the valid inputs
             # Pass the progress_bar parameter to avoid creating nested progress bars
