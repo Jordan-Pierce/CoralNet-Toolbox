@@ -2,7 +2,7 @@ import warnings
 
 from typing import Any, Dict, List, Optional, Set
 
-from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant
+from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush
 
 from coralnet_toolbox.Rasters import RasterManager
@@ -19,6 +19,9 @@ class RasterTableModel(QAbstractTableModel):
     """
     Custom table model for displaying a list of Raster objects.
     """
+    # Signals
+    rowsChanged = pyqtSignal()  # Emitted when rows are highlighted/unhighlighted
+    
     # Column indices
     CHECKBOX_COL = 0
     Z_COL = 1
@@ -236,6 +239,9 @@ class RasterTableModel(QAbstractTableModel):
                         self.index(row, 0),
                         self.index(row, self.columnCount() - 1)
                     )
+                
+                # Emit signal to notify listeners of highlighting change
+                self.rowsChanged.emit()
                     
     def clear_highlights(self):
         """Clear all highlighted paths"""
@@ -249,7 +255,7 @@ class RasterTableModel(QAbstractTableModel):
         # Unhighlight all paths
         for path in highlighted_paths:
             self.highlight_path(path, False)
-            
+
     def set_highlighted_paths(self, paths: List[str]):
         """
         Set the highlighted state for a list of paths, clearing all others.

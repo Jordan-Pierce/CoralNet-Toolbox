@@ -2613,7 +2613,7 @@ class MainWindow(QMainWindow):
         try:
             # Proceed to open the dialog if images are loaded
             self.untoggle_all_tools()
-            self.patch_annotation_sampling_dialog.exec_()
+            self.patch_annotation_sampling_dialog.show()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

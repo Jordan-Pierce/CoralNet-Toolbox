@@ -8,8 +8,8 @@ import numpy as np
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
-                             QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox, 
-                             QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
+                             QPushButton, QComboBox, QSpinBox,
+                             QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox, QLabel)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -58,7 +58,7 @@ class PatchGraphic(QGraphicsRectItem):
     def _create_pen(self):
         """Create a pulsing dotted pen with brighter color."""
         # Use a lighter version of the base color for better visibility
-        pen_color = QColor(self.base_color).darker(150)  # Changed to lighter for brighter appearance
+        pen_color = QColor(self.base_color)
         pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
         pen = QPen(pen_color, 4)  # Increased width
         pen.setCosmetic(True)
@@ -136,6 +136,7 @@ class PatchSamplingDialog(QDialog):
 
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self.layout = QVBoxLayout(self)
 
@@ -143,8 +144,6 @@ class PatchSamplingDialog(QDialog):
         self.setup_sampling_config_layout()
         # Setup the annotation configuration layout
         self.setup_annotation_config_layout()
-        # Setup the apply options layout
-        self.setup_apply_options_layout()
         # Setup the bottom button controls
         self.setup_buttons_layout()
 
@@ -154,6 +153,17 @@ class PatchSamplingDialog(QDialog):
         self.annotation_graphics = []
         # Add margin work area attribute
         self.margin_work_area = None
+        
+        # Add status label for highlighted images count
+        self.status_label = QLabel("No images highlighted")
+        self.status_label.setAlignment(Qt.AlignLeft)
+        self.layout.addWidget(self.status_label)
+        
+        # Connect to table model signals to update highlighted count when rows are highlighted
+        self.image_window.table_model.rowsChanged.connect(self.update_status_label)
+        
+        # Connect to image selection changes to update preview when user switches images
+        self.image_window.imageSelected.connect(self.on_image_changed)
 
     def setup_sampling_config_layout(self):
         """Set up the sampling method and count configuration."""
@@ -223,31 +233,6 @@ class PatchSamplingDialog(QDialog):
         # Add margin label and input directly to main layout
         self.layout.addWidget(self.margin_input)
 
-    def setup_apply_options_layout(self):
-        """Set up the application scope options."""
-        group_box = QGroupBox("Apply To")
-        layout = QVBoxLayout()
-
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
-
-        self.apply_group = QButtonGroup(self)
-        self.apply_group.addButton(self.apply_filtered_checkbox)
-        self.apply_group.addButton(self.apply_prev_checkbox)
-        self.apply_group.addButton(self.apply_next_checkbox)
-        self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(True)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
     def setup_buttons_layout(self):
         """Set up the bottom button controls."""
         button_layout = QHBoxLayout()
@@ -271,39 +256,54 @@ class PatchSamplingDialog(QDialog):
 
     def showEvent(self, event):
         """Handle dialog show event."""
-        self.update_checkboxes()
         self.update_label_combo()
-        self.preview_annotations()
+        self.update_status_label()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
-        self.update_checkboxes()
         self.clear_annotation_graphics()
         event.accept()
 
     def reject(self):
         """Handle dialog rejection."""
-        self.update_checkboxes()
         self.clear_annotation_graphics()
         super().reject()
         
-    def update_checkboxes(self):
-        """Clear the checkboxes states."""
-        # Temporarily disable exclusivity to allow unchecking all checkboxes
-        self.apply_group.setExclusive(False)
-        self.apply_filtered_checkbox.setChecked(False)
-        self.apply_prev_checkbox.setChecked(False)
-        self.apply_next_checkbox.setChecked(False)
-        self.apply_all_checkbox.setChecked(False)
-        # Restore exclusivity
-        self.apply_group.setExclusive(True)
-
     def update_label_combo(self):
         """Update the label combo box with the current labels."""
         self.label_combo.clear()
         for label in self.label_window.labels:
             self.label_combo.addItem(label.short_label_code, label.id)
         self.label_combo.setCurrentIndex(0)
+    
+    def update_status_label(self):
+        """Update the status label to show the number of images highlighted."""
+        highlighted_paths = self.image_window.table_model.get_highlighted_paths()
+        count = len(highlighted_paths)
+        if count == 0:
+            self.status_label.setText("No images highlighted")
+        elif count == 1:
+            self.status_label.setText("1 image highlighted")
+        else:
+            self.status_label.setText(f"{count} images highlighted")
+    
+    def on_image_changed(self, image_path):
+        """Handle when the user changes the selected image in the ImageWindow.
+        
+        When annotation_window.set_image() is called, it clears the scene, which removes
+        all graphics. We need to clear our stale references and then regenerate the preview
+        if one was being shown.
+        """
+        # Store whether we had preview graphics before the image changed
+        had_preview = len(self.annotation_graphics) > 0
+        
+        # Clear stale graphics references since annotation window just cleared its scene
+        self.annotation_graphics = []
+        self.margin_work_area = None
+        
+        # Only regenerate preview if we had one shown and new image is valid
+        if had_preview and image_path and self.annotation_window.active_image:
+            self.preview_annotations()
         
     def on_propagate_labels_changed(self, idx):
         """Handle changes to the propagate labels combo box."""
@@ -563,11 +563,6 @@ class PatchSamplingDialog(QDialog):
         # Clear the graphics
         self.clear_annotation_graphics()
 
-        self.apply_to_filtered = self.apply_filtered_checkbox.isChecked()
-        self.apply_to_prev = self.apply_prev_checkbox.isChecked()
-        self.apply_to_next = self.apply_next_checkbox.isChecked()
-        self.apply_to_all = self.apply_all_checkbox.isChecked()
-
         # Gets the label from LabelWindow
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
         if not sample_label:
@@ -575,37 +570,17 @@ class PatchSamplingDialog(QDialog):
             QMessageBox.warning(self, "Error", "Selected label not found")
             return
 
-        # Current image path showing
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
+        # Get highlighted image paths
+        image_paths = self.image_window.table_model.get_highlighted_paths()
+        if not image_paths:
             QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Error", "No image is currently selected")
+            msg = "Please highlight at least one image row to apply annotations to highlighted images."
+            QMessageBox.warning(self, "No Selection", msg)
             return
 
         # Prepare flags
         propagate = self.propagate_labels_combo.currentText() == "True"
         exclude_regions = False if propagate else (self.exclude_regions_combo.currentText() == "True")
-
-        # Determine which images to apply annotations to
-        if self.apply_to_filtered:
-            image_paths = self.image_window.table_model.filtered_paths
-        elif self.apply_to_prev:
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                image_paths = self.image_window.table_model.filtered_paths[:current_index + 1]
-            else:
-                image_paths = [current_image_path]
-        elif self.apply_to_next:
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                image_paths = self.image_window.table_model.filtered_paths[current_index:]
-            else:
-                image_paths = [current_image_path]
-        elif self.apply_to_all:
-            image_paths = self.image_window.raster_manager.image_paths
-        else:
-            # Only apply to the current image
-            image_paths = [current_image_path]
 
         # Create and show the progress bar
         progress_bar = ProgressBar(self, title="Sampling Annotations")
