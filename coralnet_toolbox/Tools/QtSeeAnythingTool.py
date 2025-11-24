@@ -538,11 +538,7 @@ class SeeAnythingTool(Tool):
             return None
 
         # Create a results processor to merge and filter results
-        results_processor = ResultsProcessor(self.main_window,
-                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                             iou_thresh=self.main_window.get_iou_thresh(),
-                                             min_area_thresh=self.main_window.get_area_thresh_min(),
-                                             max_area_thresh=self.main_window.get_area_thresh_max())
+        results_processor = ResultsProcessor(self.main_window, {})
         # Merge
         if self.results:
             results = CombineResults().combine_results([self.results, results])
@@ -746,11 +742,7 @@ class SeeAnythingTool(Tool):
         # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
-            class_mapping,
-            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            iou_thresh=self.main_window.get_iou_thresh(),
-            min_area_thresh=self.main_window.get_area_thresh_min(),
-            max_area_thresh=self.main_window.get_area_thresh_max()
+            class_mapping
         )
 
         # Make a copy of the results

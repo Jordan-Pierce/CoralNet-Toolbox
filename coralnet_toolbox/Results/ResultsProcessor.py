@@ -17,43 +17,35 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
 class ResultsProcessor:
-    def __init__(self,
-                 main_window,
-                 class_mapping={},
-                 uncertainty_thresh=None,
-                 iou_thresh=None,
-                 min_area_thresh=None,
-                 max_area_thresh=None):
+    def __init__(self, main_window, class_mapping={}):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-
         self.class_mapping = class_mapping
-
-        if uncertainty_thresh is None:
-            uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-
-        if iou_thresh is None:
-            iou_thresh = main_window.get_iou_thresh()
-
-        if min_area_thresh is None:
-            min_area_thresh = main_window.get_area_thresh_min()
-
-        if max_area_thresh is None:
-            max_area_thresh = main_window.get_area_thresh_max()
-
-        self.uncertainty_thresh = uncertainty_thresh
-        self.iou_thresh = iou_thresh
-        self.min_area_thresh = min_area_thresh
-        self.max_area_thresh = max_area_thresh
+    
+    def _get_uncertainty_thresh(self):
+        """Get the current uncertainty threshold from main_window."""
+        return self.main_window.get_uncertainty_thresh()
+    
+    def _get_iou_thresh(self):
+        """Get the current IoU threshold from main_window."""
+        return self.main_window.get_iou_thresh()
+    
+    def _get_area_thresh_min(self):
+        """Get the current minimum area threshold from main_window."""
+        return self.main_window.get_area_thresh_min()
+    
+    def _get_area_thresh_max(self):
+        """Get the current maximum area threshold from main_window."""
+        return self.main_window.get_area_thresh_max()
     
     def filter_by_uncertainty(self, results):
         """
         Filter the results based on the uncertainty threshold.
         """
         try:
-            results = results[results.boxes.conf > self.uncertainty_thresh]
+            results = results[results.boxes.conf > self._get_uncertainty_thresh()]
         except Exception as e:
             print(f"Warning: Failed to filter results by uncertainty\n{e}")
 
@@ -62,7 +54,7 @@ class ResultsProcessor:
     def filter_by_iou(self, results):
         """Filter the results based on the IoU threshold."""
         try:
-            results = results[TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
+            results = results[TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self._get_iou_thresh())]
         except Exception as e:
             print(f"Warning: Failed to filter results by IoU\n{e}")
 
@@ -75,7 +67,8 @@ class ResultsProcessor:
         try:
             x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
             area_norm = w_norm * h_norm
-            results = results[(area_norm >= self.min_area_thresh) & (area_norm <= self.max_area_thresh)]
+            results = results[(area_norm >= self._get_area_thresh_min()) &
+                              (area_norm <= self._get_area_thresh_max())]
         except Exception as e:
             print(f"Warning: Failed to filter results by area\n{e}")
 
@@ -93,7 +86,7 @@ class ResultsProcessor:
         Get the indices of results that pass the uncertainty threshold.
         """
         try:
-            mask = results.boxes.conf > self.uncertainty_thresh
+            mask = results.boxes.conf > self._get_uncertainty_thresh()
             indices = mask.nonzero().flatten().tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for uncertainty\n{e}")
@@ -106,7 +99,7 @@ class ResultsProcessor:
         Get the indices of results that pass the IoU threshold.
         """
         try:
-            indices = TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh).tolist()
+            indices = TorchNMS.fast_nms(results.boxes.xyxy, results.boxes.conf, self._get_iou_thresh()).tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for IoU\n{e}")
             indices = []
@@ -120,7 +113,7 @@ class ResultsProcessor:
         try:
             x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
             area_norm = w_norm * h_norm
-            mask = (area_norm >= self.min_area_thresh) & (area_norm <= self.max_area_thresh)
+            mask = (area_norm >= self._get_area_thresh_min()) & (area_norm <= self._get_area_thresh_max())
             indices = mask.nonzero().flatten().tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for area\n{e}")
@@ -215,7 +208,7 @@ class ResultsProcessor:
         
         try:
             # Apply NMS using TorchNMS. This is class-agnostic.
-            keep_indices_tensor = TorchNMS.fast_nms(bboxes, scores, self.iou_thresh)
+            keep_indices_tensor = TorchNMS.fast_nms(bboxes, scores, self._get_iou_thresh())
             keep_indices = keep_indices_tensor.tolist()  # Convert tensor to standard list of ints
         except Exception as e:
             print(f"Warning: Stage 2 NMS (TorchNMS) failed: {e}")
@@ -277,7 +270,7 @@ class ResultsProcessor:
         :param conf: Confidence score
         :return: Short label as a string
         """
-        if conf <= self.uncertainty_thresh:
+        if conf <= self._get_uncertainty_thresh():
             return 'Review'
         return self.class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
 
@@ -407,17 +400,24 @@ class ResultsProcessor:
         :param conf: The top confidence score.
         :param predictions: Dictionary of all class predictions.
         """
-        # Update the machine confidence values with all predictions
+        # Update the machine confidence values with all predictions (top5)
         annotation.update_machine_confidence(predictions)
 
-        # Determine the final label, setting it to 'Review' if confidence is too low
-        final_label = self.label_window.get_label_by_short_code(cls_name)
-        if conf < self.uncertainty_thresh:
-            final_label = self.label_window.get_label_by_id('-1')
+        # Get the current uncertainty threshold from the UI (not the cached value)
+        current_uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         
-        # Update the annotation's label
-        if final_label:
-            annotation.update_label(final_label)
+        # Determine the final label based on the top1 prediction confidence
+        if conf < current_uncertainty_thresh:
+            # If top1 confidence is below threshold, set to 'Review' label
+            # We do this AFTER update_machine_confidence to preserve all predictions
+            final_label = self.label_window.get_label_by_id('-1')  # Review label
+            annotation.label = final_label
+            annotation.verified = False
+            annotation.update_graphics_item()
+        else:
+            # Otherwise keep the label that was set by update_machine_confidence (top1 class)
+            # Note: update_machine_confidence already set annotation.label to the top prediction
+            pass
 
         # If the annotation's image is currently displayed, refresh its visual state
         if annotation.image_path == self.annotation_window.current_image_path:
@@ -425,7 +425,7 @@ class ResultsProcessor:
             # Update the confidence window if this annotation is selected
             if annotation in self.annotation_window.selected_annotations:
                 self.main_window.confidence_window.display_cropped_image(annotation)
-        
+    
         # Update the annotation count in the image table
         self.image_window.update_image_annotations(annotation.image_path)
 
@@ -518,7 +518,7 @@ class ResultsProcessor:
         annotation.update_machine_confidence(predictions)
 
         # If the confidence is below the threshold, update the label to 'Review'
-        if conf < self.uncertainty_thresh:
+        if conf < self._get_uncertainty_thresh():
             review_label = self.label_window.get_label_by_id('-1')
             annotation.update_label(review_label)
             annotation.set_verified(False)

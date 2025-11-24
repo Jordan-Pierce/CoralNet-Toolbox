@@ -491,11 +491,7 @@ class DeployPredictorDialog(QDialog):
         # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
-            class_mapping,
-            uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh(),
-            iou_thresh=self.thresholds_widget.get_iou_thresh(),
-            min_area_thresh=self.thresholds_widget.get_area_thresh_min(),
-            max_area_thresh=self.thresholds_widget.get_area_thresh_max()
+            class_mapping
         )
 
         # Get the scaled visual prompts

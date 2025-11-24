@@ -417,11 +417,7 @@ class DeployModelDialog(QDialog):
         # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
-            self.class_mapping,
-            uncertainty_thresh=self.thresholds_widget.get_uncertainty_thresh(),
-            iou_thresh=self.thresholds_widget.get_iou_thresh(),
-            min_area_thresh=self.thresholds_widget.get_area_thresh_min(),
-            max_area_thresh=self.thresholds_widget.get_area_thresh_max()
+            self.class_mapping
         )
 
         # Make cursor busy

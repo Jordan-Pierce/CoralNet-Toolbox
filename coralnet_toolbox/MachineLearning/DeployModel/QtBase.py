@@ -4,9 +4,11 @@ import os
 import gc
 import ujson as json
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDialog,
-                             QTextEdit, QPushButton, QGroupBox, QHBoxLayout)
+                             QPushButton, QGroupBox, QHBoxLayout, QTableWidget, 
+                             QTableWidgetItem)
 
 from torch.cuda import empty_cache
 
@@ -38,23 +40,25 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Deploy Model")
-        self.resize(400, 325)
+        self.resize(450, 650)
 
         # Initialize variables
         self.imgsz = 1024
-        self.iou_thresh = 0.20
+        self.max_detect = 300
         self.uncertainty_thresh = 0.30
+        self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
         
         self.BATCH_SIZE = 16
 
         self.task = None
-        self.max_detect = 300
         self.model_path = None
         self.loaded_model = None
         self.class_names = []
         self.class_mapping = {}
+        self.auto_created_labels = set()  # Track which labels were auto-created
+        self.label_to_class_name = {}  # Map row index to class name for checkbox tracking
 
         self.layout = QVBoxLayout(self)
 
@@ -89,14 +93,24 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_labels_layout(self):
-        """Setup the labels layout"""
+        """Setup the labels layout with a table"""
         group_box = QGroupBox("Labels")
         layout = QVBoxLayout()
 
-        # Text area for displaying model info
-        self.label_area = QTextEdit()
-        self.label_area.setReadOnly(True)
-        layout.addWidget(self.label_area)
+        # Create a table widget to display labels
+        self.labels_table = QTableWidget()
+        self.labels_table.setColumnCount(4)
+        self.labels_table.setHorizontalHeaderLabels(["✓", "Status", "Short Label", "Long Label"])
+        self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.labels_table.horizontalHeader().setStretchLastSection(True)
+        self.labels_table.setColumnWidth(0, 50)
+        self.labels_table.setColumnWidth(1, 60)
+        self.labels_table.setColumnWidth(2, 120)
+        layout.addWidget(self.labels_table)
+
+        # Add status label
+        self.labels_status_label = QLabel("No model file selected")
+        layout.addWidget(self.labels_status_label)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -196,7 +210,7 @@ class Base(QDialog):
                 file_path = os.path.dirname(file_path)
 
             self.model_path = file_path
-            self.label_area.setText("Model file selected")
+            self.labels_status_label.setText("Model file selected")
 
             # Try to load the class mapping file if it exists
             parent_dir = os.path.dirname(os.path.dirname(file_path))
@@ -225,9 +239,30 @@ class Base(QDialog):
         try:
             with open(file_path, 'r') as f:
                 self.class_mapping = json.load(f)  # maybe remove background? Already done in Semantic and works?
-            self.label_area.append("Class mapping file selected")
+            self.labels_status_label.setText(self.labels_status_label.text() + " | Class mapping loaded")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
+
+    def _find_unmapped_classes(self):
+        """
+        Find classes in the model that are not present in the class mapping.
+        
+        :return: Tuple of (mapped_classes, unmapped_classes, unused_mapping_keys)
+                 - mapped_classes: List of class names that exist in both model and mapping
+                 - unmapped_classes: List of class names in model but not in mapping
+                 - unused_mapping_keys: List of keys in mapping but not in model
+        """
+        if not self.class_names:
+            return [], [], list(self.class_mapping.keys())
+        
+        model_names_set = set(self.class_names)
+        mapping_keys_set = set(self.class_mapping.keys())
+        
+        mapped_classes = list(model_names_set & mapping_keys_set)
+        unmapped_classes = list(model_names_set - mapping_keys_set)
+        unused_mapping_keys = list(mapping_keys_set - model_names_set)
+        
+        return mapped_classes, unmapped_classes, unused_mapping_keys
 
     def load_model(self):
         """
@@ -237,31 +272,92 @@ class Base(QDialog):
 
     def check_and_display_class_names(self):
         """
-        Check and display the class names
+        Check and display the class names with their mapping status in a table.
+        Shows which labels are mapped from file, auto-created, or missing.
         """
         if not self.loaded_model:
             return
 
-        class_names_str = ""
         missing_labels = []
+        mapped_count = 0
+        auto_created_count = 0
+        missing_count = 0
 
-        for class_name in self.class_names:
-            label = self.label_window.get_label_by_short_code(class_name)  
-            if label.id:
-                class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
+        # Clear the table and set row count
+        self.labels_table.setRowCount(len(self.class_names))
+        self.label_to_class_name = {}  # Reset the mapping
+
+        for row, class_name in enumerate(self.class_names):
+            status_emoji = ""
+            status_text = ""
+            short_label = ""
+            long_label = ""
+
+            if class_name in self.auto_created_labels:
+                # Auto-created label
+                status_emoji = "⚠️"
+                status_text = "Auto-created"
+                short_label = class_name
+                long_label = class_name
+                auto_created_count += 1
             else:
-                class_names_str += f"❌ {class_name}\n"
-                missing_labels.append(class_name)
+                # Check if it exists in project labels
+                label = self.label_window.get_label_by_short_code(class_name)  
+                if label.id:
+                    # Found in project labels (from mapping file or previous creation)
+                    status_emoji = "✅"
+                    status_text = "Mapped"
+                    short_label = label.short_label_code
+                    long_label = label.long_label_code
+                    mapped_count += 1
+                else:
+                    # Not found anywhere
+                    status_emoji = "❌"
+                    status_text = "Missing"
+                    short_label = class_name
+                    long_label = ""
+                    missing_labels.append(class_name)
+                    missing_count += 1
 
-        self.label_area.setText(class_names_str)
+            # Store mapping of row to class name for checkbox tracking
+            self.label_to_class_name[row] = class_name
 
+            # Add checkbox in first column (initially checked and disabled)
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(checkbox_item.flags() | Qt.ItemIsUserCheckable)
+            flags = checkbox_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled
+            checkbox_item.setFlags(flags)
+            checkbox_item.setCheckState(Qt.Checked)
+            checkbox_item.setTextAlignment(Qt.AlignCenter)
+            self.labels_table.setItem(row, 0, checkbox_item)
+
+            # Add items to table with status in column 1
+            status_item = QTableWidgetItem(status_emoji)
+            status_item.setToolTip(status_text)
+            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            self.labels_table.setItem(row, 1, status_item)
+            
+            short_label_item = QTableWidgetItem(short_label)
+            short_label_item.setToolTip(f"Short Label: {short_label}")
+            short_label_item.setFlags(short_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            short_label_item.setTextAlignment(Qt.AlignCenter)
+            self.labels_table.setItem(row, 2, short_label_item)
+            
+            long_label_item = QTableWidgetItem(long_label)
+            long_label_item.setToolTip(f"Long Label: {long_label}")
+            long_label_item.setFlags(long_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            long_label_item.setTextAlignment(Qt.AlignCenter)
+            self.labels_table.setItem(row, 3, long_label_item)
+
+        # Show warning if there are missing labels
         if missing_labels:
             missing_labels_str = "\n".join(missing_labels)
             QMessageBox.warning(
                 self,
                 "Warning",
-                f"The following short labels are missing and cannot be predicted "
-                f"until added manually:\n{missing_labels_str}"
+                f"The following {len(missing_labels)} class(es) are missing and cannot be predicted "
+                f"until added manually:\n\n{missing_labels_str}"
             )
 
     def add_labels_to_label_window(self):
@@ -277,28 +373,96 @@ class Base(QDialog):
                     label_id=label.get('id')
                 )
 
-    def handle_missing_class_mapping(self):
+    def handle_missing_class_mapping(self, unmapped_classes=None):
         """
-        Handle the case when the class mapping file is missing.
+        Handle missing or incomplete class mappings.
+        
+        :param unmapped_classes: Optional list of class names missing from the mapping.
+                                If None, all classes are treated as unmapped (no mapping file).
+                                If provided, only these classes are unmapped (partial mapping).
         """
-        reply = QMessageBox.question(self,
-                                     'No Class Mapping Found',
-                                     'Do you want to create generic labels automatically?',
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.create_generic_labels()
+        if unmapped_classes is None:
+            # No mapping file at all - offer to create generic labels for all classes
+            reply = QMessageBox.question(
+                self,
+                'No Class Mapping Found',
+                'Do you want to create generic labels automatically?',
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.create_generic_labels()
+        else:
+            # Partial mapping - some classes are missing
+            unmapped_str = "\n".join(unmapped_classes)
+            message = (
+                f'The following {len(unmapped_classes)} class(es) from the model are not in the '
+                f'class mapping file:\n\n{unmapped_str}\n\n'
+                f'Do you want to create generic labels for these classes?'
+            )
+            
+            reply = QMessageBox.question(
+                self,
+                'Incomplete Class Mapping',
+                message,
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.No
+            )
+            
+            # Yes = Create generic labels for unmapped classes
+            if reply == QMessageBox.Yes:
+                self.create_generic_labels(unmapped_classes)
+            # No = Skip (keep only mapped classes)
+            elif reply == QMessageBox.No:
+                pass  # Do nothing, keep only mapped classes in mapping
+            # Cancel = Abort the load
+            else:
+                raise RuntimeError("Model load cancelled by user due to incomplete class mapping")
 
-    def create_generic_labels(self):
+    def create_generic_labels(self, class_names=None):
         """
-        Create generic labels for the given class names
+        Create generic labels for the given class names.
+        
+        :param class_names: Optional list of class names to create labels for. 
+                           If None, uses self.class_names
         """
-        for class_name in self.class_names:
+        names_to_create = class_names if class_names is not None else self.class_names
+        
+        for class_name in names_to_create:
             # Create the label in the label window
             label = self.label_window.add_label_if_not_exists(
                 class_name,
                 class_name,
             )
             self.class_mapping[class_name] = label.to_dict()
+            self.auto_created_labels.add(class_name)  # Track as auto-created
+
+    def get_checked_class_names(self):
+        """
+        Get a list of class names that are currently checked in the table.
+        
+        :return: List of class names that have checked checkboxes
+        """
+        checked_classes = []
+        for row in range(self.labels_table.rowCount()):
+            checkbox_item = self.labels_table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                if row in self.label_to_class_name:
+                    checked_classes.append(self.label_to_class_name[row])
+        return checked_classes
+
+    def get_checked_labels(self):
+        """
+        Get a list of label dictionaries for all checked rows in the table.
+        Each dictionary contains the label mapping information.
+        
+        :return: List of label dictionaries for checked class names
+        """
+        checked_labels = []
+        for class_name in self.get_checked_class_names():
+            if class_name in self.class_mapping:
+                checked_labels.append(self.class_mapping[class_name])
+        return checked_labels
 
     def predict(self, inputs):
         """
@@ -313,7 +477,9 @@ class Base(QDialog):
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = None
+        self.auto_created_labels = set()
         gc.collect()
         empty_cache()
         self.status_bar.setText("No model loaded")
-        self.label_area.setText("No model file selected")
+        self.labels_status_label.setText("No model file selected")
+        self.labels_table.setRowCount(0)

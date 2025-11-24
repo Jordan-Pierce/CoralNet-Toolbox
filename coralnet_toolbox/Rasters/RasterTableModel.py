@@ -2,7 +2,7 @@ import warnings
 
 from typing import Any, Dict, List, Optional, Set
 
-from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant
+from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush
 
 from coralnet_toolbox.Rasters import RasterManager
@@ -19,10 +19,14 @@ class RasterTableModel(QAbstractTableModel):
     """
     Custom table model for displaying a list of Raster objects.
     """
+    # Signals
+    rowsChanged = pyqtSignal()  # Emitted when rows are highlighted/unhighlighted
+    
     # Column indices
     CHECKBOX_COL = 0
-    FILENAME_COL = 1
-    ANNOTATION_COUNT_COL = 2
+    Z_COL = 1
+    FILENAME_COL = 2
+    ANNOTATION_COUNT_COL = 3
     
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
@@ -40,10 +44,10 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        self.column_headers = ["\u2713", "Image Name", "Annotations"]
+        self.column_headers = ["\u2713", "Z", "Image Name", "Annotations"]
         
         # Column widths
-        self.column_widths = [30, -1, 120]  # -1 means stretch
+        self.column_widths = [30, 30, -1, 120]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -82,6 +86,9 @@ class RasterTableModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             if index.column() == self.CHECKBOX_COL:
                 return "\u2713" if raster.checkbox_state else ""
+            elif index.column() == self.Z_COL:
+                # Display a dot if z_channel is present
+                return "\u2022" if (raster.z_channel is not None or raster.z_channel_path) else ""
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
@@ -232,6 +239,9 @@ class RasterTableModel(QAbstractTableModel):
                         self.index(row, 0),
                         self.index(row, self.columnCount() - 1)
                     )
+                
+                # Emit signal to notify listeners of highlighting change
+                self.rowsChanged.emit()
                     
     def clear_highlights(self):
         """Clear all highlighted paths"""
@@ -245,7 +255,7 @@ class RasterTableModel(QAbstractTableModel):
         # Unhighlight all paths
         for path in highlighted_paths:
             self.highlight_path(path, False)
-            
+
     def set_highlighted_paths(self, paths: List[str]):
         """
         Set the highlighted state for a list of paths, clearing all others.

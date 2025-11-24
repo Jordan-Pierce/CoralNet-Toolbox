@@ -3,8 +3,8 @@ import warnings
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogButtonBox, 
-                             QGroupBox, QFormLayout, QPushButton, QHBoxLayout, QCheckBox,
-                             QButtonGroup, QTableWidget, QTableWidgetItem, QApplication)
+                             QGroupBox, QPushButton, QHBoxLayout, QCheckBox,
+                             QTableWidget, QTableWidgetItem, QApplication)
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 
@@ -44,6 +44,10 @@ class TileManager(QDialog):
         self.setWindowTitle("Tile Manager")
         self.resize(400, 600)
         
+        # Keep dialog on top while user is working
+        from PyQt5.QtCore import Qt
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        
         # Initialize graphics tracking lists and objects
         self.margin_work_area = None
         self.margin_graphics = []
@@ -58,35 +62,69 @@ class TileManager(QDialog):
         self.setup_options_layout()
         # Setup the tile configuration layout
         self.setup_tile_config_layout()
-        # Set up apply to options layout
-        self.setup_apply_options_layout()
         
-        # Status bar
-        self.status_label = QLabel("No tiles previewed")
-        self.layout.addWidget(self.status_label)
+        # Initialize status labels (will be added after buttons in setup_buttons_layout)
+        self.status_label = QLabel("No images highlighted")
+        self.status_label.setAlignment(Qt.AlignLeft)
+        
+        self.tiles_status_label = QLabel("No tiles previewed")
+        self.tiles_status_label.setAlignment(Qt.AlignLeft)
         
         # Buttons at bottom
         self.setup_buttons_layout()
+        
+        # Connect to table model signals to update highlighted count
+        self.image_window.table_model.rowsChanged.connect(self.update_status_label)
+        
+        # Connect to image selection changes to update preview when user switches images
+        self.image_window.imageSelected.connect(self.on_image_changed)
         
     def showEvent(self, event):
         """Handle dialog show event."""
         super().showEvent(event)
         self.update_tile_size_limits()
+        self.update_status_label()
         self.clear_tiles()
-        self.clear_checkboxes()
         self.preview_tiles()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
         self.clear_tiles()
-        self.clear_checkboxes()
         event.accept()
 
     def reject(self):
         """Handle dialog rejection."""
         self.clear_tiles()
-        self.clear_checkboxes()
         super().reject()
+
+    def update_status_label(self):
+        """Update the status label to show the number of images highlighted."""
+        highlighted_paths = self.image_window.table_model.get_highlighted_paths()
+        count = len(highlighted_paths)
+        if count == 0:
+            self.status_label.setText("No images highlighted")
+        elif count == 1:
+            self.status_label.setText("1 image highlighted")
+        else:
+            self.status_label.setText(f"{count} images highlighted")
+
+    def on_image_changed(self, image_path):
+        """Handle when the user changes the selected image in the ImageWindow.
+        
+        When annotation_window.set_image() is called, it clears the scene, which removes
+        all graphics. We need to clear our stale references and then regenerate the preview
+        if one was being shown.
+        """
+        # Store whether we had preview graphics before the image changed
+        had_preview = len(self.all_graphics) > 0
+        
+        # Clear stale graphics references since annotation window just cleared its scene
+        self.all_graphics = []
+        self.margin_work_area = None
+        
+        # Only regenerate preview if we had one shown and new image is valid
+        if had_preview and image_path and self.annotation_window.active_image:
+            self.preview_tiles()
 
     def setup_info_layout(self):
         """
@@ -122,25 +160,22 @@ class TileManager(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_tile_config_layout(self):
-        """Set up tile config layout."""
-        group_box = QGroupBox("Tile Configuration Parameters")
-        layout = QFormLayout()
-
+        """Set up tile config layout without groupbox."""
+        # Tile Size Input
         self.tile_size_input = TileSizeInput()
-        layout.addRow(self.tile_size_input)
+        self.layout.addWidget(self.tile_size_input)
 
+        # Overlap Input
         self.overlap_input = OverlapInput()
-        layout.addRow(self.overlap_input)
+        self.layout.addWidget(self.overlap_input)
 
+        # Margins Input
         self.margins_input = MarginInput()
-        layout.addRow(self.margins_input)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.layout.addWidget(self.margins_input)
 
     def setup_buttons_layout(self):
         """
-        Set up the layout with buttons.
+        Set up the layout with buttons and status label.
         """
         buttons_layout = QHBoxLayout()
         
@@ -176,6 +211,11 @@ class TileManager(QDialog):
         
         self.layout.addLayout(delete_buttons_layout)
         
+        # Add status labels below action buttons, above apply/cancel
+        # Tiles status on top, highlighted images count on bottom
+        self.layout.addWidget(self.tiles_status_label)
+        self.layout.addWidget(self.status_label)
+        
         # Create a button box with custom buttons
         button_box = QDialogButtonBox()
         apply_button = QPushButton("Apply")
@@ -189,44 +229,6 @@ class TileManager(QDialog):
 
         # Add the standard button box
         self.layout.addWidget(button_box)
-        
-    def setup_apply_options_layout(self):
-        """Set up the application scope options."""
-        group_box = QGroupBox("Apply To")
-        layout = QVBoxLayout()
-
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
-
-        self.apply_group = QButtonGroup(self)
-        self.apply_group.addButton(self.apply_filtered_checkbox)
-        self.apply_group.addButton(self.apply_prev_checkbox)
-        self.apply_group.addButton(self.apply_next_checkbox)
-        self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(True)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
-    def clear_checkboxes(self):
-        """Clear all apply checkboxes."""
-        # Temporarily disable exclusivity to allow clearing all
-        self.apply_group.setExclusive(False)
-        
-        self.apply_filtered_checkbox.setChecked(False)
-        self.apply_prev_checkbox.setChecked(False)
-        self.apply_next_checkbox.setChecked(False)
-        self.apply_all_checkbox.setChecked(False)
-        
-        # Re-enable exclusivity
-        self.apply_group.setExclusive(True)
         
     def show_skipped_images_dialog(self, errors):
         """
@@ -267,35 +269,12 @@ class TileManager(QDialog):
         
     def get_selected_image_paths(self):
         """
-        Get the selected image paths based on the options.
+        Get the selected image paths - only highlighted rows.
 
-        :return: List of selected image paths
+        :return: List of highlighted image paths
         """
-        # Current image path showing
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
-            return []
-
-        # Determine which images to export annotations for
-        if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.table_model.filtered_paths
-        elif self.apply_prev_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[:current_index + 1]
-            else:
-                return [current_image_path]
-        elif self.apply_next_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[current_index:]
-            else:
-                return [current_image_path]
-        elif self.apply_all_checkbox.isChecked():
-            return self.image_window.raster_manager.image_paths
-        else:
-            # Only apply to the current image
-            return [current_image_path]
+        # Get highlighted image paths from the table model
+        return self.image_window.table_model.get_highlighted_paths()
 
     def validate_parameters(self, image_path):
         """
@@ -590,9 +569,9 @@ class TileManager(QDialog):
         # Count tiles
         total_tiles = len(self.tile_work_areas)
         
-        # Update status bar
+        # Update tile status label
         coverage_status = "with full coverage" if ensure_coverage else "with standard grid"
-        self.status_label.setText(
+        self.tiles_status_label.setText(
             f"Tiles: {total_tiles} ({num_tiles_x}×{num_tiles_y} grid, {coverage_status}) | "
             f"Size: {tile_width}×{tile_height} | Overlap: {overlap_width}×{overlap_height}"
         )
@@ -622,8 +601,8 @@ class TileManager(QDialog):
         # Update the view
         self.annotation_window.viewport().update()
         
-        # Reset status
-        self.status_label.setText("No tiles previewed")
+        # Reset tile status
+        self.tiles_status_label.setText("No tiles previewed")
 
     def delete_tiles_current_image(self):
         """Delete all existing tile work areas for the current image."""
@@ -836,12 +815,13 @@ class TileManager(QDialog):
     def apply(self):
         """
         Method called when the Apply button is clicked.
-        Applies tiling to all selected images.
+        Applies tiling to all highlighted images.
         """
-        # Get the list of image paths to apply tiling to
+        # Get the list of image paths to apply tiling to (highlighted rows only)
         image_paths = self.get_selected_image_paths()
         if not image_paths:
-            QMessageBox.warning(self, "No Images", "No images are currently selected.")
+            msg = "Please highlight at least one image row to apply tiles to highlighted images."
+            QMessageBox.warning(self, "No Selection", msg)
             return
     
         total_tiles = 0

@@ -400,9 +400,10 @@ class ImageWindow(QWidget):
         
         # Set column widths
         self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Checkmark column
-        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Filename column
-        self.tableView.setColumnWidth(2, 120)  # Annotation column
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Z column
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Filename column
+        self.tableView.setColumnWidth(3, 120)  # Annotation column
+        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         
         # Style the header
         self.tableView.horizontalHeader().setStyleSheet("""
@@ -1139,6 +1140,16 @@ class ImageWindow(QWidget):
             toggle_check_action.triggered.connect(lambda: self.on_toggle(not is_checked))
 
         context_menu.addSeparator()
+        
+        # Add batch inference action
+        batch_inference_action = context_menu.addAction(
+            f"Batch Inference ({count} Highlighted Image{'s' if count > 1 else ''})"
+        )
+        batch_inference_action.triggered.connect(
+            lambda: self.open_batch_inference_dialog(highlighted_paths)
+        )
+        
+        context_menu.addSeparator()
 
         # Add import z-channel action
         import_z_channel_action = context_menu.addAction(
@@ -1168,6 +1179,39 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def open_batch_inference_dialog(self, highlighted_image_paths):
+        """
+        Open the batch inference dialog with the highlighted images.
+        
+        Args:
+            highlighted_image_paths (list): List of image paths to process
+        """
+        # Ensure images are highlighted
+        if not highlighted_image_paths:
+            QMessageBox.warning(
+                self,
+                "No Images Selected",
+                "Please highlight one or more images before opening batch inference."
+            )
+            return
+        
+        # Check if any models are available
+        batch_dialog = self.main_window.batch_inference_dialog
+        batch_dialog.update_model_availability()
+        
+        if not batch_dialog.model_dialogs:
+            QMessageBox.warning(
+                self,
+                "No Models Available",
+                "Please load a model before opening batch inference."
+            )
+            return
+        
+        # Update the batch inference dialog with the highlighted images
+        batch_dialog.highlighted_images = highlighted_image_paths
+        # Show the dialog
+        batch_dialog.exec_()
         
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""
