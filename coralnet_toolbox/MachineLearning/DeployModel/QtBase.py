@@ -40,7 +40,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Deploy Model")
-        self.resize(400, 325)
+        self.resize(400, 500)
 
         # Initialize variables
         self.imgsz = 1024
@@ -321,16 +321,19 @@ class Base(QDialog):
             status_item = QTableWidgetItem(status_emoji)
             status_item.setToolTip(status_text)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            status_item.setTextAlignment(Qt.AlignCenter)
             self.labels_table.setItem(row, 0, status_item)
             
             short_label_item = QTableWidgetItem(short_label)
             short_label_item.setToolTip(f"Short Label: {short_label}")
             short_label_item.setFlags(short_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            short_label_item.setTextAlignment(Qt.AlignCenter)
             self.labels_table.setItem(row, 1, short_label_item)
             
             long_label_item = QTableWidgetItem(long_label)
             long_label_item.setToolTip(f"Long Label: {long_label}")
             long_label_item.setFlags(long_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
+            long_label_item.setTextAlignment(Qt.AlignCenter)
             self.labels_table.setItem(row, 2, long_label_item)
 
         # Show warning if there are missing labels
