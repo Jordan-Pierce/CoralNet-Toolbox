@@ -140,9 +140,19 @@ class Detect(Base):
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
             self.class_names = list(self.loaded_model.names.values())
 
+            # Check for unmapped classes
+            mapped_classes, unmapped_classes, unused_mapping_keys = self._find_unmapped_classes()
+
+            # Handle class mapping (complete or partial)
             if not self.class_mapping:
+                # No mapping file at all
                 self.handle_missing_class_mapping()
+            elif unmapped_classes:
+                # Partial mapping - some classes are missing
+                self.add_labels_to_label_window()
+                self.handle_missing_class_mapping(unmapped_classes)
             else:
+                # Complete mapping - all classes are mapped
                 self.add_labels_to_label_window()
 
             # Display the class names
@@ -152,6 +162,13 @@ class Detect(Base):
             self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
 
+        except RuntimeError:
+            # Model load was cancelled by user
+            self.loaded_model = None
+            self.class_names = []
+            self.auto_created_labels = set()
+            QApplication.restoreOverrideCursor()
+            return
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
         finally:
