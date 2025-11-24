@@ -400,9 +400,10 @@ class ImageWindow(QWidget):
         
         # Set column widths
         self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Checkmark column
-        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Filename column
-        self.tableView.setColumnWidth(2, 120)  # Annotation column
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Z column
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Filename column
+        self.tableView.setColumnWidth(3, 120)  # Annotation column
+        self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         
         # Style the header
         self.tableView.horizontalHeader().setStyleSheet("""

@@ -21,8 +21,9 @@ class RasterTableModel(QAbstractTableModel):
     """
     # Column indices
     CHECKBOX_COL = 0
-    FILENAME_COL = 1
-    ANNOTATION_COUNT_COL = 2
+    Z_COL = 1
+    FILENAME_COL = 2
+    ANNOTATION_COUNT_COL = 3
     
     # Row colors
     HIGHLIGHTED_COLOR = QColor(173, 216, 230)  # Light blue
@@ -40,10 +41,10 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        self.column_headers = ["\u2713", "Image Name", "Annotations"]
+        self.column_headers = ["\u2713", "Z", "Image Name", "Annotations"]
         
         # Column widths
-        self.column_widths = [30, -1, 120]  # -1 means stretch
+        self.column_widths = [30, 30, -1, 120]  # -1 means stretch
         
         # Connect to manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -82,6 +83,9 @@ class RasterTableModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             if index.column() == self.CHECKBOX_COL:
                 return "\u2713" if raster.checkbox_state else ""
+            elif index.column() == self.Z_COL:
+                # Display a dot if z_channel is present
+                return "\u2022" if raster.z_channel is not None else ""
             elif index.column() == self.FILENAME_COL:
                 return raster.display_name
             elif index.column() == self.ANNOTATION_COUNT_COL:
