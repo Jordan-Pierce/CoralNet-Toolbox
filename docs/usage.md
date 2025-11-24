@@ -340,7 +340,7 @@ The main window consists of several components:
   - **Highlight All**: Highlight all images in the current filtered view
   - **Unhighlight All**: Unhighlight all images in the current filtered view
 - **Image Preview**:
-  - **Tool Tip**: Hover over a row to show image metadata
+  - **Tooltips**: Hover over a row to show image metadata
   - **Thumbnail**: Hold <kbd>Ctrl</kbd> while hovering over a row to show a thumbnail
 
 ## Confidence Window
@@ -361,7 +361,7 @@ The main window consists of several components:
   - Each confidence bar shows the label color and confidence percentage
   - Numbered indicators (1-5) show the rank of each prediction
   - Hover over confidence bars to see a pointing hand cursor when selection is possible
-- **Tool Tip**: Hover over the window while an annotation is selected to see its metadata
+- **Tooltips**: Hover over the window while an annotation is selected to see its metadata
 
 ### [Hotkeys](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys)
 
