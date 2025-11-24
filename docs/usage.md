@@ -34,6 +34,8 @@ The main window consists of several components:
 - **Confidence Window**: Displays cropped images and confidence charts
 
 ## Menu Bar Actions
+
+### File
 - **New Project**: Reload CoralNet-Toolbox (loss of data warning)
 - **Open Project**: Open an existing CoralNet-Toolbox project JSON file
 - **Save Project**: Save current CoralNet-Toolbox project to JSON file
@@ -61,6 +63,76 @@ The main window consists of several components:
   - **Export TagLab Annotations**: Save annotation data to a TagLab JSON file
   - **Export Viscore Annotations**: Save annotation data to a Viscore CSV file
   - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Instance, Semantic)
+
+### Utilities
+
+- **Sample**:
+  - **Sample Annotations**: Automatically generate Patch annotations
+    - **Sampling Method**: Choose between Random, Stratified Random, or Uniform distribution
+    - **Number of Annotations**: Specify how many annotations to generate
+    - **Annotation Size**: Set the size of the generated patch annotations
+    - **Label As**: Choose which label to assign to generated annotations
+    - **Exclude Regions**: Option to prevent sampling in areas with existing annotations
+    - **Margins**: Define image boundary constraints for sampling:
+      - Set margins in pixels or percentage
+      - Configure different values for top, right, bottom, and left edges
+      - Annotations will only be placed within these margins
+    - Select images by highlighting them in the ImageWindow
+
+- **Tile**:
+  - **Tile Manager**: Pre-compute multiple tiles / work areas for selected images
+    - Select images by highlighting them in the ImageWindow
+  - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`
+
+### AI-Assist
+
+- **SAM**:
+  - **Deploy Predictor**: Deploy `EdgeSAM`, `MobileSAM`, `SAM`, etc, to use interactively (points, box)
+  - **Deploy Generator**: Deploy `FastSAM` to automatically segment the image
+
+- **See Anything (YOLOE)**:
+  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image
+  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor, referencing other images' annotations
+    - Select the `YOLOE` model, parameters, and load it
+    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)
+    - Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)
+    - Use the loaded model w/ VPEs on new images, or work areas
+
+- **Transformers**:
+  - **Deploy Model**: Deploy a foundational model
+    - Models Available: `Grounding DINO`, `OWLViT`
+
+### Machine Learning
+
+- **Machine Learning**:
+  - **Merge Datasets**: Merge multiple Classification datasets
+  - **Tune Model**: Identify ideal hyperparameter values before fully training a model
+  - **Train Model**: Train a machine learning model
+  - **Evaluate Model**: Evaluate a trained model
+  - **Optimize Model**: Convert model format
+  - **Deploy Model**: Make predictions using a trained model
+  - **Video Inference**: Perform inferencing on videos in real-time, view analytics
+
+### CoralNet
+
+- **CoralNet**: 
+  - **Authenticate**: Authenticate with CoralNet
+    - Enter your CoralNet username and password to access your sources
+    - Authentication is required before downloading any CoralNet data
+  - **Download**: Download data from CoralNet
+    - **Source ID**: Enter the Source ID (or multiple IDs separated by commas)
+    - **Output Directory**: Select where to save downloaded files
+    - **Download Options**: Choose what to download:
+      - Metadata: Source information and settings
+      - Labelset: All available labels from the source
+      - Annotations: Point annotations with their labels
+      - Images: Original images from the source
+    - **Parameters**: Configure download settings:
+      - Image Fetch Rate: Time between image downloads (seconds)
+      - Image Fetch Break Time: Pause duration between batches (seconds)
+    - **Debug Mode**: Toggle headless browser mode for troubleshooting
+
+### Explorer 
 
 - **Explorer**:
   - **Annotation Settings**: Select images, annotation types, and labels to include / filter press apply
@@ -95,70 +167,6 @@ The main window consists of several components:
       - **Home**: Resets the Embedding Viewer zoom level
   **Tip**: 
     - Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window
-
-- **Sample**:
-  - **Sample Annotations**: Automatically generate Patch annotations
-    - **Sampling Method**: Choose between Random, Stratified Random, or Uniform distribution
-    - **Number of Annotations**: Specify how many annotations to generate
-    - **Annotation Size**: Set the size of the generated patch annotations
-    - **Label As**: Choose which label to assign to generated annotations
-    - **Apply Options**: Apply sampling to current image, filtered images, previous/next images, or all images
-    - **Exclude Regions**: Option to prevent sampling in areas with existing annotations
-    - **Margins**: Define image boundary constraints for sampling:
-      - Set margins in pixels or percentage
-      - Configure different values for top, right, bottom, and left edges
-      - Annotations will only be placed within these margins
-
-- **Tile**:
-  - **Tile Manager**: Pre-compute multiple tiles / work areas for selected images
-  - **Tile Batch Inferece**: Apply inference on all imagues with tiles / work areas
-  - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`
-
-- **CoralNet**: 
-  - **Authenticate**: Authenticate with CoralNet
-    - Enter your CoralNet username and password to access your sources
-    - Authentication is required before downloading any CoralNet data
-  - **Download**: Download data from CoralNet
-    - **Source ID**: Enter the Source ID (or multiple IDs separated by commas)
-    - **Output Directory**: Select where to save downloaded files
-    - **Download Options**: Choose what to download:
-      - Metadata: Source information and settings
-      - Labelset: All available labels from the source
-      - Annotations: Point annotations with their labels
-      - Images: Original images from the source
-    - **Parameters**: Configure download settings:
-      - Image Fetch Rate: Time between image downloads (seconds)
-      - Image Fetch Break Time: Pause duration between batches (seconds)
-    - **Debug Mode**: Toggle headless browser mode for troubleshooting
-
-- **Machine Learning**:
-  - **Merge Datasets**: Merge multiple Classification datasets
-  - **Tune Model**: Identify ideal hyperparameter values before fully training a model
-  - **Train Model**: Train a machine learning model
-  - **Evaluate Model**: Evaluate a trained model
-  - **Optimize Model**: Convert model format
-  - **Deploy Model**: Make predictions using a trained model
-  - **Batch Inference**: Perform batch inferences
-  - **Video Inference**: Perform inferencing on videos in real-time, view analytics
-
-- **SAM**:
-  - **Deploy Predictor**: Deploy `EdgeSAM`, `MobileSAM`, `SAM`, etc, to use interactively (points, box)
-  - **Deploy Generator**: Deploy `FastSAM` to automatically segment the image
-  - **Batch Inference**: Perform batch inferencing using `FastSAM`
-
-- **See Anything (YOLOE)**:
-  - **Deploy Predictor**: Deploy a `YOLOE` model to use interactively within the same image
-  - **Deploy Generator**: Deploy a `YOLOE` model to use like a detector / segmentor, referencing other images' annotations
-    - Select the `YOLOE` model, parameters, and load it
-    - Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)
-    - Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)
-    - Use the loaded model w/ VPEs on new images, or work areas, and with batch inferencing
-  - **Batch Inference**: Perform batch inferencing using loaded `YOLOE` generator
-
-- **Transformers**:
-  - **Deploy Model**: Deploy a foundational model
-    - Models Available: `Grounding DINO`, `OWLViT`
-  - **Batch Inference**: Perform batch inferences
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool
@@ -313,8 +321,9 @@ The main window consists of several components:
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows
   - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows
 - **Open Context Menu**:
-  - <kbd>Right-Click</kbd> on a single / multiple highlighted row: 
+  - <kbd>Right-Click</kbd> on a single / multiple highlighted row to: 
     - Check / uncheck highlighted rows
+    - Batch Inference using loaded models (opens Batch Inference Dialog)
     - Import Z-channel for highlighted rows (opens Z-channel import dialog)
     - Remove Z-channel for highlighted rows
     - Delete annotations for highlighted rows
