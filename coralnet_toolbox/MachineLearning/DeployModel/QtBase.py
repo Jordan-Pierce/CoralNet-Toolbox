@@ -102,11 +102,10 @@ class Base(QDialog):
         self.labels_table.setColumnCount(4)
         self.labels_table.setHorizontalHeaderLabels(["✓", "Status", "Short Label", "Long Label"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.labels_table.horizontalHeader().setStretchLastSection(False)
+        self.labels_table.horizontalHeader().setStretchLastSection(True)
         self.labels_table.setColumnWidth(0, 50)
         self.labels_table.setColumnWidth(1, 60)
         self.labels_table.setColumnWidth(2, 120)
-        self.labels_table.setColumnWidth(3, 150)
         layout.addWidget(self.labels_table)
 
         # Add status label
