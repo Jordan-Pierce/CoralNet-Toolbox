@@ -18,8 +18,8 @@ This guide provides instructions on how to use the application, including key fu
 - **Semantic Segmentation**: Segment the entire image (Mask)
 
 ## Thresholds for Computer Vision Tasks
-- **Patch Size**: Adjust the patch size in the status bar
-- **Uncertainty** Threshold: Adjust the uncertainty threshold in the status bar
+- **Max Detections**: Adjust to limit the number of detections in the status bar
+- **Uncertainty Threshold**: Adjust the uncertainty threshold in the status bar
 - **IoU Threshold**: Adjust the IoU threshold in the status bar
 - **Area Threshold**: Adjust the min and max area threshold in the status bar
 
