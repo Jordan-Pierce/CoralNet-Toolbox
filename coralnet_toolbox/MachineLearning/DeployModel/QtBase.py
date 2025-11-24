@@ -40,24 +40,25 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coralnet.png"))
         self.setWindowTitle("Deploy Model")
-        self.resize(400, 500)
+        self.resize(450, 650)
 
         # Initialize variables
         self.imgsz = 1024
-        self.iou_thresh = 0.20
+        self.max_detect = 300
         self.uncertainty_thresh = 0.30
+        self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
         
         self.BATCH_SIZE = 16
 
         self.task = None
-        self.max_detect = 300
         self.model_path = None
         self.loaded_model = None
         self.class_names = []
         self.class_mapping = {}
         self.auto_created_labels = set()  # Track which labels were auto-created
+        self.label_to_class_name = {}  # Map row index to class name for checkbox tracking
 
         self.layout = QVBoxLayout(self)
 
@@ -98,13 +99,14 @@ class Base(QDialog):
 
         # Create a table widget to display labels
         self.labels_table = QTableWidget()
-        self.labels_table.setColumnCount(3)
-        self.labels_table.setHorizontalHeaderLabels(["Status", "Short Label", "Long Label"])
+        self.labels_table.setColumnCount(4)
+        self.labels_table.setHorizontalHeaderLabels(["✓", "Status", "Short Label", "Long Label"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.labels_table.horizontalHeader().setStretchLastSection(False)
-        self.labels_table.setColumnWidth(0, 60)
-        self.labels_table.setColumnWidth(1, 120)
-        self.labels_table.setColumnWidth(2, 150)
+        self.labels_table.setColumnWidth(0, 50)
+        self.labels_table.setColumnWidth(1, 60)
+        self.labels_table.setColumnWidth(2, 120)
+        self.labels_table.setColumnWidth(3, 150)
         layout.addWidget(self.labels_table)
 
         # Add status label
@@ -284,6 +286,7 @@ class Base(QDialog):
 
         # Clear the table and set row count
         self.labels_table.setRowCount(len(self.class_names))
+        self.label_to_class_name = {}  # Reset the mapping
 
         for row, class_name in enumerate(self.class_names):
             status_emoji = ""
@@ -317,24 +320,36 @@ class Base(QDialog):
                     missing_labels.append(class_name)
                     missing_count += 1
 
-            # Add items to table with status first
+            # Store mapping of row to class name for checkbox tracking
+            self.label_to_class_name[row] = class_name
+
+            # Add checkbox in first column (initially checked and disabled)
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(checkbox_item.flags() | Qt.ItemIsUserCheckable)
+            flags = checkbox_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled
+            checkbox_item.setFlags(flags)
+            checkbox_item.setCheckState(Qt.Checked)
+            checkbox_item.setTextAlignment(Qt.AlignCenter)
+            self.labels_table.setItem(row, 0, checkbox_item)
+
+            # Add items to table with status in column 1
             status_item = QTableWidgetItem(status_emoji)
             status_item.setToolTip(status_text)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             status_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 0, status_item)
+            self.labels_table.setItem(row, 1, status_item)
             
             short_label_item = QTableWidgetItem(short_label)
             short_label_item.setToolTip(f"Short Label: {short_label}")
             short_label_item.setFlags(short_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             short_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 1, short_label_item)
+            self.labels_table.setItem(row, 2, short_label_item)
             
             long_label_item = QTableWidgetItem(long_label)
             long_label_item.setToolTip(f"Long Label: {long_label}")
             long_label_item.setFlags(long_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             long_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 2, long_label_item)
+            self.labels_table.setItem(row, 3, long_label_item)
 
         # Show warning if there are missing labels
         if missing_labels:
@@ -422,6 +437,33 @@ class Base(QDialog):
             )
             self.class_mapping[class_name] = label.to_dict()
             self.auto_created_labels.add(class_name)  # Track as auto-created
+
+    def get_checked_class_names(self):
+        """
+        Get a list of class names that are currently checked in the table.
+        
+        :return: List of class names that have checked checkboxes
+        """
+        checked_classes = []
+        for row in range(self.labels_table.rowCount()):
+            checkbox_item = self.labels_table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                if row in self.label_to_class_name:
+                    checked_classes.append(self.label_to_class_name[row])
+        return checked_classes
+
+    def get_checked_labels(self):
+        """
+        Get a list of label dictionaries for all checked rows in the table.
+        Each dictionary contains the label mapping information.
+        
+        :return: List of label dictionaries for checked class names
+        """
+        checked_labels = []
+        for class_name in self.get_checked_class_names():
+            if class_name in self.class_mapping:
+                checked_labels.append(self.class_mapping[class_name])
+        return checked_labels
 
     def predict(self, inputs):
         """
