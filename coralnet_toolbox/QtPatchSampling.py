@@ -140,8 +140,12 @@ class PatchSamplingDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
+        # Setup the info/instructions layout
+        self.setup_info_layout()
         # Setup the sampling configuration layout
         self.setup_sampling_config_layout()
+        # Setup the propagation and exclusion layout
+        self.setup_propagation_exclusion_layout()
         # Setup the annotation configuration layout
         self.setup_annotation_config_layout()
         # Setup the bottom button controls
@@ -164,9 +168,26 @@ class PatchSamplingDialog(QDialog):
         
         # Connect to image selection changes to update preview when user switches images
         self.image_window.imageSelected.connect(self.on_image_changed)
+        
+    def setup_info_layout(self):
+        """
+        Set up the info layout with explanatory text.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+
+        info_label = QLabel(
+            "Specify your sampling parameters below and highlight rows within the ImageWindow to sample."
+        )
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_sampling_config_layout(self):
-        """Set up the sampling method and count configuration."""
+        """Set up the core sampling method and count configuration."""
         group_box = QGroupBox("Sampling Configuration")
         layout = QFormLayout()
 
@@ -192,6 +213,14 @@ class PatchSamplingDialog(QDialog):
         self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)
         layout.addRow("Annotation Size:", self.annotation_size_spinbox)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_propagation_exclusion_layout(self):
+        """Set up the propagation and exclusion options configuration."""
+        group_box = QGroupBox("Propagation & Exclusion")
+        layout = QFormLayout()
+
         # Sample Label
         self.label_combo = QComboBox()
         for label in self.label_window.labels:
@@ -199,7 +228,7 @@ class PatchSamplingDialog(QDialog):
         self.label_combo.setCurrentIndex(0)
         self.label_combo.currentIndexChanged.connect(self.preview_annotations)
         layout.addRow("Sample As:", self.label_combo)
-        
+
         # Propagate Labels
         self.propagate_labels_combo = QComboBox()
         self.propagate_labels_combo.addItems(["False", "True"])
