@@ -41,7 +41,6 @@ from coralnet_toolbox.Tile import (
     TileSegmentDataset as SegmentTileDatasetDialog,
     TileSemanticDataset as SemanticTileDatasetDialog,
     TileManager as TileManagerDialog,
-    TileBatchInference as TileBatchInferenceDialog
 )
 
 # TODO update IO classes to have dialogs
@@ -81,10 +80,6 @@ from coralnet_toolbox.MachineLearning import (
     DeployDetect as DetectDeployModelDialog,
     DeploySegment as SegmentDeployModelDialog,
     DeploySemantic as SemanticDeployModelDialog,
-    BatchClassify as ClassifyBatchInferenceDialog,
-    BatchDetect as DetectBatchInferenceDialog,
-    BatchSegment as SegmentBatchInferenceDialog,
-    BatchSemantic as SemanticBatchInferenceDialog,
     VideoDetect as DetectVideoInferenceDialog,
     VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
@@ -104,19 +99,16 @@ from coralnet_toolbox.MachineLearning import (
 from coralnet_toolbox.SAM import (
     DeployPredictorDialog as SAMDeployPredictorDialog,
     DeployGeneratorDialog as SAMDeployGeneratorDialog,
-    BatchInferenceDialog as SAMBatchInferenceDialog
 )
 
 from coralnet_toolbox.SeeAnything import (
     TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
-    BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
 from coralnet_toolbox.Transformers import (
     DeployModelDialog as TransformersDeployModelDialog,
-    BatchInferenceDialog as TransformersBatchInferenceDialog
 )
 
 from coralnet_toolbox.CoralNet import (
@@ -300,34 +292,27 @@ class MainWindow(QMainWindow):
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
         self.semantic_deploy_model_dialog = SemanticDeployModelDialog(self)
-        self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
-        self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
-        self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.semantic_batch_inference_dialog = SemanticBatchInferenceDialog(self)
         self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
         self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
-        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
 
         # Create dialogs (See Anything)
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-        self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
 
         # Create dialogs (Transformers)
         self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
-        self.transformers_batch_inference_dialog = TransformersBatchInferenceDialog(self)
 
         # Create dialogs (Batch Inference - Consolidated)
+        # This is accessed via ImageWindow right-click context menu
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
         # Create dialogs (Tile)
         self.tile_manager_dialog = TileManagerDialog(self)
-        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
@@ -541,10 +526,6 @@ class MainWindow(QMainWindow):
         self.tile_manager_action = QAction("Tile Manager", self)
         self.tile_manager_action.triggered.connect(self.open_tile_manager_dialog)
         self.tile_menu.addAction(self.tile_manager_action)
-        # Tile Batch Inference
-        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
-        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
-        self.tile_menu.addAction(self.tile_batch_inference_action)
         
         # Add a separator
         self.tile_menu.addSeparator()
@@ -582,10 +563,6 @@ class MainWindow(QMainWindow):
         self.sam_deploy_generator_action = QAction("Deploy Generator", self)
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_menu.addAction(self.sam_deploy_generator_action)
-        # Batch Inference
-        self.sam_batch_inference_action = QAction("Batch Inference", self)
-        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
-        self.sam_menu.addAction(self.sam_batch_inference_action)
 
         # See Anything submenu
         self.see_anything_menu = self.ai_assist_menu.addMenu("See Anything")
@@ -601,10 +578,6 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
         self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
-        # Batch Inference
-        self.see_anything_batch_inference_action = QAction("Batch Inference", self)
-        self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
-        self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
 
         # Transformers submenu
         self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
@@ -612,10 +585,6 @@ class MainWindow(QMainWindow):
         self.transformers_deploy_model_action = QAction("Deploy Model", self)
         self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
         self.transformers_menu.addAction(self.transformers_deploy_model_action)
-        # Batch Inference
-        self.transformers_batch_inference_action = QAction("Batch Inference", self)
-        self.transformers_batch_inference_action.triggered.connect(self.open_transformers_batch_inference_dialog)
-        self.transformers_menu.addAction(self.transformers_batch_inference_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -711,25 +680,6 @@ class MainWindow(QMainWindow):
         self.ml_semantic_deploy_model_action = QAction("Semantic", self)
         self.ml_semantic_deploy_model_action.triggered.connect(self.open_semantic_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_semantic_deploy_model_action)
-
-        # Batch Inference submenu
-        self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
-        # Batch Inference Classification
-        self.ml_classify_batch_inference_action = QAction("Classify", self)
-        self.ml_classify_batch_inference_action.triggered.connect(self.open_classify_batch_inference_dialog)
-        self.ml_batch_inference_menu.addAction(self.ml_classify_batch_inference_action)
-        # Batch Inference Detection
-        self.ml_detect_batch_inference_action = QAction("Detect", self)
-        self.ml_detect_batch_inference_action.triggered.connect(self.open_detect_batch_inference_dialog)
-        self.ml_batch_inference_menu.addAction(self.ml_detect_batch_inference_action)
-        # Batch Inference Segmentation
-        self.ml_segment_batch_inference_action = QAction("Segment", self)
-        self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
-        self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
-        # Batch Inference Semantic Segmentation
-        self.ml_semantic_batch_inference_action = QAction("Semantic", self)
-        self.ml_semantic_batch_inference_action.triggered.connect(self.open_semantic_batch_inference_dialog)
-        self.ml_batch_inference_menu.addAction(self.ml_semantic_batch_inference_action)
         
         # Add a separator
         self.ml_menu.addSeparator()
@@ -2839,29 +2789,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_tile_batch_inference_dialog(self):
-        """Open the Tile Batch Inference dialog to run batch inference on tiled images."""
-        # Check if there are loaded images
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Tile Batch Inference",
-                                "No images are present in the project.")
-            return
-        
-        # Check if there are any models deployed
-        if not self.tile_batch_inference_dialog.check_model_availability():
-            QMessageBox.warning(self,
-                                "Tile Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            # Untoggle all tools, choose the work area tool
-            self.choose_specific_tool("work_area")
-            self.tile_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
     def open_classify_tune_model_dialog(self):
         """Open the Classify Tune Model dialog to tune a classification model."""
         try:
@@ -3037,92 +2964,6 @@ class MainWindow(QMainWindow):
             self.semantic_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_classify_batch_inference_dialog(self):
-        """Open the Classify Batch Inference dialog to run batch inference on classification models."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.classify_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        if not self.annotation_window.annotations_dict:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No annotations are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.classify_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_detect_batch_inference_dialog(self):
-        """Open the Detect Batch Inference dialog to run batch inference on detection models."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.detect_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.detect_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_segment_batch_inference_dialog(self):
-        """Open the Segment Batch Inference dialog to run batch inference on segmentation models."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.segment_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.segment_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_semantic_batch_inference_dialog(self):
-        """Open the Semantic Batch Inference dialog to run batch inference on semantic segmentation models."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.semantic_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.semantic_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_detect_video_inference_dialog(self):
         """Open the Detect Video Inference dialog to run inference on video files."""
@@ -3154,26 +2995,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_transformers_batch_inference_dialog(self):
-        """Open the Transformers Batch Inference dialog to run batch inference with Transformers."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Transformers Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.transformers_deploy_model_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "Transformers Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.transformers_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
     def open_sam_deploy_predictor_dialog(self):
         """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
         if not self.image_window.raster_manager.image_paths:
@@ -3199,26 +3020,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_generator_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_sam_batch_inference_dialog(self):
-        """Open the SAM Batch Inference dialog to run batch inference with SAM."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "SAM Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.sam_deploy_generator_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "SAM Batch Inference",
-                                "Please deploy a generator before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -3263,33 +3064,6 @@ class MainWindow(QMainWindow):
             self.see_anything_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
-
-    def open_see_anything_batch_inference_dialog(self):
-        """Open the See Anything Batch Inference dialog to run batch inference with See Anything."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE) Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not self.see_anything_deploy_generator_dialog.loaded_model:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE) Batch Inference",
-                                "Please deploy a generator before running batch inference.")
-            return
-        
-        # Check if there are any annotations
-        if not self.annotation_window.annotations_dict:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE)",
-                                "Cannot run See Anything (YOLOE) without reference annotations in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.see_anything_batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_system_monitor_dialog(self):
         """Open the system system monitor window."""

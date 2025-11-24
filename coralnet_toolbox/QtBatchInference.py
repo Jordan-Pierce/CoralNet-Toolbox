@@ -404,21 +404,21 @@ class BatchInferenceDialog(QDialog):
             self.configure_thresholds(
                 enable_max_detections=False,
                 enable_uncertainty=True,
-                enable_iou=False,
-                enable_area=False
+                enable_iou=True,
+                enable_area=True
             )
         # See Anything uses uncertainty only
         elif model_name == "See Anything":
             self.configure_thresholds(
                 enable_max_detections=False,
                 enable_uncertainty=True,
-                enable_iou=False,
-                enable_area=False
+                enable_iou=True,
+                enable_area=True
             )
         # Transformers uses uncertainty, iou, and area
         elif model_name == "Transformers":
             self.configure_thresholds(
-                enable_max_detections=False,
+                enable_max_detections=True,
                 enable_uncertainty=True,
                 enable_iou=True,
                 enable_area=True
@@ -653,8 +653,6 @@ class BatchInferenceDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
             self.cleanup()
-
-        self.accept()
 
     def batch_inference(self):
         """
