@@ -448,6 +448,78 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Menu Bar Actions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utilities
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-assist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI-Assist
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#machine-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Machine Learning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coralnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CoralNet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -712,6 +784,78 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Menu Bar Actions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utilities
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-assist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI-Assist
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#machine-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Machine Learning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coralnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CoralNet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -856,6 +1000,7 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Image Window</strong>: Displays imported images
 - <strong>Confidence Window</strong>: Displays cropped images and confidence charts</p>
 <h2 id="menu-bar-actions">Menu Bar Actions<a class="headerlink" href="#menu-bar-actions" title="Permanent link">&para;</a></h2>
+<h3 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>New Project</strong>: Reload CoralNet-Toolbox (loss of data warning)</li>
 <li><strong>Open Project</strong>: Open an existing CoralNet-Toolbox project JSON file</li>
@@ -889,12 +1034,100 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Export CoralNet Annotations</strong>: Save annotation data to a CoralNet CSV file</li>
 <li><strong>Export TagLab Annotations</strong>: Save annotation data to a TagLab JSON file</li>
 <li><strong>Export Viscore Annotations</strong>: Save annotation data to a Viscore CSV file</li>
+<li><strong>Export Dataset</strong>: Create a YOLO dataset for machine learning (Classification, Detection, Instance, Semantic)</li>
+</ul>
+<h3 id="utilities">Utilities<a class="headerlink" href="#utilities" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Sample</strong>:</li>
 <li>
-<p><strong>Export Dataset</strong>: Create a YOLO dataset for machine learning (Classification, Detection, Instance, Semantic)</p>
+<p><strong>Sample Annotations</strong>: Automatically generate Patch annotations</p>
+<ul>
+<li><strong>Sampling Method</strong>: Choose between Random, Stratified Random, or Uniform distribution</li>
+<li><strong>Number of Annotations</strong>: Specify how many annotations to generate</li>
+<li><strong>Annotation Size</strong>: Set the size of the generated patch annotations</li>
+<li><strong>Label As</strong>: Choose which label to assign to generated annotations</li>
+<li><strong>Exclude Regions</strong>: Option to prevent sampling in areas with existing annotations</li>
+<li><strong>Margins</strong>: Define image boundary constraints for sampling:</li>
+<li>Set margins in pixels or percentage</li>
+<li>Configure different values for top, right, bottom, and left edges</li>
+<li>Annotations will only be placed within these margins</li>
+<li>Select images by highlighting them in the ImageWindow</li>
+</ul>
 </li>
 <li>
-<p><strong>Explorer</strong>:</p>
+<p><strong>Tile</strong>:</p>
 </li>
+<li><strong>Tile Manager</strong>: Pre-compute multiple tiles / work areas for selected images<ul>
+<li>Select images by highlighting them in the ImageWindow</li>
+</ul>
+</li>
+<li><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code></li>
+</ul>
+<h3 id="ai-assist">AI-Assist<a class="headerlink" href="#ai-assist" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>SAM</strong>:</li>
+<li><strong>Deploy Predictor</strong>: Deploy <code>EdgeSAM</code>, <code>MobileSAM</code>, <code>SAM</code>, etc, to use interactively (points, box)</li>
+<li>
+<p><strong>Deploy Generator</strong>: Deploy <code>FastSAM</code> to automatically segment the image</p>
+</li>
+<li>
+<p><strong>See Anything (YOLOE)</strong>:</p>
+</li>
+<li><strong>Deploy Predictor</strong>: Deploy a <code>YOLOE</code> model to use interactively within the same image</li>
+<li>
+<p><strong>Deploy Generator</strong>: Deploy a <code>YOLOE</code> model to use like a detector / segmentor, referencing other images' annotations</p>
+<ul>
+<li>Select the <code>YOLOE</code> model, parameters, and load it</li>
+<li>Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)</li>
+<li>Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)</li>
+<li>Use the loaded model w/ VPEs on new images, or work areas</li>
+</ul>
+</li>
+<li>
+<p><strong>Transformers</strong>:</p>
+</li>
+<li><strong>Deploy Model</strong>: Deploy a foundational model<ul>
+<li>Models Available: <code>Grounding DINO</code>, <code>OWLViT</code></li>
+</ul>
+</li>
+</ul>
+<h3 id="machine-learning">Machine Learning<a class="headerlink" href="#machine-learning" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Machine Learning</strong>:</li>
+<li><strong>Merge Datasets</strong>: Merge multiple Classification datasets</li>
+<li><strong>Tune Model</strong>: Identify ideal hyperparameter values before fully training a model</li>
+<li><strong>Train Model</strong>: Train a machine learning model</li>
+<li><strong>Evaluate Model</strong>: Evaluate a trained model</li>
+<li><strong>Optimize Model</strong>: Convert model format</li>
+<li><strong>Deploy Model</strong>: Make predictions using a trained model</li>
+<li><strong>Video Inference</strong>: Perform inferencing on videos in real-time, view analytics</li>
+</ul>
+<h3 id="coralnet">CoralNet<a class="headerlink" href="#coralnet" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>CoralNet</strong>: </li>
+<li><strong>Authenticate</strong>: Authenticate with CoralNet<ul>
+<li>Enter your CoralNet username and password to access your sources</li>
+<li>Authentication is required before downloading any CoralNet data</li>
+</ul>
+</li>
+<li><strong>Download</strong>: Download data from CoralNet<ul>
+<li><strong>Source ID</strong>: Enter the Source ID (or multiple IDs separated by commas)</li>
+<li><strong>Output Directory</strong>: Select where to save downloaded files</li>
+<li><strong>Download Options</strong>: Choose what to download:</li>
+<li>Metadata: Source information and settings</li>
+<li>Labelset: All available labels from the source</li>
+<li>Annotations: Point annotations with their labels</li>
+<li>Images: Original images from the source</li>
+<li><strong>Parameters</strong>: Configure download settings:</li>
+<li>Image Fetch Rate: Time between image downloads (seconds)</li>
+<li>Image Fetch Break Time: Pause duration between batches (seconds)</li>
+<li><strong>Debug Mode</strong>: Toggle headless browser mode for troubleshooting</li>
+</ul>
+</li>
+</ul>
+<h3 id="explorer">Explorer<a class="headerlink" href="#explorer" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Explorer</strong>:</li>
 <li><strong>Annotation Settings</strong>: Select images, annotation types, and labels to include / filter press apply</li>
 <li><strong>Model Settings</strong>: Use Color Features, a pre-trained, or existing classification model<ul>
 <li><strong>Feature Mode</strong>: Embeddings (before classification), or Predictions (after classification)</li>
@@ -915,9 +1148,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Size</strong>: Slider-bar to control annotation size in Annotation Viewer</li>
 </ul>
 </li>
-<li>
-<p><strong>Embedding Viewer</strong>: Selected, modify labels of annotations</p>
-<ul>
+<li><strong>Embedding Viewer</strong>: Selected, modify labels of annotations<ul>
 <li><strong>Controls</strong>:</li>
 <li><kbd>Left-Click</kbd>: Select an annotation</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple annotations</li>
@@ -935,99 +1166,6 @@ This guide provides instructions on how to use the application, including key fu
 <li>Use dual monitors to assess selected annotations in Annotation Viewer, in the Annotation Window</li>
 </ul>
 </li>
-<li>
-<p><strong>Sample</strong>:</p>
-</li>
-<li>
-<p><strong>Sample Annotations</strong>: Automatically generate Patch annotations</p>
-<ul>
-<li><strong>Sampling Method</strong>: Choose between Random, Stratified Random, or Uniform distribution</li>
-<li><strong>Number of Annotations</strong>: Specify how many annotations to generate</li>
-<li><strong>Annotation Size</strong>: Set the size of the generated patch annotations</li>
-<li><strong>Label As</strong>: Choose which label to assign to generated annotations</li>
-<li><strong>Apply Options</strong>: Apply sampling to current image, filtered images, previous/next images, or all images</li>
-<li><strong>Exclude Regions</strong>: Option to prevent sampling in areas with existing annotations</li>
-<li><strong>Margins</strong>: Define image boundary constraints for sampling:</li>
-<li>Set margins in pixels or percentage</li>
-<li>Configure different values for top, right, bottom, and left edges</li>
-<li>Annotations will only be placed within these margins</li>
-</ul>
-</li>
-<li>
-<p><strong>Tile</strong>:</p>
-</li>
-<li><strong>Tile Manager</strong>: Pre-compute multiple tiles / work areas for selected images</li>
-<li><strong>Tile Batch Inferece</strong>: Apply inference on all imagues with tiles / work areas</li>
-<li>
-<p><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code></p>
-</li>
-<li>
-<p><strong>CoralNet</strong>: </p>
-</li>
-<li><strong>Authenticate</strong>: Authenticate with CoralNet<ul>
-<li>Enter your CoralNet username and password to access your sources</li>
-<li>Authentication is required before downloading any CoralNet data</li>
-</ul>
-</li>
-<li>
-<p><strong>Download</strong>: Download data from CoralNet</p>
-<ul>
-<li><strong>Source ID</strong>: Enter the Source ID (or multiple IDs separated by commas)</li>
-<li><strong>Output Directory</strong>: Select where to save downloaded files</li>
-<li><strong>Download Options</strong>: Choose what to download:</li>
-<li>Metadata: Source information and settings</li>
-<li>Labelset: All available labels from the source</li>
-<li>Annotations: Point annotations with their labels</li>
-<li>Images: Original images from the source</li>
-<li><strong>Parameters</strong>: Configure download settings:</li>
-<li>Image Fetch Rate: Time between image downloads (seconds)</li>
-<li>Image Fetch Break Time: Pause duration between batches (seconds)</li>
-<li><strong>Debug Mode</strong>: Toggle headless browser mode for troubleshooting</li>
-</ul>
-</li>
-<li>
-<p><strong>Machine Learning</strong>:</p>
-</li>
-<li><strong>Merge Datasets</strong>: Merge multiple Classification datasets</li>
-<li><strong>Tune Model</strong>: Identify ideal hyperparameter values before fully training a model</li>
-<li><strong>Train Model</strong>: Train a machine learning model</li>
-<li><strong>Evaluate Model</strong>: Evaluate a trained model</li>
-<li><strong>Optimize Model</strong>: Convert model format</li>
-<li><strong>Deploy Model</strong>: Make predictions using a trained model</li>
-<li><strong>Batch Inference</strong>: Perform batch inferences</li>
-<li>
-<p><strong>Video Inference</strong>: Perform inferencing on videos in real-time, view analytics</p>
-</li>
-<li>
-<p><strong>SAM</strong>:</p>
-</li>
-<li><strong>Deploy Predictor</strong>: Deploy <code>EdgeSAM</code>, <code>MobileSAM</code>, <code>SAM</code>, etc, to use interactively (points, box)</li>
-<li><strong>Deploy Generator</strong>: Deploy <code>FastSAM</code> to automatically segment the image</li>
-<li>
-<p><strong>Batch Inference</strong>: Perform batch inferencing using <code>FastSAM</code></p>
-</li>
-<li>
-<p><strong>See Anything (YOLOE)</strong>:</p>
-</li>
-<li><strong>Deploy Predictor</strong>: Deploy a <code>YOLOE</code> model to use interactively within the same image</li>
-<li><strong>Deploy Generator</strong>: Deploy a <code>YOLOE</code> model to use like a detector / segmentor, referencing other images' annotations<ul>
-<li>Select the <code>YOLOE</code> model, parameters, and load it</li>
-<li>Choose a reference label, then select the image(s) containing reference annotations (must be rectangles or polygons)</li>
-<li>Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)</li>
-<li>Use the loaded model w/ VPEs on new images, or work areas, and with batch inferencing</li>
-</ul>
-</li>
-<li>
-<p><strong>Batch Inference</strong>: Perform batch inferencing using loaded <code>YOLOE</code> generator</p>
-</li>
-<li>
-<p><strong>Transformers</strong>:</p>
-</li>
-<li><strong>Deploy Model</strong>: Deploy a foundational model<ul>
-<li>Models Available: <code>Grounding DINO</code>, <code>OWLViT</code></li>
-</ul>
-</li>
-<li><strong>Batch Inference</strong>: Perform batch inferences</li>
 </ul>
 <h2 id="tool-bar-tools">Tool Bar Tools<a class="headerlink" href="#tool-bar-tools" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1238,8 +1376,9 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows</li>
 <li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select multiple, adjacent rows</li>
 <li><strong>Open Context Menu</strong>:</li>
-<li><kbd>Right-Click</kbd> on a single / multiple highlighted row: <ul>
+<li><kbd>Right-Click</kbd> on a single / multiple highlighted row to: <ul>
 <li>Check / uncheck highlighted rows</li>
+<li>Batch Inference using loaded models (opens Batch Inference Dialog)</li>
 <li>Import Z-channel for highlighted rows (opens Z-channel import dialog)</li>
 <li>Remove Z-channel for highlighted rows</li>
 <li>Delete annotations for highlighted rows</li>
@@ -1338,7 +1477,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2025 06:07:04 UTC"><span class="timeago" datetime="2025-11-21T06:07:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2025 06:07:04 UTC">2025-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2025 22:44:17 UTC"><span class="timeago" datetime="2025-11-24T22:44:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2025 22:44:17 UTC">2025-11-24</span>
   </span>
 
     
