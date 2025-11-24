@@ -5,7 +5,6 @@ from .TileDataset.QtDetect import Detect as TileDetectDataset
 from .TileDataset.QtSegment import Segment as TileSegmentDataset
 from .TileDataset.QtSemantic import Semantic as TileSemanticDataset
 from .QtTileManager import TileManager
-from .QtTileBatchInference import TileBatchInference
 
 __all__ = [
     'TileClassifyDataset',
@@ -13,5 +12,4 @@ __all__ = [
     'TileSegmentDataset',
     'TileSemanticDataset',
     'TileManager',
-    'TileBatchInference'
 ]

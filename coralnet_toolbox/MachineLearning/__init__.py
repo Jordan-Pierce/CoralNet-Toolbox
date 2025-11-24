@@ -17,11 +17,6 @@ from .DeployModel.QtDetect import Detect as DeployDetect
 from .DeployModel.QtSegment import Segment as DeploySegment
 from .DeployModel.QtSemantic import Semantic as DeploySemantic
 
-from .BatchInference.QtClassify import Classify as BatchClassify
-from .BatchInference.QtDetect import Detect as BatchDetect
-from .BatchInference.QtSegment import Segment as BatchSegment
-from .BatchInference.QtSemantic import Semantic as BatchSemantic
-
 from .VideoInference.QtDetect import Detect as VideoDetect
 from .VideoInference.QtSegment import Segment as VideoSegment
 
@@ -56,10 +51,6 @@ __all__ = [
     'DeployDetect', 
     'DeploySegment', 
     'DeploySemantic',
-    'BatchClassify',
-    'BatchDetect', 
-    'BatchSegment',
-    'BatchSemantic',
     'VideoDetect',
     'VideoSegment',
     'ImportDetect', 
