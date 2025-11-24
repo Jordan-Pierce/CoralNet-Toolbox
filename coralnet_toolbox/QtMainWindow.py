@@ -2785,7 +2785,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.tile_manager_dialog.exec_()
+            self.tile_manager_dialog.show()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
