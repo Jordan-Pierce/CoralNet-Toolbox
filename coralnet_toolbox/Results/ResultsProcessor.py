@@ -407,17 +407,24 @@ class ResultsProcessor:
         :param conf: The top confidence score.
         :param predictions: Dictionary of all class predictions.
         """
-        # Update the machine confidence values with all predictions
+        # Update the machine confidence values with all predictions (top5)
         annotation.update_machine_confidence(predictions)
 
-        # Determine the final label, setting it to 'Review' if confidence is too low
-        final_label = self.label_window.get_label_by_short_code(cls_name)
-        if conf < self.uncertainty_thresh:
-            final_label = self.label_window.get_label_by_id('-1')
+        # Get the current uncertainty threshold from the UI (not the cached value)
+        current_uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         
-        # Update the annotation's label
-        if final_label:
-            annotation.update_label(final_label)
+        # Determine the final label based on the top1 prediction confidence
+        if conf < current_uncertainty_thresh:
+            # If top1 confidence is below threshold, set to 'Review' label
+            # We do this AFTER update_machine_confidence to preserve all predictions
+            final_label = self.label_window.get_label_by_id('-1')  # Review label
+            annotation.label = final_label
+            annotation.verified = False
+            annotation.update_graphics_item()
+        else:
+            # Otherwise keep the label that was set by update_machine_confidence (top1 class)
+            # Note: update_machine_confidence already set annotation.label to the top prediction
+            pass
 
         # If the annotation's image is currently displayed, refresh its visual state
         if annotation.image_path == self.annotation_window.current_image_path:
@@ -425,7 +432,7 @@ class ResultsProcessor:
             # Update the confidence window if this annotation is selected
             if annotation in self.annotation_window.selected_annotations:
                 self.main_window.confidence_window.display_cropped_image(annotation)
-        
+    
         # Update the annotation count in the image table
         self.image_window.update_image_annotations(annotation.image_path)
 
