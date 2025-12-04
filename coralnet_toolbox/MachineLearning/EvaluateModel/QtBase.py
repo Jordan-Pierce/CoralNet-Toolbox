@@ -263,11 +263,14 @@ class Base(QDialog):
         params['imgsz'] = int(self.imgsz_spinbox.value())
         params['batch'] = int(self.batch_spinbox.value())
         params['conf'] = float(self.conf_spinbox.value())
-        params['iou'] = float(self.iou_spinbox.value())
-        params['max_det'] = int(self.max_det_spinbox.value())
+        
+        if self.task != 'classify':
+            params['iou'] = float(self.iou_spinbox.value())
+            params['max_det'] = int(self.max_det_spinbox.value())
+            params['agnostic_nms'] = self.agnostic_nms_combo.currentText() == "True"
+            params['single_cls'] = self.single_cls_combo.currentText() == "True"
+            
         params['augment'] = self.augment_combo.currentText() == "True"
-        params['agnostic_nms'] = self.agnostic_nms_combo.currentText() == "True"
-        params['single_cls'] = self.single_cls_combo.currentText() == "True"
         params['workers'] = int(self.workers_spinbox.value())
         
         now = datetime.datetime.now()
