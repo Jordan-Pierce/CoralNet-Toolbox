@@ -1495,13 +1495,8 @@ class AnnotationWindow(QGraphicsView):
         if not len(annotations_to_load):
             return
     
-        # Crop only the annotations (this shows the progress bar)
-        annotations_to_load = self.crop_annotations(
-            image_path or self.current_image_path,
-            annotations_to_load,
-            return_annotations=True,
-            verbose=True
-        )
+        # NOTE: Removed upfront cropping - annotations will be cropped on-demand when needed
+        # (e.g., when selected, during classification, or when displayed in confidence window)
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1608,6 +1603,7 @@ class AnnotationWindow(QGraphicsView):
         rasterio_image = rasterio_open(image_path)
         for annotation in annotations:
             try:
+                # Only crop if not already cropped
                 if not annotation.cropped_image:
                     annotation.create_cropped_image(rasterio_image)
                 if verbose:
@@ -1626,9 +1622,26 @@ class AnnotationWindow(QGraphicsView):
             return annotations
     
     def add_annotation_from_tool(self, annotation, record_action=True):
-        """Adds a new annotation created by a user tool."""
-        # This method now delegates all logic to the primary add_annotation method.
+        """
+        Adds a new annotation created by a user tool.
+        
+        This method provides immediate user feedback by cropping the annotation
+        and displaying it in the confidence window when the annotation is created
+        on the current image.
+        """
+        # First, add the annotation using the primary method
         self.add_annotation(annotation, record_action=record_action)
+        
+        # Then provide user feedback for tool-created annotations
+        if annotation.image_path == self.current_image_path and annotation.label.is_visible:
+            # Crop the annotation for immediate display in confidence window
+            if not annotation.cropped_image and self.rasterio_image:
+                annotation.create_cropped_image(self.rasterio_image)
+            
+            # Display in confidence window to give user immediate feedback
+            if annotation.cropped_image:
+                annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+                self.main_window.confidence_window.display_cropped_image(annotation)
         
     def add_annotation(self, annotation, record_action=True):
         """
@@ -1671,16 +1684,9 @@ class AnnotationWindow(QGraphicsView):
             # Create graphics item for display in the scene
             if not annotation.graphics_item:
                 annotation.create_graphics_item(self.scene)
-            
-            # Create a cropped image for the confidence window
-            if not annotation.cropped_image and self.rasterio_image:
-                annotation.create_cropped_image(self.rasterio_image)
                 
             # Set the visibility based on the current UI state (will respect label checkbox)
             self.set_annotation_visibility(annotation)
-            
-            # Update the confidence window with the new annotation (only when visible)
-            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # --- Finalization ---
         # Update the annotation count in the ImageWindow table (always, regardless of visibility)

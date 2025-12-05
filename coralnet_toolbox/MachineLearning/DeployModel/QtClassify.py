@@ -169,9 +169,21 @@ class Classify(Base):
         images_np = []
         valid_inputs = []
 
-        # Only add images and inputs that have valid cropped images
+        # Crop annotations on-demand if needed and convert to numpy arrays
         for annotation in inputs:
-            if hasattr(annotation, 'cropped_image') and annotation.cropped_image:
+            # Crop on-demand if not already cropped
+            if not annotation.cropped_image:
+                try:
+                    # Get the rasterio source for this annotation's image
+                    raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
+                    if raster and raster.rasterio_src:
+                        annotation.create_cropped_image(raster.rasterio_src)
+                except Exception as e:
+                    print(f"Error cropping annotation {annotation.id}: {str(e)}")
+                    continue
+            
+            # Convert cropped image to numpy array
+            if annotation.cropped_image:
                 try:
                     img = pixmap_to_numpy(annotation.cropped_image)
                     images_np.append(img)
