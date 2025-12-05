@@ -15,7 +15,7 @@ from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QSpinBox, QVBoxLayout, QGroupBox,
+                             QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
                              QWidget, QLineEdit, QFileDialog)
 
 from coralnet_toolbox.Results import ResultsProcessor
@@ -105,15 +105,22 @@ class DeployPredictorDialog(QDialog):
 
     def setup_models_layout(self):
         """
-        Setup the models layout with standard models and file selection.
+        Setup the models layout with tabbed interface for model selection.
         """
         group_box = QGroupBox("Model Selection")
-        layout = QFormLayout()
-    
-        # Model dropdown
+        layout = QVBoxLayout()
+
+        # Create tabbed widget
+        tab_widget = QTabWidget()
+
+        # Tab 1: Select model from dropdown
+        model_select_tab = QWidget()
+        model_select_layout = QFormLayout(model_select_tab)
+
+        # Model combo box
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-    
+
         # Define available models
         standard_models = [
             'yoloe-v8s-seg.pt',
@@ -123,17 +130,45 @@ class DeployPredictorDialog(QDialog):
             'yoloe-11m-seg.pt',
             'yoloe-11l-seg.pt',
         ]
-    
+
         # Add all models to combo box
         self.model_combo.addItems(standard_models)
-        
+
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
-        # Create a layout for the model selection
-        layout.addRow("Models:", self.model_combo)
-        
+        model_select_layout.addRow("Model:", self.model_combo)
+
+        tab_widget.addTab(model_select_tab, "Select Model")
+
+        # Tab 2: Use existing model (custom weights)
+        model_existing_tab = QWidget()
+        model_existing_layout = QFormLayout(model_existing_tab)
+
+        # Existing Model
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        model_existing_layout.addRow("Model File:", model_layout)
+
+        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+
+        layout.addWidget(tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_edit.setText(file_path)
 
     def setup_parameters_layout(self):
         """
@@ -289,15 +324,20 @@ class DeployPredictorDialog(QDialog):
 
     def load_model(self):
         """
-        Load the selected model.
+        Load the selected model (from dropdown or file).
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
     
         try:
-            # Get selected model path and download weights if needed
-            self.model_path = self.model_combo.currentText()
+            # Get model path - either from custom file or dropdown
+            if self.model_edit.text().strip():
+                # Use custom model file
+                self.model_path = self.model_edit.text().strip()
+            else:
+                # Use selected model from dropdown
+                self.model_path = self.model_combo.currentText()
     
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)

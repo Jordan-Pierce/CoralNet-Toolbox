@@ -18,7 +18,7 @@ from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QLineEdit,
-                             QFormLayout, QComboBox, QSpinBox, QPushButton,
+                             QFormLayout, QComboBox, QSpinBox, QPushButton, QTabWidget, QWidget,
                              QHBoxLayout)
 
 from coralnet_toolbox.QtImageWindow import ImageWindow
@@ -351,15 +351,23 @@ class DeployGeneratorDialog(QDialog):
         
     def setup_models_layout(self):
         """
-        Setup the models layout with a simple model selection combo box (no tabs).
+        Setup the models layout with tabbed interface for model selection and VPE file option.
         """
         group_box = QGroupBox("Model Selection")
-        layout = QFormLayout()
+        layout = QVBoxLayout()
 
+        # Create tabbed widget
+        tab_widget = QTabWidget()
+
+        # Tab 1: Select model from dropdown
+        model_select_tab = QWidget()
+        model_select_layout = QFormLayout(model_select_tab)
+
+        # Model combo box
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
-        # Define available models (keep the existing dictionary)
+        # Define available models
         self.models = [
             'yoloe-v8s-seg.pt',
             'yoloe-v8m-seg.pt',
@@ -372,13 +380,34 @@ class DeployGeneratorDialog(QDialog):
         # Add all models to combo box
         for model_name in self.models:
             self.model_combo.addItem(model_name)
-        
+
         # Set the default model
         self.model_combo.setCurrentIndex(self.models.index('yoloe-v8s-seg.pt'))
-        # Create a layout for the model selection
-        layout.addRow(QLabel("Models:"), self.model_combo)
+        model_select_layout.addRow("Model:", self.model_combo)
 
-        # Add custom vpe file selection
+        tab_widget.addTab(model_select_tab, "Select Model")
+
+        # Tab 2: Use existing model (custom weights)
+        model_existing_tab = QWidget()
+        model_existing_layout = QFormLayout(model_existing_tab)
+
+        # Existing Model
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        model_existing_layout.addRow("Model File:", model_layout)
+
+        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+
+        layout.addWidget(tab_widget)
+
+        # Add custom VPE file selection (always available, outside tabs)
+        vpe_group = QGroupBox("Visual Prompt Encoding (VPE)")
+        vpe_layout = QFormLayout()
+        
         self.vpe_path_edit = QLineEdit()
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_vpe_file)
@@ -386,10 +415,24 @@ class DeployGeneratorDialog(QDialog):
         vpe_path_layout = QHBoxLayout()
         vpe_path_layout.addWidget(self.vpe_path_edit)
         vpe_path_layout.addWidget(browse_button)
-        layout.addRow("Custom VPE:", vpe_path_layout)
+        vpe_layout.addRow("Custom VPE:", vpe_path_layout)
+        
+        vpe_group.setLayout(vpe_layout)
+        layout.addWidget(vpe_group)
 
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
+
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_edit.setText(file_path)
         
     def setup_parameters_layout(self):
         """
@@ -869,8 +912,13 @@ class DeployGeneratorDialog(QDialog):
         """        
         self.loaded_model = None
         
-        # Get selected model path and download weights if needed
-        self.model_path = self.model_combo.currentText()
+        # Get model path - either from custom file or dropdown
+        if self.model_edit.text().strip():
+            # Use custom model file
+            self.model_path = self.model_edit.text().strip()
+        else:
+            # Use selected model from dropdown
+            self.model_path = self.model_combo.currentText()
 
         # Load model using registry
         self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.device)
