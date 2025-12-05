@@ -2,6 +2,7 @@ import warnings
 
 import os
 import gc
+import yaml
 import datetime
 import traceback
 import ujson as json
@@ -13,7 +14,7 @@ from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer, YOLOEPETrainer
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame)
 
 from torch.cuda import empty_cache
 
@@ -222,8 +223,8 @@ class TrainModelDialog(QDialog):
         self.main_window = main_window
 
         self.setWindowIcon(get_icon("eye.png"))
-        self.setWindowTitle("Train Model")
-        self.resize(600, 650)
+        self.setWindowTitle("Train YOLOE Model")
+        self.resize(600, 800)  # Increased height for new parameters
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -396,6 +397,26 @@ class TrainModelDialog(QDialog):
             combo.addItems(["True", "False"])
             return combo
 
+        # Create parameters group box
+        group_box = QGroupBox("Training Parameters")
+        group_layout = QVBoxLayout(group_box)
+
+        # Add import/export buttons at the top
+        import_export_layout = QHBoxLayout()
+        
+        self.import_button = QPushButton("Import YAML")
+        self.import_button.clicked.connect(self.import_parameters)
+        import_export_layout.addWidget(self.import_button)
+
+        self.export_button = QPushButton("Export YAML")
+        self.export_button.clicked.connect(self.export_parameters)
+        import_export_layout.addWidget(self.export_button)
+        
+        # Add stretch to push buttons to the left
+        import_export_layout.addStretch()
+        
+        group_layout.addLayout(import_export_layout)
+
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
@@ -404,10 +425,7 @@ class TrainModelDialog(QDialog):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(form_widget)
-
-        # Create parameters group box
-        group_box = QGroupBox("Parameters")
-        group_layout = QVBoxLayout(group_box)
+        
         group_layout.addWidget(scroll_area)
 
         # Fine-tune or Linear Probing
@@ -494,6 +512,24 @@ class TrainModelDialog(QDialog):
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
 
+        # Multi Scale
+        self.multi_scale_combo = create_bool_combo()
+        self.multi_scale_combo.setCurrentText("False")
+        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
+
+        # Single Class (cls)
+        self.single_class_combo = create_bool_combo()
+        self.single_class_combo.setCurrentText("False")
+        form_layout.addRow("Single Class:", self.single_class_combo)
+
+        # Dropout
+        self.dropout_spinbox = QDoubleSpinBox()
+        self.dropout_spinbox.setMinimum(0.0)
+        self.dropout_spinbox.setMaximum(1.0)
+        self.dropout_spinbox.setSingleStep(0.01)
+        self.dropout_spinbox.setValue(0.0)
+        form_layout.addRow("Dropout:", self.dropout_spinbox)
+
         # Workers
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(1)
@@ -519,29 +555,85 @@ class TrainModelDialog(QDialog):
         self.verbose_combo = create_bool_combo()
         form_layout.addRow("Verbose:", self.verbose_combo)
 
-        # Add custom parameters section
-        self.custom_params_layout = QVBoxLayout()
-        form_layout.addRow("Additional Parameters:", self.custom_params_layout)
-
-        # Add button for new parameter pairs
+        # Add horizontal separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        form_layout.addRow("", separator)
+        
+        # Add parameter button at the top of custom parameters section
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
         form_layout.addRow("", self.add_param_button)
+
+        # Add custom parameters section
+        self.custom_params_layout = QVBoxLayout()
+        form_layout.addRow("", self.custom_params_layout)
+
+        # Remove parameter button at the bottom
+        self.remove_param_button = QPushButton("Remove Parameter")
+        self.remove_param_button.clicked.connect(self.remove_parameter_pair)
+        self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
+        form_layout.addRow("", self.remove_param_button)
 
         self.layout.addWidget(group_box)
 
     def add_parameter_pair(self):
         """
-        Add a new pair of parameter name and value input fields.
+        Add a new parameter input group with name, value, and type selector.
         """
         param_layout = QHBoxLayout()
+
+        # Parameter name field
         param_name = QLineEdit()
+        param_name.setPlaceholderText("Parameter name")
+
+        # Parameter value field
         param_value = QLineEdit()
+        param_value.setPlaceholderText("Value")
+
+        # Parameter type selector
+        param_type = QComboBox()
+        param_type.addItems(["string", "int", "float", "bool"])
+
+        # Add widgets to layout
         param_layout.addWidget(param_name)
         param_layout.addWidget(param_value)
+        param_layout.addWidget(param_type)
 
-        self.custom_params.append((param_name, param_value))
+        # Store the widgets for later retrieval
+        self.custom_params.append((param_name, param_value, param_type))
         self.custom_params_layout.addLayout(param_layout)
+
+        # Enable the remove button since we now have at least one parameter
+        self.remove_param_button.setEnabled(True)
+
+    def remove_parameter_pair(self):
+        """
+        Remove the most recently added parameter pair.
+        """
+        if not self.custom_params:
+            return
+
+        # Get the last parameter group
+        param_name, param_value, param_type = self.custom_params.pop()
+
+        # Remove the layout containing these widgets
+        layout_to_remove = self.custom_params_layout.itemAt(self.custom_params_layout.count() - 1)
+
+        if layout_to_remove:
+            # Remove and delete widgets from the layout
+            while layout_to_remove.count():
+                widget = layout_to_remove.takeAt(0).widget()
+                if widget:
+                    widget.deleteLater()
+
+            # Remove the layout itself
+            self.custom_params_layout.removeItem(layout_to_remove)
+
+        # Disable the remove button if no more parameters
+        if not self.custom_params:
+            self.remove_param_button.setEnabled(False)
 
     def setup_buttons_layout(self):
         """
@@ -707,6 +799,9 @@ class TrainModelDialog(QDialog):
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'multi_scale': self.multi_scale_combo.currentText() == "True",
+            'single_cls': self.single_class_combo.currentText() == "True",
+            'dropout': self.dropout_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
             'lr0': self.lr0_spinbox.value(),
             'warmup_bias_lr': self.warmup_bias_lr_spinbox.value(),
@@ -731,26 +826,211 @@ class TrainModelDialog(QDialog):
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
 
-        # Add custom parameters (allows overriding the above parameters)
-        for param_name, param_value in self.custom_params:
+        # Add custom parameters with typed values (allows overriding the above parameters)
+        for param_info in self.custom_params:
+            param_name, param_value, param_type = param_info
             name = param_name.text().strip()
-            value = param_value.text().strip().lower()
+            value = param_value.text().strip()
+            type_name = param_type.currentText()
+            
             if name:
-                if value == 'true':
-                    params[name] = True
-                elif value == 'false':
-                    params[name] = False
-                else:
+                if type_name == "bool":
+                    params[name] = value.lower() == "true"
+                elif type_name == "int":
                     try:
                         params[name] = int(value)
                     except ValueError:
-                        try:
-                            params[name] = float(value)
-                        except ValueError:
-                            params[name] = value
+                        print(f"Warning: Could not convert '{value}' to int for parameter '{name}'. Skipping.")
+                elif type_name == "float":
+                    try:
+                        params[name] = float(value)
+                    except ValueError:
+                        print(f"Warning: Could not convert '{value}' to float for parameter '{name}'. Skipping.")
+                else:  # string
+                    params[name] = value
 
         # Return the dictionary of parameters
         return params
+
+    def import_parameters(self):
+        """
+        Import parameters from a YAML file with automatic type inference.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Import Parameters from YAML",
+                                                   "",
+                                                   "YAML Files (*.yaml *.yml)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                params_to_load = yaml.safe_load(f)
+
+            if not params_to_load:
+                QMessageBox.warning(self, "Import Warning", "The selected file is empty.")
+                return
+
+            # Helper function to infer type and convert value
+            def infer_type_and_value(value):
+                if isinstance(value, bool):
+                    return "bool", value
+                elif isinstance(value, int):
+                    return "int", value
+                elif isinstance(value, float):
+                    return "float", value
+                elif isinstance(value, str):
+                    # Try to infer if it looks like a bool
+                    if value.lower() in ['true', 'false']:
+                        return "bool", value.lower() == 'true'
+                    try:
+                        if '.' not in value:
+                            return "int", int(value)
+                        else:
+                            return "float", float(value)
+                    except ValueError:
+                        return "string", value
+                else:
+                    return "string", str(value)
+
+            # Clear existing custom parameters before importing
+            while self.custom_params:
+                self.remove_parameter_pair()
+
+            # Map standard parameters to their UI controls
+            param_mapping = {
+                'epochs': self.epochs_spinbox,
+                'patience': self.patience_spinbox,
+                'imgsz': self.imgsz_spinbox,
+                'multi_scale': self.multi_scale_combo,
+                'batch': self.batch_spinbox,
+                'single_cls': self.single_class_combo,
+                'dropout': self.dropout_spinbox,
+                'workers': self.workers_spinbox,
+                'save_period': self.save_period_spinbox,
+                'lr0': self.lr0_spinbox,
+                'warmup_bias_lr': self.warmup_bias_lr_spinbox,
+                'weight_decay': self.weight_decay_spinbox,
+                'momentum': self.momentum_spinbox,
+                'close_mosaic': self.close_mosaic_spinbox,
+                'save': self.save_combo,
+                'val': self.val_combo,
+                'verbose': self.verbose_combo,
+                'optimizer': self.optimizer_combo,
+                'training_mode': self.training_mode
+            }
+
+            # Update UI controls with imported values
+            for param_name, value in params_to_load.items():
+                param_type, converted_value = infer_type_and_value(value)
+                
+                if param_name in param_mapping:
+                    widget = param_mapping[param_name]
+                    
+                    if isinstance(widget, QSpinBox):
+                        if isinstance(converted_value, (int, float)):
+                            widget.setValue(int(converted_value))
+                    elif isinstance(widget, QDoubleSpinBox):
+                        if isinstance(converted_value, (int, float)):
+                            widget.setValue(float(converted_value))
+                    elif isinstance(widget, QComboBox):
+                        if param_name in ['multi_scale', 'save', 'val', 'verbose', 'single_cls']:
+                            widget.setCurrentText("True" if converted_value else "False")
+                        elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
+                            widget.setCurrentText(str(converted_value))
+                else:
+                    # Add as a custom parameter
+                    self.add_parameter_pair()
+                    param_name_widget, param_value_widget, param_type_widget = self.custom_params[-1]
+                    
+                    param_name_widget.setText(param_name)
+                    param_type_widget.setCurrentText(param_type)
+                    
+                    if param_type == "bool":
+                        param_value_widget.setText("True" if converted_value else "False")
+                    else:
+                        param_value_widget.setText(str(converted_value))
+
+            QMessageBox.information(self, 
+                                    "Import Success", 
+                                    "Parameters successfully imported with automatic type inference.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import parameters: {str(e)}")
+
+    def export_parameters(self):
+        """
+        Export current parameters to a flat YAML file.
+        """
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Export Parameters to YAML",
+                                                   "yoloe_training_parameters.yaml",
+                                                   "YAML Files (*.yaml *.yml)")
+        if not file_path:
+            return
+
+        try:
+            # Use a single flat dictionary for export
+            export_data = {}
+
+            # Standard parameters
+            export_data['training_mode'] = self.training_mode.currentText()
+            export_data['epochs'] = self.epochs_spinbox.value()
+            export_data['patience'] = self.patience_spinbox.value()
+            export_data['close_mosaic'] = self.close_mosaic_spinbox.value()
+            export_data['optimizer'] = self.optimizer_combo.currentText()
+            export_data['lr0'] = self.lr0_spinbox.value()
+            export_data['warmup_bias_lr'] = self.warmup_bias_lr_spinbox.value()
+            export_data['weight_decay'] = self.weight_decay_spinbox.value()
+            export_data['momentum'] = self.momentum_spinbox.value()
+            export_data['imgsz'] = self.imgsz_spinbox.value()
+            export_data['batch'] = self.batch_spinbox.value()
+            export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
+            export_data['single_cls'] = self.single_class_combo.currentText() == "True"
+            export_data['dropout'] = self.dropout_spinbox.value()
+            export_data['workers'] = self.workers_spinbox.value()
+            export_data['save'] = self.save_combo.currentText() == "True"
+            export_data['save_period'] = self.save_period_spinbox.value()
+            export_data['val'] = self.val_combo.currentText() == "True"
+            export_data['verbose'] = self.verbose_combo.currentText() == "True"
+
+            # Custom parameters
+            for param_info in self.custom_params:
+                param_name_widget, param_value_widget, param_type_widget = param_info
+                name = param_name_widget.text().strip()
+                value_str = param_value_widget.text().strip()
+                type_name = param_type_widget.currentText()
+                
+                if name and value_str:
+                    # Convert value to the correct type before exporting
+                    try:
+                        if type_name == "bool":
+                            value = value_str.lower() == "true"
+                        elif type_name == "int":
+                            value = int(value_str)
+                        elif type_name == "float":
+                            value = float(value_str)
+                        else:  # string type
+                            value = value_str
+                        export_data[name] = value
+                    except ValueError:
+                        # If conversion fails, save it as a string
+                        print(f"Warning: Could not convert '{value_str}' to {type_name} for parameter '{name}'. "
+                              "Saving as string.")
+                        export_data[name] = value_str
+
+            # Write the flat dictionary to the YAML file
+            with open(file_path, 'w') as f:
+                yaml.dump(export_data, f, default_flow_style=False, sort_keys=False, indent=2)
+
+            QMessageBox.information(self, 
+                                    "Export Success", 
+                                    "Parameters successfully exported.")
+
+        except Exception as e:
+            QMessageBox.critical(self, 
+                                 "Export Error", 
+                                 f"Failed to export parameters: {str(e)}")
 
     def train_model(self):
         """
