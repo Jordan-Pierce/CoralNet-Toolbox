@@ -18,8 +18,8 @@ This guide provides instructions on how to use the application, including key fu
 - **Semantic Segmentation**: Segment the entire image (Mask)
 
 ## Thresholds for Computer Vision Tasks
-- **Patch Size**: Adjust the patch size in the status bar
-- **Uncertainty** Threshold: Adjust the uncertainty threshold in the status bar
+- **Max Detections**: Adjust to limit the number of detections in the status bar
+- **Uncertainty Threshold**: Adjust the uncertainty threshold in the status bar
 - **IoU Threshold**: Adjust the IoU threshold in the status bar
 - **Area Threshold**: Adjust the min and max area threshold in the status bar
 
@@ -340,7 +340,7 @@ The main window consists of several components:
   - **Highlight All**: Highlight all images in the current filtered view
   - **Unhighlight All**: Unhighlight all images in the current filtered view
 - **Image Preview**:
-  - **Tool Tip**: Hover over a row to show image metadata
+  - **Tooltips**: Hover over a row to show image metadata
   - **Thumbnail**: Hold <kbd>Ctrl</kbd> while hovering over a row to show a thumbnail
 
 ## Confidence Window
@@ -361,7 +361,7 @@ The main window consists of several components:
   - Each confidence bar shows the label color and confidence percentage
   - Numbered indicators (1-5) show the rank of each prediction
   - Hover over confidence bars to see a pointing hand cursor when selection is possible
-- **Tool Tip**: Hover over the window while an annotation is selected to see its metadata
+- **Tooltips**: Hover over the window while an annotation is selected to see its metadata
 
 ### [Hotkeys](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys)
 

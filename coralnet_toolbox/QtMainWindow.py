@@ -569,7 +569,9 @@ class MainWindow(QMainWindow):
         # Train Model
         self.see_anything_train_model_action = QAction("Train Model", self)
         self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
-        # self.see_anything_menu.addAction(self.see_anything_train_model_action)  TODO Doesn't work
+        self.see_anything_menu.addAction(self.see_anything_train_model_action)
+        # Add separator
+        self.see_anything_menu.addSeparator()
         # Deploy Predictor
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)

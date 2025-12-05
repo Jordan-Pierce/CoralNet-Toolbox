@@ -491,7 +491,9 @@ class SAMTool(Tool):
 
                 # Create point graphic
                 point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
-                point.setPen(QPen(Qt.green))
+                pen = QPen(Qt.green)
+                pen.setCosmetic(True)
+                point.setPen(pen)
                 point.setBrush(QColor(Qt.green))
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
@@ -508,7 +510,9 @@ class SAMTool(Tool):
 
                 # Create point graphic
                 point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
-                point.setPen(QPen(Qt.red))
+                pen = QPen(Qt.red)
+                pen.setCosmetic(True)
+                point.setPen(pen)
                 point.setBrush(QColor(Qt.red))
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
