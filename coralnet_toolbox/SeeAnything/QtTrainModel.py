@@ -8,7 +8,7 @@ import ujson as json
 from pathlib import Path
 
 from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
+from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer, YOLOEPETrainer
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -63,14 +63,33 @@ class TrainModelWorker(QThread):
         Set up the model and prepare parameters for training.
         """
         try:
-            # Extract model path
+            # Extract model path and task
             self.model_path = self.params.pop('model', None)
-            # Load the model
-            self.model = YOLOE(self.model_path)
-
-            freeze = []
+            task = self.params.get('task', 'segment')
             training_mode = self.params.pop('training_mode', 'linear-probing')
 
+            # Load the model based on task
+            if task == 'detect':
+                # For detection: initialize from YAML config
+                self.model = YOLOE(self.model_path)
+                # Load pretrained weights from segmentation checkpoint (same scale)
+                # Extract the scale (e.g., 's', 'm', 'l') from the YAML filename
+                if 'v8' in self.model_path:
+                    scale = self.model_path.split('-')[1].replace('.yaml', '')
+                    pretrained_weights = f"yoloe-v8{scale}-seg.pt"
+                else:  # v11
+                    scale = self.model_path.split('-')[1].replace('.yaml', '')
+                    pretrained_weights = f"yoloe-{scale}-seg.pt"
+                
+                try:
+                    self.model.load(pretrained_weights)
+                except Exception as e:
+                    print(f"Warning: Could not load pretrained weights from {pretrained_weights}: {e}")
+            else:
+                # For segmentation: load pretrained model directly
+                self.model = YOLOE(self.model_path)
+
+            freeze = []
             if training_mode == 'linear-probing':
                 head_index = len(self.model.model.model) - 1
                 freeze = [str(f) for f in range(0, head_index)]
@@ -107,9 +126,13 @@ class TrainModelWorker(QThread):
             # Set up the model and parameters
             self.pre_run()
 
-            # Train the model
+            # Select the appropriate trainer based on task
+            task = self.params.get('task', 'segment')
+            trainer = YOLOEPESegTrainer if task == 'segment' else YOLOEPETrainer
+
+            # Train the model with the correct trainer
             self.model.train(**self.params,
-                             trainer=YOLOEVPTrainer  , #YOLOEPESegTrainer,
+                             trainer=trainer,
                              device=self.device)
 
             # Post-run cleanup
@@ -209,8 +232,8 @@ class TrainModelDialog(QDialog):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
 
-        # Task
-        self.task = None
+        # Task - default to segmentation
+        self.task = "segment"
         # For holding parameters
         self.params = {}
         self.custom_params = []
@@ -267,12 +290,15 @@ class TrainModelDialog(QDialog):
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
 
-        self.task = "segment"
-        self.imgsz = 640
-        self.batch = 4
-
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
+
+        # Task selection (detect or segment)
+        self.task_combo = QComboBox()
+        self.task_combo.addItems(["segment", "detect"])
+        self.task_combo.setCurrentText("segment")
+        self.task_combo.currentTextChanged.connect(self.on_task_changed)
+        layout.addRow("Task:", self.task_combo)
 
         # Dataset YAML
         self.dataset_edit = QLineEdit()
@@ -530,15 +556,21 @@ class TrainModelDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.layout.addWidget(self.cancel_button)
 
+    def on_task_changed(self):
+        """Handle task selection changes (detect vs segment)"""
+        self.task = self.task_combo.currentText()
+        # Update available models based on task
+        self.load_model_combobox()
+
     def update_by_training_mode(self):
         """Update certain parameters depending on the fine-tune / linear probing"""
         # Get the current value of the fine-tune combo box
         training_mode = self.training_mode.currentText()
 
         if training_mode == "fine-tune":
-            # Fine-tune mode
+            # Fine-tune mode (parameters from YOLOE documentation)
             self.epochs_spinbox.setValue(80)
-            self.patience_spinbox.setValue(20)
+            self.patience_spinbox.setValue(10)  # Changed from 20 to 10 per docs
             self.close_mosaic_spinbox.setValue(10)
             self._close_mosaic = 10
             
@@ -567,38 +599,35 @@ class TrainModelDialog(QDialog):
             self.optimizer_combo.setCurrentText("AdamW")
 
     def load_model_combobox(self):
-        """Load the model combobox with the available models."""
+        """Load the model combobox with the available models based on task."""
         self.model_combo.clear()
         self.model_combo.setEditable(True)
 
-        standard_models = [
-            'yoloe-v8s-seg.pt',
-            'yoloe-v8m-seg.pt',
-            'yoloe-v8l-seg.pt',
-            'yoloe-11s-seg.pt',
-            'yoloe-11m-seg.pt',
-            'yoloe-11l-seg.pt',
-        ]
+        if self.task == "segment":
+            standard_models = [
+                'yoloe-v8s-seg.pt',
+                'yoloe-v8m-seg.pt',
+                'yoloe-v8l-seg.pt',
+                'yoloe-11s-seg.pt',
+                'yoloe-11m-seg.pt',
+                'yoloe-11l-seg.pt',
+            ]
+            default_model = 'yoloe-v8s-seg.pt'
+        else:  # detect
+            standard_models = [
+                'yoloe-11s.yaml',
+                'yoloe-11m.yaml',
+                'yoloe-11l.yaml',
+                'yoloe-v8s.yaml',
+                'yoloe-v8m.yaml',
+                'yoloe-v8l.yaml',
+            ]
+            default_model = 'yoloe-11s.yaml'
 
         self.model_combo.addItems(standard_models)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
-
-    def browse_dataset_dir(self):
-        """
-        Browse and select a dataset directory.
-        """
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
-        if dir_path:
-            # Load the class mapping if it exists
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-            # Set the dataset path
-            self.dataset_edit.setText(dir_path)
+        self.model_combo.setCurrentIndex(standard_models.index(default_model))
 
     def browse_dataset_yaml(self):
         """
