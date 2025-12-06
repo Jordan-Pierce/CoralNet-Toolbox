@@ -9,7 +9,7 @@ import ujson as json
 from pathlib import Path
 
 from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer, YOLOEPETrainer, YOLOETrainerFromScratch
+from ultralytics.models.yolo.yoloe import YOLOETrainerFromScratch
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -138,8 +138,7 @@ class TrainModelWorker(QThread):
             self.pre_run()
 
             # Select the appropriate trainer based on task
-            # task = self.params.get('task', 'segment')
-            trainer = YOLOETrainerFromScratch  # YOLOEPESegTrainer if task == 'segment' else YOLOEPETrainer
+            trainer = YOLOETrainerFromScratch
 
             # Train the model with the correct trainer
             self.model.train(**self.params,
@@ -307,8 +306,8 @@ class TrainModelDialog(QDialog):
 
         # Task selection (detect or segment)
         self.task_combo = QComboBox()
-        self.task_combo.addItems(["detect", "segment"])
-        self.task_combo.setCurrentText("detect")
+        self.task_combo.addItems(["segment", "detect"])
+        self.task_combo.setCurrentText("segment")
         self.task_combo.currentTextChanged.connect(self.on_task_changed)
         layout.addRow("Task:", self.task_combo)
 
