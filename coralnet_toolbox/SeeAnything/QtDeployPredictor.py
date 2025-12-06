@@ -1,12 +1,13 @@
 import warnings
 
+import os
 import gc
 
+import cv2
 import numpy as np
 
 import torch
 from torch.cuda import empty_cache
-from ultralytics.utils import ops
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
@@ -217,9 +218,6 @@ class DeployPredictorDialog(QDialog):
         """
         Setup thresholds control section in a group box.
         """
-        group_box = QGroupBox("Prediction Thresholds")
-        layout = QVBoxLayout()
-
         # Add ThresholdsWidget for all threshold controls
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
@@ -228,10 +226,8 @@ class DeployPredictorDialog(QDialog):
             show_iou=True,
             show_area=True
         )
-        layout.addWidget(self.thresholds_widget)
 
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.layout.addWidget(self.thresholds_widget)
 
     def setup_buttons_layout(self):
         """
@@ -331,6 +327,9 @@ class DeployPredictorDialog(QDialog):
         progress_bar.show()
     
         try:
+            # Update the task
+            self.task = self.task_dropdown.currentText()
+            
             # Get model path - either from custom file or dropdown
             if self.model_edit.text().strip():
                 # Use custom model file
@@ -365,12 +364,12 @@ class DeployPredictorDialog(QDialog):
             # Finish the progress bar
             progress_bar.finish_progress()
             # Update the status bar
-            self.status_bar.setText(f"Loaded ({self.model_path}")
+            self.status_bar.setText(f"Loaded ({os.path.basename(self.model_path)})")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
             self.loaded_model = None
-            self.status_bar.setText(f"Error loading model: {self.model_path}")
+            self.status_bar.setText(f"Error loading model: {os.path.basename(self.model_path)}")
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
     
         finally:
@@ -387,7 +386,7 @@ class DeployPredictorDialog(QDialog):
         """
         imgsz = self.imgsz_spinbox.value()
         target_shape = self.get_target_shape(image, imgsz)
-        return ops.scale_image(image, target_shape)
+        return self.scale_image(image, target_shape)
 
     def get_target_shape(self, image, imgsz):
         """
@@ -417,6 +416,48 @@ class DeployPredictorDialog(QDialog):
         new_w = max(32, new_w)
 
         return new_h, new_w
+    
+    def scale_image(self, masks, im0_shape, ratio_pad=None):
+        """
+        Rescale masks to original image size.
+
+        Takes resized and padded masks and rescales them back to the original image dimensions, removing any padding
+        that was applied during preprocessing.
+
+        Args:
+            masks (np.ndarray): Resized and padded masks with shape [H, W, N] or [H, W, 3].
+            im0_shape (tuple): Original image shape as HWC or HW (supports both).
+            ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_h, pad_w)).
+
+        Returns:
+            (np.ndarray): Rescaled masks with shape [H, W, N] matching original image dimensions.
+        """
+        # Rescale coordinates (xyxy) from im1_shape to im0_shape
+        im0_h, im0_w = im0_shape[:2]  # supports both HWC or HW shapes
+        im1_h, im1_w, _ = masks.shape
+        if im1_h == im0_h and im1_w == im0_w:
+            return masks
+
+        if ratio_pad is None:  # calculate from im0_shape
+            gain = min(im1_h / im0_h, im1_w / im0_w)  # gain  = old / new
+            pad = (im1_w - im0_w * gain) / 2, (im1_h - im0_h * gain) / 2  # wh padding
+        else:
+            pad = ratio_pad[1]
+
+        pad_w, pad_h = pad
+        top = int(round(pad_h - 0.1))
+        left = int(round(pad_w - 0.1))
+        bottom = im1_h - int(round(pad_h + 0.1))
+        right = im1_w - int(round(pad_w + 0.1))
+
+        if len(masks.shape) < 2:
+            raise ValueError(f'"len of masks shape" should be 2 or 3, but got {len(masks.shape)}')
+        masks = masks[top:bottom, left:right]
+        masks = cv2.resize(masks, (im0_w, im0_h))
+        if len(masks.shape) == 2:
+            masks = masks[:, :, None]
+
+        return masks
 
     def set_image(self, image, image_path):
         """
