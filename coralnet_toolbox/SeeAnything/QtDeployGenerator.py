@@ -359,7 +359,7 @@ class DeployGeneratorDialog(QDialog):
         # Create tabbed widget
         tab_widget = QTabWidget()
 
-        # Tab 1: Select model from dropdown
+        # Tab 1: Select model from dropdown and VPE browse
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
 
@@ -385,9 +385,19 @@ class DeployGeneratorDialog(QDialog):
         self.model_combo.setCurrentIndex(self.models.index('yoloe-v8s-seg.pt'))
         model_select_layout.addRow("Model:", self.model_combo)
 
+        # Add VPE file selection to the first tab
+        self.vpe_path_edit = QLineEdit()
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_vpe_file)
+
+        vpe_path_layout = QHBoxLayout()
+        vpe_path_layout.addWidget(self.vpe_path_edit)
+        vpe_path_layout.addWidget(browse_button)
+        model_select_layout.addRow("Custom VPE:", vpe_path_layout)
+
         tab_widget.addTab(model_select_tab, "Select Model")
 
-        # Tab 2: Use existing model (custom weights)
+        # Tab 2: Use existing model (custom weights) - only model browse
         model_existing_tab = QWidget()
         model_existing_layout = QFormLayout(model_existing_tab)
 
@@ -403,22 +413,6 @@ class DeployGeneratorDialog(QDialog):
         tab_widget.addTab(model_existing_tab, "Use Existing Model")
 
         layout.addWidget(tab_widget)
-
-        # Add custom VPE file selection (always available, outside tabs)
-        vpe_group = QGroupBox("Visual Prompt Encoding (VPE)")
-        vpe_layout = QFormLayout()
-        
-        self.vpe_path_edit = QLineEdit()
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_vpe_file)
-
-        vpe_path_layout = QHBoxLayout()
-        vpe_path_layout.addWidget(self.vpe_path_edit)
-        vpe_path_layout.addWidget(browse_button)
-        vpe_layout.addRow("Custom VPE:", vpe_path_layout)
-        
-        vpe_group.setLayout(vpe_layout)
-        layout.addWidget(vpe_group)
 
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel

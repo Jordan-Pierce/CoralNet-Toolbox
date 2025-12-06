@@ -9,7 +9,7 @@ import ujson as json
 from pathlib import Path
 
 from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer, YOLOEPETrainer
+from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer, YOLOEPETrainer, YOLOETrainerFromScratch
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -110,6 +110,16 @@ class TrainModelWorker(QThread):
                 )
 
             self.params['freeze'] = freeze
+            
+            self.data = self.params.pop('data', None)
+            
+            if self.data is None:
+                raise ValueError("Dataset YAML file must be specified in parameters under 'data' key.")
+            
+            self.params['data'] = dict(
+                train=dict(yolo_data=[self.data]),
+                val=dict(yolo_data=[self.data]),
+            )
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -128,8 +138,8 @@ class TrainModelWorker(QThread):
             self.pre_run()
 
             # Select the appropriate trainer based on task
-            task = self.params.get('task', 'segment')
-            trainer = YOLOEPESegTrainer if task == 'segment' else YOLOEPETrainer
+            # task = self.params.get('task', 'segment')
+            trainer = YOLOETrainerFromScratch  # YOLOEPESegTrainer if task == 'segment' else YOLOEPETrainer
 
             # Train the model with the correct trainer
             self.model.train(**self.params,
@@ -164,10 +174,11 @@ class TrainModelWorker(QThread):
         try:
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
-                'data': self.params['data'],
+                'data': self.data,
                 'imgsz': self.params['imgsz'],
                 'split': 'test',  # Evaluate on the test set only
-                'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
+                'save_dir': Path(self.params['project']) / self.params['name'] / 'test',
+                'load_vp': True,
             }
 
             # Create and start the worker thread
@@ -296,8 +307,8 @@ class TrainModelDialog(QDialog):
 
         # Task selection (detect or segment)
         self.task_combo = QComboBox()
-        self.task_combo.addItems(["segment", "detect"])
-        self.task_combo.setCurrentText("segment")
+        self.task_combo.addItems(["detect", "segment"])
+        self.task_combo.setCurrentText("detect")
         self.task_combo.currentTextChanged.connect(self.on_task_changed)
         layout.addRow("Task:", self.task_combo)
 
