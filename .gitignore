@@ -127,6 +127,7 @@ launch.json
 *.amltmp
 *.amlignore
 *.ipynb_aml_checkpoints
+*.ts
 
 # Local
 data/
