@@ -216,6 +216,22 @@ class AnnotationWindow(QGraphicsView):
     def _is_in_mask_editing_mode(self):
         """Check if the annotation window is currently in mask editing mode."""
         return self.selected_tool and self.selected_tool in self.mask_tools
+    
+    def resizeEvent(self, event):
+        """Handle resize events to maintain proper view fitting."""
+        super().resizeEvent(event)
+        
+        # Only fit view if we have an active image
+        if self.active_image and self.pixmap_image and self.scene:
+            # Preserve the current zoom level if zoom tool has been used
+            if hasattr(self, 'tools') and 'zoom' in self.tools:
+                zoom_tool = self.tools['zoom']
+                # Only auto-fit if user hasn't manually zoomed
+                if not zoom_tool.has_zoomed:
+                    self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+            else:
+                # No zoom tool or hasn't been used, safe to fit
+                self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
