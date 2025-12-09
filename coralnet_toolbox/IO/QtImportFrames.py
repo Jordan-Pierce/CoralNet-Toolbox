@@ -728,7 +728,8 @@ class ImportFrames(QDialog):
                                     "Please select a valid video file.")
                 return
                 
-            # Set the video file path in the edit box
+            # Set the video file path in the edit box and store it
+            self.video_file = file_name
             self.video_file_edit.setText(file_name)
             
             # Make cursor busy
@@ -892,11 +893,13 @@ class ImportFrames(QDialog):
                 start_frame = self.range_start_slider.value()
                 end_frame = self.range_end_slider.value()
                 step = self.every_n_frames_spinbox.value()
+                
+                # Generate frame indices with proper range
                 frame_indices = list(range(start_frame, end_frame + 1, step))
-                # Always include end_frame if not already present and in range
-                if end_frame not in frame_indices and 0 <= end_frame < self.total_frames:
+                
+                # Ensure end_frame is included if it's not already in the list
+                if frame_indices and frame_indices[-1] != end_frame:
                     frame_indices.append(end_frame)
-                    frame_indices = sorted(frame_indices)
             elif self.current_tab == "specific":
                 # Extract specific frames
                 frame_str = self.specific_frames_edit.text().strip()
@@ -953,16 +956,19 @@ class ImportFrames(QDialog):
         frame_ext = self.frame_ext_combo.currentText()
         
         output_dir = self.output_dir_edit.text()
+        
+        # Validate output directory first
+        if not output_dir:
+            QMessageBox.warning(self, "Invalid Input", "Please select an output directory.")
+            return
+            
+        # Create subdirectory based on video filename
         output_dir = f"{output_dir}/{os.path.basename(video_file).split('.')[0]}"
         os.makedirs(output_dir, exist_ok=True)
         
         # Validate inputs
         if not video_file or not os.path.exists(video_file):
             QMessageBox.warning(self, "Invalid Input", "Please select a valid video file.")
-            return
-            
-        if not output_dir or not os.path.exists(output_dir):
-            QMessageBox.warning(self, "Invalid Input", "Please select a valid output directory.")
             return
             
         if not frame_prefix:
@@ -977,11 +983,13 @@ class ImportFrames(QDialog):
             start_frame = self.range_start_slider.value()
             end_frame = self.range_end_slider.value()
             step = self.every_n_frames_spinbox.value()
+            
+            # Generate frame indices with proper range
             frame_indices = list(range(start_frame, end_frame + 1, step))
-            # Always include end_frame if not already present and in range
-            if end_frame not in frame_indices and 0 <= end_frame < self.total_frames:
+            
+            # Ensure end_frame is included if it's not already in the list
+            if frame_indices and frame_indices[-1] != end_frame:
                 frame_indices.append(end_frame)
-                frame_indices = sorted(frame_indices)
         else:  # specific frames
             frame_str = self.specific_frames_edit.text().strip()
             if frame_str:
