@@ -366,7 +366,7 @@ class ScaleToolDialog(QDialog):
         self.line_3d_layout.addRow(self.line_profile_button)
         # --- End New ---
         
-        self.line_3d_group.setEnabled(False) # Disabled by default
+        self.line_3d_group.setEnabled(False)  # Disabled by default
         layout.addRow(self.line_3d_group)
 
     def setup_rect_tab(self, tab_widget):
@@ -409,7 +409,7 @@ class ScaleToolDialog(QDialog):
         self.rect_3d_layout.addRow("Prismatic Volume:", self.rect_volume_label)
         self.rect_3d_layout.addRow("Areal Rugosity:", self.rect_rugosity_label)
         
-        self.rect_3d_group.setEnabled(False) # Disabled by default
+        self.rect_3d_group.setEnabled(False)  # Disabled by default
         layout.addRow(self.rect_3d_group)
 
     def get_selected_image_paths(self):
@@ -553,16 +553,18 @@ class ScaleTool(Tool):
         self.preview_wireframe = QGraphicsItemGroup()
         self.preview_wireframe_base = QGraphicsRectItem(parent=self.preview_wireframe)
         self.preview_wireframe_base.setPen(self.base_pen)
+        self.preview_wireframe_base.setZValue(2)  # Base rect on top of grid lines
         
         self.wireframe_grid_lines = []
-        grid_size = 5 # Must match the grid_size in _update_wireframe_graphic
-        num_lines_needed = (grid_size * (grid_size - 1)) * 2 # (5 * 4) * 2 = 40 lines
+        grid_size = 5  # Must match the grid_size in _update_wireframe_graphic
+        num_lines_needed = (grid_size * (grid_size - 1)) * 2  # (5 * 4) * 2 = 40 lines
         
         for _ in range(num_lines_needed): 
             line = QGraphicsLineItem(parent=self.preview_wireframe)
             pen = QPen(QColor(230, 62, 0, 100), 1, Qt.DotLine)
             pen.setCosmetic(True)
             line.setPen(pen)
+            line.setZValue(1)  # Grid lines below base rect
             self.wireframe_grid_lines.append(line)
         self.preview_wireframe.setZValue(100)
         
@@ -1006,11 +1008,14 @@ class ScaleTool(Tool):
         
         # Combine accumulated plots with the current (unsaved) plot
         all_plots_to_show = self.accumulated_profiles.copy()
-        if self.current_profile_data:
+        # Only add current profile if it has 3D data
+        if self.current_profile_data and self.current_profile_data.get("has_3d", False):
             all_plots_to_show.append(self.current_profile_data)
 
         if not all_plots_to_show:
-            QMessageBox.warning(self.dialog, "No Data", "No profile data to display.")
+            QMessageBox.warning(self.dialog, "No Data", 
+                                "No 3D elevation profile data to display.\n"
+                                "Elevation profiles require depth/z-channel data.")
             return
             
         try:
@@ -1052,6 +1057,19 @@ class ScaleTool(Tool):
         if final_calc:
             self.current_line_length = length_2d_display
             self.dialog.line_add_button.setEnabled(True)
+            
+            # Always create basic profile data (even without z-channel)
+            # This ensures "Add to Total" works for 2D-only lines
+            self.current_profile_data = {
+                "name": "Current Line",
+                "color": self.color_cycle_pens[0],  # Always orange for current
+                "x_data": None,  # Will be populated if z_channel exists
+                "y_data": None,
+                "x_label": None,
+                "y_label": None,
+                "stats_str": None,
+                "has_3d": False  # Flag to indicate if 3D data is present
+            }
         
         self.dialog.line_length_label.setText(f"{length_2d_display:.3f} {display_units}")
 
@@ -1158,15 +1176,14 @@ class ScaleTool(Tool):
             stats_str += f"ΔZ: {delta_z:.2f}{z_unit_str} | "
             stats_str += f"Rugosity: {linear_rugosity:.3f}"
             
-            self.current_profile_data = {
-                "name": "Current Line",
-                "color": self.color_cycle_pens[0],  # Always orange for current
-                "x_data": plot_x_data,
-                "y_data": profile_data_y,
-                "x_label": plot_x_label,
-                "y_label": plot_y_label,
-                "stats_str": stats_str 
-            }
+            # Update the current_profile_data with 3D information
+            if self.current_profile_data:
+                self.current_profile_data["x_data"] = plot_x_data
+                self.current_profile_data["y_data"] = profile_data_y
+                self.current_profile_data["x_label"] = plot_x_label
+                self.current_profile_data["y_label"] = plot_y_label
+                self.current_profile_data["stats_str"] = stats_str
+                self.current_profile_data["has_3d"] = True
 
             if final_calc:
                 self.dialog.line_profile_button.setEnabled(True)
@@ -1176,7 +1193,8 @@ class ScaleTool(Tool):
                 if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
                     # If it is, update it directly
                     all_plots = self.accumulated_profiles.copy()
-                    all_plots.append(self.current_profile_data)
+                    if self.current_profile_data and self.current_profile_data.get("has_3d", False):
+                        all_plots.append(self.current_profile_data)
                     self.profile_plot_dialog.update_plot(all_plots)
                     
         except Exception as e:
@@ -1187,7 +1205,10 @@ class ScaleTool(Tool):
         """Adds the current 2D line length and profile to the total."""
         
         # 1. Check if there is a line to add
-        if not self.current_profile_data:
+        # We need either current_profile_data OR a valid current_line_length
+        if self.current_line_length <= 0:
+            QMessageBox.warning(self.dialog, "No Line", 
+                                "Please draw and complete a line measurement first.")
             return
             
         # 2. Add 2D length to total
@@ -1243,10 +1264,11 @@ class ScaleTool(Tool):
         self.annotation_window.scene.addItem(end_ellipse)
         self.accumulated_points.append(end_ellipse)
         
-        # 5. Promote the "current" profile to "accumulated"
-        self.current_profile_data["name"] = name_to_use
-        self.current_profile_data["color"] = pen_to_use
-        self.accumulated_profiles.append(self.current_profile_data)
+        # 5. Promote the "current" profile to "accumulated" (only if it has 3D data)
+        if self.current_profile_data and self.current_profile_data.get("has_3d", False):
+            self.current_profile_data["name"] = name_to_use
+            self.current_profile_data["color"] = pen_to_use
+            self.accumulated_profiles.append(self.current_profile_data)
         
         # 6. Increment color index
         self.current_color_index += 1
@@ -1255,9 +1277,14 @@ class ScaleTool(Tool):
         #    resets UI, and updates the plot)
         self.stop_current_drawing()
         
-        # 8. Update plot dialog if it's open
+        # 8. Update plot dialog if it's open (only if we have profiles to show)
         if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
-            self.profile_plot_dialog.update_plot(self.accumulated_profiles)
+            if self.accumulated_profiles:
+                self.profile_plot_dialog.update_plot(self.accumulated_profiles)
+            else:
+                # Close the plot dialog if no 3D profiles exist
+                self.profile_plot_dialog.reject()
+                self.profile_plot_dialog = None
 
     def clear_line_total(self):
         # 1. Reset 2D total
@@ -1279,7 +1306,10 @@ class ScaleTool(Tool):
         
         # 3. Clear profile data
         self.accumulated_profiles.clear()
-        self.current_color_index = 0
+        
+        # Reset color index only if both lines and rects are cleared
+        if not self.accumulated_rects:
+            self.current_color_index = 0
         
         # 4. Stop any current drawing
         self.stop_current_drawing()
@@ -1308,8 +1338,15 @@ class ScaleTool(Tool):
         pixel_width = rect.width()
         pixel_height = rect.height()
         
-        if pixel_width < 1 or pixel_height < 1:
-            self.stop_current_drawing()
+        # Only reject tiny rectangles on final calculation
+        if final_calc and (pixel_width < 1 or pixel_height < 1):
+            # Don't stop_current_drawing here - just show a warning
+            self.dialog.rect_perimeter_label.setText("Too Small")
+            self.dialog.rect_area_label.setText("Too Small")
+            self.reset_3d_labels()
+            return
+        elif not final_calc and (pixel_width < 1 or pixel_height < 1):
+            # During live drawing, just don't calculate
             return
 
         # --- 2. 2D Calculations ---
@@ -1413,6 +1450,14 @@ class ScaleTool(Tool):
 
     def add_rect_to_total(self):
         """Adds the current 2D rect area to the total."""
+        
+        # 1. Check if there is a rect to add
+        if self.current_rect_area <= 0:
+            QMessageBox.warning(self.dialog, "No Rectangle", 
+                                "Please draw and complete a rectangle measurement first.")
+            return
+            
+        # 2. Add area to total
         self.total_rect_area += self.current_rect_area
         display_units = self.dialog.rect_units_combo.currentText()
         area_units = f"{display_units}²" if display_units != "px" else "px²"
@@ -1424,21 +1469,43 @@ class ScaleTool(Tool):
             self.rect_total_locked = True
             self.dialog.rect_units_combo.setEnabled(False)
         
-        # Create a permanent rect item to keep visible
-        # We only add the base rect, not the full wireframe
+        # 3. Get next color for the saved rectangle
+        # We skip index 0 (orange) for saved shapes
+        color_index = (self.current_color_index % (len(self.color_cycle_pens) - 1)) + 1
+        pen_to_use = self.color_cycle_pens[color_index]
+        qcolor_to_use = pen_to_use.color()
+        
+        # 4. Create a permanent rect item with solid colored line
         perm_rect = QGraphicsRectItem(self.preview_wireframe_base.rect())
-        perm_rect.setPen(self.base_pen)
+        perm_pen = QPen(qcolor_to_use, 4, Qt.SolidLine)
+        perm_pen.setCosmetic(True)
+        perm_rect.setPen(perm_pen)
         perm_rect.setZValue(99)  # Slightly below preview
         self.annotation_window.scene.addItem(perm_rect)
         self.accumulated_rects.append(perm_rect)
         
+        # 5. Increment color index (shared with lines)
+        self.current_color_index += 1
+        
+        # 6. Reset current measurement and UI
         self.current_rect_area = 0.0
         self.dialog.rect_add_button.setEnabled(False)
+        
+        # Hide the preview but don't clear start/end points yet
+        self.preview_wireframe.hide()
+        
+        # Reset labels
         self.dialog.rect_perimeter_label.setText("N/A")
         self.dialog.rect_area_label.setText("N/A")
-        self.reset_3d_labels() # Reset 3D fields too
+        self.reset_3d_labels()  # Reset 3D fields too
+        
+        # Reset the drawing state to allow a new rectangle
+        self.is_drawing = False
+        self.start_point = None
+        self.end_point = None
 
     def clear_rect_total(self):
+        # 1. Reset total
         self.total_rect_area = 0.0
         display_units = self.dialog.rect_units_combo.currentText()
         area_units = f"{display_units}²" if display_units != "px" else "px²"
@@ -1448,11 +1515,16 @@ class ScaleTool(Tool):
         self.rect_total_locked = False
         self.dialog.rect_units_combo.setEnabled(True)
         
-        # Remove accumulated rects
+        # 2. Remove accumulated rects from map
         for rect in self.accumulated_rects:
             self.annotation_window.scene.removeItem(rect)
         self.accumulated_rects.clear()
         
+        # Reset color index only if both lines and rects are cleared
+        if not self.accumulated_lines and not self.accumulated_points:
+            self.current_color_index = 0
+        
+        # 3. Stop any current drawing
         self.stop_current_drawing()
 
     def apply_scale(self):
