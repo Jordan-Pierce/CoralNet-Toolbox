@@ -33,7 +33,6 @@ class Classify(Base):
     def __init__(self, parent=None):
         super(Classify, self).__init__(parent)
         self.setWindowTitle("Export Classification Dataset")
-        self.setWindowIcon(get_icon("coral"))
 
     def setup_info_layout(self):
         """Setup the info layout"""

@@ -223,15 +223,8 @@ class AnnotationWindow(QGraphicsView):
         
         # Only fit view if we have an active image
         if self.active_image and self.pixmap_image and self.scene:
-            # Preserve the current zoom level if zoom tool has been used
-            if hasattr(self, 'tools') and 'zoom' in self.tools:
-                zoom_tool = self.tools['zoom']
-                # Only auto-fit if user hasn't manually zoomed
-                if not zoom_tool.has_zoomed:
-                    self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            else:
-                # No zoom tool or hasn't been used, safe to fit
-                self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+            # No zoom tool or hasn't been used, safe to fit
+            self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""

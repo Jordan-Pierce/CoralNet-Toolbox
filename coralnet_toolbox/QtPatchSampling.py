@@ -285,6 +285,17 @@ class PatchSamplingDialog(QDialog):
 
     def showEvent(self, event):
         """Handle dialog show event."""
+        super().showEvent(event)
+        
+        # Automatically highlight the current image if one is loaded
+        current_image_path = self.annotation_window.current_image_path
+        if current_image_path:
+            # Check if current image is already highlighted
+            highlighted_paths = self.image_window.table_model.get_highlighted_paths()
+            if current_image_path not in highlighted_paths:
+                # Highlight only the current image
+                self.image_window.table_model.set_highlighted_paths([current_image_path])
+        
         self.update_label_combo()
         self.update_status_label()
 

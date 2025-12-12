@@ -44,7 +44,7 @@ class RasterTableModel(QAbstractTableModel):
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
         
-        self.column_headers = ["\u2713", "Z", "Image Name", "Annotations"]
+        self.column_headers = ["\u2713", "Z", "Image", "Annotations"]
         
         # Column widths
         self.column_widths = [30, 30, -1, 120]  # -1 means stretch
