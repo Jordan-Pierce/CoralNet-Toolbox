@@ -92,6 +92,9 @@ class ProfilePlotDialog(QDialog):
             combined_plot_item.showGrid(x=True, y=True, alpha=0.3)
             combined_plot_item.addLegend()
             
+            # Enable antialiasing for better cross-platform rendering
+            combined_plot_widget.setAntialiasing(True)
+            
             for profile in profiles_list:
                 try:
                     x_data = np.array(profile["x_data"])
@@ -159,6 +162,9 @@ class ProfilePlotDialog(QDialog):
                 ind_plot_item.setLabel('bottom', '')
                 ind_plot_item.setLabel('left', profile["y_label"])
                 ind_plot_item.showGrid(x=True, y=True, alpha=0.3)
+                
+                # Enable antialiasing for better cross-platform rendering
+                ind_plot_widget.setAntialiasing(True)
                 
                 ind_plot_item.plot(
                     profile["x_data"],
@@ -527,15 +533,16 @@ class ScaleTool(Tool):
         self.profile_plot_dialog = None  # Reference to pop-up
         
         # Color cycle for plots and lines
+        # Note: Use width >= 3 for better cross-platform rendering compatibility
         self.color_cycle_pens = [
-            pg.mkPen(color='#E63E00', width=3),  # Bright Orange (Current)
-            pg.mkPen(color='#1f77b4', width=2),  # Matplotlib Blue
-            pg.mkPen(color='#2ca02c', width=2),  # Matplotlib Green
-            pg.mkPen(color='#d62728', width=2),  # Matplotlib Red
-            pg.mkPen(color='#9467bd', width=2),  # Matplotlib Purple
-            pg.mkPen(color='#8c564b', width=2),  # Matplotlib Brown
-            pg.mkPen(color='#e377c2', width=2),  # Matplotlib Pink
-            pg.mkPen(color='#7f7f7f', width=2),  # Matplotlib Gray
+            pg.mkPen(color='#E63E00', width=4, cosmetic=True),  # Bright Orange (Current)
+            pg.mkPen(color='#1f77b4', width=3, cosmetic=True),  # Matplotlib Blue
+            pg.mkPen(color='#2ca02c', width=3, cosmetic=True),  # Matplotlib Green
+            pg.mkPen(color='#d62728', width=3, cosmetic=True),  # Matplotlib Red
+            pg.mkPen(color='#9467bd', width=3, cosmetic=True),  # Matplotlib Purple
+            pg.mkPen(color='#8c564b', width=3, cosmetic=True),  # Matplotlib Brown
+            pg.mkPen(color='#e377c2', width=3, cosmetic=True),  # Matplotlib Pink
+            pg.mkPen(color='#7f7f7f', width=3, cosmetic=True),  # Matplotlib Gray
         ]
         self.current_color_index = 0 # Index for *accumulated* lines
         
@@ -649,13 +656,36 @@ class ScaleTool(Tool):
         self.dialog.line_delta_z_label.setText("N/A")
         self.dialog.line_slope_label.setText("N/A")
         self.dialog.line_rugosity_label.setText("N/A")
-        self.dialog.line_profile_button.setEnabled(False)
         self.current_profile_data = None
+        # Update profile button state (might still have accumulated profiles)
+        self.update_profile_button_state()
         # Rect Tab
         self.dialog.rect_z_stats_label.setText("N/A")
         self.dialog.rect_3d_surface_area_label.setText("N/A")
         self.dialog.rect_volume_label.setText("N/A")
         self.dialog.rect_rugosity_label.setText("N/A")
+    
+    def update_profile_button_state(self):
+        """
+        Update the 'Show Elevation Profile' button state based on available profile data.
+        The button should be enabled if:
+        1. There are accumulated profiles with 3D data, OR
+        2. There is a current profile with 3D data, OR
+        3. Both
+        """
+        # Safety check: dialog and button must exist
+        if (not self.dialog or
+            not hasattr(self.dialog, 'line_profile_button') or
+            self.dialog.line_profile_button is None):
+            return
+        
+        has_accumulated = len(self.accumulated_profiles) > 0 if self.accumulated_profiles is not None else False
+        has_current = self.current_profile_data and self.current_profile_data.get("has_3d", False)
+        
+        # Enable if there's any profile data to show
+        should_enable = bool(has_accumulated or has_current)
+            
+        self.dialog.line_profile_button.setEnabled(should_enable)
 
     def load_existing_scale(self):
         """Loads and displays existing scale data for the current image if available."""
@@ -1186,7 +1216,8 @@ class ScaleTool(Tool):
                 self.current_profile_data["has_3d"] = True
 
             if final_calc:
-                self.dialog.line_profile_button.setEnabled(True)
+                # Update profile button state (we now have a current profile)
+                self.update_profile_button_state()
                 
                 # --- Update plot ONLY on final click ---
                 # Check if the plot dialog is already open and visible
@@ -1277,7 +1308,10 @@ class ScaleTool(Tool):
         #    resets UI, and updates the plot)
         self.stop_current_drawing()
         
-        # 8. Update plot dialog if it's open (only if we have profiles to show)
+        # 8. Update profile button state (we may have added a profile)
+        self.update_profile_button_state()
+        
+        # 9. Update plot dialog if it's open (only if we have profiles to show)
         if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
             if self.accumulated_profiles:
                 self.profile_plot_dialog.update_plot(self.accumulated_profiles)
@@ -1314,7 +1348,10 @@ class ScaleTool(Tool):
         # 4. Stop any current drawing
         self.stop_current_drawing()
         
-        # 5. Update plot if open
+        # 5. Update profile button state (all profiles cleared)
+        self.update_profile_button_state()
+        
+        # 6. Update plot if open
         if self.profile_plot_dialog and self.profile_plot_dialog.isVisible():
             self.profile_plot_dialog.update_plot([])
 
