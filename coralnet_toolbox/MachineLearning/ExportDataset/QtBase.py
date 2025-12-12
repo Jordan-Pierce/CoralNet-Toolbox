@@ -335,6 +335,21 @@ class Base(QDialog):
         return class_mapping
 
     @staticmethod
+    def create_centered_item(text):
+        """
+        Create a QTableWidgetItem with centered text alignment.
+
+        Args:
+            text (str): The text to display in the item.
+
+        Returns:
+            QTableWidgetItem: A table item with centered alignment.
+        """
+        item = QTableWidgetItem(str(text))
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
+
+    @staticmethod
     def save_class_mapping_json(class_mapping, output_dir_path):
         """
         Save the class mapping dictionary as a JSON file.
@@ -453,18 +468,14 @@ class Base(QDialog):
             layout.addStretch()
             layout.addWidget(include_checkbox)
             layout.addStretch()
-            label_item = QTableWidgetItem(label)
-            label_item.setTextAlignment(Qt.AlignCenter)
-            anno_count = QTableWidgetItem(str(count))
-            anno_count.setTextAlignment(Qt.AlignCenter)
-            train_item = QTableWidgetItem("0")
-            train_item.setTextAlignment(Qt.AlignCenter)
-            val_item = QTableWidgetItem("0")
-            val_item.setTextAlignment(Qt.AlignCenter)
-            test_item = QTableWidgetItem("0")
-            test_item.setTextAlignment(Qt.AlignCenter)
-            images_item = QTableWidgetItem(str(len(label_image_counts[label])))
-            images_item.setTextAlignment(Qt.AlignCenter)
+
+            # Create centered table items using helper function
+            label_item = self.create_centered_item(label)
+            anno_count = self.create_centered_item(count)
+            train_item = self.create_centered_item("0")
+            val_item = self.create_centered_item("0")
+            test_item = self.create_centered_item("0")
+            images_item = self.create_centered_item(len(label_image_counts[label]))
 
             self.label_counts_table.insertRow(row)
             self.label_counts_table.setCellWidget(row, 0, container)
@@ -630,7 +641,7 @@ class Base(QDialog):
         self.selected_labels = []
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
-            include_checkbox = container.layout().itemAt(1).widget()
+            include_checkbox = container.findChild(QCheckBox)
             if include_checkbox.isChecked():
                 label = self.label_counts_table.item(row, 1).text()
                 self.selected_labels.append(label)
@@ -647,7 +658,7 @@ class Base(QDialog):
         # Update the label counts table
         for row in range(self.label_counts_table.rowCount()):
             container = self.label_counts_table.cellWidget(row, 0)
-            include_checkbox = container.layout().itemAt(1).widget()
+            include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
             anno_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
             if include_checkbox.isChecked():
