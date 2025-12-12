@@ -2,9 +2,7 @@ import warnings
 import math
 import numpy as np
 
-# --- New Imports for Plotting and Graphics ---
 import pyqtgraph as pg
-# --- End New Imports ---
 
 from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint, QPointF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPixmap, QPainter, QBrush, QFontMetrics, QPolygonF
@@ -26,6 +24,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Helper Class for Elevation Profile Plot
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class ProfilePlotDialog(QDialog):
     """
@@ -204,9 +203,11 @@ class ProfilePlotDialog(QDialog):
         except Exception as e:
             print(f"Error updating plot: {e}")
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # ScaleToolDialog Class
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class ScaleToolDialog(QDialog):
     """
@@ -229,9 +230,6 @@ class ScaleToolDialog(QDialog):
 
         self.main_layout = QVBoxLayout(self)
 
-        # --- Image Options (Must be set up *before* tabs) ---
-        self.setup_options_layout()
-
         # --- Tab Widget ---
         self.tab_widget = QTabWidget()
         
@@ -252,12 +250,7 @@ class ScaleToolDialog(QDialog):
 
         self.main_layout.addWidget(self.tab_widget)  # Add tab widget FIRST
 
-        # --- Scale Status (for reference on other tabs) ---
-        self.current_scale_status_label = QLabel("Scale: N/A")
-        self.current_scale_status_label.setToolTip("Current scale loaded from the image.")
-        self.main_layout.addWidget(self.current_scale_status_label)
-
-        # --- Dialog Buttons (Now outside the tabs) ---
+        # --- Dialog Buttons ---
         self.button_box = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
         
         # Rename "Apply" to "Set Scale" for clarity
@@ -265,6 +258,14 @@ class ScaleToolDialog(QDialog):
         self.set_scale_button.setText("Set Scale")
         
         self.main_layout.addWidget(self.button_box)
+        
+        # --- Status Label (at bottom of dialog) ---
+        self.status_label = QLabel("No images highlighted")
+        self.status_label.setAlignment(Qt.AlignLeft)
+        self.main_layout.addWidget(self.status_label)
+        
+        # Signal connection will be made in activate() when image_window is guaranteed to exist
+        self._signal_connected = False
 
     def setup_scale_tab(self, tab_widget):
         """Populates the 'Set Scale' tab."""
@@ -290,27 +291,36 @@ class ScaleToolDialog(QDialog):
         self.scale_layout.addRow("Known Length:", self.known_length_input)
         self.scale_layout.addRow("Units:", self.units_combo)
         self.scale_layout.addRow("Pixel Length:", self.pixel_length_label)
-        self.scale_layout.addRow("Result:", self.calculated_scale_label)
+        self.scale_layout.addRow("Scale:", self.calculated_scale_label)
         
-        # Button for current image (styled in red)
-        self.remove_current_button = QPushButton("Remove Scale from Current Image")
-        self.remove_current_button.setToolTip("Removes the scale data from this image only.")
-        self.remove_current_button.setStyleSheet(
-            "background-color: #D9534F; color: white; font-weight: bold;"
-        )
-        self.scale_layout.addRow(self.remove_current_button)
+        # --- Danger Zone (Collapsible) ---
+        self.danger_zone_group_box = QGroupBox("Danger Zone")
+        self.danger_zone_group_box.setCheckable(True)
+        self.danger_zone_group_box.setChecked(False)  # Collapsed by default
 
-        # Button for all images (styled in red)
-        self.remove_all_button = QPushButton("Remove Scale from ALL Images")
-        self.remove_all_button.setToolTip("Removes all scale data from every image in this project.")
-        # Style the button to be red as a warning
-        self.remove_all_button.setStyleSheet(
+        # Create a container widget to hold the buttons
+        danger_zone_container = QWidget()
+        danger_zone_layout = QVBoxLayout(danger_zone_container)
+        danger_zone_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Button for removing scale from highlighted images (styled in red)
+        self.remove_highlighted_button = QPushButton("Remove Scale from Highlighted Images")
+        self.remove_highlighted_button.setToolTip("Removes the scale data from all highlighted images.")
+        self.remove_highlighted_button.setStyleSheet(
             "background-color: #D9534F; color: white; font-weight: bold;"
         )
-        self.scale_layout.addRow(self.remove_all_button)
-        
-        # --- Add Image Options GroupBox ---
-        self.scale_layout.addRow(self.options_group_box)
+        danger_zone_layout.addWidget(self.remove_highlighted_button)
+
+        # Set the container as the group box layout
+        group_layout = QVBoxLayout()
+        group_layout.addWidget(danger_zone_container)
+        self.danger_zone_group_box.setLayout(group_layout)
+
+        # Connect the toggled signal to show/hide the container
+        self.danger_zone_group_box.toggled.connect(danger_zone_container.setVisible)
+        danger_zone_container.setVisible(False)  # Start hidden
+
+        self.scale_layout.addRow(self.danger_zone_group_box)
 
     def setup_line_tab(self, tab_widget):
         """Populates the 'Measure Line' tab."""
@@ -402,71 +412,14 @@ class ScaleToolDialog(QDialog):
         self.rect_3d_group.setEnabled(False) # Disabled by default
         layout.addRow(self.rect_3d_group)
 
-    def setup_options_layout(self):
-        """
-        Set up the layout with image options.
-        """
-        # Create a group box for image options
-        self.options_group_box = QGroupBox("Image Options")
-        layout = QVBoxLayout()
-
-        # Create a button group for the image checkboxes
-        self.apply_group = QButtonGroup(self)
-
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        # Add the checkboxes to the button group
-        self.apply_group.addButton(self.apply_filtered_checkbox)
-        self.apply_group.addButton(self.apply_prev_checkbox)
-        self.apply_group.addButton(self.apply_next_checkbox)
-        self.apply_group.addButton(self.apply_all_checkbox)
-
-        # Ensure only one checkbox can be checked at a time
-        self.apply_group.setExclusive(True)
-
-        # No default checkbox set, defaults to current image
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
-
-        self.options_group_box.setLayout(layout)
-
     def get_selected_image_paths(self):
         """
-        Get the selected image paths based on the options.
+        Get the selected image paths - only highlighted rows.
         
-        :return: List of selected image paths
+        :return: List of highlighted image paths
         """
-        # Current image path showing
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
-            return []
-
-        # Determine which images to apply the scale to
-        if self.apply_filtered_checkbox.isChecked():
-            return self.main_window.image_window.table_model.filtered_paths
-        elif self.apply_prev_checkbox.isChecked():
-            if current_image_path in self.main_window.image_window.table_model.filtered_paths:
-                current_index = self.main_window.image_window.table_model.get_row_for_path(current_image_path)
-                return self.main_window.image_window.table_model.filtered_paths[:current_index + 1]
-            else:
-                return [current_image_path]
-        elif self.apply_next_checkbox.isChecked():
-            if current_image_path in self.main_window.image_window.table_model.filtered_paths:
-                current_index = self.main_window.image_window.table_model.get_row_for_path(current_image_path)
-                return self.main_window.image_window.table_model.filtered_paths[current_index:]
-            else:
-                return [current_image_path]
-        elif self.apply_all_checkbox.isChecked():
-            return self.main_window.image_window.raster_manager.image_paths
-        else:
-            # Default to "Apply to current image only"
-            return [current_image_path]
+        # Get highlighted image paths from the table model
+        return self.main_window.image_window.table_model.get_highlighted_paths()
 
     def reset_fields(self):
         """Resets the dialog fields to their default state."""
@@ -498,24 +451,22 @@ class ScaleToolDialog(QDialog):
         self.rect_volume_label.setText("N/A")
         self.rect_rugosity_label.setText("N/A")
 
-        self.update_checkboxes()
-
         # Reset locked flags and enable combos
         self.line_total_locked = False
         self.rect_total_locked = False
         self.line_units_combo.setEnabled(True)
         self.rect_units_combo.setEnabled(True)
-
-    def update_checkboxes(self):
-        """Clear the checkboxes states."""
-        # Temporarily disable exclusivity to allow unchecking all checkboxes
-        self.apply_group.setExclusive(False)
-        self.apply_filtered_checkbox.setChecked(False)
-        self.apply_prev_checkbox.setChecked(False)
-        self.apply_next_checkbox.setChecked(False)
-        self.apply_all_checkbox.setChecked(False)
-        # Restore exclusivity
-        self.apply_group.setExclusive(True)
+    
+    def update_status_label(self):
+        """Update the status label to show the number of images highlighted."""
+        highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
+        count = len(highlighted_paths)
+        if count == 0:
+            self.status_label.setText("No images highlighted")
+        elif count == 1:
+            self.status_label.setText("1 image highlighted")
+        else:
+            self.status_label.setText(f"{count} images highlighted")
 
     def closeEvent(self, event):
         """
@@ -559,8 +510,7 @@ class ScaleTool(Tool):
         self.dialog.rect_add_button.clicked.connect(self.add_rect_to_total)
         self.dialog.rect_clear_button.clicked.connect(self.clear_rect_total)
         
-        self.dialog.remove_current_button.clicked.connect(self.remove_scale_current)
-        self.dialog.remove_all_button.clicked.connect(self.remove_scale_all)
+        self.dialog.remove_highlighted_button.clicked.connect(self.remove_scale_highlighted)
 
         # --- New Button Connection ---
         self.dialog.line_profile_button.clicked.connect(self._show_elevation_profile)
@@ -705,6 +655,30 @@ class ScaleTool(Tool):
         self.dialog.rect_volume_label.setText("N/A")
         self.dialog.rect_rugosity_label.setText("N/A")
 
+    def load_existing_scale(self):
+        """Loads and displays existing scale data for the current image if available."""
+        current_path = self.annotation_window.current_image_path
+        if not current_path:
+            return
+        
+        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
+        if not raster or raster.scale_x is None:
+            # No scale data available
+            self.dialog.calculated_scale_label.setText("Scale: N/A")
+            return
+        
+        # Display the existing scale
+        scale_value = raster.scale_x  # Assuming square pixels
+        units = raster.scale_units if raster.scale_units else "metre"
+        
+        # Standardize unit display
+        if units == "metre":
+            units = "m"
+        
+        # Format the scale text
+        scale_text = f"{scale_value:.6f} {units}/pixel"
+        self.dialog.calculated_scale_label.setText(f"Scale: {scale_text}")
+
     def activate(self):
         super().activate()
         # Set initial mode based on the currently selected tab
@@ -719,15 +693,28 @@ class ScaleTool(Tool):
         self.stop_current_drawing()  # Resets all drawing
         self.dialog.reset_fields()
         
-        # Update status label with current scale
-        scale, units = self.get_current_scale()
-        if units != "px":
-            self.dialog.current_scale_status_label.setText(f"Scale: {scale:.6f} {units}/pixel")
-        else:
-            self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
+        # Connect signal to update highlighted count (only once)
+        if not self.dialog._signal_connected:
+            self.main_window.image_window.table_model.rowsChanged.connect(self.dialog.update_status_label)
+            self.dialog._signal_connected = True
+        
+        # Automatically highlight the current image if one is loaded
+        current_image_path = self.annotation_window.current_image_path
+        if current_image_path:
+            # Check if current image is already highlighted
+            highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
+            if current_image_path not in highlighted_paths:
+                # Highlight only the current image
+                self.main_window.image_window.table_model.set_highlighted_paths([current_image_path])
+        
+        # Update status label with highlighted count
+        self.dialog.update_status_label()
 
         # Check for Z-Data to enable/disable 3D tabs
         self.get_current_z_data()
+        
+        # Load and display existing scale if present
+        self.load_existing_scale()
 
         self.dialog.show()
         self.dialog.activateWindow()  # Bring it to the front
@@ -1561,9 +1548,6 @@ class ScaleTool(Tool):
         # --- 7. Finalize ---
         scale_text = f"{new_scale:.6f} m/pixel"
         self.dialog.calculated_scale_label.setText(f"Scale: {scale_text}")
-        
-        # Update the status label
-        self.dialog.current_scale_status_label.setText(f"Scale: {new_scale:.6f} m/pixel")
 
         # Refresh the main window status bar if the current image was updated
         if current_path in target_image_paths:
@@ -1583,85 +1567,60 @@ class ScaleTool(Tool):
         if self.main_window.confidence_window.annotation:
             self.main_window.confidence_window.refresh_display()
         
-    def remove_scale_current(self):
-        """Removes scale from the currently loaded image."""
-        current_path = self.annotation_window.current_image_path
-        if not current_path:
-            QMessageBox.warning(self.dialog, "No Image", "No image is currently loaded.")
+    def remove_scale_highlighted(self):
+        """Removes scale from all highlighted images."""
+        highlighted_paths = self.dialog.get_selected_image_paths()
+        
+        if not highlighted_paths:
+            QMessageBox.warning(self.dialog, "No Images", "No images are highlighted.")
             return
-
-        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
-        if not raster or raster.scale_x is None:
-            QMessageBox.information(self.dialog, "No Scale", "The current image has no scale data to remove.")
+        
+        # Count how many highlighted images actually have scale
+        images_with_scale = []
+        for path in highlighted_paths:
+            raster = self.main_window.image_window.raster_manager.get_raster(path)
+            if raster and raster.scale_x is not None:
+                images_with_scale.append(path)
+        
+        if not images_with_scale:
+            QMessageBox.information(self.dialog, "No Scale",
+                                    "None of the highlighted images have scale data to remove.")
             return
-
+        
         # Warn the user
+        count = len(images_with_scale)
+        if count == 1:
+            message = "Are you sure you want to remove the scale from 1 highlighted image?\n"
+        else:
+            message = f"Are you sure you want to remove the scale from {count} highlighted images?\n"
+        message += "This cannot be undone."
+        
         reply = QMessageBox.question(self.dialog,
                                      "Confirm Removal",
-                                     "Are you sure you want to remove the scale from the current image?\n"
-                                     "This cannot be undone.",
+                                     message,
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-
-        if reply == QMessageBox.Yes:
-            # Remove scale from Raster
-            raster.remove_scale()
-            
-            # Update all associated annotations
-            self.annotation_window.set_annotations_scale(current_path)
-            
-            # Update UI
-            self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
-            self.main_window.update_view_dimensions(raster.width, raster.height)
-            
-            # Clear accumulated measurements since scale changed
-            self.clear_line_total()
-            self.clear_rect_total()
-
-            # Refresh the confidence window to update the tooltip
-            if self.main_window.confidence_window.annotation:
-                self.main_window.confidence_window.refresh_display()
-            
-            QMessageBox.information(self.dialog, "Success", "Scale removed from the current image.")
-
-    def remove_scale_all(self):
-        """Removes scale from ALL images in the project."""
-        all_paths = self.main_window.image_window.raster_manager.image_paths
-        if not all_paths:
-            QMessageBox.warning(self.dialog, "No Images", "There are no images in the project.")
-            return
-
-        # CRITICAL warning for the user
-        reply = QMessageBox.warning(self.dialog,
-                                    "Confirm Global Removal",
-                                    "ARE YOU SURE?\n\n"
-                                    "This will remove scale data from ALL images in this project.\n"
-                                    "This action cannot be undone.",
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-
+        
         if reply == QMessageBox.Yes:
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress_bar = ProgressBar(self.annotation_window, title="Removing All Scale Data")
+            progress_bar = ProgressBar(self.annotation_window, title="Removing Scale Data")
             progress_bar.show()
-            progress_bar.start_progress(len(all_paths))
-
+            progress_bar.start_progress(len(images_with_scale))
+            
             current_image_was_updated = False
             
             try:
-                for path in all_paths:
+                for path in images_with_scale:
                     if progress_bar.wasCanceled():
                         break
                     
                     raster = self.main_window.image_window.raster_manager.get_raster(path)
                     if raster and raster.scale_x is not None:
-                        # 1. Remove scale from Raster
+                        # Remove scale from Raster
                         raster.remove_scale()
                         
                         # Update all associated annotations
                         self.annotation_window.set_annotations_scale(path)
                         
-                        # 2. Update all associated annotations
-                        self.annotation_window.set_annotations_scale(path)
-
                         if path == self.annotation_window.current_image_path:
                             current_image_was_updated = True
                     
@@ -1670,21 +1629,27 @@ class ScaleTool(Tool):
                 progress_bar.stop_progress()
                 progress_bar.close()
                 QApplication.restoreOverrideCursor()
-
+            
             # Update UI if the current image was affected
             if current_image_was_updated:
                 raster = self.main_window.image_window.raster_manager.get_raster(
                     self.annotation_window.current_image_path
                 )
-                self.dialog.current_scale_status_label.setText("Scale: Not Set (units in pixels)")
                 self.main_window.update_view_dimensions(raster.width, raster.height)
                 
                 # Refresh the confidence window to update the tooltip
                 if self.main_window.confidence_window.annotation:
                     self.main_window.confidence_window.refresh_display()
-
-            QMessageBox.information(self.dialog, "Success", "Scale data has been removed from all images.")
+                
+                # Update the scale display in the dialog
+                self.load_existing_scale()
             
             # Clear accumulated measurements since scale changed
             self.clear_line_total()
             self.clear_rect_total()
+            
+            if count == 1:
+                message = "Scale removed from 1 image."
+            else:
+                message = f"Scale removed from {count} images."
+            QMessageBox.information(self.dialog, "Success", message)
