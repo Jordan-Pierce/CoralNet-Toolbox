@@ -887,6 +887,12 @@ class Base(QDialog):
         params['name'] = params['name'] if params['name'] else now
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
+        
+        # If using an existing model, set specific parameters
+        if self.model_edit.text():
+            params['warmup_epochs'] = 0
+            params['lr0'] = 0.0005
+            params['optimizer'] = 'AdamW'
     
         # Add custom parameters (allows overriding the above parameters)
         for param_info in self.custom_params:
