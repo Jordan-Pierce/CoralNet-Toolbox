@@ -1,8 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import os
 import yaml
 import shutil
@@ -11,10 +8,13 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
-from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.Icons import get_icon
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import rasterio_open
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -25,7 +25,6 @@ class Segment(Base):
     def __init__(self, parent=None):
         super(Segment, self).__init__(parent)
         self.setWindowTitle("Export Segmentation Dataset")
-        self.setWindowIcon(get_icon("coral"))
 
     def setup_info_layout(self):
         """Setup the info layout"""

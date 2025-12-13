@@ -12,11 +12,14 @@ from rasterio.features import rasterize
 from shapely.geometry import Polygon
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, QTableWidgetItem)
 from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, 
+                             QTableWidgetItem, QWidget, QHBoxLayout)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -321,19 +324,36 @@ class Semantic(Base):
                                                            "Val", 
                                                            "Test", 
                                                            "Images"])
+        self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
         row = 0
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
+            include_checkbox.stateChanged.connect(self.update_summary_statistics)
+            container = QWidget()
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addStretch()
+            layout.addWidget(include_checkbox)
+            layout.addStretch()
+
+            # Create centered table items using helper function from Base class
+            label_item = self.create_centered_item(label)
+            anno_item = self.create_centered_item(count)
+            train_item = self.create_centered_item("0")
+            val_item = self.create_centered_item("0")
+            test_item = self.create_centered_item("0")
+            images_item = self.create_centered_item(len(label_image_counts.get(label, set())))
+
             self.label_counts_table.insertRow(row)
-            self.label_counts_table.setCellWidget(row, 0, include_checkbox)
-            self.label_counts_table.setItem(row, 1, QTableWidgetItem(label))
-            self.label_counts_table.setItem(row, 2, QTableWidgetItem(str(count)))
-            self.label_counts_table.setItem(row, 3, QTableWidgetItem("0"))
-            self.label_counts_table.setItem(row, 4, QTableWidgetItem("0"))
-            self.label_counts_table.setItem(row, 5, QTableWidgetItem("0"))
-            self.label_counts_table.setItem(row, 6, QTableWidgetItem(str(len(label_image_counts.get(label, set())))))
+            self.label_counts_table.setCellWidget(row, 0, container)
+            self.label_counts_table.setItem(row, 1, label_item)
+            self.label_counts_table.setItem(row, 2, anno_item)
+            self.label_counts_table.setItem(row, 3, train_item)
+            self.label_counts_table.setItem(row, 4, val_item)
+            self.label_counts_table.setItem(row, 5, test_item)
+            self.label_counts_table.setItem(row, 6, images_item)
             row += 1
             
         # Restore the cursor to the default cursor
@@ -360,7 +380,8 @@ class Semantic(Base):
         # Selected labels based on user's selection
         self.selected_labels = []
         for row in range(self.label_counts_table.rowCount()):
-            include_checkbox = self.label_counts_table.cellWidget(row, 0)
+            container = self.label_counts_table.cellWidget(row, 0)
+            include_checkbox = container.findChild(QCheckBox)
             if include_checkbox.isChecked():
                 label = self.label_counts_table.item(row, 1).text()
                 self.selected_labels.append(label)
@@ -376,7 +397,8 @@ class Semantic(Base):
 
         # Update the label counts table
         for row in range(self.label_counts_table.rowCount()):
-            include_checkbox = self.label_counts_table.cellWidget(row, 0)
+            container = self.label_counts_table.cellWidget(row, 0)
+            include_checkbox = container.findChild(QCheckBox)
             label = self.label_counts_table.item(row, 1).text()
             
             # --- Read from the cache ---
