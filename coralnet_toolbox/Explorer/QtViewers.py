@@ -4,6 +4,13 @@ import os
 
 import numpy as np
 
+try:
+    import jenkspy
+    JENKSPY_AVAILABLE = True
+except ImportError:
+    JENKSPY_AVAILABLE = False
+    print("Warning: jenkspy not available, falling back to quantile breaks for confidence sorting")
+
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -832,7 +839,8 @@ class AnnotationViewer(QWidget):
 
         # State for sorting options
         self.active_ordered_ids = []
-        self.is_confidence_sort_available = False
+        self.is_confidence_sort_available = True  # Enable confidence sorting by default
+        self.confidence_breaks = None  # For confidence-based grouping
 
         # New attributes for virtualization
         self.all_data_items = []
@@ -886,7 +894,6 @@ class AnnotationViewer(QWidget):
         self.sort_combo = QComboBox()
         # Remove "Similarity" as it's now an implicit action
         self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
-        self.sort_combo.insertSeparator(3)  # Add separator before "Confidence"
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
@@ -1119,12 +1126,123 @@ class AnnotationViewer(QWidget):
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []  # Clear any special ordering
+        
+        # Clear confidence breaks when not sorting by confidence
+        if sort_type != "Confidence":
+            self.confidence_breaks = None
+        
         self.recalculate_layout()
 
     def set_confidence_sort_availability(self, is_available):
         """Sets the availability of the confidence sort option."""
         self.is_confidence_sort_available = is_available
         self._update_sort_options_state()
+    
+    def _calculate_confidence_breaks(self, data_items):
+        """
+        Calculate quantile-based breaks for confidence scores.
+        
+        Args:
+            data_items (list): List of AnnotationDataItem objects
+        
+        Returns:
+            list: Break points for confidence categories (e.g., [0.5, 0.75, 0.9])
+        """
+        # Collect all confidence scores
+        confidences = []
+        for item in data_items:
+            conf, _ = item.get_machine_confidence()
+            if conf > 0:  # Only include annotations with confidence scores
+                confidences.append(conf)
+        
+        if not confidences:
+            return None
+        
+        confidences = np.array(confidences)
+        
+        # Use Jenks Natural Breaks if available, otherwise fall back to quantiles
+        try:
+            if JENKSPY_AVAILABLE and len(confidences) >= 5:
+                # Use Jenks Natural Breaks for optimal classification
+                # 4 classes means we get 3 internal breaks (plus min/max boundaries)
+                n_classes = 4
+                jenks_breaks = jenkspy.jenks_breaks(confidences, n_classes=n_classes)
+                # jenks_breaks returns [min, break1, break2, break3, max]
+                # We want the internal breaks: [break1, break2, break3]
+                breaks = [float(b) for b in jenks_breaks[1:-1]]
+            else:
+                # Fallback to quantile breaks
+                breaks = [
+                    float(np.quantile(confidences, 0.25)),
+                    float(np.quantile(confidences, 0.50)),
+                    float(np.quantile(confidences, 0.75))
+                ]
+            
+            # Ensure breaks are unique and sorted
+            breaks = sorted(list(set(breaks)))
+            return breaks if len(breaks) >= 2 else None
+        except Exception as e:
+            print(f"Error calculating confidence breaks: {e}")
+            return None
+    
+    def _get_confidence_range_label(self, min_conf, max_conf, breaks):
+        """
+        Get a formatted label for a confidence range with color coding.
+        
+        Args:
+            min_conf (float): Minimum confidence in range (0-1)
+            max_conf (float): Maximum confidence in range (0-1)
+            breaks (list): Confidence break points
+        
+        Returns:
+            tuple: (label_text, color)
+        """
+        # Determine category based on midpoint
+        mid_conf = (min_conf + max_conf) / 2
+        
+        # Determine color and category based on breaks
+        if breaks and len(breaks) >= 2:
+            if len(breaks) >= 3:
+                if mid_conf <= breaks[0]:
+                    category = "Low Confidence"
+                    color = QColor(220, 20, 60)
+                elif mid_conf <= breaks[1]:
+                    category = "Medium Confidence"
+                    color = QColor(255, 215, 0)
+                elif mid_conf <= breaks[2]:
+                    category = "Medium-High Confidence"
+                    color = QColor(144, 238, 144)
+                else:
+                    category = "High Confidence"
+                    color = QColor(34, 139, 34)
+            else:
+                if mid_conf <= breaks[0]:
+                    category = "Low Confidence"
+                    color = QColor(220, 20, 60)
+                elif mid_conf <= breaks[1]:
+                    category = "Medium Confidence"
+                    color = QColor(255, 215, 0)
+                else:
+                    category = "High Confidence"
+                    color = QColor(34, 139, 34)
+        else:
+            # Default thresholds
+            if mid_conf <= 0.50:
+                category = "Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= 0.75:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        
+        # Format percentage range
+        min_pct = int(min_conf * 100)
+        max_pct = int(max_conf * 100)
+        label = f"{category}: {min_pct}-{max_pct}%"
+        
+        return label, color
 
     def _get_sorted_data_items(self):
         """Get data items sorted according to the current sort setting."""
@@ -1160,32 +1278,82 @@ class AnnotationViewer(QWidget):
     def _group_data_items_by_sort_key(self, data_items):
         """Group data items by the current sort key."""
         sort_type = self.sort_combo.currentText()
-        if not self.active_ordered_ids and sort_type == "None":
-            return [("", data_items)]
-
-        if self.active_ordered_ids:  # Don't show group headers for similarity results
-            return [("", data_items)]
-
+        
+        # No grouping for "None" sort or similarity results
+        if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
+            return [("", None, data_items)]
+        
+        if sort_type == "Confidence":
+            # Calculate confidence breaks
+            self.confidence_breaks = self._calculate_confidence_breaks(data_items)
+            
+            if not self.confidence_breaks:
+                # No confidence data, return single group
+                return [("", None, data_items)]
+            
+            # Create bins based on breaks
+            bins = [-0.001] + self.confidence_breaks + [1.001]  # Add edges
+            
+            # Group items by confidence bin
+            bin_groups = [[] for _ in range(len(bins) - 1)]
+            
+            for item in data_items:
+                conf, _ = item.get_machine_confidence()
+                if conf == 0:
+                    continue  # Skip items without confidence
+                    
+                # Find which bin this confidence falls into
+                for i in range(len(bins) - 1):
+                    # First bin: inclusive on both ends
+                    # Other bins: exclusive lower, inclusive upper (so break points go in lower bin)
+                    if i == 0:
+                        if bins[i] <= conf <= bins[i + 1]:
+                            bin_groups[i].append(item)
+                            break
+                    else:
+                        if bins[i] < conf <= bins[i + 1]:
+                            bin_groups[i].append(item)
+                            break
+            
+            # Create labeled groups (highest confidence first)
+            groups = []
+            for i in range(len(bin_groups) - 1, -1, -1):
+                if bin_groups[i]:  # Only add non-empty groups
+                    min_conf = max(0, bins[i])
+                    max_conf = min(1, bins[i + 1])
+                    label, color = self._get_confidence_range_label(min_conf, max_conf, self.confidence_breaks)
+                    groups.append((label, color, bin_groups[i]))
+            
+            return groups
+        
+        # Original grouping logic for Label and Image
         groups = []
         current_group = []
         current_key = None
+        current_color = None
         for item in data_items:
             if sort_type == "Label":
                 key = item.effective_label.short_label_code
+                color = item.effective_color
             elif sort_type == "Image":
                 key = os.path.basename(item.annotation.image_path)
+                color = None
             else:
-                key = "" # No headers for Confidence or None
+                key = ""
+                color = None
             
             if key and current_key != key:
                 if current_group:
-                    groups.append((current_key, current_group))
+                    groups.append((current_key, current_color, current_group))
                 current_group = [item]
                 current_key = key
+                current_color = color
             else:
                 current_group.append(item)
+        
         if current_group:
-            groups.append((current_key, current_group))
+            groups.append((current_key, current_color, current_group))
+        
         return groups
 
     def _clear_separator_labels(self):
@@ -1196,24 +1364,43 @@ class AnnotationViewer(QWidget):
                 header.deleteLater()
         self._group_headers = []
 
-    def _create_group_header(self, text):
-        """Create a group header label."""
+    def _create_group_header(self, text, color=None):
+        """
+        Create a group header label.
+        
+        Args:
+            text (str): Header text
+            color (QColor, optional): Background color for the header
+        """
         if not hasattr(self, '_group_headers'):
             self._group_headers = []
+        
         header = QLabel(text, self.content_widget)
+        
+        # Base style
+        bg_color = color.name() if color else "#f0f0f0"
+        
+        # Determine text color based on background brightness
+        if color:
+            # Calculate luminance
+            luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255
+            text_color = "#ffffff" if luminance < 0.5 else "#000000"
+        else:
+            text_color = "#555"
+        
         header.setStyleSheet(
-            "QLabel {"
-            " font-weight: bold;"
-            " font-size: 12px;"
-            " color: #555;"
-            " background-color: #f0f0f0;"
-            " border: 1px solid #ccc;"
-            " border-radius: 3px;"
-            " padding: 5px 8px;"
-            " margin: 2px 0px;"
-            " }"
+            f"QLabel {{"
+            f" font-weight: bold;"
+            f" font-size: 12px;"
+            f" color: {text_color};"
+            f" background-color: {bg_color};"
+            f" border: 2px solid {bg_color if color else '#ccc'};"
+            f" border-radius: 4px;"
+            f" padding: 6px 10px;"
+            f" margin: 2px 0px;"
+            f"}}"
         )
-        header.setFixedHeight(30)
+        header.setFixedHeight(32)
         header.setMinimumWidth(self.scroll_area.viewport().width() - 20)
         header.show()
         self._group_headers.append(header)
@@ -1298,13 +1485,21 @@ class AnnotationViewer(QWidget):
         self.widget_positions.clear()
 
         # Calculate positions
-        for group_name, group_data_items in groups:
+        for group_data in groups:
+            # Handle both old format (name, items) and new format (name, color, items)
+            if len(group_data) == 3:
+                group_name, group_color, group_data_items = group_data
+            else:
+                group_name, group_data_items = group_data
+                group_color = None
+            
+            # Add header if there's a group name and not in "None" sort
             if group_name and self.sort_combo.currentText() != "None":
                 if x > spacing:
                     x = spacing
                     y += max_height_in_row + spacing
                     max_height_in_row = 0
-                header_label = self._create_group_header(group_name)
+                header_label = self._create_group_header(group_name, group_color)
                 header_label.move(x, y)
                 y += header_label.height() + spacing
                 x = spacing
@@ -1358,6 +1553,11 @@ class AnnotationViewer(QWidget):
         self.all_data_items = data_items
         self.selected_widgets.clear()
         self.last_selected_item_id = None
+        
+        # Check if any annotations have machine confidence and enable sorting
+        has_confidence = True  # Always enable confidence sorting
+        
+        self.set_confidence_sort_availability(has_confidence)
 
         self.recalculate_layout()
         self._update_toolbar_state()

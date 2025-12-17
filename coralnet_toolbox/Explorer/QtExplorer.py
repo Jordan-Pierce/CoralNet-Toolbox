@@ -457,9 +457,14 @@ class ExplorerWindow(QMainWindow):
         )
 
         if all_same_current_label:
-            self.label_window.set_active_label(first_effective_label)
-            # This emit is what updates other UI elements, like the annotation list
-            self.annotation_window.labelSelected.emit(first_effective_label.id)
+            # Get the actual Label widget from LabelWindow by ID to ensure object identity
+            label_widget = self.label_window.get_label_by_id(first_effective_label.id, return_review=True)
+            if label_widget:
+                self.label_window.set_active_label(label_widget)
+                # This emit is what updates other UI elements, like the annotation list
+                self.annotation_window.labelSelected.emit(first_effective_label.id)
+            else:
+                self.label_window.deselect_active_label()
         else:
             self.label_window.deselect_active_label()
 
@@ -1626,7 +1631,8 @@ class ExplorerWindow(QMainWindow):
             # Check if confidence scores are available to enable sorting
             _, feature_mode = self.current_embedding_model_info
             is_predict_mode = feature_mode == "Predictions"
-            self.annotation_viewer.set_confidence_sort_availability(is_predict_mode)
+            if is_predict_mode:
+                self.annotation_viewer.set_confidence_sort_availability(True)
 
             # If using Predictions mode, update data items with probabilities for confidence sorting
             if is_predict_mode:
@@ -1655,7 +1661,6 @@ class ExplorerWindow(QMainWindow):
 
             # Reset sort options when filters change
             self.annotation_viewer.active_ordered_ids = []
-            self.annotation_viewer.set_confidence_sort_availability(False)
             
             # Update the annotation count in the label window
             self.label_window.update_annotation_count()
@@ -1753,6 +1758,9 @@ class ExplorerWindow(QMainWindow):
             for point in self.embedding_viewer.points_by_id.values():
                 point.update_tooltip()
 
+        # After reverting all changes, update the label and count display
+        self.update_label_window_selection()
+        
         # After reverting all changes, update the button states.
         self.update_button_states()
         print("Cleared all pending changes.")

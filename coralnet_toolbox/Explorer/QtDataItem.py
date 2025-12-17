@@ -4,8 +4,8 @@ import os
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor, QPainter
+from PyQt5.QtCore import Qt, QRectF, QRect
+from PyQt5.QtGui import QPen, QColor, QPainter, QFont
 from PyQt5.QtWidgets import QGraphicsObject, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 POINT_SIZE = 15
 POINT_WIDTH = 3
@@ -269,7 +270,6 @@ class AnnotationImageWidget(QWidget):
         self._pulse_alpha = 128
         self._pulse_direction = 1
 
-        self.setup_ui()
         self.recalculate_aspect_ratio()
         self.update_height(self.widget_height)
         self.update_tooltip()
@@ -294,16 +294,6 @@ class AnnotationImageWidget(QWidget):
             return self.isVisible()
         except RuntimeError:
             return False
-
-    def setup_ui(self):
-        """Set up the basic UI with a label for the image."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setScaledContents(True)
-        self.image_label.setStyleSheet("border: none;")
-        layout.addWidget(self.image_label)
         
     def update_tooltip(self):
         """Updates the tooltip by fetching the latest text from the data item."""
@@ -360,42 +350,27 @@ class AnnotationImageWidget(QWidget):
             if cropped_pixmap and not cropped_pixmap.isNull():
                 self.pixmap = cropped_pixmap
                 self.is_loaded = True
-                self._display_pixmap()
+                self.update()
             else:
-                self.image_label.setText("No Image\nAvailable")
                 self.pixmap = None
+                self.update()
         except Exception as e:
             print(f"Error loading annotation image: {e}")
-            self.image_label.setText("Error\nLoading Image")
             self.pixmap = None
+            self.update()
 
     def unload_image(self):
         """Unloads the pixmap to free memory."""
         if not self.is_loaded:
             return
         self.pixmap = None
-        self.image_label.clear()
         self.is_loaded = False
-
-    def _display_pixmap(self):
-        """Scales and displays the currently loaded pixmap."""
-        if self.pixmap:
-            new_width = int(self.widget_height * self.aspect_ratio)
-            scaled_pixmap = self.pixmap.scaled(
-                new_width - 8,
-                self.widget_height - 8,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.image_label.setPixmap(scaled_pixmap)
 
     def update_height(self, new_height):
         """Updates the widget's height and rescales its width and content accordingly."""
         self.widget_height = new_height
         new_width = int(self.widget_height * self.aspect_ratio)
         self.setFixedSize(new_width, new_height)
-        if self.pixmap:
-            self._display_pixmap()
         self.update()
 
     def update_selection_visuals(self):
@@ -429,6 +404,20 @@ class AnnotationImageWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        # Draw the image
+        if self.pixmap:
+            scaled_pixmap = self.pixmap.scaled(
+                self.width() - 8,
+                self.height() - 8,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(4, 4, scaled_pixmap)
+        else:
+            painter.setPen(QColor("black"))
+            painter.setFont(QFont("Arial", 12))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No Image\nAvailable")
+
         effective_label = self.data_item.effective_label
         pen_color = self.data_item.effective_color
         if effective_label and effective_label.id == "-1":
@@ -454,6 +443,48 @@ class AnnotationImageWidget(QWidget):
         half_width = (width - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
+        
+        # --- Draw Machine Confidence Badge ---
+        confidence_score, _ = self.data_item.get_machine_confidence()
+        if confidence_score > 0:
+            # Badge dimensions - minimum size with fixed font
+            badge_size = 32  # Increased from 28 for better readability
+            margin = 4
+            badge_x = self.width() - badge_size - margin
+            badge_y = margin
+            badge_rect = QRect(badge_x, badge_y, badge_size, badge_size)
+            
+            # Get color-coded background from viewer's breaks
+
+            try:
+                if (self.annotation_viewer and
+                    hasattr(self.annotation_viewer, 'confidence_breaks') and
+                    self.annotation_viewer.confidence_breaks):
+                    badge_color = self.data_item.get_confidence_color(self.annotation_viewer.confidence_breaks)
+                else:
+                    badge_color = self.data_item.get_confidence_color()
+            except Exception:
+                # Fallback to default color if anything goes wrong
+                badge_color = QColor(0, 0, 0, 180)
+            
+            # Make badge semi-transparent
+            badge_color.setAlpha(200)
+            painter.fillRect(badge_rect, badge_color)
+            
+            # Draw border
+            painter.setPen(QPen(QColor(0, 0, 0, 100), 1))
+            painter.drawRect(badge_rect)
+            
+            # Draw percentage text with fixed size (doesn't scale with widget)
+            confidence_percent = int(confidence_score * 100)
+            painter.setFont(QFont("Arial", 10, QFont.Bold))  # Fixed size font
+            painter.setPen(QColor("white"))
+            
+            # Add text shadow for better readability
+            painter.setPen(QColor(0, 0, 0, 180))
+            painter.drawText(badge_rect.adjusted(1, 1, 1, 1), Qt.AlignCenter, f"{confidence_percent}%")
+            painter.setPen(QColor("white"))
+            painter.drawText(badge_rect, Qt.AlignCenter, f"{confidence_percent}%")
         
     def tick_animation(self):
         """
@@ -672,9 +703,96 @@ class AnnotationDataItem:
                 return float(probs)
 
         # Fallback to existing confidence values
-        if self.annotation.verified and hasattr(self.annotation, 'user_confidence') and self.annotation.user_confidence:
-            return list(self.annotation.user_confidence.values())[0]
+        if self.annotation.verified:
+            return 1.0
         elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
             return list(self.annotation.machine_confidence.values())[0]
             
-        return 0.0
+        return 1.0
+
+    def get_machine_confidence(self):
+        """
+        Get the top-1 machine confidence score.
+        Prioritizes prediction_probabilities from current model over annotation's machine_confidence.
+        Returns a tuple (confidence_value, label_name) or (0.0, None) if not available.
+        """
+        # First priority: current prediction probabilities (from model)
+        if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
+            probs = self.prediction_probabilities
+            try:
+                # Handle array-like probabilities
+                if len(probs) > 0:
+                    confidence = float(np.max(probs))
+                    if confidence > 0:  # Only use if valid confidence
+                        # Try to get the label if available
+                        label = self.effective_label.short_label_code if self.effective_label else None
+                        return confidence, label
+            except TypeError:
+                # Handle scalar probabilities
+                confidence = float(probs)
+                if confidence > 0:  # Only use if valid confidence
+                    label = self.effective_label.short_label_code if self.effective_label else None
+                    return confidence, label
+        
+        # Second priority: annotation's machine_confidence dict
+        if (hasattr(self.annotation, 'machine_confidence') and 
+            self.annotation.machine_confidence and 
+            isinstance(self.annotation.machine_confidence, dict)
+        ):
+            # Get the label with highest confidence
+            top_label = max(
+                self.annotation.machine_confidence.keys(),
+                key=lambda k: self.annotation.machine_confidence[k]
+            )
+            top_confidence = float(self.annotation.machine_confidence[top_label])
+            return top_confidence, top_label
+        
+        return 0.0, None
+    
+    def get_confidence_color(self, breaks=None):
+        """
+        Get a color for the confidence score based on quantile breaks.
+        
+        Args:
+            breaks (list): List of confidence break points (e.g., [0.5, 0.75, 0.9])
+                          If None, uses simple default thresholds.
+        
+        Returns:
+            QColor: Color representing the confidence level
+        """
+        confidence, _ = self.get_machine_confidence()
+        
+        if confidence == 0:
+            return QColor(128, 128, 128)  # Gray for no confidence
+        
+        # Use provided breaks or default thresholds
+        if breaks is None or len(breaks) < 2:
+            # Default 4-tier system
+            if confidence <= 0.50:
+                return QColor(220, 20, 60)  # Crimson red (<=50%)
+            elif confidence <= 0.75:
+                return QColor(255, 215, 0)  # Gold/yellow (50-75%)
+            elif confidence <= 0.90:
+                return QColor(144, 238, 144)  # Light green (75-90%)
+            else:
+                return QColor(34, 139, 34)  # Dark green (>90%)
+        else:
+            # Use quantile breaks
+            if len(breaks) >= 3:
+                # 4 categories (3 breaks)
+                if confidence <= breaks[0]:
+                    return QColor(220, 20, 60)  # Crimson red
+                elif confidence <= breaks[1]:
+                    return QColor(255, 215, 0)  # Gold/yellow
+                elif confidence <= breaks[2]:
+                    return QColor(144, 238, 144)  # Light green
+                else:
+                    return QColor(34, 139, 34)  # Dark green
+            else:
+                # 2 categories (2 breaks)
+                if confidence <= breaks[0]:
+                    return QColor(220, 20, 60)  # Crimson red
+                elif confidence <= breaks[1]:
+                    return QColor(255, 215, 0)  # Gold/yellow
+                else:
+                    return QColor(34, 139, 34)  # Dark green

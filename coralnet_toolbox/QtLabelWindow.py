@@ -598,10 +598,9 @@ class LabelWindow(QWidget):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
         # Check if we're in Explorer mode
-        if self.main_window.explorer_window and \
-            hasattr(self.main_window, 'explorer_window') and \
-            hasattr(self.main_window.explorer_window, 'annotation_viewer'):
-            annotation_viewer = self.main_window.explorer_window.annotation_viewer
+        explorer_window = self.main_window.explorer_window if self.main_window else None
+        if explorer_window and hasattr(explorer_window, 'annotation_viewer'):
+            annotation_viewer = explorer_window.annotation_viewer
            
             # Priority 1: Always check for a selection in Explorer first.
             explorer_selected_count = len(annotation_viewer.selected_widgets)
@@ -663,6 +662,29 @@ class LabelWindow(QWidget):
 
                     # Center on the selected annotation
                     self.annotation_window.center_on_annotation(annotations[zero_based_index])
+                    
+                    # Sync selection back to Explorer viewers if available
+                    explorer_window = (
+                        self.main_window.explorer_window
+                        if hasattr(self, 'main_window') and self.main_window else None
+                    )
+                    if explorer_window and hasattr(explorer_window, 'current_data_items'):
+                        selected_annotation = annotations[zero_based_index]
+                        # Find the corresponding data item and select it
+                        for data_item in explorer_window.current_data_items:
+                            if data_item.annotation.id == selected_annotation.id:
+                                data_item.set_selected(True)
+                        # Update viewers to reflect the selection
+                        if hasattr(explorer_window, 'annotation_viewer') and explorer_window.annotation_viewer:
+                            explorer_window.annotation_viewer.render_selection_from_ids(
+                                {selected_annotation.id}
+                            )
+                        if hasattr(explorer_window, 'embedding_viewer') and explorer_window.embedding_viewer:
+                            explorer_window.embedding_viewer.render_selection_from_ids(
+                                {selected_annotation.id}
+                            )
+                        # Update the label window
+                        explorer_window.update_label_window_selection()
             except (ValueError, IndexError):
                 # In case of parsing error or index out of range
                 pass
@@ -849,13 +871,39 @@ class LabelWindow(QWidget):
         # Use update_scene() which includes QApplication.processEvents()
         # This ensures the scene is properly refreshed with all changes
         self.annotation_window.update_scene()
+        
+        # Update annotation count in case visibility changes affect displayed count
+        explorer_window = (
+            self.main_window.explorer_window
+            if hasattr(self, 'main_window') and self.main_window else None
+        )
+        if explorer_window and hasattr(explorer_window, 'label_window'):
+            explorer_window.label_window.update_annotation_count()
     
     def get_visible_labels(self):
         """Get a list of all labels whose visibility checkbox is checked."""
         return [label for label in self.labels if label.is_visible]
 
     def set_active_label(self, selected_label):
-        """Set the currently active label, updating UI and emitting signals."""
+        """
+        Set the currently active label, updating UI and emitting signals.
+        
+        Args:
+            selected_label: Can be either a Label widget or an object with an 'id' property.
+                           If it has an id property but isn't a Label widget, we look it up by ID.
+        """
+        # Handle the case where we receive a label object instead of a Label widget
+        # (e.g., from AnnotationDataItem.effective_label)
+        if selected_label and not isinstance(selected_label, Label):
+            # Try to get the actual Label widget by ID
+            label_widget = self.get_label_by_id(selected_label.id, return_review=True)
+            if label_widget:
+                selected_label = label_widget
+            else:
+                # If we can't find it, deselect
+                self.deselect_active_label()
+                return
+        
         # Handle deselection when clicking the same label again
         if self.active_label == selected_label:
             # If the label is no longer selected (user clicked to deselect), handle deselection
