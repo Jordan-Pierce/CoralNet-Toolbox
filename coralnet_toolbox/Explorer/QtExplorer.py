@@ -1553,6 +1553,10 @@ class ExplorerWindow(QMainWindow):
             self.annotation_viewer.show_all_annotations()
 
         self.embedding_viewer.render_selection_from_ids(set())
+        
+        # Reset sort to "None" to ensure confidence colors/bins recalculate correctly
+        self.annotation_viewer.sort_combo.setCurrentText("None")
+        
         self.update_button_states()
 
         self.current_embedding_model_info = self.model_settings_widget.get_selected_model()

@@ -445,7 +445,7 @@ class AnnotationImageWidget(QWidget):
         painter.drawRect(rect)
         
         # --- Draw Machine Confidence Badge ---
-        confidence_score, _ = self.data_item.get_machine_confidence()
+        confidence_score = self.data_item.get_effective_confidence()
         if confidence_score > 0:
             # Badge dimensions - minimum size with fixed font
             badge_size = 32  # Increased from 28 for better readability
@@ -709,45 +709,6 @@ class AnnotationDataItem:
             return list(self.annotation.machine_confidence.values())[0]
             
         return 1.0
-
-    def get_machine_confidence(self):
-        """
-        Get the top-1 machine confidence score.
-        Prioritizes prediction_probabilities from current model over annotation's machine_confidence.
-        Returns a tuple (confidence_value, label_name) or (0.0, None) if not available.
-        """
-        # First priority: current prediction probabilities (from model)
-        if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
-            probs = self.prediction_probabilities
-            try:
-                # Handle array-like probabilities
-                if len(probs) > 0:
-                    confidence = float(np.max(probs))
-                    if confidence > 0:  # Only use if valid confidence
-                        # Try to get the label if available
-                        label = self.effective_label.short_label_code if self.effective_label else None
-                        return confidence, label
-            except TypeError:
-                # Handle scalar probabilities
-                confidence = float(probs)
-                if confidence > 0:  # Only use if valid confidence
-                    label = self.effective_label.short_label_code if self.effective_label else None
-                    return confidence, label
-        
-        # Second priority: annotation's machine_confidence dict
-        if (hasattr(self.annotation, 'machine_confidence') and 
-            self.annotation.machine_confidence and 
-            isinstance(self.annotation.machine_confidence, dict)
-        ):
-            # Get the label with highest confidence
-            top_label = max(
-                self.annotation.machine_confidence.keys(),
-                key=lambda k: self.annotation.machine_confidence[k]
-            )
-            top_confidence = float(self.annotation.machine_confidence[top_label])
-            return top_confidence, top_label
-        
-        return 0.0, None
     
     def get_confidence_color(self, breaks=None):
         """
@@ -760,7 +721,7 @@ class AnnotationDataItem:
         Returns:
             QColor: Color representing the confidence level
         """
-        confidence, _ = self.get_machine_confidence()
+        confidence = self.get_effective_confidence()
         
         if confidence == 0:
             return QColor(128, 128, 128)  # Gray for no confidence

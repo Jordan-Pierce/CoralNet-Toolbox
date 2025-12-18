@@ -1151,7 +1151,7 @@ class AnnotationViewer(QWidget):
         # Collect all confidence scores
         confidences = []
         for item in data_items:
-            conf, _ = item.get_machine_confidence()
+            conf = item.get_effective_confidence()
             if conf > 0:  # Only include annotations with confidence scores
                 confidences.append(conf)
         
@@ -1298,7 +1298,7 @@ class AnnotationViewer(QWidget):
             bin_groups = [[] for _ in range(len(bins) - 1)]
             
             for item in data_items:
-                conf, _ = item.get_machine_confidence()
+                conf = item.get_effective_confidence()
                 if conf == 0:
                     continue  # Skip items without confidence
                     
