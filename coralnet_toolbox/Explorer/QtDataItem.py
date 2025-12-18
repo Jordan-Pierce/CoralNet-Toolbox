@@ -594,6 +594,12 @@ class AnnotationDataItem:
         self.prediction_details = None
         # To store prediction probabilities for sorting
         self.prediction_probabilities = None
+        
+        # Quality and anomaly metrics
+        self.quality_score = None  # Composite quality metric (0-1)
+        self.anomaly_score = None  # Anomaly detection score (0-1, higher = more anomalous)
+        self.local_density = None  # Local density in feature space
+        self.spatial_consistency = None  # Consistency with nearby annotations
 
     def _calculate_aspect_ratio(self):
         """Calculate and return the annotation's aspect ratio."""
@@ -695,6 +701,16 @@ class AnnotationDataItem:
         # Add prediction details if they exist
         if self.prediction_details:
             tooltip_parts.append(f"<hr>{self.prediction_details}")
+        
+        # Add quality information if available
+        quality_info = self.get_quality_info()
+        if quality_info:
+            tooltip_parts.append(f"<hr>{quality_info}")
+        
+        # Add anomaly information if available
+        anomaly_info = self.get_anomaly_info()
+        if anomaly_info:
+            tooltip_parts.append(f"{anomaly_info}")
 
         return "<br>".join(tooltip_parts)
 
@@ -769,3 +785,154 @@ class AnnotationDataItem:
                     return QColor(255, 215, 0)  # Gold/yellow
                 else:
                     return QColor(34, 139, 34)  # Dark green
+    
+    def calculate_quality_score(self):
+        """
+        Calculate a composite quality score (0-1) based on multiple factors.
+        Higher score = better quality annotation.
+        
+        Factors:
+        - Model confidence (if available)
+        - Local density (well-supported by neighbors)
+        - Spatial consistency (agreement with nearby annotations in same image)
+        - Annotation geometry quality (size, aspect ratio reasonableness)
+        
+        Returns:
+            float: Quality score between 0 and 1
+        """
+        weights = {
+            'confidence': 0.4,
+            'density': 0.3,
+            'spatial': 0.2,
+            'geometry': 0.1
+        }
+        
+        scores = {}
+        
+        # 1. Model confidence score
+        if self.prediction_probabilities is not None:
+            confidence = self.get_effective_confidence()
+            scores['confidence'] = confidence
+        else:
+            # If no model predictions, use verification status
+            scores['confidence'] = 1.0 if self.annotation.verified else 0.5
+        
+        # 2. Local density score (higher density = more support)
+        if self.local_density is not None:
+            # Normalize density to 0-1 range (assuming density is positive)
+            # Higher density = higher quality
+            scores['density'] = min(1.0, self.local_density / 10.0)  # Adjust scale as needed
+        else:
+            scores['density'] = 0.5  # Neutral if unknown
+        
+        # 3. Spatial consistency score
+        if self.spatial_consistency is not None:
+            scores['spatial'] = self.spatial_consistency
+        else:
+            scores['spatial'] = 0.5  # Neutral if unknown
+        
+        # 4. Geometry quality score (reasonable size and aspect ratio)
+        geometry_score = 1.0
+        
+        # Check aspect ratio (extreme ratios might indicate poor annotations)
+        if self.aspect_ratio < 0.1 or self.aspect_ratio > 10.0:
+            geometry_score *= 0.5
+        
+        # Check if annotation has valid bounding box
+        try:
+            top_left = self.annotation.get_bounding_box_top_left()
+            bottom_right = self.annotation.get_bounding_box_bottom_right()
+            if top_left and bottom_right:
+                width = bottom_right.x() - top_left.x()
+                height = bottom_right.y() - top_left.y()
+                
+                # Penalize very small annotations (might be errors)
+                if width < 5 or height < 5:
+                    geometry_score *= 0.7
+                    
+                # Penalize very large annotations (might be incorrect)
+                if width > 1000 or height > 1000:
+                    geometry_score *= 0.8
+        except (AttributeError, TypeError):
+            pass
+        
+        scores['geometry'] = geometry_score
+        
+        # Calculate weighted average
+        total_weight = sum(weights[k] for k in scores.keys())
+        quality = sum(scores[k] * weights[k] for k in scores.keys()) / total_weight
+        
+        self.quality_score = quality
+        return quality
+    
+    def get_quality_info(self):
+        """
+        Get formatted quality information for display.
+        
+        Returns:
+            str: HTML-formatted quality information
+        """
+        if self.quality_score is None:
+            return ""
+        
+        quality_percent = int(self.quality_score * 100)
+        
+        # Color code based on quality
+        if quality_percent >= 80:
+            color = "green"
+            rating = "Excellent"
+        elif quality_percent >= 60:
+            color = "lightgreen"
+            rating = "Good"
+        elif quality_percent >= 40:
+            color = "orange"
+            rating = "Fair"
+        else:
+            color = "red"
+            rating = "Poor"
+        
+        info_parts = [
+            f"<b style='color: {color}'>Quality: {quality_percent}% ({rating})</b>"
+        ]
+        
+        # Add component details if available
+        if hasattr(self, 'local_density') and self.local_density is not None:
+            info_parts.append(f"Density: {self.local_density:.2f}")
+        
+        if hasattr(self, 'spatial_consistency') and self.spatial_consistency is not None:
+            consistency_percent = int(self.spatial_consistency * 100)
+            info_parts.append(f"Spatial Consistency: {consistency_percent}%")
+        
+        if hasattr(self, 'anomaly_score') and self.anomaly_score is not None:
+            anomaly_percent = int(self.anomaly_score * 100)
+            info_parts.append(f"Anomaly Score: {anomaly_percent}%")
+        
+        return "<br>".join(info_parts)
+    
+    def get_anomaly_info(self):
+        """
+        Get formatted anomaly information for display.
+        
+        Returns:
+            str: HTML-formatted anomaly information
+        """
+        if self.anomaly_score is None:
+            return ""
+        
+        anomaly_percent = int(self.anomaly_score * 100)
+        
+        # Color code based on anomaly level
+        if anomaly_percent >= 80:
+            color = "red"
+            rating = "Very Anomalous"
+        elif anomaly_percent >= 60:
+            color = "orange"
+            rating = "Anomalous"
+        elif anomaly_percent >= 40:
+            color = "gold"
+            rating = "Slightly Anomalous"
+        else:
+            color = "green"
+            rating = "Normal"
+        
+        return f"<b style='color: {color}'>Anomaly: {anomaly_percent}% ({rating})</b>"

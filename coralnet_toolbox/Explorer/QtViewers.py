@@ -22,7 +22,7 @@ from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import SimilaritySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidget
-from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import AnomalySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import DuplicateSettingsWidget
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -47,8 +47,8 @@ class EmbeddingViewer(QWidget):
     """Custom QGraphicsView for interactive embedding visualization with an isolate mode."""
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
-    find_mislabels_requested = pyqtSignal()
-    mislabel_parameters_changed = pyqtSignal(dict) 
+    find_anomalies_requested = pyqtSignal()
+    anomaly_parameters_changed = pyqtSignal(dict) 
     find_uncertain_requested = pyqtSignal()
     uncertainty_parameters_changed = pyqtSignal(dict)
     find_duplicates_requested = pyqtSignal()
@@ -140,12 +140,16 @@ class EmbeddingViewer(QWidget):
         
         toolbar_layout.addWidget(self._create_separator())
                 
-        # Create a QToolButton to have both a primary action and a dropdown menu
-        self.find_mislabels_button = QToolButton()
-        self.find_mislabels_button.setText("Find Potential Mislabels")
-        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup)  # Key change for split-button style
-        self.find_mislabels_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_mislabels_button.setStyleSheet(
+        # Create a QToolButton for anomaly detection with settings dropdown
+        self.find_anomalies_button = QToolButton()
+        self.find_anomalies_button.setText("Find Anomalies")
+        self.find_anomalies_button.setToolTip(
+            "Detect anomalous annotations using LOF and Isolation Forest.\n"
+            "Scores each annotation and selects outliers."
+        )
+        self.find_anomalies_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_anomalies_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_anomalies_button.setStyleSheet(
             "QToolButton::menu-indicator {"
             " subcontrol-position: right center;"
             " subcontrol-origin: padding;"
@@ -154,21 +158,21 @@ class EmbeddingViewer(QWidget):
         )
 
         # The primary action (clicking the button) triggers the analysis
-        run_analysis_action = QAction("Find Potential Mislabels", self)
-        run_analysis_action.triggered.connect(self.find_mislabels_requested.emit)
-        self.find_mislabels_button.setDefaultAction(run_analysis_action)
+        run_analysis_action = QAction("Find Anomalies", self)
+        run_analysis_action.triggered.connect(self.find_anomalies_requested.emit)
+        self.find_anomalies_button.setDefaultAction(run_analysis_action)
 
         # The dropdown menu contains the settings
-        mislabel_settings_widget = MislabelSettingsWidget()
+        anomaly_settings_widget = AnomalySettingsWidget()
         settings_menu = QMenu(self)
         widget_action = QWidgetAction(settings_menu)
-        widget_action.setDefaultWidget(mislabel_settings_widget)
+        widget_action.setDefaultWidget(anomaly_settings_widget)
         settings_menu.addAction(widget_action)
-        self.find_mislabels_button.setMenu(settings_menu)
+        self.find_anomalies_button.setMenu(settings_menu)
         
         # Connect the widget's signal to the viewer's signal
-        mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
-        toolbar_layout.addWidget(self.find_mislabels_button)
+        anomaly_settings_widget.parameters_changed.connect(self.anomaly_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_anomalies_button)
         
         # Create a QToolButton for uncertainty analysis
         self.find_uncertain_button = QToolButton()
@@ -353,7 +357,7 @@ class EmbeddingViewer(QWidget):
         selection_exists = bool(self.graphics_scene.selectedItems())
         points_exist = bool(self.points_by_id)
 
-        self.find_mislabels_button.setEnabled(points_exist)
+        self.find_anomalies_button.setEnabled(points_exist)
         self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
         self.find_duplicates_button.setEnabled(points_exist)
         self.center_on_selection_button.setEnabled(points_exist and selection_exists)
@@ -414,7 +418,7 @@ class EmbeddingViewer(QWidget):
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
         self.center_on_selection_button.setEnabled(False)  # Disable center button
-        self.find_mislabels_button.setEnabled(False)
+        self.find_anomalies_button.setEnabled(False)
         self.find_uncertain_button.setEnabled(False)
         self.find_duplicates_button.setEnabled(False)
 
@@ -893,8 +897,8 @@ class AnnotationViewer(QWidget):
         sort_label = QLabel("Sort By:")
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
-        # Remove "Similarity" as it's now an implicit action
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
+        # Add new sort options for quality and anomaly scores
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Quality", "Anomaly"])
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
@@ -1278,6 +1282,12 @@ class AnnotationViewer(QWidget):
         elif sort_type == "Confidence":
             # Sort by confidence, descending. Handles cases with no confidence gracefully.
             items.sort(key=lambda i: i.get_effective_confidence(), reverse=True)
+        elif sort_type == "Quality":
+            # Sort by quality score, descending (highest quality first)
+            items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=True)
+        elif sort_type == "Anomaly":
+            # Sort by anomaly score, descending (most anomalous first)
+            items.sort(key=lambda i: i.anomaly_score if i.anomaly_score is not None else 0.0, reverse=True)
 
         return items
 
@@ -1338,6 +1348,51 @@ class AnnotationViewer(QWidget):
                     max_conf = min(1, bins[i + 1])
                     label, color = self._get_confidence_range_label(min_conf, max_conf, self.confidence_breaks)
                     groups.append((label, color, bin_groups[i]))
+            
+            return groups
+        
+        # Quality and Anomaly grouping logic
+        if sort_type == "Quality":
+            # Group by quality ranges
+            high_quality = [item for item in data_items if item.quality_score is not None and item.quality_score >= 0.8]
+            good_quality = [item for item in data_items if item.quality_score is not None and 0.6 <= item.quality_score < 0.8]
+            fair_quality = [item for item in data_items if item.quality_score is not None and 0.4 <= item.quality_score < 0.6]
+            poor_quality = [item for item in data_items if item.quality_score is not None and item.quality_score < 0.4]
+            unknown_quality = [item for item in data_items if item.quality_score is None]
+            
+            groups = []
+            if high_quality:
+                groups.append(("Excellent Quality (≥80%)", QColor(34, 139, 34), high_quality))
+            if good_quality:
+                groups.append(("Good Quality (60-80%)", QColor(144, 238, 144), good_quality))
+            if fair_quality:
+                groups.append(("Fair Quality (40-60%)", QColor(255, 215, 0), fair_quality))
+            if poor_quality:
+                groups.append(("Poor Quality (<40%)", QColor(220, 20, 60), poor_quality))
+            if unknown_quality:
+                groups.append(("Unknown Quality", None, unknown_quality))
+            
+            return groups
+        
+        if sort_type == "Anomaly":
+            # Group by anomaly ranges
+            very_anomalous = [item for item in data_items if item.anomaly_score is not None and item.anomaly_score >= 0.8]
+            anomalous = [item for item in data_items if item.anomaly_score is not None and 0.6 <= item.anomaly_score < 0.8]
+            slightly_anomalous = [item for item in data_items if item.anomaly_score is not None and 0.4 <= item.anomaly_score < 0.6]
+            normal = [item for item in data_items if item.anomaly_score is not None and item.anomaly_score < 0.4]
+            unknown_anomaly = [item for item in data_items if item.anomaly_score is None]
+            
+            groups = []
+            if very_anomalous:
+                groups.append(("Very Anomalous (≥80%)", QColor(220, 20, 60), very_anomalous))
+            if anomalous:
+                groups.append(("Anomalous (60-80%)", QColor(255, 140, 0), anomalous))
+            if slightly_anomalous:
+                groups.append(("Slightly Anomalous (40-60%)", QColor(255, 215, 0), slightly_anomalous))
+            if normal:
+                groups.append(("Normal (<40%)", QColor(144, 238, 144), normal))
+            if unknown_anomaly:
+                groups.append(("Unknown Anomaly", None, unknown_anomaly))
             
             return groups
         

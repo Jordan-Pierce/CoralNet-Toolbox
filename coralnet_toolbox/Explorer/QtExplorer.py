@@ -79,10 +79,10 @@ class ExplorerWindow(QMainWindow):
         self.feature_store = FeatureStore()
         
         # Add a property to store the parameters with defaults
-        self.mislabel_params = {'k': 20, 'threshold': 0.6}
+        self.anomaly_params = {'contamination': 0.1, 'n_neighbors': 20, 'threshold': 75}
         self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
         self.similarity_params = {'k': 30}
-        self.duplicate_params = {'threshold': 0.05}
+        self.duplicate_params = {'threshold': 0.05, 'spatial_threshold': 100}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
@@ -244,8 +244,8 @@ class ExplorerWindow(QMainWindow):
         self.annotation_viewer.reset_view_requested.connect(self.on_reset_view_requested)
         self.embedding_viewer.selection_changed.connect(self.on_embedding_view_selection_changed)
         self.embedding_viewer.reset_view_requested.connect(self.on_reset_view_requested)
-        self.embedding_viewer.find_mislabels_requested.connect(self.find_potential_mislabels)
-        self.embedding_viewer.mislabel_parameters_changed.connect(self.on_mislabel_params_changed)
+        self.embedding_viewer.find_anomalies_requested.connect(self.find_anomalies)
+        self.embedding_viewer.anomaly_parameters_changed.connect(self.on_anomaly_params_changed)
         self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
         self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
         self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
@@ -384,10 +384,10 @@ class ExplorerWindow(QMainWindow):
         print("Reset view: cleared selections and exited isolation mode")
         
     @pyqtSlot(dict)
-    def on_mislabel_params_changed(self, params):
-        """Updates the stored parameters for mislabel detection."""
-        self.mislabel_params = params
-        print(f"Mislabel detection parameters updated: {self.mislabel_params}")
+    def on_anomaly_params_changed(self, params):
+        """Updates the stored parameters for anomaly detection."""
+        self.anomaly_params = params
+        print(f"Anomaly detection parameters updated: {self.anomaly_params}")
         
     @pyqtSlot(dict)
     def on_uncertainty_params_changed(self, params):
@@ -496,20 +496,21 @@ class ExplorerWindow(QMainWindow):
         
         return [self.data_item_cache[ann.id] for ann in annotations_to_process if ann.id in self.data_item_cache]
     
-    def find_potential_mislabels(self):
+    def find_anomalies(self):
         """
-        Identifies annotations whose label does not match the majority of its
-        k-nearest neighbors in the high-dimensional feature space.
-        Skips any annotation or neighbor with an invalid label (id == -1).
+        Identifies anomalous annotations using Local Outlier Factor (LOF) and Isolation Forest.
+        Computes anomaly scores for each annotation and selects those exceeding threshold.
+        Also calculates quality scores based on local density and spatial consistency.
         """
-        # Get parameters from the stored property instead of hardcoding
-        K = self.mislabel_params.get('k', 5)
-        agreement_threshold = self.mislabel_params.get('threshold', 0.6)
+        # Get parameters
+        contamination = self.anomaly_params.get('contamination', 0.1)
+        n_neighbors = self.anomaly_params.get('n_neighbors', 20)
+        threshold_percentile = self.anomaly_params.get('threshold', 75)
 
-        if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < K:
+        if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < n_neighbors:
             QMessageBox.information(self, 
                                     "Not Enough Data",
-                                    f"This feature requires at least {K} points in the embedding viewer.")
+                                    f"This feature requires at least {n_neighbors} points in the embedding viewer.")
             return
 
         items_in_view = list(self.embedding_viewer.points_by_id.values())
@@ -524,16 +525,10 @@ class ExplorerWindow(QMainWindow):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # Get the FAISS index and the mapping from index to annotation ID
-            index = self.feature_store._get_or_load_index(model_key)
-            faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
-            if index is None or not faiss_idx_to_ann_id:
-                QMessageBox.warning(self, 
-                                    "Error", 
-                                    "Could not find a valid feature index for the current model.")
-                return
-
-            # Get the high-dimensional features for the points in the current view
+            from sklearn.neighbors import LocalOutlierFactor
+            from sklearn.ensemble import IsolationForest
+            
+            # Get the high-dimensional features
             features_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
             if not features_dict:
                 QMessageBox.warning(self, 
@@ -544,55 +539,121 @@ class ExplorerWindow(QMainWindow):
             query_ann_ids = list(features_dict.keys())
             query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
 
-            # Perform k-NN search. We search for K+1 because the point itself will be the first result.
-            _, I = index.search(query_vectors, K + 1)
-
-            mislabeled_ann_ids = []
+            # 1. Local Outlier Factor (LOF) - detects local density anomalies
+            lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination, novelty=False)
+            lof_predictions = lof.fit_predict(query_vectors)
+            lof_scores = -lof.negative_outlier_factor_  # Convert to positive scores (higher = more anomalous)
+            
+            # 2. Isolation Forest - detects global isolation anomalies
+            iso_forest = IsolationForest(contamination=contamination, random_state=42)
+            iso_predictions = iso_forest.fit_predict(query_vectors)
+            iso_scores = -iso_forest.score_samples(query_vectors)  # Convert to positive scores
+            
+            # Normalize scores to 0-1 range
+            lof_scores_normalized = (lof_scores - lof_scores.min()) / (lof_scores.max() - lof_scores.min() + 1e-10)
+            iso_scores_normalized = (iso_scores - iso_scores.min()) / (iso_scores.max() - iso_scores.min() + 1e-10)
+            
+            # Combine scores (weighted average)
+            combined_scores = 0.6 * lof_scores_normalized + 0.4 * iso_scores_normalized
+            
+            # Calculate local density for quality scoring
+            from sklearn.neighbors import NearestNeighbors
+            nn = NearestNeighbors(n_neighbors=n_neighbors + 1)
+            nn.fit(query_vectors)
+            distances, indices = nn.kneighbors(query_vectors)
+            
+            # Average distance to k nearest neighbors (excluding self)
+            avg_distances = distances[:, 1:].mean(axis=1)
+            local_densities = 1.0 / (avg_distances + 1e-10)  # Inverse distance = density
+            
+            # Calculate spatial consistency (label agreement with neighbors)
+            spatial_consistencies = []
             for i, ann_id in enumerate(query_ann_ids):
                 data_item = self.data_item_cache[ann_id]
-                # Use preview_label if present, else effective_label
-                label_obj = getattr(data_item, "preview_label", None) or data_item.effective_label
-                current_label_id = getattr(label_obj, "id", "-1")
-                if current_label_id == "-1":
-                    continue  # Skip if label is invalid
+                label_id = data_item.effective_label.id
+                
+                # Check neighbor labels
+                neighbor_indices = indices[i][1:]  # Exclude self
+                matching_neighbors = 0
+                valid_neighbors = 0
+                
+                for neighbor_idx in neighbor_indices:
+                    neighbor_ann_id = query_ann_ids[neighbor_idx]
+                    neighbor_item = self.data_item_cache[neighbor_ann_id]
+                    
+                    # Only count neighbors from the same image for spatial consistency
+                    if neighbor_item.annotation.image_path == data_item.annotation.image_path:
+                        valid_neighbors += 1
+                        if neighbor_item.effective_label.id == label_id:
+                            matching_neighbors += 1
+                
+                if valid_neighbors > 0:
+                    consistency = matching_neighbors / valid_neighbors
+                else:
+                    consistency = 0.5  # Neutral if no same-image neighbors
+                
+                spatial_consistencies.append(consistency)
+            
+            spatial_consistencies = np.array(spatial_consistencies)
+            
+            # Update data items with scores
+            anomaly_threshold = np.percentile(combined_scores, threshold_percentile)
+            anomalous_ann_ids = []
+            
+            for i, ann_id in enumerate(query_ann_ids):
+                data_item = self.data_item_cache[ann_id]
+                
+                # Store anomaly and quality metrics
+                data_item.anomaly_score = float(combined_scores[i])
+                data_item.local_density = float(local_densities[i])
+                data_item.spatial_consistency = float(spatial_consistencies[i])
+                
+                # Calculate quality score
+                data_item.calculate_quality_score()
+                
+                # Update tooltip to show new info
+                if hasattr(data_item, 'point_item') and data_item.point_item:
+                    data_item.point_item.update_tooltip()
+                
+                # Select if anomaly score exceeds threshold
+                if combined_scores[i] >= anomaly_threshold:
+                    anomalous_ann_ids.append(ann_id)
+            
+            # Select anomalous items and sort by anomaly score (most anomalous first)
+            sorted_anomalous_ids = sorted(anomalous_ann_ids, 
+                                         key=lambda aid: self.data_item_cache[aid].anomaly_score, 
+                                         reverse=True)
+            
+            self.annotation_viewer.display_and_isolate_ordered_results(sorted_anomalous_ids)
+            self.embedding_viewer.render_selection_from_ids(set(sorted_anomalous_ids))
+            
+            # Show summary message
+            total_items = len(query_ann_ids)
+            num_anomalies = len(anomalous_ann_ids)
+            QMessageBox.information(self,
+                                   "Anomaly Detection Complete",
+                                   f"Found {num_anomalies} anomalous annotations out of {total_items} total.\n\n"
+                                   f"Threshold: {threshold_percentile}th percentile (score ≥ {anomaly_threshold:.3f})\n"
+                                   f"Results sorted by anomaly score (highest first).")
 
-                # Get neighbor labels, ignoring the first result (the point itself)
-                neighbor_faiss_indices = I[i][1:]
-
-                neighbor_labels = []
-                for n_idx in neighbor_faiss_indices:
-                    if n_idx in faiss_idx_to_ann_id:
-                        neighbor_ann_id = faiss_idx_to_ann_id[n_idx]
-                        if neighbor_ann_id in self.data_item_cache:
-                            neighbor_item = self.data_item_cache[neighbor_ann_id]
-                            neighbor_label_obj = getattr(neighbor_item, "preview_label", None)
-                            if neighbor_label_obj is None:
-                                neighbor_label_obj = neighbor_item.effective_label
-                            neighbor_label_id = getattr(neighbor_label_obj, "id", "-1")
-                            if neighbor_label_id != "-1":
-                                neighbor_labels.append(neighbor_label_id)
-
-                if not neighbor_labels:
-                    continue
-
-                num_matching_neighbors = neighbor_labels.count(current_label_id)
-                agreement_ratio = num_matching_neighbors / len(neighbor_labels)
-
-                if agreement_ratio < agreement_threshold:
-                    mislabeled_ann_ids.append(ann_id)
-
-            self.embedding_viewer.render_selection_from_ids(set(mislabeled_ann_ids))
-
+        except ImportError as e:
+            QMessageBox.critical(self,
+                               "Missing Dependencies",
+                               f"Anomaly detection requires scikit-learn.\n\n{str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
 
     def find_duplicate_annotations(self):
         """
-        Identifies annotations that are likely duplicates based on feature similarity.
-        It uses a nearest-neighbor approach in the high-dimensional feature space.
-        For each group of duplicates found, it selects all but one "original".
+        Enhanced duplicate detection with multi-stage filtering:
+        1. Visual similarity (feature distance)
+        2. Spatial proximity (same image + nearby locations)
+        3. Metadata consistency (if available)
+        
+        Uses DSU to group transitively connected duplicates.
         """
         threshold = self.duplicate_params.get('threshold', 0.05)
+        spatial_threshold = self.duplicate_params.get('spatial_threshold', 100)  # pixels
 
         if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < 2:
             QMessageBox.information(self, 
@@ -609,7 +670,6 @@ class ExplorerWindow(QMainWindow):
         sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
         model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
 
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             index = self.feature_store._get_or_load_index(model_key)
@@ -625,13 +685,14 @@ class ExplorerWindow(QMainWindow):
             query_ann_ids = list(features_dict.keys())
             query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
 
-            # Find the 2 nearest neighbors for each vector. D = squared L2 distances.
-            D, I = index.search(query_vectors, 2)
+            # Stage 1: Find visually similar candidates (feature similarity)
+            # Search for more neighbors to catch potential duplicates
+            k_search = min(10, len(query_ann_ids))
+            D, I = index.search(query_vectors, k_search)
 
-            # Use a Disjoint Set Union (DSU) data structure to group duplicates.
+            # Use a Disjoint Set Union (DSU) data structure to group duplicates
             parent = {ann_id: ann_id for ann_id in query_ann_ids}
             
-            # Helper functions for DSU
             def find_set(v):
                 if v == parent[v]:
                     return v
@@ -645,15 +706,71 @@ class ExplorerWindow(QMainWindow):
                     parent[b] = a
             
             id_map = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            
+            # Helper function to calculate spatial distance between annotations
+            def get_spatial_distance(item1, item2):
+                """Calculate Euclidean distance between annotation centers."""
+                try:
+                    # Get bounding box centers
+                    tl1 = item1.annotation.get_bounding_box_top_left()
+                    br1 = item1.annotation.get_bounding_box_bottom_right()
+                    tl2 = item2.annotation.get_bounding_box_top_left()
+                    br2 = item2.annotation.get_bounding_box_bottom_right()
+                    
+                    if tl1 and br1 and tl2 and br2:
+                        center1_x = (tl1.x() + br1.x()) / 2
+                        center1_y = (tl1.y() + br1.y()) / 2
+                        center2_x = (tl2.x() + br2.x()) / 2
+                        center2_y = (tl2.y() + br2.y()) / 2
+                        
+                        distance = np.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
+                        return distance
+                except (AttributeError, TypeError):
+                    pass
+                return float('inf')
 
+            # Stage 2 & 3: Filter by spatial proximity and metadata
+            duplicate_pairs = []
+            
             for i, ann_id in enumerate(query_ann_ids):
-                neighbor_faiss_idx = I[i, 1]  # The second result is the nearest neighbor
-                distance = D[i, 1]
+                data_item = self.data_item_cache[ann_id]
+                
+                # Check each neighbor (skip index 0 which is self)
+                for j in range(1, k_search):
+                    if j >= len(I[i]):
+                        break
+                        
+                    neighbor_faiss_idx = I[i, j]
+                    distance = D[i, j]
 
-                if distance < threshold:
+                    # Stage 1 check: Visual similarity
+                    if distance >= threshold:
+                        continue  # Not similar enough
+                    
                     neighbor_ann_id = id_map.get(neighbor_faiss_idx)
-                    if neighbor_ann_id and neighbor_ann_id in parent:
-                        unite_sets(ann_id, neighbor_ann_id)
+                    if not neighbor_ann_id or neighbor_ann_id not in self.data_item_cache:
+                        continue
+                    
+                    neighbor_item = self.data_item_cache[neighbor_ann_id]
+                    
+                    # Stage 2 check: Same image
+                    if data_item.annotation.image_path != neighbor_item.annotation.image_path:
+                        continue  # Different images - likely not duplicates
+                    
+                    # Stage 3 check: Spatial proximity (for same-image annotations)
+                    spatial_dist = get_spatial_distance(data_item, neighbor_item)
+                    if spatial_dist > spatial_threshold:
+                        continue  # Too far apart
+                    
+                    # Stage 4 check: Label consistency (same label increases confidence)
+                    if data_item.effective_label.id != neighbor_item.effective_label.id:
+                        # Different labels but visually similar and nearby - might be annotation error
+                        # Still consider as duplicate but with lower confidence
+                        pass
+                    
+                    # Passed all filters - mark as duplicate
+                    duplicate_pairs.append((ann_id, neighbor_ann_id, distance, spatial_dist))
+                    unite_sets(ann_id, neighbor_ann_id)
             
             # Group annotations by their set representative
             groups = {}
@@ -663,17 +780,45 @@ class ExplorerWindow(QMainWindow):
                     groups[root] = []
                 groups[root].append(ann_id)
 
-            copies_to_select = set()
+            # Select duplicate copies (keep one original per group)
+            copies_to_select = []
+            duplicate_info = []
+            
             for root_id, group_ids in groups.items():
                 if len(group_ids) > 1:
-                    # Sort IDs to consistently pick the same "original".
-                    # Sorting strings is reliable.
+                    # Sort IDs to consistently pick the same "original"
                     sorted_ids = sorted(group_ids)
-                    # The first ID is the original, add the rest to the selection.
-                    copies_to_select.update(sorted_ids[1:])
+                    original = sorted_ids[0]
+                    duplicates = sorted_ids[1:]
+                    copies_to_select.extend(duplicates)
+                    
+                    # Collect info for summary
+                    duplicate_info.append({
+                        'original': original,
+                        'duplicates': duplicates,
+                        'count': len(group_ids)
+                    })
             
-            print(f"Found {len(copies_to_select)} duplicate annotations.")
-            self.embedding_viewer.render_selection_from_ids(copies_to_select)
+            # Sort results by number of duplicates per group (most duplicates first)
+            sorted_copies = sorted(copies_to_select, 
+                                  key=lambda aid: next((info['count'] for info in duplicate_info 
+                                                       if aid in info['duplicates']), 0),
+                                  reverse=True)
+            
+            self.annotation_viewer.display_and_isolate_ordered_results(sorted_copies)
+            self.embedding_viewer.render_selection_from_ids(set(sorted_copies))
+            
+            # Show summary
+            num_groups = len(duplicate_info)
+            num_duplicates = len(copies_to_select)
+            QMessageBox.information(self,
+                                   "Duplicate Detection Complete",
+                                   f"Found {num_groups} duplicate groups with {num_duplicates} duplicate copies.\n\n"
+                                   f"Filters applied:\n"
+                                   f"• Visual similarity threshold: {threshold}\n"
+                                   f"• Spatial proximity: {spatial_threshold}px\n"
+                                   f"• Same image requirement\n\n"
+                                   f"Results sorted by group size (largest first).")
 
         finally:
             QApplication.restoreOverrideCursor()
