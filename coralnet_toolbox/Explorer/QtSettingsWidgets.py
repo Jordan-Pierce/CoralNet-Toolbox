@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
                              QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
-                             QToolBox)
+                             QToolBox, QCheckBox)
 
 from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
 from coralnet_toolbox.Explorer.yolo_models import YOLO_MODELS
@@ -243,13 +243,16 @@ class MislabelSettingsWidget(QWidget):
         
 
 class SimilaritySettingsWidget(QWidget):
-    """A widget for configuring similarity search parameters (number of neighbors)."""
+    """A widget for configuring similarity search parameters with filtering options."""
     parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
         self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+        self.same_label_checkbox.setFocusPolicy(Qt.StrongFocus)
+        self.same_image_checkbox.setFocusPolicy(Qt.StrongFocus)
+        self.min_confidence_slider.setFocusPolicy(Qt.StrongFocus)
 
     def setup_ui(self):
         """Creates the UI controls for the parameters."""
@@ -257,16 +260,54 @@ class SimilaritySettingsWidget(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(15)
 
+        # Same Label Filter (moved to top)
+        self.same_label_checkbox = QCheckBox("Same label only")
+        self.same_label_checkbox.setChecked(False)
+        self.same_label_checkbox.setToolTip(
+            "Only find items with the same label as the selection."
+        )
+        main_layout.addRow("", self.same_label_checkbox)
+        
+        # Same Image Filter (moved to top)
+        self.same_image_checkbox = QCheckBox("Same image only")
+        self.same_image_checkbox.setChecked(False)
+        self.same_image_checkbox.setToolTip(
+            "Only find items from the same image as the selection."
+        )
+        main_layout.addRow("", self.same_image_checkbox)
+        
         # K (Number of Neighbors)
         self.k_spinbox = QSpinBox()
         self.k_spinbox.setMinimum(1)
         self.k_spinbox.setMaximum(200)
-        self.k_spinbox.setValue(10)
+        self.k_spinbox.setValue(50)
         self.k_spinbox.setToolTip("Number of similar items to find (K).")
         main_layout.addRow("Neighbors (K):", self.k_spinbox)
+        
+        # Minimum Confidence Filter
+        confidence_layout = QHBoxLayout()
+        self.min_confidence_slider = QSlider(Qt.Horizontal)
+        self.min_confidence_slider.setMinimum(0)
+        self.min_confidence_slider.setMaximum(100)
+        self.min_confidence_slider.setValue(0)
+        self.min_confidence_slider.setToolTip(
+            "Minimum confidence threshold for results.\n"
+            "0 = no filtering, 100 = only show highly confident items."
+        )
+        self.min_confidence_label = QLabel("0%")
+        self.min_confidence_label.setMinimumWidth(40)
+        confidence_layout.addWidget(self.min_confidence_slider)
+        confidence_layout.addWidget(self.min_confidence_label)
+        main_layout.addRow("Min Confidence:", confidence_layout)
 
         # Connect signals
         self.k_spinbox.valueChanged.connect(self._emit_parameters)
+        self.same_label_checkbox.stateChanged.connect(self._emit_parameters)
+        self.same_image_checkbox.stateChanged.connect(self._emit_parameters)
+        self.min_confidence_slider.valueChanged.connect(self._emit_parameters)
+        self.min_confidence_slider.valueChanged.connect(
+            lambda v: self.min_confidence_label.setText(f"{v}%")
+        )
 
     @pyqtSlot()
     def _emit_parameters(self):
@@ -275,7 +316,10 @@ class SimilaritySettingsWidget(QWidget):
 
     def get_parameters(self):
         return {
-            'k': self.k_spinbox.value()
+            'k': self.k_spinbox.value(),
+            'same_label': self.same_label_checkbox.isChecked(),
+            'same_image': self.same_image_checkbox.isChecked(),
+            'min_confidence': self.min_confidence_slider.value() / 100.0
         }
         
         
@@ -289,12 +333,22 @@ class DuplicateSettingsWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(15)
         
-        # 1. Visual Similarity Threshold (Feature distance)
+        # 1. Same Image Only checkbox (moved to top)
+        self.same_image_checkbox = QCheckBox("Same image only")
+        self.same_image_checkbox.setChecked(True)  # Default: checked
+        self.same_image_checkbox.setToolTip(
+            "Only consider annotations from the same image as duplicates.\n"
+            "Uncheck to find duplicates across different images."
+        )
+        self.same_image_checkbox.stateChanged.connect(self._emit_parameters)
+        layout.addRow("", self.same_image_checkbox)
+        
+        # 2. Visual Similarity Threshold (Feature distance)
         self.threshold_spinbox = QDoubleSpinBox()
         self.threshold_spinbox.setDecimals(3)
         self.threshold_spinbox.setRange(0.0, 10.0)
         self.threshold_spinbox.setSingleStep(0.01)
-        self.threshold_spinbox.setValue(0.05)
+        self.threshold_spinbox.setValue(0.5)
         self.threshold_spinbox.setToolTip(
             "Visual Similarity Threshold (Squared L2 Distance).\n"
             "Lower values = must be more visually similar to be duplicates.\n"
@@ -303,14 +357,14 @@ class DuplicateSettingsWidget(QWidget):
         self.threshold_spinbox.valueChanged.connect(self._emit_parameters)
         layout.addRow("Visual Threshold:", self.threshold_spinbox)
         
-        # 2. Spatial Proximity Threshold (pixels)
+        # 3. Spatial Proximity Threshold (pixels) - only relevant when same image is checked
         self.spatial_spinbox = QSpinBox()
         self.spatial_spinbox.setRange(10, 1000)
         self.spatial_spinbox.setSingleStep(10)
         self.spatial_spinbox.setValue(100)
         self.spatial_spinbox.setToolTip(
             "Maximum distance in pixels between annotation centers.\n"
-            "Duplicates must be within this distance in the same image.\n"
+            "Duplicates must be within this distance (same image only).\n"
             "Lower values = stricter proximity requirement."
         )
         self.spatial_spinbox.valueChanged.connect(self._emit_parameters)
@@ -319,9 +373,9 @@ class DuplicateSettingsWidget(QWidget):
         # Add info label
         info_label = QLabel(
             "<i>Multi-stage filtering:</i><br>"
-            "1. Visual similarity<br>"
-            "2. Same image only<br>"
-            "3. Spatial proximity"
+            "1. Optional: Same image only<br>"
+            "2. Visual similarity<br>"
+            "3. Optional: Spatial proximity"
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: gray; font-size: 9pt;")
@@ -336,6 +390,7 @@ class DuplicateSettingsWidget(QWidget):
         """Returns the current parameters as a dictionary."""
         return {
             'threshold': self.threshold_spinbox.value(),
+            'same_image': self.same_image_checkbox.isChecked(),
             'spatial_threshold': self.spatial_spinbox.value()
         }
 

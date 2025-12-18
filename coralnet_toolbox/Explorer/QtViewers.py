@@ -48,11 +48,11 @@ class EmbeddingViewer(QWidget):
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
     find_anomalies_requested = pyqtSignal()
-    anomaly_parameters_changed = pyqtSignal(dict) 
-    find_uncertain_requested = pyqtSignal()
-    uncertainty_parameters_changed = pyqtSignal(dict)
+    anomaly_parameters_changed = pyqtSignal(dict)
     find_duplicates_requested = pyqtSignal()
     duplicate_parameters_changed = pyqtSignal(dict)
+    find_similar_requested = pyqtSignal()
+    similarity_parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -94,8 +94,6 @@ class EmbeddingViewer(QWidget):
         
         # Properties for display mode
         self.display_mode = 'dots'  # Can be 'dots' or 'sprites'
-        
-        self.is_uncertainty_analysis_available = False
 
         # New timer for virtualization
         self.view_update_timer = QTimer(self)
@@ -140,6 +138,65 @@ class EmbeddingViewer(QWidget):
         
         toolbar_layout.addWidget(self._create_separator())
                 
+        # Create a QToolButton for similarity search
+        self.find_similar_button = QToolButton()
+        self.find_similar_button.setText("Find Similar")
+        self.find_similar_button.setToolTip(
+            "Find annotations with similar visual features to the selection.\n"
+            "Uses cosine similarity on high-dimensional feature vectors."
+        )
+        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_similar_button.setStyleSheet(
+            "QToolButton::menu-indicator { "
+            "subcontrol-position: right center; "
+            "subcontrol-origin: padding; "
+            "left: -4px; }"
+        )
+        
+        run_similar_action = QAction("Find Similar", self)
+        run_similar_action.triggered.connect(self.find_similar_requested.emit)
+        self.find_similar_button.setDefaultAction(run_similar_action)
+
+        self.similarity_settings_widget = SimilaritySettingsWidget()
+        similarity_menu = QMenu(self)
+        similarity_widget_action = QWidgetAction(similarity_menu)
+        similarity_widget_action.setDefaultWidget(self.similarity_settings_widget)
+        similarity_menu.addAction(similarity_widget_action)
+        self.find_similar_button.setMenu(similarity_menu)
+        
+        self.similarity_settings_widget.parameters_changed.connect(self.similarity_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_similar_button)
+        
+        # Create a QToolButton for duplicate detection
+        self.find_duplicates_button = QToolButton()
+        self.find_duplicates_button.setText("Find Duplicates")
+        self.find_duplicates_button.setToolTip(
+            "Find annotations that are likely duplicates based on feature similarity."
+        )
+        self.find_duplicates_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_duplicates_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_duplicates_button.setStyleSheet(
+            "QToolButton::menu-indicator { "
+            "subcontrol-position: right center; "
+            "subcontrol-origin: padding; "
+            "left: -4px; }"
+        )
+
+        run_duplicates_action = QAction("Find Duplicates", self)
+        run_duplicates_action.triggered.connect(self.find_duplicates_requested.emit)
+        self.find_duplicates_button.setDefaultAction(run_duplicates_action)
+
+        duplicate_settings_widget = DuplicateSettingsWidget()
+        duplicate_menu = QMenu(self)
+        duplicate_widget_action = QWidgetAction(duplicate_menu)
+        duplicate_widget_action.setDefaultWidget(duplicate_settings_widget)
+        duplicate_menu.addAction(duplicate_widget_action)
+        self.find_duplicates_button.setMenu(duplicate_menu)
+        
+        duplicate_settings_widget.parameters_changed.connect(self.duplicate_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_duplicates_button)
+        
         # Create a QToolButton for anomaly detection with settings dropdown
         self.find_anomalies_button = QToolButton()
         self.find_anomalies_button.setText("Find Anomalies")
@@ -173,65 +230,6 @@ class EmbeddingViewer(QWidget):
         # Connect the widget's signal to the viewer's signal
         anomaly_settings_widget.parameters_changed.connect(self.anomaly_parameters_changed.emit)
         toolbar_layout.addWidget(self.find_anomalies_button)
-        
-        # Create a QToolButton for uncertainty analysis
-        self.find_uncertain_button = QToolButton()
-        self.find_uncertain_button.setText("Review Uncertain")
-        self.find_uncertain_button.setToolTip(
-            "Find annotations where the model is least confident.\n"
-            "Requires a .pt classification model and 'Predictions' mode."
-        )
-        self.find_uncertain_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_uncertain_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_uncertain_button.setStyleSheet(
-            "QToolButton::menu-indicator { "
-            "subcontrol-position: right center; "
-            "subcontrol-origin: padding; "
-            "left: -4px; }"
-        )
-        
-        run_uncertainty_action = QAction("Review Uncertain", self)
-        run_uncertainty_action.triggered.connect(self.find_uncertain_requested.emit)
-        self.find_uncertain_button.setDefaultAction(run_uncertainty_action)
-
-        uncertainty_settings_widget = UncertaintySettingsWidget()
-        uncertainty_menu = QMenu(self)
-        uncertainty_widget_action = QWidgetAction(uncertainty_menu)
-        uncertainty_widget_action.setDefaultWidget(uncertainty_settings_widget)
-        uncertainty_menu.addAction(uncertainty_widget_action)
-        self.find_uncertain_button.setMenu(uncertainty_menu)
-        
-        uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
-        toolbar_layout.addWidget(self.find_uncertain_button)
-        
-        # Create a QToolButton for duplicate detection
-        self.find_duplicates_button = QToolButton()
-        self.find_duplicates_button.setText("Find Duplicates")
-        self.find_duplicates_button.setToolTip(
-            "Find annotations that are likely duplicates based on feature similarity."
-        )
-        self.find_duplicates_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_duplicates_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_duplicates_button.setStyleSheet(
-            "QToolButton::menu-indicator { "
-            "subcontrol-position: right center; "
-            "subcontrol-origin: padding; "
-            "left: -4px; }"
-        )
-
-        run_duplicates_action = QAction("Find Duplicates", self)
-        run_duplicates_action.triggered.connect(self.find_duplicates_requested.emit)
-        self.find_duplicates_button.setDefaultAction(run_duplicates_action)
-
-        duplicate_settings_widget = DuplicateSettingsWidget()
-        duplicate_menu = QMenu(self)
-        duplicate_widget_action = QWidgetAction(duplicate_menu)
-        duplicate_widget_action.setDefaultWidget(duplicate_settings_widget)
-        duplicate_menu.addAction(duplicate_widget_action)
-        self.find_duplicates_button.setMenu(duplicate_menu)
-        
-        duplicate_settings_widget.parameters_changed.connect(self.duplicate_parameters_changed.emit)
-        toolbar_layout.addWidget(self.find_duplicates_button)
     
         # Add a stretch and separator
         toolbar_layout.addStretch()
@@ -358,7 +356,7 @@ class EmbeddingViewer(QWidget):
         points_exist = bool(self.points_by_id)
 
         self.find_anomalies_button.setEnabled(points_exist)
-        self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
+        self.find_similar_button.setEnabled(points_exist and selection_exists)
         self.find_duplicates_button.setEnabled(points_exist)
         self.center_on_selection_button.setEnabled(points_exist and selection_exists)
 
@@ -419,7 +417,7 @@ class EmbeddingViewer(QWidget):
         self.home_button.setEnabled(False)
         self.center_on_selection_button.setEnabled(False)  # Disable center button
         self.find_anomalies_button.setEnabled(False)
-        self.find_uncertain_button.setEnabled(False)
+        self.find_similar_button.setEnabled(False)
         self.find_duplicates_button.setEnabled(False)
 
         self.isolate_button.show()
@@ -817,7 +815,6 @@ class AnnotationViewer(QWidget):
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
-    find_similar_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the AnnotationViewer widget."""
@@ -903,27 +900,6 @@ class AnnotationViewer(QWidget):
         toolbar_layout.addWidget(self.sort_combo)
         
         toolbar_layout.addWidget(self._create_separator())
-        
-        self.find_similar_button = QToolButton()
-        self.find_similar_button.setText("Find Similar")
-        self.find_similar_button.setToolTip("Find annotations visually similar to the selection.")
-        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_similar_button.setStyleSheet(
-            "QToolButton::menu-indicator { subcontrol-position: right center; subcontrol-origin: padding; left: -4px; }"
-        )
-
-        run_similar_action = QAction("Find Similar", self)
-        run_similar_action.triggered.connect(self.find_similar_requested.emit)
-        self.find_similar_button.setDefaultAction(run_similar_action)
-        
-        self.similarity_settings_widget = SimilaritySettingsWidget()
-        settings_menu = QMenu(self)
-        widget_action = QWidgetAction(settings_menu)
-        widget_action.setDefaultWidget(self.similarity_settings_widget)
-        settings_menu.addAction(widget_action)
-        self.find_similar_button.setMenu(settings_menu)
-        toolbar_layout.addWidget(self.find_similar_button)
         
         toolbar_layout.addStretch()
         
@@ -1179,6 +1155,10 @@ class AnnotationViewer(QWidget):
         
         confidences = np.array(confidences)
         
+        # Special case: if all confidences are 1.0 (100% verified), create a single bin
+        if np.all(confidences == 1.0):
+            return [0.99]  # Single break point to create one bin for 100%
+        
         # Use Jenks Natural Breaks if available, otherwise fall back to quantiles
         try:
             if JENKSPY_AVAILABLE and len(confidences) >= 5:
@@ -1199,7 +1179,8 @@ class AnnotationViewer(QWidget):
             
             # Ensure breaks are unique and sorted
             breaks = sorted(list(set(breaks)))
-            return breaks if len(breaks) >= 2 else None
+            # Allow single break for special cases (e.g., all 100% verified)
+            return breaks if len(breaks) >= 1 else None
         except Exception as e:
             print(f"Error calculating confidence breaks: {e}")
             return None
@@ -1216,34 +1197,45 @@ class AnnotationViewer(QWidget):
         Returns:
             tuple: (label_text, color)
         """
+        # Special case: 100% verified annotations
+        if min_conf >= 0.99 and max_conf >= 1.0:
+            return ("100% Verified", QColor(0, 100, 0))  # Dark green for 100%
+        
         # Determine category based on midpoint
         mid_conf = (min_conf + max_conf) / 2
         
         # Determine color and category based on breaks
-        if breaks and len(breaks) >= 2:
-            if len(breaks) >= 3:
-                if mid_conf <= breaks[0]:
-                    category = "Low Confidence"
-                    color = QColor(220, 20, 60)
-                elif mid_conf <= breaks[1]:
-                    category = "Medium Confidence"
-                    color = QColor(255, 215, 0)
-                elif mid_conf <= breaks[2]:
-                    category = "Medium-High Confidence"
-                    color = QColor(144, 238, 144)
-                else:
-                    category = "High Confidence"
-                    color = QColor(34, 139, 34)
+        if breaks and len(breaks) >= 3:
+            if mid_conf <= breaks[0]:
+                category = "Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            elif mid_conf <= breaks[2]:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
             else:
-                if mid_conf <= breaks[0]:
-                    category = "Low Confidence"
-                    color = QColor(220, 20, 60)
-                elif mid_conf <= breaks[1]:
-                    category = "Medium Confidence"
-                    color = QColor(255, 215, 0)
-                else:
-                    category = "High Confidence"
-                    color = QColor(34, 139, 34)
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) == 2:
+            if mid_conf <= breaks[0]:
+                category = "Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) == 1:
+            # Single break (e.g., all 100% verified)
+            if mid_conf <= breaks[0]:
+                category = "Lower Range"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
         else:
             # Default thresholds
             if mid_conf <= 0.50:
@@ -1283,8 +1275,8 @@ class AnnotationViewer(QWidget):
             # Sort by confidence, descending. Handles cases with no confidence gracefully.
             items.sort(key=lambda i: i.get_effective_confidence(), reverse=True)
         elif sort_type == "Quality":
-            # Sort by quality score, descending (highest quality first)
-            items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=True)
+            # Sort by quality score, ascending (lowest quality first)
+            items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=False)
         elif sort_type == "Anomaly":
             # Sort by anomaly score, descending (most anomalous first)
             items.sort(key=lambda i: i.anomaly_score if i.anomaly_score is not None else 0.0, reverse=True)
@@ -1361,14 +1353,14 @@ class AnnotationViewer(QWidget):
             unknown_quality = [item for item in data_items if item.quality_score is None]
             
             groups = []
-            if high_quality:
-                groups.append(("Excellent Quality (≥80%)", QColor(34, 139, 34), high_quality))
-            if good_quality:
-                groups.append(("Good Quality (60-80%)", QColor(144, 238, 144), good_quality))
-            if fair_quality:
-                groups.append(("Fair Quality (40-60%)", QColor(255, 215, 0), fair_quality))
             if poor_quality:
                 groups.append(("Poor Quality (<40%)", QColor(220, 20, 60), poor_quality))
+            if fair_quality:
+                groups.append(("Fair Quality (40-60%)", QColor(255, 215, 0), fair_quality))
+            if good_quality:
+                groups.append(("Good Quality (60-80%)", QColor(144, 238, 144), good_quality))
+            if high_quality:
+                groups.append(("Excellent Quality (≥80%)", QColor(34, 139, 34), high_quality))
             if unknown_quality:
                 groups.append(("Unknown Quality", None, unknown_quality))
             

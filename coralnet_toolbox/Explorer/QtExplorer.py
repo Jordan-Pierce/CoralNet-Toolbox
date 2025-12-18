@@ -4,6 +4,7 @@ import os
 
 import numpy as np
 import torch
+import faiss
 
 from ultralytics import YOLO
 
@@ -17,6 +18,7 @@ from coralnet_toolbox.Explorer.QtViewers import AnnotationViewer
 from coralnet_toolbox.Explorer.QtViewers import EmbeddingViewer
 from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationDataItem
+from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
@@ -80,9 +82,8 @@ class ExplorerWindow(QMainWindow):
         
         # Add a property to store the parameters with defaults
         self.anomaly_params = {'contamination': 0.1, 'n_neighbors': 20, 'threshold': 75}
-        self.uncertainty_params = {'confidence': 0.6, 'margin': 0.1}
-        self.similarity_params = {'k': 30}
-        self.duplicate_params = {'threshold': 0.05, 'spatial_threshold': 100}
+        self.similarity_params = {'k': 50, 'same_label': False, 'same_image': False, 'min_confidence': 0.0}
+        self.duplicate_params = {'threshold': 0.5, 'same_image': True, 'spatial_threshold': 100}
         
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
@@ -247,12 +248,10 @@ class ExplorerWindow(QMainWindow):
         self.embedding_viewer.find_anomalies_requested.connect(self.find_anomalies)
         self.embedding_viewer.anomaly_parameters_changed.connect(self.on_anomaly_params_changed)
         self.model_settings_widget.selection_changed.connect(self.on_model_selection_changed)
-        self.embedding_viewer.find_uncertain_requested.connect(self.find_uncertain_annotations)
-        self.embedding_viewer.uncertainty_parameters_changed.connect(self.on_uncertainty_params_changed)
         self.embedding_viewer.find_duplicates_requested.connect(self.find_duplicate_annotations)
         self.embedding_viewer.duplicate_parameters_changed.connect(self.on_duplicate_params_changed)
-        self.annotation_viewer.find_similar_requested.connect(self.find_similar_annotations)
-        self.annotation_viewer.similarity_settings_widget.parameters_changed.connect(self.on_similarity_params_changed)
+        self.embedding_viewer.find_similar_requested.connect(self.find_similar_annotations)
+        self.embedding_viewer.similarity_parameters_changed.connect(self.on_similarity_params_changed)
         
     def _clear_selections(self):
         """Clears selections in both viewers and stops animations."""
@@ -390,12 +389,6 @@ class ExplorerWindow(QMainWindow):
         print(f"Anomaly detection parameters updated: {self.anomaly_params}")
         
     @pyqtSlot(dict)
-    def on_uncertainty_params_changed(self, params):
-        """Updates the stored parameters for uncertainty analysis."""
-        self.uncertainty_params = params
-        print(f"Uncertainty parameters updated: {self.uncertainty_params}")
-
-    @pyqtSlot(dict)
     def on_duplicate_params_changed(self, params):
         """Updates the stored parameters for duplicate detection."""
         self.duplicate_params = params
@@ -416,9 +409,8 @@ class ExplorerWindow(QMainWindow):
             return
 
         model_name, feature_mode = self.model_settings_widget.get_selected_model()
-        is_predict_mode = ".pt" in model_name and feature_mode == "Predictions"
         
-        self.embedding_viewer.is_uncertainty_analysis_available = is_predict_mode
+        # Update toolbar state when model changes
         self.embedding_viewer._update_toolbar_state()
         
     def _initialize_data_item_cache(self):
@@ -653,6 +645,7 @@ class ExplorerWindow(QMainWindow):
         Uses DSU to group transitively connected duplicates.
         """
         threshold = self.duplicate_params.get('threshold', 0.05)
+        same_image_only = self.duplicate_params.get('same_image', True)
         spatial_threshold = self.duplicate_params.get('spatial_threshold', 100)  # pixels
 
         if not self.embedding_viewer.points_by_id or len(self.embedding_viewer.points_by_id) < 2:
@@ -753,14 +746,17 @@ class ExplorerWindow(QMainWindow):
                     
                     neighbor_item = self.data_item_cache[neighbor_ann_id]
                     
-                    # Stage 2 check: Same image
-                    if data_item.annotation.image_path != neighbor_item.annotation.image_path:
-                        continue  # Different images - likely not duplicates
+                    # Stage 2 check: Same image (if required)
+                    if same_image_only and data_item.annotation.image_path != neighbor_item.annotation.image_path:
+                        continue  # Different images - skip if same_image_only is True
                     
-                    # Stage 3 check: Spatial proximity (for same-image annotations)
-                    spatial_dist = get_spatial_distance(data_item, neighbor_item)
-                    if spatial_dist > spatial_threshold:
-                        continue  # Too far apart
+                    # Stage 3 check: Spatial proximity (only for same-image annotations)
+                    if data_item.annotation.image_path == neighbor_item.annotation.image_path:
+                        spatial_dist = get_spatial_distance(data_item, neighbor_item)
+                        if spatial_dist > spatial_threshold:
+                            continue  # Too far apart in same image
+                    else:
+                        spatial_dist = float('inf')  # Different images
                     
                     # Stage 4 check: Label consistency (same label increases confidence)
                     if data_item.effective_label.id != neighbor_item.effective_label.id:
@@ -811,81 +807,19 @@ class ExplorerWindow(QMainWindow):
             # Show summary
             num_groups = len(duplicate_info)
             num_duplicates = len(copies_to_select)
+            # Build summary message
+            filters_text = f"• Visual similarity threshold: {threshold}\n"
+            if same_image_only:
+                filters_text += f"• Same image only\n• Spatial proximity: {spatial_threshold}px\n"
+            else:
+                filters_text += "• Across all images\n"
+            
             QMessageBox.information(self,
                                    "Duplicate Detection Complete",
                                    f"Found {num_groups} duplicate groups with {num_duplicates} duplicate copies.\n\n"
                                    f"Filters applied:\n"
-                                   f"• Visual similarity threshold: {threshold}\n"
-                                   f"• Spatial proximity: {spatial_threshold}px\n"
-                                   f"• Same image requirement\n\n"
+                                   f"{filters_text}\n"
                                    f"Results sorted by group size (largest first).")
-
-        finally:
-            QApplication.restoreOverrideCursor()
-            
-    def find_uncertain_annotations(self):
-        """
-        Identifies annotations where the model's prediction is uncertain.
-        It reuses cached predictions if available, otherwise runs a temporary prediction.
-        """
-        if not self.embedding_viewer.points_by_id:
-            QMessageBox.information(self, "No Data", "Please generate an embedding first.")
-            return
-
-        if self.current_embedding_model_info is None:
-            QMessageBox.information(self, 
-                                    "No Embedding", 
-                                    "Could not determine the model used for the embedding. Please run it again.")
-            return
-
-        items_in_view = list(self.embedding_viewer.points_by_id.values())
-        data_items_in_view = [p.data_item for p in items_in_view]
-        
-        model_name_from_embedding, feature_mode_from_embedding = self.current_embedding_model_info
-        
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            probabilities_dict = {}
-
-            # Decide whether to reuse cached features or run a new prediction
-            if feature_mode_from_embedding == "Predictions":
-                print("Reusing cached prediction vectors from the FeatureStore.")
-                sanitized_model_name = os.path.basename(model_name_from_embedding).replace(' ', '_').replace('/', '_')
-                sanitized_feature_mode = feature_mode_from_embedding.replace(' ', '_').replace('/', '_')
-                model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
-                
-                probabilities_dict, _ = self.feature_store.get_features(data_items_in_view, model_key)
-                if not probabilities_dict:
-                    QMessageBox.warning(self, 
-                                        "Cache Error", 
-                                        "Could not retrieve cached predictions.")
-                    return
-            else:
-                print("Embedding not based on 'Predictions' mode. Running a temporary prediction.")
-                model_info_for_predict = self.model_settings_widget.get_selected_model()
-                probabilities_dict = self._get_yolo_predictions_for_uncertainty(data_items_in_view, 
-                                                                                model_info_for_predict)
-
-            if not probabilities_dict:
-                # The helper function will show its own, more specific errors.
-                return
-
-            uncertain_ids = []
-            params = self.uncertainty_params
-            for ann_id, probs in probabilities_dict.items():
-                if len(probs) < 2:
-                    continue  # Cannot calculate margin
-
-                sorted_probs = np.sort(probs)[::-1]
-                top1_conf = sorted_probs[0]
-                top2_conf = sorted_probs[1]
-                margin = top1_conf - top2_conf
-
-                if top1_conf < params['confidence'] or margin < params['margin']:
-                    uncertain_ids.append(ann_id)
-            
-            self.embedding_viewer.render_selection_from_ids(set(uncertain_ids))
-            print(f"Found {len(uncertain_ids)} uncertain annotations.")
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -893,21 +827,29 @@ class ExplorerWindow(QMainWindow):
     @pyqtSlot()
     def find_similar_annotations(self):
         """
-        Finds k-nearest neighbors to the selected annotation(s) and updates 
-        the UI to show the results in an isolated, ordered view. This method
-        now ensures the grid is always updated and resets the sort-by dropdown.
+        Finds k-nearest neighbors to the selected annotation(s) using cosine similarity.
+        Uses confidence-weighted centroids and supports filtering by label, image, and confidence.
         """
-        k = self.similarity_params.get('k', 10)
+        k = self.similarity_params.get('k', 50)
+        same_label = self.similarity_params.get('same_label', False)
+        same_image = self.similarity_params.get('same_image', False)
+        min_confidence = self.similarity_params.get('min_confidence', 0.0)
 
-        if not self.annotation_viewer.selected_widgets:
-            QMessageBox.information(self, "No Selection", "Please select one or more annotations first.")
+        # Get selected items from embedding viewer
+        selected_points = [point for point in self.embedding_viewer.graphics_scene.selectedItems()
+                          if isinstance(point, EmbeddingPointItem)]
+        
+        if not selected_points:
+            QMessageBox.information(self, "No Selection", 
+                                  "Please select one or more points in the embedding viewer first.")
             return
 
         if not self.current_embedding_model_info:
-            QMessageBox.warning(self, "No Embedding", "Please run an embedding before searching for similar items.")
+            QMessageBox.warning(self, "No Embedding", 
+                              "Please run an embedding before searching for similar items.")
             return
 
-        selected_data_items = [widget.data_item for widget in self.annotation_viewer.selected_widgets]
+        selected_data_items = [point.data_item for point in selected_points]
         model_name, feature_mode = self.current_embedding_model_info
         sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
         sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
@@ -915,57 +857,174 @@ class ExplorerWindow(QMainWindow):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            # Get features for selected items
             features_dict, _ = self.feature_store.get_features(selected_data_items, model_key)
             if not features_dict:
                 QMessageBox.warning(self, 
-                                    "Features Not Found", 
-                                    "Could not retrieve feature vectors for the selected items.")
+                                  "Features Not Found", 
+                                  "Could not retrieve feature vectors for the selected items.")
                 return
 
-            source_vectors = np.array(list(features_dict.values()))
-            query_vector = np.mean(source_vectors, axis=0, keepdims=True).astype('float32')
+            # Create confidence-weighted query vector
+            source_vectors = []
+            confidences = []
+            for item in selected_data_items:
+                if item.annotation.id in features_dict:
+                    source_vectors.append(features_dict[item.annotation.id])
+                    # Use effective confidence, defaulting to 1.0 if unavailable
+                    conf = item.get_effective_confidence()
+                    confidences.append(conf if conf is not None else 1.0)
+            
+            source_vectors = np.array(source_vectors).astype('float32')
+            confidences = np.array(confidences)
+            
+            # Normalize confidences to use as weights
+            if confidences.sum() > 0:
+                weights = confidences / confidences.sum()
+            else:
+                weights = np.ones(len(confidences)) / len(confidences)
+            
+            # Compute weighted centroid
+            query_vector = np.average(source_vectors, axis=0, weights=weights, keepdims=True).astype('float32')
+            
+            # Normalize query vector for cosine similarity
+            faiss.normalize_L2(query_vector)
 
-            index = self.feature_store._get_or_load_index(model_key)
+            # Get or create normalized index for cosine similarity
+            index = self._get_or_create_normalized_index(model_key)
             faiss_idx_to_ann_id = self.feature_store.get_faiss_index_to_annotation_id_map(model_key)
+            
             if index is None or not faiss_idx_to_ann_id:
                 QMessageBox.warning(self, 
-                                    "Index Error", 
-                                    "Could not find a valid feature index for the current model.")
+                                  "Index Error", 
+                                  "Could not find a valid feature index for the current model.")
                 return
 
-            # Find k results, plus more to account for the query items possibly being in the results
-            num_to_find = k + len(selected_data_items)
-            if num_to_find > index.ntotal:
-                num_to_find = index.ntotal
-            
-            _, I = index.search(query_vector, num_to_find)
+            # Search for more candidates than needed to account for filtering
+            num_to_find = min(k * 5, index.ntotal)  # Search 5x more for filtering
+            distances, I = index.search(query_vector, num_to_find)
 
+            # Filter and collect results
             source_ids = {item.annotation.id for item in selected_data_items}
-            similar_ann_ids = []
-            for faiss_idx in I[0]:
+            similar_items = []
+            
+            for idx, (faiss_idx, distance) in enumerate(zip(I[0], distances[0])):
                 ann_id = faiss_idx_to_ann_id.get(faiss_idx)
-                if ann_id and ann_id in self.data_item_cache and ann_id not in source_ids:
-                    similar_ann_ids.append(ann_id)
-                if len(similar_ann_ids) == k:
+                if not ann_id or ann_id not in self.data_item_cache or ann_id in source_ids:
+                    continue
+                
+                data_item = self.data_item_cache[ann_id]
+                
+                # Apply filters
+                if same_label:
+                    # Check if all selected items have the same label
+                    selected_labels = {item.effective_label.id for item in selected_data_items}
+                    if len(selected_labels) == 1:
+                        if data_item.effective_label.id not in selected_labels:
+                            continue
+                    else:
+                        # If multiple labels selected, skip this filter
+                        pass
+                
+                if same_image:
+                    # Check if from same image as any selected item
+                    selected_images = {item.annotation.image_path for item in selected_data_items}
+                    if data_item.annotation.image_path not in selected_images:
+                        continue
+                
+                if min_confidence > 0:
+                    item_confidence = data_item.get_effective_confidence()
+                    if item_confidence is None or item_confidence < min_confidence:
+                        continue
+                
+                # Store similarity score (convert distance to similarity)
+                # For inner product after normalization, higher score = more similar
+                similarity_score = float(distance)  # Already cosine similarity
+                data_item.similarity_score = similarity_score
+                data_item.similarity_rank = len(similar_items) + 1
+                
+                similar_items.append((ann_id, similarity_score))
+                
+                if len(similar_items) >= k:
                     break
 
-            # Create the final ordered list: original selection first, then similar items.
+            if not similar_items:
+                QMessageBox.information(self, 
+                                      "No Results", 
+                                      "No similar items found matching the filter criteria.")
+                return
+
+            # Sort by similarity (highest first) and get IDs
+            similar_items.sort(key=lambda x: x[1], reverse=True)
+            similar_ann_ids = [ann_id for ann_id, _ in similar_items]
+
+            # Create ordered list: selection first, then similar items
             ordered_ids_to_display = list(source_ids) + similar_ann_ids
             
-            # --- FIX IMPLEMENTATION ---
-            # 1. Force sort combo to "None" to avoid user confusion.
+            # Update UI
             self.annotation_viewer.sort_combo.setCurrentText("None")
-
-            # 2. Update the embedding viewer selection.
             self.embedding_viewer.render_selection_from_ids(set(ordered_ids_to_display))
-            
-            # 3. Call the new robust method in AnnotationViewer to handle isolation and grid updates.
             self.annotation_viewer.display_and_isolate_ordered_results(ordered_ids_to_display)
-
+            
             self.update_button_states()
+            
+            # Show summary
+            filter_text = []
+            if same_label:
+                filter_text.append("same label")
+            if same_image:
+                filter_text.append("same image")
+            if min_confidence > 0:
+                filter_text.append(f"min confidence {min_confidence:.0%}")
+            
+            filter_str = " + ".join(filter_text) if filter_text else "no filters"
+            
+            QMessageBox.information(self,
+                                  "Similar Items Found",
+                                  f"Found {len(similar_items)} similar items (requested: {k})\n"
+                                  f"Filters: {filter_str}\n"
+                                  f"Using cosine similarity on confidence-weighted query.")
 
         finally:
             QApplication.restoreOverrideCursor()
+    
+    def _get_or_create_normalized_index(self, model_key):
+        """
+        Gets or creates a normalized FAISS index for cosine similarity using IndexFlatIP.
+        Caches normalized indexes separately from the standard L2 indexes.
+        """
+        # Check if we have a cached normalized index
+        normalized_key = f"{model_key}_normalized"
+        if hasattr(self, '_normalized_indexes') and normalized_key in self._normalized_indexes:
+            return self._normalized_indexes[normalized_key]
+        
+        # Get the original index from feature store
+        original_index = self.feature_store._get_or_load_index(model_key)
+        if original_index is None:
+            return None
+        
+        # Extract all vectors and normalize them
+        n_vectors = original_index.ntotal
+        if n_vectors == 0:
+            return None
+        
+        vectors = original_index.reconstruct_n(0, n_vectors)
+        vectors = vectors.astype('float32')
+        
+        # Normalize for cosine similarity
+        faiss.normalize_L2(vectors)
+        
+        # Create inner product index (equivalent to cosine similarity after normalization)
+        dim = vectors.shape[1]
+        normalized_index = faiss.IndexFlatIP(dim)
+        normalized_index.add(vectors)
+        
+        # Cache the normalized index
+        if not hasattr(self, '_normalized_indexes'):
+            self._normalized_indexes = {}
+        self._normalized_indexes[normalized_key] = normalized_index
+        
+        return normalized_index
             
     def _get_yolo_predictions_for_uncertainty(self, data_items, model_info):
         """
@@ -1791,12 +1850,122 @@ class ExplorerWindow(QMainWindow):
 
             # When a new embedding is run, any previous similarity sort becomes irrelevant
             self.annotation_viewer.active_ordered_ids = []
+            
+            # Auto-calculate anomaly scores and quality metrics
+            progress_bar.set_busy_mode("Calculating quality metrics...")
+            self._calculate_quality_metrics_silently()
 
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
+    
+    def _calculate_quality_metrics_silently(self):
+        """
+        Calculates anomaly scores, local density, spatial consistency, and quality scores
+        for all current data items without displaying results or changing selection.
+        Similar to find_anomalies but doesn't select/display results.
+        """
+        # Get parameters (use defaults)
+        contamination = self.anomaly_params.get('contamination', 0.1)
+        n_neighbors = min(self.anomaly_params.get('n_neighbors', 20), len(self.current_data_items) - 1)
+        
+        if len(self.current_data_items) < n_neighbors:
+            print(f"Not enough data items ({len(self.current_data_items)}) for quality calculation (needs {n_neighbors}).")
+            return
+
+        # Get the model key used for the current embedding
+        model_name, feature_mode = self.current_embedding_model_info
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
+        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
+        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+
+        try:
+            from sklearn.neighbors import LocalOutlierFactor
+            from sklearn.ensemble import IsolationForest
+            from sklearn.neighbors import NearestNeighbors
+            
+            # Get the high-dimensional features
+            features_dict, _ = self.feature_store.get_features(self.current_data_items, model_key)
+            if not features_dict:
+                print("Could not retrieve features for quality calculation.")
+                return
+
+            query_ann_ids = list(features_dict.keys())
+            query_vectors = np.array([features_dict[ann_id] for ann_id in query_ann_ids]).astype('float32')
+
+            # 1. Local Outlier Factor (LOF)
+            lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination, novelty=False)
+            lof_predictions = lof.fit_predict(query_vectors)
+            lof_scores = -lof.negative_outlier_factor_
+            
+            # 2. Isolation Forest
+            iso_forest = IsolationForest(contamination=contamination, random_state=42)
+            iso_predictions = iso_forest.fit_predict(query_vectors)
+            iso_scores = -iso_forest.score_samples(query_vectors)
+            
+            # Normalize scores
+            lof_scores_normalized = (lof_scores - lof_scores.min()) / (lof_scores.max() - lof_scores.min() + 1e-10)
+            iso_scores_normalized = (iso_scores - iso_scores.min()) / (iso_scores.max() - iso_scores.min() + 1e-10)
+            
+            # Combine scores
+            combined_scores = 0.6 * lof_scores_normalized + 0.4 * iso_scores_normalized
+            
+            # Calculate local density
+            nn = NearestNeighbors(n_neighbors=n_neighbors + 1)
+            nn.fit(query_vectors)
+            distances, indices = nn.kneighbors(query_vectors)
+            
+            avg_distances = distances[:, 1:].mean(axis=1)
+            local_densities = 1.0 / (avg_distances + 1e-10)
+            
+            # Calculate spatial consistency
+            spatial_consistencies = []
+            for i, ann_id in enumerate(query_ann_ids):
+                data_item = self.data_item_cache[ann_id]
+                label_id = data_item.effective_label.id
+                
+                neighbor_indices = indices[i][1:]
+                matching_neighbors = 0
+                valid_neighbors = 0
+                
+                for neighbor_idx in neighbor_indices:
+                    neighbor_ann_id = query_ann_ids[neighbor_idx]
+                    neighbor_item = self.data_item_cache[neighbor_ann_id]
+                    
+                    if neighbor_item.annotation.image_path == data_item.annotation.image_path:
+                        valid_neighbors += 1
+                        if neighbor_item.effective_label.id == label_id:
+                            matching_neighbors += 1
+                
+                consistency = matching_neighbors / valid_neighbors if valid_neighbors > 0 else 0.5
+                spatial_consistencies.append(consistency)
+            
+            spatial_consistencies = np.array(spatial_consistencies)
+            
+            # Update data items with scores
+            for i, ann_id in enumerate(query_ann_ids):
+                data_item = self.data_item_cache[ann_id]
+                
+                # Store metrics
+                data_item.anomaly_score = float(combined_scores[i])
+                data_item.local_density = float(local_densities[i])
+                data_item.spatial_consistency = float(spatial_consistencies[i])
+                
+                # Calculate quality score
+                data_item.calculate_quality_score()
+                
+                # Update tooltip
+                if hasattr(data_item, 'point_item') and data_item.point_item:
+                    data_item.point_item.update_tooltip()
+            
+            print(f"Quality metrics calculated for {len(query_ann_ids)} annotations.")
+
+        except ImportError as e:
+            print(f"Could not calculate quality metrics: {str(e)}")
+        except Exception as e:
+            print(f"Error during quality calculation: {str(e)}")
 
     def refresh_filters(self):
         """Refresh display: filter data and update annotation viewer."""
@@ -1926,10 +2095,8 @@ class ExplorerWindow(QMainWindow):
         self.clear_preview_button.setToolTip(f"Clear all preview changes - {summary}")
         self.apply_button.setToolTip(f"Apply changes - {summary}")
 
-        # Logic for the "Find Similar" button
-        selection_exists = bool(self.annotation_viewer.selected_widgets)
-        embedding_exists = bool(self.embedding_viewer.points_by_id) and self.current_embedding_model_info is not None
-        self.annotation_viewer.find_similar_button.setEnabled(selection_exists and embedding_exists)
+        # Find Similar button is now managed by embedding_viewer's _update_toolbar_state()
+        # No need to manually update it here since it updates automatically on selection changes
 
     def apply(self):
         """
@@ -1974,6 +2141,10 @@ class ExplorerWindow(QMainWindow):
             
     def _cleanup_resources(self):
         """Clean up resources."""
+        # Clear any cached normalized indexes
+        if hasattr(self, '_normalized_indexes'):
+            self._normalized_indexes.clear()
+        
         self.loaded_model = None
         self.model_path = ""
         self.current_features = None
