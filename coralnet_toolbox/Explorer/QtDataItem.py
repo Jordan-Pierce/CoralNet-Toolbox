@@ -448,9 +448,13 @@ class AnnotationImageWidget(QWidget):
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
         
-        # --- Draw Machine Confidence Badge ---
+        # --- Draw Machine Confidence Badge (if enabled) ---
+        # Only show confidence badge if the viewer has it enabled
+        show_badge = (self.annotation_viewer and 
+                      hasattr(self.annotation_viewer, 'show_confidence') and 
+                      self.annotation_viewer.show_confidence)
         confidence_score = self.data_item.get_effective_confidence()
-        if confidence_score > 0:
+        if show_badge and confidence_score > 0:
             # Badge dimensions - minimum size with fixed font
             badge_size = 32  # Increased from 28 for better readability
             margin = 4

@@ -836,6 +836,7 @@ class AnnotationViewer(QWidget):
         self.original_label_assignments = {}
         self.isolated_mode = False
         self.isolated_widgets = set()
+        self.show_confidence = False  # Default to not showing confidence badges
 
         # State for sorting options
         self.active_ordered_ids = []
@@ -921,7 +922,7 @@ class AnnotationViewer(QWidget):
         toolbar_layout.addWidget(self.find_similar_button)
         
         toolbar_layout.addStretch()
-
+        
         size_label = QLabel("Size:")
         toolbar_layout.addWidget(size_label)
         self.size_slider = QSlider(Qt.Horizontal)
@@ -936,6 +937,20 @@ class AnnotationViewer(QWidget):
         self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
         toolbar_layout.addWidget(self.size_value_label)
+        
+        toolbar_layout.addWidget(self._create_separator())
+        
+        # Confidence badge toggle button
+        self.confidence_toggle_button = QPushButton()
+        self.confidence_toggle_button.setIcon(get_icon("percentage.png"))
+        self.confidence_toggle_button.setToolTip("Toggle confidence badge visibility")
+        self.confidence_toggle_button.setCheckable(True)
+        self.confidence_toggle_button.setChecked(False)  # Start with badges hidden
+        self.confidence_toggle_button.clicked.connect(self.on_confidence_toggle_changed)
+        toolbar_layout.addWidget(self.confidence_toggle_button)
+
+        
+        # Add the toolbar to the main layout
         main_layout.addWidget(toolbar_widget)
         
         # Create the scroll area which will contain the content
@@ -1414,6 +1429,13 @@ class AnnotationViewer(QWidget):
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         self.recalculate_layout()
+    
+    def on_confidence_toggle_changed(self):
+        """Handle confidence badge visibility toggle."""
+        self.show_confidence = self.confidence_toggle_button.isChecked()
+        # Trigger repaint of all widgets
+        for widget in self.annotation_widgets_by_id.values():
+            widget.update()
 
     def _schedule_update(self):
         """Schedules a delayed update of visible widgets to avoid performance issues during rapid scrolling."""
