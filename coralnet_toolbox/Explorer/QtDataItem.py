@@ -240,7 +240,11 @@ class EmbeddingPointItem(QGraphicsObject):
             self.animation_manager.unregister_animating_object(self)
             
         self._pulse_alpha = 128  # Reset to default
-        self.update()  # Apply the default style
+        try:
+            self.update()  # Apply the default style
+        except RuntimeError:
+            # C++ object has been deleted, safe to ignore
+            pass
     
     def __del__(self):
         """Clean up the timer when the item is deleted."""
@@ -526,7 +530,11 @@ class AnnotationImageWidget(QWidget):
             self.animation_manager.unregister_animating_object(self)
             
         self._pulse_alpha = 128  # Reset to default
-        self.update()  # Apply the default style
+        try:
+            self.update()  # Apply the default style
+        except RuntimeError:
+            # C++ object has been deleted, safe to ignore
+            pass
     
     def mousePressEvent(self, event):
         """Handle mouse press events for selection, delegating logic to the viewer."""

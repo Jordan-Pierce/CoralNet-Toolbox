@@ -1732,11 +1732,12 @@ class ExplorerWindow(QMainWindow):
             self.update_label_window_selection()
             self.update_button_states()
 
-            # 6. Refresh main window annotations list
+            # 6. Refresh main window annotations table counts
+            # Note: We don't call load_annotations() here to avoid bringing MainWindow forward.
+            # The update_image_annotations() call updates the table counts, which is sufficient.
             affected_images = {ann.image_path for ann in annotations_to_delete_from_main_app}
             for image_path in affected_images:
                 self.image_window.update_image_annotations(image_path)
-            self.annotation_window.load_annotations()
 
         except Exception as e:
             QMessageBox.warning(self, 
@@ -1804,10 +1805,11 @@ class ExplorerWindow(QMainWindow):
                 return
 
             # Update the main application's data and UI
+            # Note: We don't call load_annotations() here to avoid bringing MainWindow forward
+            # and because it's unnecessary - the Explorer manages its own view updates.
             affected_images = {ann.image_path for ann in applied_label_changes}
             for image_path in affected_images:
                 self.image_window.update_image_annotations(image_path)
-            self.annotation_window.load_annotations()
 
             # Refresh the annotation viewer since its underlying data has changed.
             # This implicitly deselects everything by rebuilding the widgets.
