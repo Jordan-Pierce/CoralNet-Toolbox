@@ -79,6 +79,9 @@ class AutoAnnotationWizard(QDialog):
         self.current_batch = []
         self.current_batch_index = 0
         
+        # Track annotations completed in this session (to exclude from future batches)
+        self.completed_annotation_ids = set()
+        
         # Annotation mode: 'active_learning' or 'bulk_labeling'
         self.annotation_mode = 'active_learning'
         
@@ -481,8 +484,8 @@ class AutoAnnotationWizard(QDialog):
             "Interactively adjust the confidence threshold to preview automatic label assignments. "
             "Annotations are sorted by predicted label in the viewer below. "
             "Adjust the slider to see which annotations will be auto-labeled at different thresholds.<br><br>"
-            "<b>Apply All Preview Labels:</b> Permanently applies all previewed labels to annotations. "
-            "<b>Clear Preview Labels:</b> Removes all preview labels without saving changes."
+            "<b>Apply Auto-Labels:</b> Permanently applies all previewed labels to annotations. "
+            "Once applied, labels cannot be undone within the wizard."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
@@ -547,16 +550,11 @@ class AutoAnnotationWizard(QDialog):
         actions_group = QGroupBox("Actions")
         actions_layout = QVBoxLayout(actions_group)
         
-        self.apply_bulk_button = QPushButton("✓ Apply All Preview Labels")
-        self.apply_bulk_button.setToolTip("Commit all preview label assignments shown below")
+        self.apply_bulk_button = QPushButton("✓ Apply Auto-Labels")
+        self.apply_bulk_button.setToolTip("Permanently apply all preview label assignments shown below")
         self.apply_bulk_button.clicked.connect(self._apply_bulk_labels_permanently)
         self.apply_bulk_button.setStyleSheet("QPushButton { font-weight: bold; padding: 8px; }")
         actions_layout.addWidget(self.apply_bulk_button)
-        
-        self.clear_bulk_button = QPushButton("Clear All Previews")
-        self.clear_bulk_button.setToolTip("Remove all preview labels")
-        self.clear_bulk_button.clicked.connect(self._clear_bulk_previews)
-        actions_layout.addWidget(self.clear_bulk_button)
         
         layout.addWidget(actions_group)
         layout.addStretch()
@@ -579,6 +577,9 @@ class AutoAnnotationWizard(QDialog):
         
         # Clear bulk predictions since they're model-specific
         self.bulk_predictions = {}
+        
+        # Reset completed annotations tracking
+        self.completed_annotation_ids = set()
         
         # Reset training page UI
         self.metrics_text.clear()
@@ -804,13 +805,17 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.embedding_viewer.selection_blocked = True
         self.explorer_window.annotation_viewer.selection_blocked = True
         
-        # Generate predictions for all Review annotations
-        self._generate_all_predictions()
+        # Generate predictions for all Review annotations (if not already done)
+        if not self.bulk_predictions:
+            self._generate_all_predictions()
         
-        # Initialize based on current mode
-        if self.annotation_mode == 'active_learning':
+        # Initialize based on current mode (from the active tab)
+        current_tab = self.annotation_tabs.currentIndex()
+        if current_tab == 0:
+            self.annotation_mode = 'active_learning'
             self._enter_active_learning_mode()
         else:
+            self.annotation_mode = 'bulk_labeling'
             self._enter_bulk_labeling_mode()
     
     def _enter_active_learning_mode(self):
@@ -837,9 +842,13 @@ class AutoAnnotationWizard(QDialog):
     
     def _enter_bulk_labeling_mode(self):
         """Enter Bulk Labeling mode."""
-        # Get current review annotations (this may have changed since last time)
-        review_items = [item for item in self.explorer_window.current_data_items
-                       if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+        # Get current review annotations, excluding completed ones from this session
+        # Note: completed_annotation_ids is the authoritative source - if an ID is there, exclude it
+        review_items = [
+            item for item in self.explorer_window.current_data_items
+            if item.annotation.id not in self.completed_annotation_ids
+            and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        ]
         
         print(f"Bulk Labeling: Found {len(review_items)} review items")
         
@@ -905,14 +914,20 @@ class AutoAnnotationWizard(QDialog):
             print(f"Failed to generate predictions: {str(e)}")
     
     def _generate_all_predictions(self):
-        """Generate predictions for all Review annotations."""
+        """Generate predictions for all Review annotations, excluding completed ones."""
         # Validate model and scaler
         if self.trained_model is None or self.scaler is None:
             print("Warning: Model or scaler not initialized. Skipping prediction generation.")
             return
         
-        review_items = [item for item in self.explorer_window.current_data_items
-                       if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+        # Get review items excluding those completed in this session
+        # Note: We rely on completed_annotation_ids as the source of truth
+        # Even if an annotation appears as 'Review' in the cache, if it's in completed_annotation_ids, skip it
+        review_items = [
+            item for item in self.explorer_window.current_data_items
+            if item.annotation.id not in self.completed_annotation_ids
+            and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        ]
         
         if not review_items:
             print("No review items found")
@@ -1031,30 +1046,47 @@ class AutoAnnotationWizard(QDialog):
         
         reply = QMessageBox.question(
             self,
-            "Apply Bulk Labels",
-            f"Apply {preview_count} preview labels permanently?",
+            "Apply Auto-Labels",
+            f"Permanently apply {preview_count} auto-labels?\n\nThis action cannot be undone within the wizard.",
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            # Collect IDs of items being labeled
-            labeled_ids = [item.annotation.id for item in self.explorer_window.current_data_items
-                          if item.has_preview_changes()]
-            
-            # Apply all previews
+            # Apply all previews permanently and track completed IDs
             for item in self.explorer_window.current_data_items:
                 if item.has_preview_changes():
+                    # Apply the preview label permanently
                     item.apply_preview_permanently()
+                    
+                    # Update the data item's effective_label cache
+                    item._effective_label = item.annotation.label
+                    
+                    # Track as completed
+                    self.completed_annotation_ids.add(item.annotation.id)
+                    
+                    # Remove from predictions
+                    if item.annotation.id in self.bulk_predictions:
+                        del self.bulk_predictions[item.annotation.id]
+                    
+                    # Update tooltip and visuals
+                    if hasattr(item, 'widget') and item.widget:
+                        item.widget.update_tooltip()
+                    if hasattr(item, 'graphics_item') and item.graphics_item:
+                        item.graphics_item.update_tooltip()
             
-            # Remove predictions for items that are no longer Review
-            for ann_id in labeled_ids:
-                if ann_id in self.bulk_predictions:
-                    del self.bulk_predictions[ann_id]
+            # Get remaining review items (excluding completed ones)
+            # completed_annotation_ids is the authoritative exclusion list
+            review_items = [
+                item for item in self.explorer_window.current_data_items
+                if item.annotation.id not in self.completed_annotation_ids
+                and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+            ]
             
-            # Get remaining review items and update viewer
-            review_items = [item for item in self.explorer_window.current_data_items
-                           if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+            # Regenerate predictions for remaining items
+            if review_items:
+                self._generate_predictions_for_items(review_items)
             
+            # Update viewer with remaining items
             self.explorer_window.annotation_viewer.update_annotations(review_items)
             
             # Update statistics
@@ -1068,7 +1100,7 @@ class AutoAnnotationWizard(QDialog):
             )
     
     def _get_next_batch(self):
-        """Get next batch of annotations to label."""
+        """Get next batch of annotations to label, excluding completed ones."""
         # Validate model and scaler before getting batch
         if self.trained_model is None or self.scaler is None:
             print("Warning: Model or scaler not initialized")
@@ -1076,13 +1108,22 @@ class AutoAnnotationWizard(QDialog):
             return
         
         try:
-            self.current_batch = self.explorer_window.get_next_annotation_batch(
+            # Get batch from explorer
+            batch = self.explorer_window.get_next_annotation_batch(
                 model=self.trained_model,
                 scaler=self.scaler,
                 class_to_idx=self.class_to_idx,
                 feature_type=self.feature_type,
                 batch_size=self.batch_size
             )
+            
+            # Filter out any annotations that were completed in this session
+            # Trust completed_annotation_ids as the single source of truth
+            self.current_batch = [
+                item for item in batch
+                if item.annotation.id not in self.completed_annotation_ids
+            ]
+            
             self.current_batch_index = 0
             
             # Highlight batch in embedding viewer only (don't isolate in annotation viewer)
@@ -1161,7 +1202,7 @@ class AutoAnnotationWizard(QDialog):
         self.skip_button.setEnabled(enabled)
     
     def _accept_prediction(self):
-        """Accept the predicted label."""
+        """Accept the predicted label permanently."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
             return
         
@@ -1180,16 +1221,57 @@ class AutoAnnotationWizard(QDialog):
                         from_import=True  # Don't overwrite the label we're about to apply
                     )
                 
-                # Set preview label and apply it permanently
-                item.set_preview_label(label_obj)
-                item.apply_preview_permanently()
+                # Apply label directly and permanently (no preview)
+                item.annotation.label = label_obj
+                
+                # Update the data item's effective_label cache
+                item._effective_label = label_obj
+                
+                # Track this annotation as completed
+                self.completed_annotation_ids.add(item.annotation.id)
+                
+                # Remove from predictions since it's now labeled
+                if item.annotation.id in self.bulk_predictions:
+                    del self.bulk_predictions[item.annotation.id]
+                
                 self.labels_since_retrain += 1
+                
+                # Update tooltip and visuals
+                if hasattr(item, 'widget') and item.widget:
+                    item.widget.update_tooltip()
+                if hasattr(item, 'graphics_item') and item.graphics_item:
+                    item.graphics_item.update_tooltip()
     
         # Move to next BEFORE refreshing viewers to avoid blocking
         self._move_to_next_annotation()
     
     def _skip_annotation(self):
-        """Skip current annotation."""
+        """Skip current annotation, but check if it was manually labeled first."""
+        # Check if the current annotation was manually labeled (changed from Review)
+        if self.current_batch and self.current_batch_index < len(self.current_batch):
+            item = self.current_batch[self.current_batch_index]
+            current_label = getattr(item.annotation.label, 'short_label_code', '')
+            
+            # If it's no longer Review, the user manually labeled it
+            if current_label and current_label != REVIEW_LABEL:
+                # Update the data item's effective_label cache
+                item._effective_label = item.annotation.label
+                
+                # Track as completed
+                self.completed_annotation_ids.add(item.annotation.id)
+                
+                # Remove from predictions
+                if item.annotation.id in self.bulk_predictions:
+                    del self.bulk_predictions[item.annotation.id]
+                
+                # Update tooltip and visuals
+                if hasattr(item, 'widget') and item.widget:
+                    item.widget.update_tooltip()
+                if hasattr(item, 'graphics_item') and item.graphics_item:
+                    item.graphics_item.update_tooltip()
+                
+                print(f"Detected manual label change to '{current_label}' for annotation {item.annotation.id}")
+        
         self._move_to_next_annotation()
     
     def _move_to_next_annotation(self):
@@ -1240,13 +1322,27 @@ class AutoAnnotationWizard(QDialog):
                 self.training_score = result['accuracy']
                 self.labels_since_retrain = 0
                 
+                # Update class mappings in case new classes were added
+                self.label_classes = result['classes']
+                self.class_to_idx = result['class_to_idx']
+                self.idx_to_class = result['idx_to_class']
+                
                 # Display training results
                 self._display_training_metrics(result)
+                
+                # Regenerate predictions for remaining Review annotations
+                self._generate_all_predictions()
+                
+                self.training_status_label.setText(
+                    f"✓ Model retrained successfully! Accuracy: {self.training_score:.2%}\n\n"
+                    "Review the updated metrics below, then click 'Start Annotating >' to continue."
+                )
                 
                 QMessageBox.information(
                     self,
                     "Retrain Complete",
-                    f"Model retrained successfully!\nNew accuracy: {self.training_score:.2%}\n\nClick 'Start Annotating' to continue."
+                    f"Model retrained successfully!\nNew accuracy: {self.training_score:.2%}\n\n"
+                    "Review the metrics and click 'Start Annotating >' to continue."
                 )
                 
         except Exception as e:
@@ -1261,17 +1357,22 @@ class AutoAnnotationWizard(QDialog):
     
     def _finish(self):
         """Finish wizard and apply changes."""
+        # Count completed annotations
+        completed_count = len(self.completed_annotation_ids)
+        
         reply = QMessageBox.question(
             self,
             "Finish Wizard",
-            "Exit the Auto-Annotation Wizard?\n\nAll labeled annotations will be saved.",
+            f"Exit the Auto-Annotation Wizard?\n\n{completed_count} annotations were labeled in this session.\nAll changes have been saved.",
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            # Emit signal with updated annotations
-            updated_items = [item for item in self.explorer_window.current_data_items 
-                            if item.has_preview_changes()]
+            # Emit signal with all completed annotations from this session
+            updated_items = [
+                item for item in self.explorer_window.current_data_items
+                if item.annotation.id in self.completed_annotation_ids
+            ]
             self.annotations_updated.emit(updated_items)
             
             # Reset wizard state for next use
@@ -1319,6 +1420,9 @@ class AutoAnnotationWizard(QDialog):
         self.bulk_predictions = {}
         self.bulk_confidence_threshold = 0.95
         self.bulk_threshold_slider.setValue(95)
+        
+        # Reset completed annotations tracking
+        self.completed_annotation_ids = set()
         
         # Clear UI elements
         self.metrics_text.clear()

@@ -2580,13 +2580,31 @@ class ExplorerWindow(QMainWindow):
     
     def _update_wizard_button_state(self):
         """Update the Auto-Annotation Wizard button state."""
-        # Enable if we have features or embeddings
+        # Check if we have features stored
         has_features = bool(self.current_feature_generating_model)
-        has_embeddings = (self.current_data_items and 
-                         hasattr(self.current_data_items[0], 'embedding_x') and
-                         self.current_data_items[0].embedding_x is not None)
         
-        self.auto_annotation_button.setEnabled(has_features or has_embeddings)
+        # Check if embeddings have been calculated (viewer is not empty)
+        has_embeddings = False
+        if self.current_data_items:
+            # Check if any data items have embeddings
+            has_embeddings = any(
+                hasattr(item, 'embedding_x') and item.embedding_x is not None
+                for item in self.current_data_items
+            )
+        
+        # Only enable if we have either features or embeddings
+        should_enable = has_features or has_embeddings
+        self.auto_annotation_button.setEnabled(should_enable)
+        
+        # Update tooltip to explain why it's disabled
+        if not should_enable:
+            self.auto_annotation_button.setToolTip(
+                "Generate features or run embedding pipeline first to enable auto-annotation"
+            )
+        else:
+            self.auto_annotation_button.setToolTip(
+                "Open the ML-assisted annotation wizard (requires features/embeddings)"
+            )
             
     def _cleanup_resources(self):
         """Clean up resources."""
