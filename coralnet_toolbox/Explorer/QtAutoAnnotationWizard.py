@@ -394,8 +394,9 @@ class AutoAnnotationWizard(QDialog):
             "Review annotations one-by-one, prioritized by model uncertainty. "
             "This focuses on difficult cases to improve the model most efficiently. "
             "The model automatically retrains as you label. Annotations are shown in the viewer below.<br><br>"
-            "<b>✓ Accept Prediction:</b> Applies the predicted label to the current annotation. "
-            "<b>→ Skip:</b> Moves to the next annotation without labeling."
+            "<b>✓ Accept Prediction:</b> Applies the predicted label to the current annotation.<br>"
+            "<b>⊘ Skip:</b> Skips the current annotation without labeling (leaves as 'Review').<br>"
+            "<b>→ Next:</b> Advances after you manually changed the label in the Label Window."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
@@ -460,12 +461,21 @@ class AutoAnnotationWizard(QDialog):
         
         row1 = QHBoxLayout()
         self.accept_button = QPushButton("✓ Accept Prediction")
-        self.skip_button = QPushButton("→ Skip / Next")
+        self.accept_button.setToolTip("Apply the predicted label to this annotation")
         self.accept_button.clicked.connect(self._accept_prediction)
-        self.skip_button.clicked.connect(self._skip_annotation)
         row1.addWidget(self.accept_button)
-        row1.addWidget(self.skip_button)
         actions_layout.addLayout(row1)
+        
+        row2 = QHBoxLayout()
+        self.skip_button = QPushButton("⊘ Skip")
+        self.skip_button.setToolTip("Skip this annotation without labeling (leaves as 'Review')")
+        self.skip_button.clicked.connect(self._skip_annotation)
+        self.next_button = QPushButton("→ Next")
+        self.next_button.setToolTip("Advance to next annotation after manually labeling in Label Window")
+        self.next_button.clicked.connect(self._next_annotation)
+        row2.addWidget(self.skip_button)
+        row2.addWidget(self.next_button)
+        actions_layout.addLayout(row2)
         
         layout.addWidget(actions_group)
         layout.addStretch()
@@ -596,12 +606,59 @@ class AutoAnnotationWizard(QDialog):
         # Clear animations and selections when switching modes
         self._clear_animations_and_selections()
         
+        # Rescan for any manually labeled annotations before entering new mode
+        manually_labeled_count = self._rescan_for_manual_labels()
+        if manually_labeled_count > 0:
+            print(f"✓ Detected {manually_labeled_count} manually labeled annotation(s) before mode switch")
+        
+        # Reset retrain counter when switching modes to avoid unexpected retraining
+        self.labels_since_retrain = 0
+        
         if index == 0:
             self.annotation_mode = 'active_learning'
             self._enter_active_learning_mode()
         elif index == 1:
             self.annotation_mode = 'bulk_labeling'
             self._enter_bulk_labeling_mode()
+    
+    def _rescan_for_manual_labels(self):
+        """Scan all annotations and mark any that are no longer 'Review' as completed.
+        
+        This ensures that manually labeled annotations (changed outside the wizard)
+        are properly tracked and excluded from future batches.
+        
+        Returns:
+            int: Number of newly detected manually labeled annotations
+        """
+        newly_labeled_count = 0
+        
+        for item in self.explorer_window.current_data_items:
+            # Check if this annotation is not in completed set but is also not 'Review'
+            if item.annotation.id not in self.completed_annotation_ids:
+                current_label = getattr(item.annotation.label, 'short_label_code', '')
+                
+                # If it's not Review, it was manually labeled
+                if current_label and current_label != REVIEW_LABEL:
+                    # Mark as completed
+                    self.completed_annotation_ids.add(item.annotation.id)
+                    newly_labeled_count += 1
+                    
+                    # Update the data item's effective_label cache
+                    item._effective_label = item.annotation.label
+                    
+                    # Remove from bulk predictions if it was there
+                    if item.annotation.id in self.bulk_predictions:
+                        del self.bulk_predictions[item.annotation.id]
+                    
+                    # Update tooltip and visuals
+                    if hasattr(item, 'widget') and item.widget:
+                        item.widget.update_tooltip()
+                    if hasattr(item, 'graphics_item') and item.graphics_item:
+                        item.graphics_item.update_tooltip()
+                    
+                    print(f"  Detected manual label: {current_label} for annotation {item.annotation.id[:12]}...")
+        
+        return newly_labeled_count
     
     def _clear_animations_and_selections(self):
         """Clear all animations and selections from viewers."""
@@ -825,6 +882,18 @@ class AutoAnnotationWizard(QDialog):
             print("Warning: Model not trained yet")
             return
         
+        # Rescan for manually labeled annotations before entering mode
+        manually_labeled_count = self._rescan_for_manual_labels()
+        if manually_labeled_count > 0:
+            # Show toast notification for manual label detection
+            QMessageBox.information(
+                self,
+                "Manual Labels Detected",
+                f"Detected {manually_labeled_count} manually labeled annotation(s).\n"
+                f"These will be excluded from active learning batches.",
+                QMessageBox.Ok
+            )
+        
         # Exit isolation mode if active and show all data items
         if self.explorer_window.annotation_viewer.isolated_mode:
             self.explorer_window.annotation_viewer.show_all_annotations()
@@ -842,21 +911,41 @@ class AutoAnnotationWizard(QDialog):
     
     def _enter_bulk_labeling_mode(self):
         """Enter Bulk Labeling mode."""
+        # First, rescan for manually labeled annotations
+        manually_labeled_count = self._rescan_for_manual_labels()
+        if manually_labeled_count > 0:
+            # Show toast notification for manual label detection
+            QMessageBox.information(
+                self,
+                "Manual Labels Detected",
+                f"Detected {manually_labeled_count} manually labeled annotation(s).\n"
+                f"These will be excluded from bulk labeling.",
+                QMessageBox.Ok
+            )
+        
+        # Clear all existing preview labels before entering mode
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
         # Get current review annotations, excluding completed ones from this session
         # Note: completed_annotation_ids is the authoritative source - if an ID is there, exclude it
+        # We also check effective_label to catch any recently changed labels
         review_items = [
             item for item in self.explorer_window.current_data_items
             if item.annotation.id not in self.completed_annotation_ids
             and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
         ]
         
-        print(f"Bulk Labeling: Found {len(review_items)} review items")
+        print(f"Bulk Labeling: Found {len(review_items)} review items (after excluding {len(self.completed_annotation_ids)} completed)")
         
         # Clear any stale predictions for items that are no longer Review
         review_ids = {item.annotation.id for item in review_items}
         stale_ids = [ann_id for ann_id in self.bulk_predictions.keys() if ann_id not in review_ids]
-        for ann_id in stale_ids:
-            del self.bulk_predictions[ann_id]
+        if stale_ids:
+            print(f"Clearing {len(stale_ids)} stale predictions")
+            for ann_id in stale_ids:
+                del self.bulk_predictions[ann_id]
         
         # Regenerate predictions for new review items
         items_needing_predictions = [item for item in review_items 
@@ -867,23 +956,18 @@ class AutoAnnotationWizard(QDialog):
         
         print(f"Bulk Labeling: Have {len(self.bulk_predictions)} predictions")
         
-        # Clear all existing preview labels before entering mode
-        for item in self.explorer_window.current_data_items:
-            if item.has_preview_changes():
-                item.clear_preview_label()
+        # Exit isolation mode if active
+        if self.explorer_window.annotation_viewer.isolated_mode:
+            self.explorer_window.annotation_viewer.show_all_annotations()
         
         # Set annotation viewer to sort by label and lock it
         self.explorer_window.annotation_viewer.sort_combo.setCurrentText("Label")
         self.explorer_window.annotation_viewer.sort_combo.setEnabled(False)
         
-        # Show only Review annotations in the viewer
-        if self.explorer_window.annotation_viewer.isolated_mode:
-            self.explorer_window.annotation_viewer.show_all_annotations()
-        
-        # Update the viewer with only Review data items
+        # Update the viewer with only Review data items to show proper label bins
         self.explorer_window.annotation_viewer.update_annotations(review_items)
         
-        # Update statistics
+        # Update statistics (will recount from scratch)
         self._update_bulk_statistics()
         
         # Apply threshold to show preview labels
@@ -957,12 +1041,21 @@ class AutoAnnotationWizard(QDialog):
             self.overall_progress_bar.setValue(progress_percent)
     
     def _update_bulk_statistics(self):
-        """Update statistics for Bulk Labeling mode."""
+        """Update statistics for Bulk Labeling mode.
+        
+        Recounts from scratch to ensure accurate display after mode switches.
+        """
         data_items = self.explorer_window.current_data_items
         total = len(data_items)
         
-        review_count = sum(1 for item in data_items
-                          if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+        # Recount review items from scratch, excluding completed annotations
+        # and checking actual current label state
+        review_count = 0
+        for item in data_items:
+            if item.annotation.id not in self.completed_annotation_ids:
+                current_label = getattr(item.annotation.label, 'short_label_code', '')
+                if current_label == REVIEW_LABEL:
+                    review_count += 1
         
         labeled = total - review_count
         
@@ -1200,6 +1293,7 @@ class AutoAnnotationWizard(QDialog):
         """Enable/disable annotation action buttons."""
         self.accept_button.setEnabled(enabled)
         self.skip_button.setEnabled(enabled)
+        self.next_button.setEnabled(enabled)
     
     def _accept_prediction(self):
         """Accept the predicted label permanently."""
@@ -1246,31 +1340,63 @@ class AutoAnnotationWizard(QDialog):
         self._move_to_next_annotation()
     
     def _skip_annotation(self):
-        """Skip current annotation, but check if it was manually labeled first."""
-        # Check if the current annotation was manually labeled (changed from Review)
-        if self.current_batch and self.current_batch_index < len(self.current_batch):
-            item = self.current_batch[self.current_batch_index]
-            current_label = getattr(item.annotation.label, 'short_label_code', '')
+        """Skip the current annotation without labeling it (leaves as 'Review')."""
+        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
+            return
             
-            # If it's no longer Review, the user manually labeled it
-            if current_label and current_label != REVIEW_LABEL:
-                # Update the data item's effective_label cache
-                item._effective_label = item.annotation.label
-                
-                # Track as completed
-                self.completed_annotation_ids.add(item.annotation.id)
-                
-                # Remove from predictions
-                if item.annotation.id in self.bulk_predictions:
-                    del self.bulk_predictions[item.annotation.id]
-                
-                # Update tooltip and visuals
-                if hasattr(item, 'widget') and item.widget:
-                    item.widget.update_tooltip()
-                if hasattr(item, 'graphics_item') and item.graphics_item:
-                    item.graphics_item.update_tooltip()
-                
-                print(f"Detected manual label change to '{current_label}' for annotation {item.annotation.id}")
+        item = self.current_batch[self.current_batch_index]
+        print(f"⊘ Skipped annotation {item.annotation.id[:12]}... (no label applied)")
+        
+        self._move_to_next_annotation()
+    
+    def _next_annotation(self):
+        """Advance to next annotation after manually labeling the current one.
+        
+        This should be used when the user manually changed the label in the Label Window.
+        It detects if the label was changed from 'Review' and properly tracks it.
+        """
+        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
+            return
+            
+        item = self.current_batch[self.current_batch_index]
+        current_label = getattr(item.annotation.label, 'short_label_code', '')
+        
+        # Check if the annotation was manually labeled (changed from Review)
+        if current_label and current_label != REVIEW_LABEL:
+            # The user manually labeled it
+            print(f"✓ Manual label detected: '{current_label}' for annotation {item.annotation.id[:12]}...")
+            
+            # Update the data item's effective_label cache
+            item._effective_label = item.annotation.label
+            
+            # Track as completed
+            self.completed_annotation_ids.add(item.annotation.id)
+            
+            # Remove from predictions
+            if item.annotation.id in self.bulk_predictions:
+                del self.bulk_predictions[item.annotation.id]
+            
+            # Increment retrain counter since this is a new labeled annotation
+            self.labels_since_retrain += 1
+            
+            # Update tooltip and visuals
+            if hasattr(item, 'widget') and item.widget:
+                item.widget.update_tooltip()
+            if hasattr(item, 'graphics_item') and item.graphics_item:
+                item.graphics_item.update_tooltip()
+            
+            print(f"  → Added to completed annotations (total: {len(self.completed_annotation_ids)})")
+        else:
+            # Warning: Next button clicked but label is still 'Review'
+            QMessageBox.warning(
+                self,
+                "No Label Change Detected",
+                f"The annotation label is still '{current_label}'.\n\n"
+                "Please change the label in the Label Window before clicking 'Next', "
+                "or click 'Skip' to move on without labeling.",
+                QMessageBox.Ok
+            )
+            return  # Don't move to next annotation
         
         self._move_to_next_annotation()
     
