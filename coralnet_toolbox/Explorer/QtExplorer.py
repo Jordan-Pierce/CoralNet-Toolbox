@@ -22,6 +22,7 @@ from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtSettingsWidgets import ModelSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import EmbeddingSettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import AnnotationSettingsWidget
+from coralnet_toolbox.Explorer.QtAutoAnnotationWizard import AutoAnnotationWizard, AutoAnnotationError
 
 from coralnet_toolbox.Explorer.yolo_models import is_yolo_model
 from coralnet_toolbox.Explorer.transformer_models import is_transformer_model
@@ -108,6 +109,13 @@ class ExplorerWindow(QMainWindow):
         self.embedding_settings_widget = None
         self.annotation_viewer = None
         self.embedding_viewer = None
+        
+        self.auto_annotation_button = QPushButton('🤖 Auto Annotation Wizard', self)
+        self.auto_annotation_button.clicked.connect(self.open_auto_annotation_wizard)
+        self.auto_annotation_button.setToolTip("Open the ML-assisted annotation wizard (requires features/embeddings)")
+        self.auto_annotation_button.setEnabled(False)
+        
+        self.auto_annotation_wizard = None  # Will be created when needed
 
         self.clear_preview_button = QPushButton('Clear Preview', self)
         self.clear_preview_button.clicked.connect(self.clear_preview_changes)
@@ -222,6 +230,7 @@ class ExplorerWindow(QMainWindow):
         self.main_layout.addLayout(horizontal_layout)
 
         self.buttons_layout = QHBoxLayout()
+        self.buttons_layout.addWidget(self.auto_annotation_button)
         self.buttons_layout.addStretch(1)
         self.buttons_layout.addWidget(self.clear_preview_button)
         self.buttons_layout.addWidget(self.exit_button)
@@ -1814,6 +1823,10 @@ class ExplorerWindow(QMainWindow):
             features = np.array(final_feature_list)
             self.current_data_items = final_data_items
             self.annotation_viewer.update_annotations(self.current_data_items)
+            
+            # Store features and model key for wizard access
+            self.current_features = features
+            self.current_feature_generating_model = model_key
 
             # Validate LDA requirements if selected
             if embedding_params.get('technique') == 'LDA':
@@ -1854,6 +1867,9 @@ class ExplorerWindow(QMainWindow):
             # Auto-calculate anomaly scores and quality metrics
             progress_bar.set_busy_mode("Calculating quality metrics...")
             self._calculate_quality_metrics_silently()
+            
+            # Enable auto-annotation wizard button now that features are available
+            self._update_wizard_button_state()
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2138,6 +2154,479 @@ class ExplorerWindow(QMainWindow):
                                 f"An error occurred while applying changes.\n\nError: {e}")
         finally:
             QApplication.restoreOverrideCursor()
+    
+    # ============================================================================
+    # ML Training and Prediction Methods
+    # ============================================================================
+    
+    def get_features_for_training(self, data_items, feature_type='full'):
+        """
+        Extract features for model training from data items.
+        
+        Args:
+            data_items: List of AnnotationDataItem objects
+            feature_type: 'full' for high-dimensional features, 'reduced' for embeddings
+            
+        Returns:
+            numpy array of features (n_samples, n_features)
+        """
+        if feature_type == 'reduced':
+            # Use reduced embeddings (2D or 3D)
+            features = []
+            for item in data_items:
+                if hasattr(item, 'embedding_x') and item.embedding_x is not None:
+                    feat = [item.embedding_x, item.embedding_y]
+                    if hasattr(item, 'embedding_z') and item.embedding_z is not None:
+                        feat.append(item.embedding_z)
+                    features.append(feat)
+                else:
+                    # No embeddings available
+                    return None
+            
+            return np.array(features)
+        
+        else:  # 'full'
+            # Use full features from FeatureStore
+            if not self.current_feature_generating_model:
+                raise AutoAnnotationError("No features available. Please run embedding pipeline first.")
+            
+            model_key = self.current_feature_generating_model
+            found_features, not_found = self.feature_store.get_features(data_items, model_key)
+            
+            if not_found:
+                # Extract features for missing items
+                progress_bar = ProgressBar(self, title="Extracting Features")
+                try:
+                    self._extract_features(not_found, progress_bar)
+                    found_features, still_missing = self.feature_store.get_features(data_items, model_key)
+                    
+                    if still_missing:
+                        raise AutoAnnotationError(f"Failed to extract features for {len(still_missing)} items")
+                finally:
+                    progress_bar.close()
+            
+            # Build feature matrix in correct order
+            features = []
+            for item in data_items:
+                feat = found_features.get(item.annotation.id)
+                if feat is not None:
+                    features.append(feat)
+                else:
+                    raise AutoAnnotationError(f"Missing features for annotation {item.annotation.id}")
+            
+            return np.array(features)
+    
+    def train_annotation_model(self, feature_type='full', model_type='random_forest', model_params=None):
+        """
+        Train a scikit-learn model on labeled annotations.
+        
+        Args:
+            feature_type: 'full' or 'reduced'
+            model_type: 'random_forest', 'svc', or 'knn'
+            model_params: Dictionary of model-specific parameters
+            
+        Returns:
+            Dictionary containing model, scaler, classes, and metrics
+        """
+        try:
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.svm import SVC
+            from sklearn.neighbors import KNeighborsClassifier
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+        except ImportError:
+            raise AutoAnnotationError("scikit-learn not installed. Please install: pip install scikit-learn")
+        
+        # Filter data items - only use labeled (non-Review) annotations
+        labeled_items = [
+            item for item in self.current_data_items
+            if getattr(item.effective_label, 'short_label_code', '') != REVIEW_LABEL
+        ]
+        
+        if len(labeled_items) < 2:
+            raise AutoAnnotationError("Need at least 2 labeled annotations to train model")
+        
+        # Get unique classes
+        label_to_items = {}
+        for item in labeled_items:
+            label_code = item.effective_label.short_label_code
+            if label_code not in label_to_items:
+                label_to_items[label_code] = []
+            label_to_items[label_code].append(item)
+        
+        classes = sorted(label_to_items.keys())
+        
+        if len(classes) < 2:
+            raise AutoAnnotationError("Need at least 2 different classes to train model")
+        
+        # Check for cold start / class imbalance
+        min_samples = min(len(items) for items in label_to_items.values())
+        max_samples = max(len(items) for items in label_to_items.values())
+        
+        if min_samples < 2:
+            raise AutoAnnotationError(f"Some classes have fewer than 2 examples. Cannot train.")
+        
+        warnings_text = []
+        if min_samples < 5:
+            warnings_text.append(f"⚠️ Cold start detected: minimum {min_samples} examples per class")
+        
+        if max_samples / min_samples > 5:
+            warnings_text.append(f"⚠️ Class imbalance: {max_samples}:{min_samples} ratio")
+        
+        # Extract features
+        try:
+            X = self.get_features_for_training(labeled_items, feature_type)
+            if X is None:
+                raise AutoAnnotationError(f"No {feature_type} features available")
+        except Exception as e:
+            raise AutoAnnotationError(f"Failed to extract features: {str(e)}")
+        
+        # Create labels
+        class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+        idx_to_class = {idx: cls for cls, idx in class_to_idx.items()}
+        
+        y = np.array([class_to_idx[item.effective_label.short_label_code] 
+                     for item in labeled_items])
+        
+        # Normalize features (especially important for SVC)
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Create model
+        if model_params is None:
+            model_params = {}
+        
+        if model_type == 'random_forest':
+            model = RandomForestClassifier(
+                n_estimators=model_params.get('n_estimators', 100),
+                max_depth=model_params.get('max_depth', 10),
+                random_state=42,
+                class_weight='balanced'  # Handle imbalance
+            )
+        elif model_type == 'svc':
+            model = SVC(
+                C=model_params.get('C', 1.0),
+                kernel=model_params.get('kernel', 'rbf'),
+                probability=True,  # Enable probability estimates
+                random_state=42,
+                class_weight='balanced'
+            )
+        elif model_type == 'knn':
+            model = KNeighborsClassifier(
+                n_neighbors=min(model_params.get('n_neighbors', 5), len(labeled_items) - 1)
+            )
+        else:
+            raise AutoAnnotationError(f"Unknown model type: {model_type}")
+        
+        # Train model
+        model.fit(X_scaled, y)
+        
+        # Evaluate on training data
+        y_pred = model.predict(X_scaled)
+        accuracy = accuracy_score(y, y_pred)
+        
+        # Get classification report
+        report = classification_report(y, y_pred, target_names=classes, zero_division=0)
+        
+        # Get confusion matrix
+        cm = confusion_matrix(y, y_pred)
+        
+        result = {
+            'model': model,
+            'scaler': scaler,
+            'classes': classes,
+            'class_to_idx': class_to_idx,
+            'idx_to_class': idx_to_class,
+            'accuracy': accuracy,
+            'report': report,
+            'confusion_matrix': cm,
+            'warnings': warnings_text,
+            'n_samples': len(labeled_items),
+            'feature_type': feature_type
+        }
+        
+        return result
+    
+    def predict_with_model(self, data_items, model, scaler, class_to_idx, idx_to_class, feature_type='full'):
+        """
+        Predict labels for data items using trained model.
+        
+        Args:
+            data_items: List of AnnotationDataItem objects
+            model: Trained scikit-learn model
+            scaler: Fitted StandardScaler
+            class_to_idx: Dict mapping class names to indices
+            idx_to_class: Dict mapping indices to class names
+            feature_type: 'full' or 'reduced'
+            
+        Returns:
+            None (predictions stored in data_items.ml_prediction)
+        """
+        if not data_items:
+            return
+        
+        # Extract features
+        try:
+            X = self.get_features_for_training(data_items, feature_type)
+            if X is None:
+                return
+        except Exception as e:
+            print(f"Failed to extract features for prediction: {e}")
+            return
+        
+        # Normalize
+        X_scaled = scaler.transform(X)
+        
+        # Predict probabilities
+        probabilities = model.predict_proba(X_scaled)
+        
+        # Store predictions in data items
+        for i, item in enumerate(data_items):
+            probs = probabilities[i]
+            
+            # Get top prediction
+            top_idx = np.argmax(probs)
+            top_label = idx_to_class[top_idx]
+            top_conf = probs[top_idx]
+            
+            # Get top 3 predictions
+            top_3_indices = np.argsort(probs)[-3:][::-1]
+            top_predictions = [
+                {'label': idx_to_class[idx], 'confidence': probs[idx]}
+                for idx in top_3_indices
+            ]
+            
+            # Calculate margin (difference between top 2)
+            if len(probs) > 1:
+                sorted_probs = np.sort(probs)
+                margin = sorted_probs[-1] - sorted_probs[-2]
+            else:
+                margin = 1.0
+            
+            item.ml_prediction = {
+                'label': top_label,
+                'confidence': float(top_conf),
+                'margin': float(margin),
+                'top_predictions': top_predictions,
+                'probabilities': {idx_to_class[j]: float(probs[j]) 
+                                for j in range(len(probs))}
+            }
+    
+    def get_next_annotation_batch(self, model, scaler, class_to_idx, feature_type='full', batch_size=20):
+        """
+        Get next batch of annotations to label using active learning strategies.
+        Combines uncertainty sampling, margin sampling, and diversity.
+        
+        Args:
+            model: Trained model
+            scaler: Fitted scaler
+            class_to_idx: Class mapping
+            feature_type: Feature type used
+            batch_size: Number of annotations to return
+            
+        Returns:
+            List of AnnotationDataItem objects sorted by priority
+        """
+        # Get unlabeled (Review) annotations
+        unlabeled_items = [
+            item for item in self.current_data_items
+            if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        ]
+        
+        if not unlabeled_items:
+            return []
+        
+        idx_to_class = {idx: cls for cls, idx in class_to_idx.items()}
+        
+        # Get predictions for all unlabeled items
+        self.predict_with_model(unlabeled_items, model, scaler, class_to_idx, idx_to_class, feature_type)
+        
+        # Score items for active learning
+        scored_items = []
+        for item in unlabeled_items:
+            if not hasattr(item, 'ml_prediction'):
+                continue
+            
+            pred = item.ml_prediction
+            
+            # Uncertainty score (low confidence = high priority)
+            uncertainty_score = 1.0 - pred['confidence']
+            
+            # Margin score (small margin = high priority)
+            margin_score = 1.0 - pred['margin']
+            
+            # Diversity score (distance from training set in feature space)
+            # For now, use a simple heuristic based on prediction entropy
+            probs = list(pred['probabilities'].values())
+            entropy = -sum(p * np.log(p + 1e-10) for p in probs if p > 0)
+            max_entropy = np.log(len(probs))
+            diversity_score = entropy / max_entropy if max_entropy > 0 else 0
+            
+            # Combined score (weighted average)
+            combined_score = (0.4 * uncertainty_score + 
+                            0.4 * margin_score + 
+                            0.2 * diversity_score)
+            
+            scored_items.append((combined_score, item))
+        
+        # Sort by score (highest first) and return top batch_size
+        scored_items.sort(key=lambda x: x[0], reverse=True)
+        batch = [item for score, item in scored_items[:batch_size]]
+        
+        return batch
+    
+    def auto_label_confident_predictions(self, model, scaler, class_to_idx, idx_to_class, 
+                                        feature_type='full', threshold=0.95):
+        """
+        Automatically apply labels to high-confidence predictions.
+        
+        Args:
+            model: Trained model
+            scaler: Fitted scaler
+            class_to_idx: Class mapping
+            idx_to_class: Reverse class mapping
+            feature_type: Feature type
+            threshold: Minimum confidence for auto-labeling
+            
+        Returns:
+            Number of annotations auto-labeled
+        """
+        # Get Review annotations
+        review_items = [
+            item for item in self.current_data_items
+            if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        ]
+        
+        if not review_items:
+            return 0
+        
+        # Get predictions
+        self.predict_with_model(review_items, model, scaler, class_to_idx, idx_to_class, feature_type)
+        
+        # Apply labels where confidence > threshold
+        count = 0
+        for item in review_items:
+            if not hasattr(item, 'ml_prediction'):
+                continue
+            
+            pred = item.ml_prediction
+            if pred['confidence'] >= threshold:
+                # Find label object
+                predicted_label_code = pred['label']
+                label_obj = None
+                for label in self.main_window.label_window.labels:
+                    if label.short_label_code == predicted_label_code:
+                        label_obj = label
+                        break
+                
+                if label_obj:
+                    item.annotation.update_label(label_obj)
+                    count += 1
+        
+        # Update displays
+        if count > 0:
+            self.annotation_viewer.update_annotations(self.current_data_items)
+            self.embedding_viewer.update_embeddings(self.current_data_items, 
+                                                   2 if not hasattr(self.current_data_items[0], 'embedding_z') else 3)
+        
+        return count
+    
+    def validate_training_labels(self):
+        """
+        Use anomaly detection to identify potentially mislabeled training data.
+        
+        Returns:
+            List of AnnotationDataItem objects that may be mislabeled
+        """
+        # Get labeled (non-Review) annotations
+        labeled_items = [
+            item for item in self.current_data_items
+            if getattr(item.effective_label, 'short_label_code', '') != REVIEW_LABEL
+        ]
+        
+        if len(labeled_items) < 10:
+            return []
+        
+        # Run anomaly detection on labeled set
+        # Group by label and find anomalies within each group
+        from collections import defaultdict
+        label_groups = defaultdict(list)
+        
+        for item in labeled_items:
+            label_code = item.effective_label.short_label_code
+            label_groups[label_code].append(item)
+        
+        flagged_items = []
+        
+        for label_code, items in label_groups.items():
+            if len(items) < 5:  # Skip small groups
+                continue
+            
+            # Run anomaly detection on this group
+            # Temporarily set these as the data items
+            original_items = self.current_data_items
+            self.current_data_items = items
+            
+            try:
+                # Use existing anomaly detection
+                self.find_anomalies()
+                
+                # Items with high anomaly scores are potentially mislabeled
+                for item in items:
+                    if hasattr(item, 'anomaly_score') and item.anomaly_score > 0.7:
+                        flagged_items.append(item)
+            finally:
+                self.current_data_items = original_items
+        
+        return flagged_items
+    
+    def open_auto_annotation_wizard(self):
+        """Open the Auto-Annotation Wizard."""
+        try:
+            from sklearn.ensemble import RandomForestClassifier
+        except ImportError:
+            QMessageBox.critical(
+                self,
+                "Missing Dependencies",
+                "scikit-learn is required for the Auto-Annotation Wizard.\n\n"
+                "Install it with: pip install scikit-learn"
+            )
+            return
+        
+        # Create wizard if it doesn't exist
+        if self.auto_annotation_wizard is None:
+            self.auto_annotation_wizard = AutoAnnotationWizard(self, self)
+            self.auto_annotation_wizard.annotations_updated.connect(self._on_wizard_annotations_updated)
+        
+        # Show wizard (modeless)
+        self.auto_annotation_wizard.show()
+        self.auto_annotation_wizard.raise_()
+        self.auto_annotation_wizard.activateWindow()
+    
+    def _on_wizard_annotations_updated(self, updated_items):
+        """Handle annotations updated from wizard."""
+        # Refresh views
+        self.annotation_viewer.update_annotations(self.current_data_items)
+        
+        n_dims = 2
+        if self.current_data_items and hasattr(self.current_data_items[0], 'embedding_z'):
+            if self.current_data_items[0].embedding_z is not None:
+                n_dims = 3
+        
+        self.embedding_viewer.update_embeddings(self.current_data_items, n_dims)
+        
+        # Update button states
+        self.update_button_states()
+    
+    def _update_wizard_button_state(self):
+        """Update the Auto-Annotation Wizard button state."""
+        # Enable if we have features or embeddings
+        has_features = bool(self.current_feature_generating_model)
+        has_embeddings = (self.current_data_items and 
+                         hasattr(self.current_data_items[0], 'embedding_x') and
+                         self.current_data_items[0].embedding_x is not None)
+        
+        self.auto_annotation_button.setEnabled(has_features or has_embeddings)
             
     def _cleanup_resources(self):
         """Clean up resources."""
