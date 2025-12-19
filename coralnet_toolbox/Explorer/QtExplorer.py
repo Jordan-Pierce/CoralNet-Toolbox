@@ -2520,7 +2520,16 @@ class ExplorerWindow(QMainWindow):
                         break
                 
                 if label_obj:
-                    item.annotation.update_label(label_obj)
+                    # Set preview label and apply it permanently
+                    item.set_preview_label(label_obj)
+                    item.apply_preview_permanently()
+                    
+                    # Update machine confidence
+                    if 'probabilities' in pred:
+                        item.annotation.update_machine_confidence(
+                            pred['probabilities'],
+                            from_import=False
+                        )
                     count += 1
         
         # Update displays
@@ -2530,55 +2539,6 @@ class ExplorerWindow(QMainWindow):
                                                    2 if not hasattr(self.current_data_items[0], 'embedding_z') else 3)
         
         return count
-    
-    def validate_training_labels(self):
-        """
-        Use anomaly detection to identify potentially mislabeled training data.
-        
-        Returns:
-            List of AnnotationDataItem objects that may be mislabeled
-        """
-        # Get labeled (non-Review) annotations
-        labeled_items = [
-            item for item in self.current_data_items
-            if getattr(item.effective_label, 'short_label_code', '') != REVIEW_LABEL
-        ]
-        
-        if len(labeled_items) < 10:
-            return []
-        
-        # Run anomaly detection on labeled set
-        # Group by label and find anomalies within each group
-        from collections import defaultdict
-        label_groups = defaultdict(list)
-        
-        for item in labeled_items:
-            label_code = item.effective_label.short_label_code
-            label_groups[label_code].append(item)
-        
-        flagged_items = []
-        
-        for label_code, items in label_groups.items():
-            if len(items) < 5:  # Skip small groups
-                continue
-            
-            # Run anomaly detection on this group
-            # Temporarily set these as the data items
-            original_items = self.current_data_items
-            self.current_data_items = items
-            
-            try:
-                # Use existing anomaly detection
-                self.find_anomalies()
-                
-                # Items with high anomaly scores are potentially mislabeled
-                for item in items:
-                    if hasattr(item, 'anomaly_score') and item.anomaly_score > 0.7:
-                        flagged_items.append(item)
-            finally:
-                self.current_data_items = original_items
-        
-        return flagged_items
     
     def open_auto_annotation_wizard(self):
         """Open the Auto-Annotation Wizard."""

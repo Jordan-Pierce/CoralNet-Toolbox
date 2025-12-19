@@ -1,6 +1,7 @@
 import warnings
-import numpy as np
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+
+from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QHBoxLayout,
                              QLabel, QListWidget, QPushButton, QRadioButton,
                              QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
@@ -18,11 +19,22 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
     print("Warning: scikit-learn not installed. Auto-annotation wizard will not be available.")
+    
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+    
+    
+# ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 REVIEW_LABEL = 'Review'
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class AutoAnnotationError(Exception):
@@ -103,11 +115,18 @@ class AutoAnnotationWizard(QDialog):
         self.next_button = QPushButton("Next >")
         self.cancel_button = QPushButton("Cancel")
         
+        # Retrain button in bottom-left
+        self.retrain_now_button = QPushButton("🔄 Retrain Model")
+        self.retrain_now_button.setToolTip("Manually trigger model retraining with current labels")
+        self.retrain_now_button.clicked.connect(self._retrain_now)
+        self.retrain_now_button.setVisible(False)  # Only show on annotation page
+        
         self.back_button.clicked.connect(self._go_back)
         self.next_button.clicked.connect(self._go_next)
         self.cancel_button.clicked.connect(self.close)
         
         nav_layout.addWidget(self.back_button)
+        nav_layout.addWidget(self.retrain_now_button)
         nav_layout.addStretch()
         nav_layout.addWidget(self.cancel_button)
         nav_layout.addWidget(self.next_button)
@@ -124,6 +143,18 @@ class AutoAnnotationWizard(QDialog):
         # Title
         title = QLabel("<h2>Setup: Model & Feature Selection</h2>")
         layout.addWidget(title)
+        
+        # Information box
+        info_box = QGroupBox("Information")
+        info_layout = QVBoxLayout(info_box)
+        info_text = QLabel(
+            "Configure the machine learning model to assist with annotation labeling. "
+            "Choose between full features (more accurate) or reduced embeddings (faster). "
+            "Select a model algorithm and adjust hyperparameters based on your dataset size and complexity."
+        )
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        layout.addWidget(info_box)
         
         # Dataset info
         info_group = QGroupBox("Dataset Information")
@@ -241,6 +272,18 @@ class AutoAnnotationWizard(QDialog):
         title = QLabel("<h2>Training: Model Performance</h2>")
         layout.addWidget(title)
         
+        # Information box
+        info_box = QGroupBox("Information")
+        info_layout = QVBoxLayout(info_box)
+        info_text = QLabel(
+            "Train the model on your labeled annotations. The model will learn patterns from your existing labels "
+            "to predict labels for unlabeled annotations. Review the accuracy metrics and confusion matrix to assess "
+            "model performance before proceeding to annotation."
+        )
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        layout.addWidget(info_box)
+        
         # Status
         self.training_status_label = QLabel("Press 'Train Model' to begin...")
         layout.addWidget(self.training_status_label)
@@ -262,6 +305,9 @@ class AutoAnnotationWizard(QDialog):
         self.metrics_text = QTextEdit()
         self.metrics_text.setReadOnly(True)
         self.metrics_text.setMaximumHeight(200)
+        # Use monospace font for proper alignment of classification report
+        font = QFont("Courier New", 9)
+        self.metrics_text.setFont(font)
         metrics_layout.addWidget(self.metrics_text)
         
         layout.addWidget(metrics_group)
@@ -288,77 +334,115 @@ class AutoAnnotationWizard(QDialog):
         title = QLabel("<h2>Annotation: Intelligent Labeling</h2>")
         layout.addWidget(title)
         
-        # Progress info
-        progress_group = QGroupBox("Progress")
-        progress_layout = QFormLayout(progress_group)
+        # Information box
+        info_box = QGroupBox("Information")
+        info_layout = QVBoxLayout(info_box)
+        info_text = QLabel(
+            "Review each annotation and its predicted label. Accept confident predictions to apply them, "
+            "reject uncertain ones for manual review in the main interface, or skip to return later. "
+            "The model will automatically retrain after a set number of labels to improve predictions."
+        )
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        layout.addWidget(info_box)
         
+        # Progress info with visual progress bar
+        progress_group = QGroupBox("Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        
+        # Overall progress bar
+        self.overall_progress_bar = QProgressBar()
+        self.overall_progress_bar.setTextVisible(True)
+        self.overall_progress_bar.setFormat("%p% Complete")
+        progress_layout.addWidget(self.overall_progress_bar)
+        
+        # Detailed stats in grid layout
+        stats_layout = QFormLayout()
         self.progress_label = QLabel("0 / 0")
         self.auto_label_progress_label = QLabel("0")
         self.remaining_review_label = QLabel("0")
         self.model_accuracy_label = QLabel("N/A")
         
-        progress_layout.addRow("Manually labeled:", self.progress_label)
-        progress_layout.addRow("Auto-labeled:", self.auto_label_progress_label)
-        progress_layout.addRow("Remaining 'Review':", self.remaining_review_label)
-        progress_layout.addRow("Est. accuracy:", self.model_accuracy_label)
+        stats_layout.addRow("<b>Total labeled:</b>", self.progress_label)
+        stats_layout.addRow("<b>Auto-labeled:</b>", self.auto_label_progress_label)
+        stats_layout.addRow("<b>Remaining 'Review':</b>", self.remaining_review_label)
+        stats_layout.addRow("<b>Model accuracy:</b>", self.model_accuracy_label)
         
+        progress_layout.addLayout(stats_layout)
         layout.addWidget(progress_group)
         
-        # Current annotation info
-        current_group = QGroupBox("Current Annotation")
+        # Current annotation info with better styling
+        current_group = QGroupBox("Current Annotation Under Review")
         current_layout = QVBoxLayout(current_group)
         
+        # Annotation ID and position in batch
         self.current_annotation_label = QLabel("No annotation selected")
+        self.current_annotation_label.setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; }")
         current_layout.addWidget(self.current_annotation_label)
         
-        # Prediction display
+        # Current label display
+        current_label_layout = QHBoxLayout()
+        current_label_layout.addWidget(QLabel("<b>Current Label:</b>"))
+        self.current_label_display = QLabel("-")
+        self.current_label_display.setStyleSheet("QLabel { color: #d32f2f; }")
+        current_label_layout.addWidget(self.current_label_display)
+        current_label_layout.addStretch()
+        current_layout.addLayout(current_label_layout)
+        
+        # Prediction display with better styling
         pred_layout = QFormLayout()
+        
         self.predicted_label_label = QLabel("-")
+        self.predicted_label_label.setStyleSheet("QLabel { font-weight: bold; color: #1976d2; font-size: 12pt; }")
+        
         self.confidence_label = QLabel("-")
         self.confidence_bar = QProgressBar()
-        self.top_predictions_label = QLabel("-")
+        self.confidence_bar.setStyleSheet(
+            "QProgressBar::chunk { background-color: #4caf50; }"
+        )
         
-        pred_layout.addRow("Predicted Label:", self.predicted_label_label)
-        pred_layout.addRow("Confidence:", self.confidence_label)
+        self.top_predictions_label = QLabel("-")
+        self.top_predictions_label.setWordWrap(True)
+        
+        pred_layout.addRow("<b>Predicted Label:</b>", self.predicted_label_label)
+        pred_layout.addRow("<b>Confidence:</b>", self.confidence_label)
         pred_layout.addRow("", self.confidence_bar)
-        pred_layout.addRow("Top 3 Alternatives:", self.top_predictions_label)
+        pred_layout.addRow("<b>Alternatives:</b>", self.top_predictions_label)
         
         current_layout.addLayout(pred_layout)
         layout.addWidget(current_group)
         
-        # Action buttons
-        action_group = QGroupBox("Actions")
-        action_layout = QVBoxLayout(action_group)
+        # Annotation actions
+        actions_group = QGroupBox("Annotation Actions")
+        actions_layout = QVBoxLayout(actions_group)
         
-        button_row1 = QHBoxLayout()
-        self.accept_button = QPushButton("Accept Prediction")
-        self.reject_button = QPushButton("Reject / Manual Label")
-        self.skip_button = QPushButton("Skip")
+        # Row 1: Individual actions
+        row1 = QHBoxLayout()
+        self.accept_button = QPushButton("✓ Accept Prediction")
+        self.skip_button = QPushButton("→ Skip / Next")
+        self.recenter_button = QPushButton("🎯 Re-center")
+        self.recenter_button.setToolTip("Center the embedding view on the current annotation")
         
         self.accept_button.clicked.connect(self._accept_prediction)
-        self.reject_button.clicked.connect(self._reject_prediction)
         self.skip_button.clicked.connect(self._skip_annotation)
+        self.recenter_button.clicked.connect(self._recenter_on_current)
         
-        button_row1.addWidget(self.accept_button)
-        button_row1.addWidget(self.reject_button)
-        button_row1.addWidget(self.skip_button)
-        action_layout.addLayout(button_row1)
+        row1.addWidget(self.accept_button)
+        row1.addWidget(self.skip_button)
+        row1.addWidget(self.recenter_button)
+        actions_layout.addLayout(row1)
         
-        button_row2 = QHBoxLayout()
-        self.retrain_now_button = QPushButton("Retrain Now")
-        self.auto_label_all_button = QPushButton("Auto-Label All Confident")
-        self.validate_button = QPushButton("Validate Training Labels")
-        
-        self.retrain_now_button.clicked.connect(self._retrain_now)
+        # Row 2: Auto-label action
+        row2 = QHBoxLayout()
+        self.auto_label_all_button = QPushButton("⚡ Auto-Label All Confident")
+        self.auto_label_all_button.setToolTip(
+            f"Automatically apply predicted labels when confidence > {int(self.auto_label_threshold * 100)}%"
+        )
         self.auto_label_all_button.clicked.connect(self._auto_label_all)
-        self.validate_button.clicked.connect(self._validate_labels)
+        row2.addWidget(self.auto_label_all_button)
+        actions_layout.addLayout(row2)
         
-        button_row2.addWidget(self.retrain_now_button)
-        button_row2.addWidget(self.auto_label_all_button)
-        button_row2.addWidget(self.validate_button)
-        action_layout.addLayout(button_row2)
-        
-        layout.addWidget(action_group)
+        layout.addWidget(actions_group)
         layout.addStretch()
         
         return page
@@ -374,12 +458,15 @@ class AutoAnnotationWizard(QDialog):
         if self.current_page == 0:
             self.next_button.setText("Next >")
             self.next_button.setEnabled(True)
+            self.retrain_now_button.setVisible(False)
         elif self.current_page == 1:
             self.next_button.setText("Start Annotating >")
             self.next_button.setEnabled(self.trained_model is not None)
+            self.retrain_now_button.setVisible(False)
         elif self.current_page == 2:
             self.next_button.setText("Finish")
             self.next_button.setEnabled(True)
+            self.retrain_now_button.setVisible(True)
     
     def _go_back(self):
         """Navigate to previous page."""
@@ -400,7 +487,7 @@ class AutoAnnotationWizard(QDialog):
             if self.trained_model is None:
                 QMessageBox.warning(self, 
                                     "Not Ready", 
-                                   "Please train the model before proceeding.")
+                                    "Please train the model before proceeding.")
                 return
             self._start_annotation()
             self.current_page = 2
@@ -558,10 +645,17 @@ class AutoAnnotationWizard(QDialog):
         review_count = sum(1 for item in data_items 
                           if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
         
-        self.progress_label.setText(f"{self.labeled_count} / {total}")
+        labeled = total - review_count
+        
+        self.progress_label.setText(f"{labeled} / {total}")
         self.auto_label_progress_label.setText(str(self.auto_labeled_count))
         self.remaining_review_label.setText(str(review_count))
         self.model_accuracy_label.setText(f"{self.training_score:.1%}")
+        
+        # Update progress bar (0-100%)
+        if total > 0:
+            progress_percent = int((labeled / total) * 100)
+            self.overall_progress_bar.setValue(progress_percent)
     
     def _get_next_batch(self):
         """Get next batch of annotations to label."""
@@ -588,16 +682,25 @@ class AutoAnnotationWizard(QDialog):
     def _show_current_annotation(self):
         """Display information about current annotation."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
-            self.current_annotation_label.setText("No more annotations in current batch")
+            self.current_annotation_label.setText("✓ Batch Complete - No more annotations")
             self._enable_annotation_buttons(False)
             return
         
         item = self.current_batch[self.current_batch_index]
         
-        # Show annotation info
-        annotation_text = f"Annotation {self.current_batch_index + 1} of {len(self.current_batch)}\n"
-        annotation_text += f"ID: {item.annotation.id[:8]}..."
+        # Show annotation info with progress
+        annotation_text = f"📍 Annotation {self.current_batch_index + 1} of {len(self.current_batch)} in current batch"
+        annotation_text += f"<br><small>ID: {item.annotation.id[:12]}...</small>"
         self.current_annotation_label.setText(annotation_text)
+        
+        # Show current label
+        current_label = getattr(item.effective_label, 'short_label_code', 'Unknown')
+        if current_label == REVIEW_LABEL:
+            self.current_label_display.setText(f"{current_label} (Needs labeling)")
+            self.current_label_display.setStyleSheet("QLabel { color: #d32f2f; font-weight: bold; }")
+        else:
+            self.current_label_display.setText(current_label)
+            self.current_label_display.setStyleSheet("QLabel { color: #388e3c; font-weight: bold; }")
         
         # Show prediction
         if hasattr(item, 'ml_prediction') and item.ml_prediction:
@@ -606,9 +709,17 @@ class AutoAnnotationWizard(QDialog):
             self.confidence_label.setText(f"{pred['confidence']:.1%}")
             self.confidence_bar.setValue(int(pred['confidence'] * 100))
             
+            # Color code confidence bar
+            if pred['confidence'] >= 0.9:
+                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #4caf50; }")
+            elif pred['confidence'] >= 0.7:
+                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #ff9800; }")
+            else:
+                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #f44336; }")
+            
             # Format top predictions
             top_3_text = "<br>".join([
-                f"{i+1}. {p['label']}: {p['confidence']:.1%}"
+                f"<b>{i+1}.</b> {p['label']}: {p['confidence']:.1%}"
                 for i, p in enumerate(pred['top_predictions'][:3])
             ])
             self.top_predictions_label.setText(top_3_text)
@@ -617,6 +728,12 @@ class AutoAnnotationWizard(QDialog):
             self.confidence_label.setText("N/A")
             self.confidence_bar.setValue(0)
             self.top_predictions_label.setText("N/A")
+        
+        # Select and highlight in viewers
+        self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
+        
+        # Center the embedding view on the selected annotation
+        self.explorer_window.embedding_viewer.center_on_selection()
         
         # Highlight in viewers - call animate on the item's graphics representations
         if hasattr(item, 'graphics_item') and item.graphics_item:
@@ -629,8 +746,8 @@ class AutoAnnotationWizard(QDialog):
     def _enable_annotation_buttons(self, enabled):
         """Enable/disable annotation action buttons."""
         self.accept_button.setEnabled(enabled)
-        self.reject_button.setEnabled(enabled)
         self.skip_button.setEnabled(enabled)
+        self.recenter_button.setEnabled(enabled)
     
     def _accept_prediction(self):
         """Accept the predicted label."""
@@ -645,29 +762,102 @@ class AutoAnnotationWizard(QDialog):
             label_obj = self._get_label_by_code(predicted_label)
             
             if label_obj:
-                item.annotation.update_label(label_obj)
-                self.labeled_count += 1
+                # Update machine confidence from prediction first (before applying label)
+                if 'probabilities' in item.ml_prediction:
+                    item.annotation.update_machine_confidence(
+                        item.ml_prediction['probabilities'],
+                        from_import=True  # Don't overwrite the label we're about to apply
+                    )
+                
+                # Set preview label and apply it permanently
+                item.set_preview_label(label_obj)
+                item.apply_preview_permanently()
                 self.labels_since_retrain += 1
+                
+                # Refresh the viewers to show the updated label
+                self.explorer_window.annotation_viewer.update_annotations(
+                    self.explorer_window.current_data_items
+                )
         
         self._move_to_next_annotation()
     
-    def _reject_prediction(self):
-        """Reject prediction - user will manually label via main UI."""
+    def _accept_current_batch(self):
+        """Accept all predictions in the current batch."""
+        if not self.current_batch:
+            return
+        
+        accepted_count = 0
+        
+        for item in self.current_batch:
+            if hasattr(item, 'ml_prediction') and item.ml_prediction:
+                predicted_label = item.ml_prediction['label']
+                label_obj = self._get_label_by_code(predicted_label)
+                
+                if label_obj:
+                    item.annotation.update_label(label_obj)
+                    accepted_count += 1
+                    self.labels_since_retrain += 1
+        
+        # Refresh viewers
+        self.explorer_window.annotation_viewer.update_annotations(
+            self.explorer_window.current_data_items
+        )
+        
+        QMessageBox.information(
+            self,
+            "Batch Accepted",
+            f"Successfully applied {accepted_count} predicted labels from the current batch."
+        )
+        
+        # Check if we need to retrain
+        if self.labels_since_retrain >= self.retrain_interval:
+            reply = QMessageBox.question(
+                self,
+                "Retrain Model?",
+                f"You've labeled {self.labels_since_retrain} annotations. Retrain the model now?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self._retrain_now()
+        
+        # Get next batch
+        self._update_progress_display()
+        self._get_next_batch()
+        self._show_current_annotation()
+    
+    def _recenter_on_current(self):
+        """Re-center the embedding view on the current annotation."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
             return
         
         item = self.current_batch[self.current_batch_index]
         
-        # Show message
-        QMessageBox.information(
-            self,
-            "Manual Labeling",
-            "Use the Label Window in the main interface to assign the correct label.\n\n"
-            "The annotation will remain highlighted for your reference."
-        )
+        # Re-select and center on the annotation
+        self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
+        self.explorer_window.embedding_viewer.center_on_selection()
         
-        # Keep annotation highlighted but move to next
-        self._move_to_next_annotation()
+        # Re-animate the graphics items
+        if hasattr(item, 'graphics_item') and item.graphics_item:
+            item.graphics_item.animate()
+        if hasattr(item, 'widget') and item.widget:
+            item.widget.animate()
+    
+    def _recenter_on_current(self):
+        """Re-center the embedding view on the current annotation."""
+        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
+            return
+        
+        item = self.current_batch[self.current_batch_index]
+        
+        # Re-select and center on the annotation
+        self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
+        self.explorer_window.embedding_viewer.center_on_selection()
+        
+        # Re-animate the graphics items
+        if hasattr(item, 'graphics_item') and item.graphics_item:
+            item.graphics_item.animate()
+        if hasattr(item, 'widget') and item.widget:
+            item.widget.animate()
     
     def _skip_annotation(self):
         """Skip current annotation."""
@@ -763,32 +953,6 @@ class AutoAnnotationWizard(QDialog):
             except Exception as e:
                 QMessageBox.warning(self, "Auto-Label Error", f"Failed: {str(e)}")
     
-    def _validate_labels(self):
-        """Validate training labels using anomaly detection."""
-        try:
-            flagged_items = self.explorer_window.validate_training_labels()
-            
-            if flagged_items:
-                QMessageBox.warning(
-                    self,
-                    "Validation Results",
-                    f"Found {len(flagged_items)} potentially mislabeled annotations.\n\n"
-                    "These have been highlighted in the viewers for your review."
-                )
-                
-                # Display flagged items
-                flagged_ids = [item.annotation.id for item in flagged_items]
-                self.explorer_window.annotation_viewer.display_and_isolate_ordered_results(flagged_ids)
-            else:
-                QMessageBox.information(
-                    self,
-                    "Validation Results",
-                    "No obvious labeling issues detected!"
-                )
-                
-        except Exception as e:
-            QMessageBox.warning(self, "Validation Error", f"Failed: {str(e)}")
-    
     def _get_label_by_code(self, label_code):
         """Get Label object from code."""
         for label in self.main_window.label_window.labels:
@@ -811,8 +975,42 @@ class AutoAnnotationWizard(QDialog):
                             if item.has_preview_changes()]
             self.annotations_updated.emit(updated_items)
             
+            # Reset wizard state for next use
+            self._reset_wizard()
+            
             # Close wizard
             self.close()
+    
+    def _reset_wizard(self):
+        """Reset wizard state to initial values."""
+        # Stop any running label check timer
+        # Reset to first page
+        self.current_page = 0
+        self.page_stack.setCurrentIndex(0)
+        
+        # Clear model state
+        self.trained_model = None
+        self.scaler = None
+        self.label_classes = []
+        self.class_to_idx = {}
+        self.idx_to_class = {}
+        self.training_score = 0.0
+        
+        # Clear progress tracking
+        self.labeled_count = 0
+        self.auto_labeled_count = 0
+        self.labels_since_retrain = 0
+        self.current_batch = []
+        self.current_batch_index = 0
+        
+        # Clear UI elements
+        self.metrics_text.clear()
+        self.confusion_table.setRowCount(0)
+        self.confusion_table.setColumnCount(0)
+        self.training_status_label.setText("Ready to train...")
+        
+        # Update navigation buttons
+        self._update_navigation_buttons()
     
     def showEvent(self, event):
         """Handle show event."""
