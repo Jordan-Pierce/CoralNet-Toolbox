@@ -1,13 +1,14 @@
 import warnings
 
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QHBoxLayout,
                              QLabel, QListWidget, QPushButton, QRadioButton,
                              QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
                              QDialog, QGroupBox, QComboBox, QDoubleSpinBox,
                              QTextEdit, QProgressBar, QFormLayout, QGridLayout,
-                             QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView)
+                             QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
+                             QTabWidget, QSlider)
 
 try:
     from sklearn.ensemble import RandomForestClassifier
@@ -78,6 +79,16 @@ class AutoAnnotationWizard(QDialog):
         self.current_batch = []
         self.current_batch_index = 0
         
+        # Annotation mode: 'active_learning' or 'bulk_labeling'
+        self.annotation_mode = 'active_learning'
+        
+        # Bulk labeling state
+        self.bulk_predictions = {}  # annotation_id -> prediction dict
+        self.bulk_confidence_threshold = 0.95  # Reset each session
+        self.bulk_preview_timer = QTimer()
+        self.bulk_preview_timer.setSingleShot(True)
+        self.bulk_preview_timer.timeout.connect(self._apply_bulk_preview_labels)
+        
         # Model parameters
         self.model_params = {
             'random_forest': {'n_estimators': 100, 'max_depth': 10},
@@ -86,7 +97,6 @@ class AutoAnnotationWizard(QDialog):
         }
         
         # Thresholds
-        self.auto_label_threshold = 0.95
         self.uncertainty_threshold = 0.60
         self.batch_size = 20
         
@@ -157,10 +167,30 @@ class AutoAnnotationWizard(QDialog):
         layout.addWidget(info_box)
         
         # Dataset info
-        info_group = QGroupBox("Dataset Information")
+        info_group = QGroupBox("📊 Dataset Information")
         info_layout = QVBoxLayout(info_group)
-        self.dataset_info_label = QLabel()
-        info_layout.addWidget(self.dataset_info_label)
+        
+        # Create a more structured layout
+        stats_layout = QFormLayout()
+        
+        self.dataset_total_label = QLabel("0")
+        self.dataset_labeled_label = QLabel("0")
+        self.dataset_review_label = QLabel("0")
+        self.dataset_classes_label = QLabel("0")
+        
+        stats_layout.addRow("<b>Total annotations:</b>", self.dataset_total_label)
+        stats_layout.addRow("<b>Labeled:</b>", self.dataset_labeled_label)
+        stats_layout.addRow("<b>Review (unlabeled):</b>", self.dataset_review_label)
+        stats_layout.addRow("<b>Unique classes:</b>", self.dataset_classes_label)
+        
+        info_layout.addLayout(stats_layout)
+        
+        # Warning label
+        self.dataset_warning_label = QLabel()
+        self.dataset_warning_label.setWordWrap(True)
+        self.dataset_warning_label.setStyleSheet("QLabel { color: #ff9800; font-weight: bold; }")
+        info_layout.addWidget(self.dataset_warning_label)
+        
         layout.addWidget(info_group)
         
         # Feature selection
@@ -178,6 +208,10 @@ class AutoAnnotationWizard(QDialog):
         self.feature_button_group.addButton(self.reduced_features_radio)
         self.full_features_radio.setChecked(True)
         
+        # Connect to reset training when feature type changes
+        self.full_features_radio.toggled.connect(self._on_setup_changed)
+        self.reduced_features_radio.toggled.connect(self._on_setup_changed)
+        
         feature_layout.addWidget(self.full_features_radio)
         feature_layout.addWidget(self.reduced_features_radio)
         layout.addWidget(feature_group)
@@ -193,6 +227,7 @@ class AutoAnnotationWizard(QDialog):
             "K-Nearest Neighbors"
         ])
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
+        self.model_combo.currentIndexChanged.connect(self._on_setup_changed)
         model_layout.addRow("Algorithm:", self.model_combo)
         
         # Model-specific parameters
@@ -235,20 +270,13 @@ class AutoAnnotationWizard(QDialog):
         model_layout.addRow(self.param_stack)
         layout.addWidget(model_group)
         
-        # Training parameters
-        param_group = QGroupBox("Training Parameters")
+        # Active Learning parameters
+        param_group = QGroupBox("Active Learning Parameters")
         param_layout = QFormLayout(param_group)
-        
-        self.auto_label_spin = QDoubleSpinBox()
-        self.auto_label_spin.setRange(0.5, 1.0)
-        self.auto_label_spin.setSingleStep(0.05)
-        self.auto_label_spin.setValue(0.95)
-        self.auto_label_spin.setToolTip("Automatically apply labels when confidence exceeds this threshold")
-        param_layout.addRow("Auto-label threshold:", self.auto_label_spin)
         
         self.batch_size_spin = QSpinBox()
         self.batch_size_spin.setRange(5, 100)
-        self.batch_size_spin.setValue(20)
+        self.batch_size_spin.setValue(10)
         self.batch_size_spin.setToolTip("Number of annotations to suggest in each batch")
         param_layout.addRow("Batch size:", self.batch_size_spin)
         
@@ -326,61 +354,79 @@ class AutoAnnotationWizard(QDialog):
         return page
     
     def _create_annotation_page(self):
-        """Page 3: Iterative annotation with predictions."""
+        """Page 3: Dual-mode intelligent labeling."""
         page = QWidget()
         layout = QVBoxLayout(page)
         
         # Title
-        title = QLabel("<h2>Annotation: Intelligent Labeling</h2>")
+        title = QLabel("<h2>Intelligent Labeling</h2>")
         layout.addWidget(title)
         
+        # Tabbed interface for two modes
+        self.annotation_tabs = QTabWidget()
+        self.annotation_tabs.currentChanged.connect(self._on_annotation_mode_changed)
+        
+        # Mode 1: Active Learning (uncertainty-driven one-by-one)
+        active_learning_tab = self._create_active_learning_tab()
+        self.annotation_tabs.addTab(active_learning_tab, "🎯 Active Learning")
+        
+        # Mode 2: Bulk Labeling (confidence-threshold-based)
+        bulk_labeling_tab = self._create_bulk_labeling_tab()
+        self.annotation_tabs.addTab(bulk_labeling_tab, "⚡ Bulk Labeling")
+        
+        layout.addWidget(self.annotation_tabs)
+        layout.addStretch()
+        
+        return page
+    
+    def _create_active_learning_tab(self):
+        """Create the Active Learning mode tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
         # Information box
-        info_box = QGroupBox("Information")
+        info_box = QGroupBox("Active Learning Mode")
         info_layout = QVBoxLayout(info_box)
         info_text = QLabel(
-            "Review each annotation and its predicted label. Accept confident predictions to apply them, "
-            "reject uncertain ones for manual review in the main interface, or skip to return later. "
-            "The model will automatically retrain after a set number of labels to improve predictions."
+            "Review annotations one-by-one, prioritized by model uncertainty. "
+            "This focuses on difficult cases to improve the model most efficiently. "
+            "The model automatically retrains as you label. Annotations are shown in the viewer below.<br><br>"
+            "<b>✓ Accept Prediction:</b> Applies the predicted label to the current annotation. "
+            "<b>→ Skip:</b> Moves to the next annotation without labeling."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         layout.addWidget(info_box)
         
-        # Progress info with visual progress bar
+        # Progress info
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
         
-        # Overall progress bar
         self.overall_progress_bar = QProgressBar()
         self.overall_progress_bar.setTextVisible(True)
         self.overall_progress_bar.setFormat("%p% Complete")
         progress_layout.addWidget(self.overall_progress_bar)
         
-        # Detailed stats in grid layout
         stats_layout = QFormLayout()
         self.progress_label = QLabel("0 / 0")
-        self.auto_label_progress_label = QLabel("0")
         self.remaining_review_label = QLabel("0")
         self.model_accuracy_label = QLabel("N/A")
         
         stats_layout.addRow("<b>Total labeled:</b>", self.progress_label)
-        stats_layout.addRow("<b>Auto-labeled:</b>", self.auto_label_progress_label)
         stats_layout.addRow("<b>Remaining 'Review':</b>", self.remaining_review_label)
         stats_layout.addRow("<b>Model accuracy:</b>", self.model_accuracy_label)
         
         progress_layout.addLayout(stats_layout)
         layout.addWidget(progress_group)
         
-        # Current annotation info with better styling
-        current_group = QGroupBox("Current Annotation Under Review")
+        # Current annotation info
+        current_group = QGroupBox("Current Annotation")
         current_layout = QVBoxLayout(current_group)
         
-        # Annotation ID and position in batch
         self.current_annotation_label = QLabel("No annotation selected")
         self.current_annotation_label.setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; }")
         current_layout.addWidget(self.current_annotation_label)
         
-        # Current label display
         current_label_layout = QHBoxLayout()
         current_label_layout.addWidget(QLabel("<b>Current Label:</b>"))
         self.current_label_display = QLabel("-")
@@ -389,18 +435,12 @@ class AutoAnnotationWizard(QDialog):
         current_label_layout.addStretch()
         current_layout.addLayout(current_label_layout)
         
-        # Prediction display with better styling
         pred_layout = QFormLayout()
-        
         self.predicted_label_label = QLabel("-")
         self.predicted_label_label.setStyleSheet("QLabel { font-weight: bold; color: #1976d2; font-size: 12pt; }")
-        
         self.confidence_label = QLabel("-")
         self.confidence_bar = QProgressBar()
-        self.confidence_bar.setStyleSheet(
-            "QProgressBar::chunk { background-color: #4caf50; }"
-        )
-        
+        self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #4caf50; }")
         self.top_predictions_label = QLabel("-")
         self.top_predictions_label.setWordWrap(True)
         
@@ -408,44 +448,174 @@ class AutoAnnotationWizard(QDialog):
         pred_layout.addRow("<b>Confidence:</b>", self.confidence_label)
         pred_layout.addRow("", self.confidence_bar)
         pred_layout.addRow("<b>Alternatives:</b>", self.top_predictions_label)
-        
         current_layout.addLayout(pred_layout)
         layout.addWidget(current_group)
         
         # Annotation actions
-        actions_group = QGroupBox("Annotation Actions")
+        actions_group = QGroupBox("Actions")
         actions_layout = QVBoxLayout(actions_group)
         
-        # Row 1: Individual actions
         row1 = QHBoxLayout()
         self.accept_button = QPushButton("✓ Accept Prediction")
         self.skip_button = QPushButton("→ Skip / Next")
-        
         self.accept_button.clicked.connect(self._accept_prediction)
         self.skip_button.clicked.connect(self._skip_annotation)
-        
         row1.addWidget(self.accept_button)
         row1.addWidget(self.skip_button)
         actions_layout.addLayout(row1)
         
-        # Row 2: Auto-label action
-        row2 = QHBoxLayout()
-        self.auto_label_all_button = QPushButton("⚡ Auto-Label All Confident")
-        self.auto_label_all_button.setToolTip(
-            f"Automatically apply predicted labels when confidence > {int(self.auto_label_threshold * 100)}%"
+        layout.addWidget(actions_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def _create_bulk_labeling_tab(self):
+        """Create the Bulk Labeling mode tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Information box
+        info_box = QGroupBox("Bulk Labeling Mode")
+        info_layout = QVBoxLayout(info_box)
+        info_text = QLabel(
+            "Interactively adjust the confidence threshold to preview automatic label assignments. "
+            "Annotations are sorted by predicted label in the viewer below. "
+            "Adjust the slider to see which annotations will be auto-labeled at different thresholds.<br><br>"
+            "<b>Apply All Preview Labels:</b> Permanently applies all previewed labels to annotations. "
+            "<b>Clear Preview Labels:</b> Removes all preview labels without saving changes."
         )
-        self.auto_label_all_button.clicked.connect(self._auto_label_all)
-        row2.addWidget(self.auto_label_all_button)
-        actions_layout.addLayout(row2)
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        layout.addWidget(info_box)
+        
+        # Progress display
+        progress_group = QGroupBox("Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        
+        self.bulk_overall_progress_bar = QProgressBar()
+        self.bulk_overall_progress_bar.setTextVisible(True)
+        self.bulk_overall_progress_bar.setFormat("%p% Complete")
+        progress_layout.addWidget(self.bulk_overall_progress_bar)
+        
+        stats_layout = QFormLayout()
+        self.bulk_progress_label = QLabel("0 / 0")
+        self.bulk_remaining_review_label = QLabel("0")
+        self.bulk_model_accuracy_label = QLabel("N/A")
+        
+        stats_layout.addRow("<b>Total labeled:</b>", self.bulk_progress_label)
+        stats_layout.addRow("<b>Remaining 'Review':</b>", self.bulk_remaining_review_label)
+        stats_layout.addRow("<b>Model accuracy:</b>", self.bulk_model_accuracy_label)
+        
+        progress_layout.addLayout(stats_layout)
+        layout.addWidget(progress_group)
+        
+        # Confidence threshold control
+        threshold_group = QGroupBox("Confidence Threshold")
+        threshold_layout = QVBoxLayout(threshold_group)
+        
+        # Slider with labels
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(QLabel("50%"))
+        
+        self.bulk_threshold_slider = QSlider(Qt.Horizontal)
+        self.bulk_threshold_slider.setMinimum(50)
+        self.bulk_threshold_slider.setMaximum(100)
+        self.bulk_threshold_slider.setValue(95)
+        self.bulk_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.bulk_threshold_slider.setTickInterval(10)
+        self.bulk_threshold_slider.valueChanged.connect(self._on_bulk_threshold_changed)
+        slider_layout.addWidget(self.bulk_threshold_slider)
+        
+        slider_layout.addWidget(QLabel("100%"))
+        threshold_layout.addLayout(slider_layout)
+        
+        # Current value and count display
+        info_layout2 = QHBoxLayout()
+        self.bulk_threshold_label = QLabel("<b>Current Threshold: 95%</b>")
+        self.bulk_threshold_label.setStyleSheet("QLabel { font-size: 11pt; }")
+        info_layout2.addWidget(self.bulk_threshold_label)
+        info_layout2.addStretch()
+        threshold_layout.addLayout(info_layout2)
+        
+        self.bulk_count_label = QLabel("Annotations to be auto-labeled: 0")
+        self.bulk_count_label.setStyleSheet("QLabel { color: #1976d2; font-weight: bold; }")
+        threshold_layout.addWidget(self.bulk_count_label)
+        
+        layout.addWidget(threshold_group)
+        
+        # Actions
+        actions_group = QGroupBox("Actions")
+        actions_layout = QVBoxLayout(actions_group)
+        
+        self.apply_bulk_button = QPushButton("✓ Apply All Preview Labels")
+        self.apply_bulk_button.setToolTip("Commit all preview label assignments shown below")
+        self.apply_bulk_button.clicked.connect(self._apply_bulk_labels_permanently)
+        self.apply_bulk_button.setStyleSheet("QPushButton { font-weight: bold; padding: 8px; }")
+        actions_layout.addWidget(self.apply_bulk_button)
+        
+        self.clear_bulk_button = QPushButton("Clear All Previews")
+        self.clear_bulk_button.setToolTip("Remove all preview labels")
+        self.clear_bulk_button.clicked.connect(self._clear_bulk_previews)
+        actions_layout.addWidget(self.clear_bulk_button)
         
         layout.addWidget(actions_group)
         layout.addStretch()
         
-        return page
+        return tab
     
     def _on_model_changed(self, index):
         """Update parameter widget when model selection changes."""
         self.param_stack.setCurrentIndex(index)
+    
+    def _on_setup_changed(self):
+        """Reset training state when setup parameters change."""
+        # Clear trained model and results
+        self.trained_model = None
+        self.scaler = None
+        self.label_classes = []
+        self.class_to_idx = {}
+        self.idx_to_class = {}
+        self.training_score = 0.0
+        
+        # Clear bulk predictions since they're model-specific
+        self.bulk_predictions = {}
+        
+        # Reset training page UI
+        self.metrics_text.clear()
+        self.confusion_table.setRowCount(0)
+        self.confusion_table.setColumnCount(0)
+        self.training_status_label.setText("Model configuration changed. Please train the model again.")
+        
+        # Disable navigation to annotation page
+        if self.current_page == 1:
+            self._update_navigation_buttons()
+    
+    def _on_annotation_mode_changed(self, index):
+        """Handle switching between Active Learning and Bulk Labeling modes."""
+        # Clear animations and selections when switching modes
+        self._clear_animations_and_selections()
+        
+        if index == 0:
+            self.annotation_mode = 'active_learning'
+            self._enter_active_learning_mode()
+        elif index == 1:
+            self.annotation_mode = 'bulk_labeling'
+            self._enter_bulk_labeling_mode()
+    
+    def _clear_animations_and_selections(self):
+        """Clear all animations and selections from viewers."""
+        # Clear animations
+        for item in self.explorer_window.current_data_items:
+            if hasattr(item, 'graphics_item') and item.graphics_item:
+                if hasattr(item.graphics_item, 'deanimate'):
+                    item.graphics_item.deanimate()
+            if hasattr(item, 'widget') and item.widget:
+                if hasattr(item.widget, 'deanimate'):
+                    item.widget.deanimate()
+        
+        # Clear selection in embedding viewer
+        if hasattr(self.explorer_window, 'embedding_viewer'):
+            self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
     
     def _update_navigation_buttons(self):
         """Update button states based on current page."""
@@ -514,8 +684,7 @@ class AutoAnnotationWizard(QDialog):
         elif self.model_type == 'knn':
             self.model_params['knn']['n_neighbors'] = self.knn_neighbors.value()
         
-        # Get training parameters
-        self.auto_label_threshold = self.auto_label_spin.value()
+        # Get active learning parameters
         self.batch_size = self.batch_size_spin.value()
         self.retrain_interval = self.retrain_interval_spin.value()
         
@@ -539,19 +708,21 @@ class AutoAnnotationWizard(QDialog):
             if label_code and label_code != REVIEW_LABEL:
                 unique_labels.add(label_code)
         
-        info_text = (
-            f"Total annotations: {total}\n"
-            f"Labeled: {labeled_count}\n"
-            f"Review (unlabeled): {review_count}\n"
-            f"Unique classes: {len(unique_labels)}"
-        )
+        # Update labels
+        self.dataset_total_label.setText(str(total))
+        self.dataset_labeled_label.setText(str(labeled_count))
+        self.dataset_review_label.setText(str(review_count))
+        self.dataset_classes_label.setText(str(len(unique_labels)))
         
+        # Update warnings
+        warning_text = ""
         if len(unique_labels) < 2:
-            info_text += "\n\n⚠️ Warning: Need at least 2 classes to train model"
+            warning_text = "⚠️ Warning: Need at least 2 classes to train model"
         elif labeled_count < 10:
-            info_text += f"\n\n⚠️ Warning: Only {labeled_count} labeled examples (cold start)"
+            warning_text = f"⚠️ Warning: Only {labeled_count} labeled examples (cold start)"
         
-        self.dataset_info_label.setText(info_text)
+        self.dataset_warning_label.setText(warning_text)
+        self.dataset_warning_label.setVisible(bool(warning_text))
     
     def _train_model(self):
         """Train the ML model."""
@@ -633,12 +804,126 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.embedding_viewer.selection_blocked = True
         self.explorer_window.annotation_viewer.selection_blocked = True
         
+        # Generate predictions for all Review annotations
+        self._generate_all_predictions()
+        
+        # Initialize based on current mode
+        if self.annotation_mode == 'active_learning':
+            self._enter_active_learning_mode()
+        else:
+            self._enter_bulk_labeling_mode()
+    
+    def _enter_active_learning_mode(self):
+        """Enter Active Learning mode."""
+        # Check if model is trained
+        if self.trained_model is None:
+            print("Warning: Model not trained yet")
+            return
+        
+        # Exit isolation mode if active and show all data items
+        if self.explorer_window.annotation_viewer.isolated_mode:
+            self.explorer_window.annotation_viewer.show_all_annotations()
+        
+        # Update viewer with all data items to show all label bins
+        self.explorer_window.annotation_viewer.update_annotations(self.explorer_window.current_data_items)
+        
+        # Set annotation viewer to sort by label and lock it
+        self.explorer_window.annotation_viewer.sort_combo.setCurrentText("Label")
+        self.explorer_window.annotation_viewer.sort_combo.setEnabled(False)
+        
         self._update_progress_display()
         self._get_next_batch()
         self._show_current_annotation()
     
+    def _enter_bulk_labeling_mode(self):
+        """Enter Bulk Labeling mode."""
+        # Get current review annotations (this may have changed since last time)
+        review_items = [item for item in self.explorer_window.current_data_items
+                       if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+        
+        print(f"Bulk Labeling: Found {len(review_items)} review items")
+        
+        # Clear any stale predictions for items that are no longer Review
+        review_ids = {item.annotation.id for item in review_items}
+        stale_ids = [ann_id for ann_id in self.bulk_predictions.keys() if ann_id not in review_ids]
+        for ann_id in stale_ids:
+            del self.bulk_predictions[ann_id]
+        
+        # Regenerate predictions for new review items
+        items_needing_predictions = [item for item in review_items 
+                                     if item.annotation.id not in self.bulk_predictions]
+        if items_needing_predictions and self.trained_model is not None:
+            print(f"Generating predictions for {len(items_needing_predictions)} new review items")
+            self._generate_predictions_for_items(items_needing_predictions)
+        
+        print(f"Bulk Labeling: Have {len(self.bulk_predictions)} predictions")
+        
+        # Clear all existing preview labels before entering mode
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
+        # Set annotation viewer to sort by label and lock it
+        self.explorer_window.annotation_viewer.sort_combo.setCurrentText("Label")
+        self.explorer_window.annotation_viewer.sort_combo.setEnabled(False)
+        
+        # Show only Review annotations in the viewer
+        if self.explorer_window.annotation_viewer.isolated_mode:
+            self.explorer_window.annotation_viewer.show_all_annotations()
+        
+        # Update the viewer with only Review data items
+        self.explorer_window.annotation_viewer.update_annotations(review_items)
+        
+        # Update statistics
+        self._update_bulk_statistics()
+        
+        # Apply threshold to show preview labels
+        self._apply_bulk_preview_labels()
+    
+    def _generate_predictions_for_items(self, items):
+        """Generate predictions for specific items."""
+        if not items:
+            return
+        
+        try:
+            # predict_with_model returns None but stores predictions in item.ml_prediction
+            self.explorer_window.predict_with_model(
+                items,
+                self.trained_model,
+                self.scaler,
+                self.class_to_idx,
+                self.idx_to_class,
+                self.feature_type
+            )
+            
+            # Collect the predictions that were stored in the items
+            for item in items:
+                if hasattr(item, 'ml_prediction') and item.ml_prediction:
+                    self.bulk_predictions[item.annotation.id] = item.ml_prediction
+                
+        except Exception as e:
+            print(f"Failed to generate predictions: {str(e)}")
+    
+    def _generate_all_predictions(self):
+        """Generate predictions for all Review annotations."""
+        # Validate model and scaler
+        if self.trained_model is None or self.scaler is None:
+            print("Warning: Model or scaler not initialized. Skipping prediction generation.")
+            return
+        
+        review_items = [item for item in self.explorer_window.current_data_items
+                       if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+        
+        if not review_items:
+            print("No review items found")
+            return
+        
+        print(f"Generating predictions for {len(review_items)} review items...")
+        self._generate_predictions_for_items(review_items)
+        print(f"Successfully generated {len(self.bulk_predictions)} predictions")
+    
     def _update_progress_display(self):
-        """Update progress statistics."""
+        """Update progress statistics for Active Learning mode."""
         data_items = self.explorer_window.current_data_items
         total = len(data_items)
         
@@ -648,7 +933,6 @@ class AutoAnnotationWizard(QDialog):
         labeled = total - review_count
         
         self.progress_label.setText(f"{labeled} / {total}")
-        self.auto_label_progress_label.setText(str(self.auto_labeled_count))
         self.remaining_review_label.setText(str(review_count))
         self.model_accuracy_label.setText(f"{self.training_score:.1%}")
         
@@ -657,8 +941,140 @@ class AutoAnnotationWizard(QDialog):
             progress_percent = int((labeled / total) * 100)
             self.overall_progress_bar.setValue(progress_percent)
     
+    def _update_bulk_statistics(self):
+        """Update statistics for Bulk Labeling mode."""
+        data_items = self.explorer_window.current_data_items
+        total = len(data_items)
+        
+        review_count = sum(1 for item in data_items
+                          if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+        
+        labeled = total - review_count
+        
+        self.bulk_progress_label.setText(f"{labeled} / {total}")
+        self.bulk_remaining_review_label.setText(str(review_count))
+        self.bulk_model_accuracy_label.setText(f"{self.training_score:.1%}")
+        
+        # Update progress bar (0-100%)
+        if total > 0:
+            progress_percent = int((labeled / total) * 100)
+            self.bulk_overall_progress_bar.setValue(progress_percent)
+    
+    def _on_bulk_threshold_changed(self, value):
+        """Handle bulk threshold slider change with debouncing."""
+        threshold = value / 100.0
+        self.bulk_confidence_threshold = threshold
+        
+        # Update label
+        self.bulk_threshold_label.setText(f"<b>Current Threshold: {value}%</b>")
+        
+        # Debounce: restart timer
+        self.bulk_preview_timer.stop()
+        self.bulk_preview_timer.start(400)  # 400ms debounce
+    
+    def _apply_bulk_preview_labels(self):
+        """Apply preview labels based on current confidence threshold."""
+        threshold = self.bulk_confidence_threshold
+        count = 0
+        above_threshold = 0
+        
+        # Clear all previews first
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
+        # Apply previews for annotations above threshold
+        for item in self.explorer_window.current_data_items:
+            ann_id = item.annotation.id
+            
+            # Only process Review annotations with predictions
+            if getattr(item.effective_label, 'short_label_code', '') != REVIEW_LABEL:
+                continue
+            
+            if ann_id not in self.bulk_predictions:
+                continue
+            
+            pred = self.bulk_predictions[ann_id]
+            if pred['confidence'] >= threshold:
+                above_threshold += 1
+                label_obj = self._get_label_by_code(pred['label'])
+                if label_obj:
+                    item.set_preview_label(label_obj)
+                    count += 1
+        
+        print(f"Bulk Labeling: Threshold {threshold:.2f}, {above_threshold} above threshold, {count} labels applied")
+        
+        # Update count display
+        self.bulk_count_label.setText(f"Annotations to be auto-labeled: {count}")
+        
+        # Refresh annotation viewer to show preview changes
+        self.explorer_window.annotation_viewer.recalculate_layout()
+    
+    def _clear_bulk_previews(self):
+        """Clear all bulk preview labels."""
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
+        self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
+        self.explorer_window.annotation_viewer.recalculate_layout()
+    
+    def _apply_bulk_labels_permanently(self):
+        """Apply all bulk preview labels permanently."""
+        # Count preview changes
+        preview_count = sum(1 for item in self.explorer_window.current_data_items
+                           if item.has_preview_changes())
+        
+        if preview_count == 0:
+            QMessageBox.information(self, "No Changes", "No preview labels to apply.")
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Apply Bulk Labels",
+            f"Apply {preview_count} preview labels permanently?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Collect IDs of items being labeled
+            labeled_ids = [item.annotation.id for item in self.explorer_window.current_data_items
+                          if item.has_preview_changes()]
+            
+            # Apply all previews
+            for item in self.explorer_window.current_data_items:
+                if item.has_preview_changes():
+                    item.apply_preview_permanently()
+            
+            # Remove predictions for items that are no longer Review
+            for ann_id in labeled_ids:
+                if ann_id in self.bulk_predictions:
+                    del self.bulk_predictions[ann_id]
+            
+            # Get remaining review items and update viewer
+            review_items = [item for item in self.explorer_window.current_data_items
+                           if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL]
+            
+            self.explorer_window.annotation_viewer.update_annotations(review_items)
+            
+            # Update statistics
+            self._update_bulk_statistics()
+            self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
+            
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Successfully applied {preview_count} labels.\n\n{len(review_items)} Review annotations remaining."
+            )
+    
     def _get_next_batch(self):
         """Get next batch of annotations to label."""
+        # Validate model and scaler before getting batch
+        if self.trained_model is None or self.scaler is None:
+            print("Warning: Model or scaler not initialized")
+            self.current_batch = []
+            return
+        
         try:
             self.current_batch = self.explorer_window.get_next_annotation_batch(
                 model=self.trained_model,
@@ -669,10 +1085,9 @@ class AutoAnnotationWizard(QDialog):
             )
             self.current_batch_index = 0
             
-            # Display batch in viewers
+            # Highlight batch in embedding viewer only (don't isolate in annotation viewer)
             if self.current_batch:
                 batch_ids = [item.annotation.id for item in self.current_batch]
-                self.explorer_window.annotation_viewer.display_and_isolate_ordered_results(batch_ids)
                 self.explorer_window.embedding_viewer.render_selection_from_ids(batch_ids)
                 
         except Exception as e:
@@ -804,6 +1219,11 @@ class AutoAnnotationWizard(QDialog):
     
     def _retrain_now(self):
         """Manually trigger model retraining."""
+        # Navigate back to training page
+        self.current_page = 1
+        self.page_stack.setCurrentIndex(1)
+        self._update_navigation_buttons()
+        
         self.training_status_label.setText("Retraining model...")
         QApplication.processEvents()
         
@@ -820,52 +1240,17 @@ class AutoAnnotationWizard(QDialog):
                 self.training_score = result['accuracy']
                 self.labels_since_retrain = 0
                 
+                # Display training results
+                self._display_training_metrics(result)
+                
                 QMessageBox.information(
                     self,
                     "Retrain Complete",
-                    f"Model retrained successfully!\nNew accuracy: {self.training_score:.2%}"
+                    f"Model retrained successfully!\nNew accuracy: {self.training_score:.2%}\n\nClick 'Start Annotating' to continue."
                 )
-                
-                # Get fresh predictions for current batch
-                self._get_next_batch()
                 
         except Exception as e:
             QMessageBox.warning(self, "Retrain Error", f"Failed to retrain: {str(e)}")
-    
-    def _auto_label_all(self):
-        """Auto-label all confident predictions."""
-        reply = QMessageBox.question(
-            self,
-            "Auto-Label All",
-            f"Apply predicted labels to all annotations with confidence > {self.auto_label_threshold:.0%}?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            try:
-                count = self.explorer_window.auto_label_confident_predictions(
-                    model=self.trained_model,
-                    scaler=self.scaler,
-                    class_to_idx=self.class_to_idx,
-                    idx_to_class=self.idx_to_class,
-                    feature_type=self.feature_type,
-                    threshold=self.auto_label_threshold
-                )
-                
-                self.auto_labeled_count += count
-                self._update_progress_display()
-                
-                QMessageBox.information(
-                    self,
-                    "Auto-Labeling Complete",
-                    f"Successfully auto-labeled {count} annotations."
-                )
-                
-                # Refresh batch
-                self._get_next_batch()
-                
-            except Exception as e:
-                QMessageBox.warning(self, "Auto-Label Error", f"Failed: {str(e)}")
     
     def _get_label_by_code(self, label_code):
         """Get Label object from code."""
@@ -901,10 +1286,19 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.embedding_viewer.selection_blocked = False
         self.explorer_window.annotation_viewer.selection_blocked = False
         
-        # Stop any running label check timer
+        # Re-enable sort combo
+        self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
+        
+        # Stop any timers
+        self.bulk_preview_timer.stop()
+        
         # Reset to first page
         self.current_page = 0
         self.page_stack.setCurrentIndex(0)
+        
+        # Reset annotation mode
+        self.annotation_mode = 'active_learning'
+        self.annotation_tabs.setCurrentIndex(0)
         
         # Clear model state
         self.trained_model = None
@@ -920,6 +1314,11 @@ class AutoAnnotationWizard(QDialog):
         self.labels_since_retrain = 0
         self.current_batch = []
         self.current_batch_index = 0
+        
+        # Clear bulk labeling state
+        self.bulk_predictions = {}
+        self.bulk_confidence_threshold = 0.95
+        self.bulk_threshold_slider.setValue(95)
         
         # Clear UI elements
         self.metrics_text.clear()
@@ -941,9 +1340,14 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.embedding_viewer.selection_blocked = False
         self.explorer_window.annotation_viewer.selection_blocked = False
         
+        # Re-enable sort combo
+        self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
+        
+        # Stop any timers
+        self.bulk_preview_timer.stop()
+        
         # Clear any animations
         for item in self.explorer_window.current_data_items:
-
             # Stop animations on graphics representations
             if hasattr(item, 'graphics_item') and item.graphics_item:
                 if hasattr(item.graphics_item, 'deanimate'):
@@ -952,7 +1356,7 @@ class AutoAnnotationWizard(QDialog):
                 if hasattr(item.widget, 'deanimate'):
                     item.widget.deanimate()
         
-        # Reset viewers
+        # Reset viewers and restore settings
         if hasattr(self.explorer_window, 'annotation_viewer'):
             self.explorer_window.annotation_viewer.reset_view_requested.emit()
         
