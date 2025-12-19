@@ -629,6 +629,10 @@ class AutoAnnotationWizard(QDialog):
     
     def _start_annotation(self):
         """Start the annotation process."""
+        # Enable selection blocking to keep user focused on wizard workflow
+        self.explorer_window.embedding_viewer.selection_blocked = True
+        self.explorer_window.annotation_viewer.selection_blocked = True
+        
         self._update_progress_display()
         self._get_next_batch()
         self._show_current_annotation()
@@ -893,6 +897,10 @@ class AutoAnnotationWizard(QDialog):
     
     def _reset_wizard(self):
         """Reset wizard state to initial values."""
+        # Restore normal selection behavior
+        self.explorer_window.embedding_viewer.selection_blocked = False
+        self.explorer_window.annotation_viewer.selection_blocked = False
+        
         # Stop any running label check timer
         # Reset to first page
         self.current_page = 0
@@ -929,6 +937,10 @@ class AutoAnnotationWizard(QDialog):
     
     def closeEvent(self, event):
         """Handle close event."""
+        # Restore normal selection behavior
+        self.explorer_window.embedding_viewer.selection_blocked = False
+        self.explorer_window.annotation_viewer.selection_blocked = False
+        
         # Clear any animations
         for item in self.explorer_window.current_data_items:
 

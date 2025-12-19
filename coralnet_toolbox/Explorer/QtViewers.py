@@ -92,6 +92,9 @@ class EmbeddingViewer(QWidget):
         self.isolated_mode = False
         self.isolated_points = set()
         
+        # Selection blocking for wizard mode
+        self.selection_blocked = False
+        
         # Properties for display mode
         self.display_mode = 'dots'  # Can be 'dots' or 'sprites'
 
@@ -488,6 +491,18 @@ class EmbeddingViewer(QWidget):
     def mousePressEvent(self, event):
         """Handle mouse press for selection, panning, and rotation."""
         
+        # Block selection changes when wizard is active, but allow navigation
+        if self.selection_blocked:
+            # Allow right-click panning
+            if event.button() == Qt.RightButton and event.modifiers() != Qt.ControlModifier:
+                self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+                left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
+                QGraphicsView.mousePressEvent(self.graphics_view, left_event)
+                return
+            # Block all other mouse press events
+            event.ignore()
+            return
+        
         # Ctrl+Right-Click Drag for rotation
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
@@ -559,6 +574,11 @@ class EmbeddingViewer(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         """Handle double-click to clear selection and reset the main view."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            event.ignore()
+            return
+            
         if event.button() == Qt.LeftButton:
             if self.graphics_scene.selectedItems():
                 self.graphics_scene.clearSelection()
@@ -570,6 +590,7 @@ class EmbeddingViewer(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move for dynamic selection, panning, and rotation."""
         
+        # Allow rotation and panning even when selection is blocked
         if self.is_rotating:
             delta = event.pos() - self.last_mouse_pos
             self.last_mouse_pos = event.pos()
@@ -608,6 +629,15 @@ class EmbeddingViewer(QWidget):
             self.is_rotating = False
             self.graphics_view.unsetCursor()
             event.accept()
+            return
+        
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            # Clean up any lingering UI elements but don't change selection
+            if self.rubber_band:
+                self.graphics_scene.removeItem(self.rubber_band)
+                self.rubber_band = None
+                self.selection_at_press = None
             return
 
         if self.rubber_band:
@@ -850,6 +880,9 @@ class AnnotationViewer(QWidget):
         self.update_timer = QTimer(self)
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_visible_widgets)
+        
+        # Selection blocking for wizard mode
+        self.selection_blocked = False
 
         self.setup_ui()
 
@@ -1676,6 +1709,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_press(self, event):
         """Handle mouse press inside the viewport for selection."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return False  # Let event propagate for scrolling
+            
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             # Start rubber band selection
             self.selection_at_press = set(self.selected_widgets)
@@ -1704,6 +1741,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_double_click(self, event):
         """Handle double-click in the viewport to clear selection and reset view."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return False
+            
         if event.button() == Qt.LeftButton:
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
@@ -1717,6 +1758,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_move(self, event):
         """Handle mouse move in the viewport for dynamic rubber band selection."""
+        # Block rubber band selection when wizard is active
+        if self.selection_blocked:
+            return False
+            
         if (
             self.rubber_band_origin is None or
             event.buttons() != Qt.LeftButton or
@@ -1771,6 +1816,16 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_release(self, event):
         """Handle mouse release in the viewport to finalize rubber band selection."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            # Clean up any lingering UI elements
+            if self.rubber_band:
+                self.rubber_band.hide()
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+            self.rubber_band_origin = None
+            return False
+            
         if self.rubber_band_origin is not None and event.button() == Qt.LeftButton:
             if self.rubber_band and self.rubber_band.isVisible():
                 self.rubber_band.hide()
@@ -1782,6 +1837,10 @@ class AnnotationViewer(QWidget):
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes (single, ctrl, shift)."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return
+            
         # The list for range selection should be based on the sorted data items
         sorted_data_items = self._get_sorted_data_items()
 
