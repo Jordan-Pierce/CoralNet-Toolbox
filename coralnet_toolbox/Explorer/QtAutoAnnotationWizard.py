@@ -728,9 +728,6 @@ class AutoAnnotationWizard(QDialog):
         # Select and highlight in viewers
         self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
         
-        # Center the embedding view on the selected annotation
-        self.explorer_window.embedding_viewer.center_on_selection()
-        
         # Highlight in viewers - call animate on the item's graphics representations
         if hasattr(item, 'graphics_item') and item.graphics_item:
             item.graphics_item.animate()
