@@ -381,8 +381,8 @@ class EmbeddingViewer(QWidget):
         """Centers the view on selected point(s) or maintains the current view if no points are selected."""
         selected_items = self.graphics_scene.selectedItems()
         if not selected_items:
-            # No selection, show a message
-            QMessageBox.information(self, "No Selection", "Please select one or more points first.")
+            # No selection - silently return without blocking modal dialog
+            # This can happen during rapid UI updates in the wizard
             return
             
         # Create a bounding rect that encompasses all selected points

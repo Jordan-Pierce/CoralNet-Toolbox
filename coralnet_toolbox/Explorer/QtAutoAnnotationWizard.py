@@ -420,16 +420,12 @@ class AutoAnnotationWizard(QDialog):
         row1 = QHBoxLayout()
         self.accept_button = QPushButton("✓ Accept Prediction")
         self.skip_button = QPushButton("→ Skip / Next")
-        self.recenter_button = QPushButton("🎯 Re-center")
-        self.recenter_button.setToolTip("Center the embedding view on the current annotation")
         
         self.accept_button.clicked.connect(self._accept_prediction)
         self.skip_button.clicked.connect(self._skip_annotation)
-        self.recenter_button.clicked.connect(self._recenter_on_current)
         
         row1.addWidget(self.accept_button)
         row1.addWidget(self.skip_button)
-        row1.addWidget(self.recenter_button)
         actions_layout.addLayout(row1)
         
         # Row 2: Auto-label action
@@ -747,7 +743,6 @@ class AutoAnnotationWizard(QDialog):
         """Enable/disable annotation action buttons."""
         self.accept_button.setEnabled(enabled)
         self.skip_button.setEnabled(enabled)
-        self.recenter_button.setEnabled(enabled)
     
     def _accept_prediction(self):
         """Accept the predicted label."""
@@ -773,91 +768,9 @@ class AutoAnnotationWizard(QDialog):
                 item.set_preview_label(label_obj)
                 item.apply_preview_permanently()
                 self.labels_since_retrain += 1
-                
-                # Refresh the viewers to show the updated label
-                self.explorer_window.annotation_viewer.update_annotations(
-                    self.explorer_window.current_data_items
-                )
-        
+    
+        # Move to next BEFORE refreshing viewers to avoid blocking
         self._move_to_next_annotation()
-    
-    def _accept_current_batch(self):
-        """Accept all predictions in the current batch."""
-        if not self.current_batch:
-            return
-        
-        accepted_count = 0
-        
-        for item in self.current_batch:
-            if hasattr(item, 'ml_prediction') and item.ml_prediction:
-                predicted_label = item.ml_prediction['label']
-                label_obj = self._get_label_by_code(predicted_label)
-                
-                if label_obj:
-                    item.annotation.update_label(label_obj)
-                    accepted_count += 1
-                    self.labels_since_retrain += 1
-        
-        # Refresh viewers
-        self.explorer_window.annotation_viewer.update_annotations(
-            self.explorer_window.current_data_items
-        )
-        
-        QMessageBox.information(
-            self,
-            "Batch Accepted",
-            f"Successfully applied {accepted_count} predicted labels from the current batch."
-        )
-        
-        # Check if we need to retrain
-        if self.labels_since_retrain >= self.retrain_interval:
-            reply = QMessageBox.question(
-                self,
-                "Retrain Model?",
-                f"You've labeled {self.labels_since_retrain} annotations. Retrain the model now?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                self._retrain_now()
-        
-        # Get next batch
-        self._update_progress_display()
-        self._get_next_batch()
-        self._show_current_annotation()
-    
-    def _recenter_on_current(self):
-        """Re-center the embedding view on the current annotation."""
-        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
-            return
-        
-        item = self.current_batch[self.current_batch_index]
-        
-        # Re-select and center on the annotation
-        self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
-        self.explorer_window.embedding_viewer.center_on_selection()
-        
-        # Re-animate the graphics items
-        if hasattr(item, 'graphics_item') and item.graphics_item:
-            item.graphics_item.animate()
-        if hasattr(item, 'widget') and item.widget:
-            item.widget.animate()
-    
-    def _recenter_on_current(self):
-        """Re-center the embedding view on the current annotation."""
-        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
-            return
-        
-        item = self.current_batch[self.current_batch_index]
-        
-        # Re-select and center on the annotation
-        self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
-        self.explorer_window.embedding_viewer.center_on_selection()
-        
-        # Re-animate the graphics items
-        if hasattr(item, 'graphics_item') and item.graphics_item:
-            item.graphics_item.animate()
-        if hasattr(item, 'widget') and item.widget:
-            item.widget.animate()
     
     def _skip_annotation(self):
         """Skip current annotation."""
