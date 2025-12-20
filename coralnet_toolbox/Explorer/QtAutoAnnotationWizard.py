@@ -105,6 +105,9 @@ class AutoAnnotationWizard(QDialog):
         
         self.setup_ui()
         
+        # Connect to label selection signal to capture manual label changes
+        self.main_window.label_window.labelSelected.connect(self._on_label_manually_selected)
+        
     def setup_ui(self):
         """Create the wizard interface with 3 pages."""
         main_layout = QVBoxLayout(self)
@@ -1339,6 +1342,38 @@ class AutoAnnotationWizard(QDialog):
         # Move to next BEFORE refreshing viewers to avoid blocking
         self._move_to_next_annotation()
     
+    def _on_label_manually_selected(self, label_widget):
+        """Handle when user manually selects a label from LabelWindow."""
+        if not self.current_batch or self.current_batch_index >= len(self.current_batch):
+            return
+        
+        if not label_widget:  # Label was deselected
+            return
+        
+        item = self.current_batch[self.current_batch_index]
+        
+        # Only update if the label actually changed
+        if item.annotation.label.id == label_widget.id:
+            return
+        
+        # Apply the label using the proper annotation API (same as bulk labeling)
+        item.annotation.update_label(label_widget)
+        item.annotation.update_user_confidence(label_widget)
+        
+        # Update the data item's effective_label cache
+        item._effective_label = label_widget
+        
+        # Update tooltips
+        if hasattr(item, 'widget') and item.widget:
+            item.widget.update_tooltip()
+        if hasattr(item, 'graphics_item') and item.graphics_item:
+            item.graphics_item.update_tooltip()
+        
+        # Refresh UI to show the change immediately
+        self._show_current_annotation()
+        
+        print(f"✓ Manual label applied: '{label_widget.short_label_code}' for annotation {item.annotation.id[:12]}...")
+    
     def _skip_annotation(self):
         """Skip the current annotation without labeling it (leaves as 'Review')."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
@@ -1352,8 +1387,8 @@ class AutoAnnotationWizard(QDialog):
     def _next_annotation(self):
         """Advance to next annotation after manually labeling the current one.
         
-        This should be used when the user manually changed the label in the Label Window.
-        It detects if the label was changed from 'Review' and properly tracks it.
+        Since labels are now applied immediately via _on_label_manually_selected(),
+        this just verifies the label was changed and moves to the next annotation.
         """
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
             return
@@ -1363,13 +1398,8 @@ class AutoAnnotationWizard(QDialog):
         
         # Check if the annotation was manually labeled (changed from Review)
         if current_label and current_label != REVIEW_LABEL:
-            # The user manually labeled it
-            print(f"✓ Manual label detected: '{current_label}' for annotation {item.annotation.id[:12]}...")
-            
-            # Update the data item's effective_label cache
-            item._effective_label = item.annotation.label
-            
-            # Track as completed
+            # The label was already applied via _on_label_manually_selected()
+            # Just track it as completed and move on
             self.completed_annotation_ids.add(item.annotation.id)
             
             # Remove from predictions
@@ -1379,20 +1409,14 @@ class AutoAnnotationWizard(QDialog):
             # Increment retrain counter since this is a new labeled annotation
             self.labels_since_retrain += 1
             
-            # Update tooltip and visuals
-            if hasattr(item, 'widget') and item.widget:
-                item.widget.update_tooltip()
-            if hasattr(item, 'graphics_item') and item.graphics_item:
-                item.graphics_item.update_tooltip()
-            
-            print(f"  → Added to completed annotations (total: {len(self.completed_annotation_ids)})")
+            print(f"  → Confirmed and moving to next (total completed: {len(self.completed_annotation_ids)})")
         else:
             # Warning: Next button clicked but label is still 'Review'
             QMessageBox.warning(
                 self,
                 "No Label Change Detected",
                 f"The annotation label is still '{current_label}'.\n\n"
-                "Please change the label in the Label Window before clicking 'Next', "
+                "Please select a label in the Label Window before clicking 'Next', "
                 "or click 'Skip' to move on without labeling.",
                 QMessageBox.Ok
             )
