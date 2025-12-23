@@ -885,17 +885,28 @@ class AutoAnnotationWizard(QDialog):
             print("Warning: Model not trained yet")
             return
         
+        print("\n=== Entering Active Learning Mode ===")
+        
         # Rescan for manually labeled annotations before entering mode
         manually_labeled_count = self._rescan_for_manual_labels()
         if manually_labeled_count > 0:
-            # Show toast notification for manual label detection
-            QMessageBox.information(
-                self,
-                "Manual Labels Detected",
-                f"Detected {manually_labeled_count} manually labeled annotation(s).\n"
-                f"These will be excluded from active learning batches.",
-                QMessageBox.Ok
-            )
+            print(f"Found {manually_labeled_count} manually labeled annotations")
+        
+        # Clear any preview labels from bulk mode
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
+        # Regenerate all predictions to ensure they're current
+        review_items = [
+            item for item in self.explorer_window.current_data_items
+            if item.annotation.id not in self.completed_annotation_ids
+            and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        ]
+        
+        if review_items:
+            print(f"Generating predictions for {len(review_items)} review items")
+            self._generate_predictions_for_items(review_items)
         
         # Exit isolation mode if active and show all data items
         if self.explorer_window.annotation_viewer.isolated_mode:
@@ -911,20 +922,16 @@ class AutoAnnotationWizard(QDialog):
         self._update_progress_display()
         self._get_next_batch()
         self._show_current_annotation()
+        print("=== Active Learning Mode Ready ===")
     
     def _enter_bulk_labeling_mode(self):
         """Enter Bulk Labeling mode."""
+        print("\n=== Entering Bulk Labeling Mode ===")
+        
         # First, rescan for manually labeled annotations
         manually_labeled_count = self._rescan_for_manual_labels()
         if manually_labeled_count > 0:
-            # Show toast notification for manual label detection
-            QMessageBox.information(
-                self,
-                "Manual Labels Detected",
-                f"Detected {manually_labeled_count} manually labeled annotation(s).\n"
-                f"These will be excluded from bulk labeling.",
-                QMessageBox.Ok
-            )
+            print(f"Found {manually_labeled_count} manually labeled annotations")
         
         # Clear all existing preview labels before entering mode
         for item in self.explorer_window.current_data_items:
@@ -932,15 +939,13 @@ class AutoAnnotationWizard(QDialog):
                 item.clear_preview_label()
         
         # Get current review annotations, excluding completed ones from this session
-        # Note: completed_annotation_ids is the authoritative source - if an ID is there, exclude it
-        # We also check effective_label to catch any recently changed labels
         review_items = [
             item for item in self.explorer_window.current_data_items
             if item.annotation.id not in self.completed_annotation_ids
             and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
         ]
         
-        print(f"Bulk Labeling: Found {len(review_items)} review items (after excluding {len(self.completed_annotation_ids)} completed)")
+        print(f"Found {len(review_items)} review items (excluded {len(self.completed_annotation_ids)} completed)")
         
         # Clear any stale predictions for items that are no longer Review
         review_ids = {item.annotation.id for item in review_items}
@@ -950,14 +955,12 @@ class AutoAnnotationWizard(QDialog):
             for ann_id in stale_ids:
                 del self.bulk_predictions[ann_id]
         
-        # Regenerate predictions for new review items
-        items_needing_predictions = [item for item in review_items 
-                                     if item.annotation.id not in self.bulk_predictions]
-        if items_needing_predictions and self.trained_model is not None:
-            print(f"Generating predictions for {len(items_needing_predictions)} new review items")
-            self._generate_predictions_for_items(items_needing_predictions)
+        # Regenerate predictions for all review items to ensure they're current
+        if review_items and self.trained_model is not None:
+            print(f"Generating/updating predictions for {len(review_items)} review items")
+            self._generate_predictions_for_items(review_items)
         
-        print(f"Bulk Labeling: Have {len(self.bulk_predictions)} predictions")
+        print(f"Have {len(self.bulk_predictions)} total predictions")
         
         # Exit isolation mode if active
         if self.explorer_window.annotation_viewer.isolated_mode:
@@ -975,6 +978,7 @@ class AutoAnnotationWizard(QDialog):
         
         # Apply threshold to show preview labels
         self._apply_bulk_preview_labels()
+        print("=== Bulk Labeling Mode Ready ===")
     
     def _generate_predictions_for_items(self, items):
         """Generate predictions for specific items."""
@@ -1029,8 +1033,10 @@ class AutoAnnotationWizard(QDialog):
         data_items = self.explorer_window.current_data_items
         total = len(data_items)
         
-        review_count = sum(1 for item in data_items 
-                          if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+        # Count review items excluding completed annotations
+        review_count = sum(1 for item in data_items
+                          if item.annotation.id not in self.completed_annotation_ids
+                          and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
         
         labeled = total - review_count
         
@@ -1204,6 +1210,13 @@ class AutoAnnotationWizard(QDialog):
             return
         
         try:
+            # Count total remaining review items
+            total_review = sum(1 for i in self.explorer_window.current_data_items
+                             if i.annotation.id not in self.completed_annotation_ids
+                             and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+            
+            print(f"\nRequesting batch from {total_review} total review items...")
+            
             # Get batch from explorer
             batch = self.explorer_window.get_next_annotation_batch(
                 model=self.trained_model,
@@ -1213,6 +1226,8 @@ class AutoAnnotationWizard(QDialog):
                 batch_size=self.batch_size
             )
             
+            print(f"Explorer returned {len(batch)} items before filtering")
+            
             # Filter out any annotations that were completed in this session
             # Trust completed_annotation_ids as the single source of truth
             self.current_batch = [
@@ -1220,29 +1235,43 @@ class AutoAnnotationWizard(QDialog):
                 if item.annotation.id not in self.completed_annotation_ids
             ]
             
+            print(f"After filtering completed: {len(self.current_batch)} items in batch")
+            
             self.current_batch_index = 0
             
             # Highlight batch in embedding viewer only (don't isolate in annotation viewer)
             if self.current_batch:
                 batch_ids = [item.annotation.id for item in self.current_batch]
                 self.explorer_window.embedding_viewer.render_selection_from_ids(batch_ids)
+                print(f"✓ Batch ready: {len(self.current_batch)} annotations")
+            else:
+                print("⚠ No more uncertain annotations available")
                 
         except Exception as e:
+            print(f"Error getting batch: {str(e)}")
             QMessageBox.warning(self, "Batch Error", f"Failed to get next batch: {str(e)}")
             self.current_batch = []
     
     def _show_current_annotation(self):
         """Display information about current annotation."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
-            self.current_annotation_label.setText("✓ Batch Complete - No more annotations")
+            self.current_annotation_label.setText("✓ All Done! No more annotations in current batch.<br><small>Click 'Finish' to close the wizard.</small>")
             self._enable_annotation_buttons(False)
+            # Clear any previous highlights
+            if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
+                self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
             return
         
         item = self.current_batch[self.current_batch_index]
         
         # Show annotation info with progress
+        # Calculate how many review items remain total
+        total_review = sum(1 for i in self.explorer_window.current_data_items
+                          if i.annotation.id not in self.completed_annotation_ids
+                          and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+        
         annotation_text = f"📍 Annotation {self.current_batch_index + 1} of {len(self.current_batch)} in current batch"
-        annotation_text += f"<br><small>ID: {item.annotation.id[:12]}...</small>"
+        annotation_text += f"<br><small>ID: {item.annotation.id[:12]}... | {total_review} total remaining</small>"
         self.current_annotation_label.setText(annotation_text)
         
         # Show current label
@@ -1442,8 +1471,20 @@ class AutoAnnotationWizard(QDialog):
             )
             if reply == QMessageBox.Yes:
                 self._get_next_batch()
+                # If no batch was retrieved, we're done
+                if not self.current_batch:
+                    self._show_current_annotation()
+                    self._update_progress_display()
+                    self._update_navigation_buttons()
+                    self.retrain_now_button.setVisible(False)
+                    return
             else:
+                # User declined next batch - they're done for now
                 self._enable_annotation_buttons(False)
+                self._show_current_annotation()
+                self._update_progress_display()
+                self._update_navigation_buttons()
+                self.retrain_now_button.setVisible(False)
                 return
         
         self._update_progress_display()
