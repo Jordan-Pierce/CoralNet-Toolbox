@@ -410,9 +410,8 @@ class AutoAnnotationWizard(QDialog):
             "This focuses on difficult cases to improve the model most efficiently. "
             "Use the 'Retrain Model' button to update predictions with your new labels. "
             "Annotations are shown in the viewer below.<br><br>"
-            "<b>✓ Accept Prediction:</b> Applies the predicted label to the current annotation.<br>"
-            "<b>⊘ Skip:</b> Skips the current annotation without labeling (leaves as 'Review').<br>"
-            "<b>→ Next:</b> Advances after you manually changed the label in the Label Window."
+            "<b>💡 Click on a prediction:</b> Directly applies that label to the annotation.<br>"
+            "<b>⊘ Skip:</b> Skips the current annotation without labeling (leaves as 'Review')."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
@@ -506,31 +505,19 @@ class AutoAnnotationWizard(QDialog):
             })
         
         current_layout.addWidget(pred_group)
-        layout.addWidget(current_group)
         
-        # Annotation actions
-        actions_group = QGroupBox("Actions")
-        actions_layout = QVBoxLayout(actions_group)
-        
-        row1 = QHBoxLayout()
-        self.accept_button = QPushButton("✓ Accept Prediction")
-        self.accept_button.setToolTip("Apply the predicted label to this annotation")
-        self.accept_button.clicked.connect(self._accept_prediction)
-        row1.addWidget(self.accept_button)
-        actions_layout.addLayout(row1)
-        
-        row2 = QHBoxLayout()
-        self.skip_button = QPushButton("⊘ Skip")
+        # Skip button at bottom of current group
+        skip_layout = QHBoxLayout()
+        skip_layout.addStretch()
+        self.skip_button = QPushButton("⊘ Skip Annotation")
         self.skip_button.setToolTip("Skip this annotation without labeling (leaves as 'Review')")
         self.skip_button.clicked.connect(self._skip_annotation)
-        self.next_button = QPushButton("→ Next")
-        self.next_button.setToolTip("Advance to next annotation after manually labeling in Label Window")
-        self.next_button.clicked.connect(self._next_annotation)
-        row2.addWidget(self.skip_button)
-        row2.addWidget(self.next_button)
-        actions_layout.addLayout(row2)
+        self.skip_button.setStyleSheet("QPushButton { padding: 6px 12px; }")
+        skip_layout.addWidget(self.skip_button)
+        skip_layout.addStretch()
+        current_layout.addLayout(skip_layout)
         
-        layout.addWidget(actions_group)
+        layout.addWidget(current_group)
         layout.addStretch()
         
         return tab
@@ -1397,9 +1384,7 @@ class AutoAnnotationWizard(QDialog):
     
     def _enable_annotation_buttons(self, enabled):
         """Enable/disable annotation action buttons."""
-        self.accept_button.setEnabled(enabled)
         self.skip_button.setEnabled(enabled)
-        self.next_button.setEnabled(enabled)
     
     def _apply_label_from_prediction(self, label_code):
         """Apply a label when a prediction row is clicked."""
@@ -1438,18 +1423,6 @@ class AutoAnnotationWizard(QDialog):
             
             # Move to next annotation
             self._move_to_next_annotation()
-    
-    def _accept_prediction(self):
-        """Accept the predicted label permanently (top prediction)."""
-        if not self.current_annotation_item:
-            return
-        
-        item = self.current_annotation_item
-        
-        if hasattr(item, 'ml_prediction') and item.ml_prediction:
-            # Apply the top predicted label
-            predicted_label = item.ml_prediction['label']
-            self._apply_label_from_prediction(predicted_label)
     
     def _on_label_manually_selected(self, label_widget):
         """Handle when user manually selects a label from LabelWindow."""
@@ -1534,18 +1507,12 @@ class AutoAnnotationWizard(QDialog):
         
         # If auto-close is requested, show completion message and close
         if auto_close:
-            # Count how many were labeled
-            completed_count = len(self.completed_annotation_ids)
-            total_review = sum(1 for i in self.explorer_window.current_data_items
-                             if getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
             
             QMessageBox.information(
                 self,
-                "Annotation Complete! 🎉",
-                f"✓ All uncertain annotations have been labeled!\n\n"
-                f"Labeled in this session: {completed_count}\n"
-                f"Remaining 'Review' annotations: {total_review}\n\n"
-                f"No more uncertain annotations require attention.\n"
+                "Annotation Complete",
+                f"All 'Review'' annotations have been labeled!\n\n"
+                f"No more 'Review' annotations require attention.\n"
                 f"The wizard will now close.",
                 QMessageBox.Ok
             )
@@ -1568,43 +1535,6 @@ class AutoAnnotationWizard(QDialog):
             
         item = self.current_annotation_item
         print(f"⊘ Skipped annotation {item.annotation.id[:12]}... (no label applied)")
-        
-        self._move_to_next_annotation()
-    
-    def _next_annotation(self):
-        """Advance to next annotation after manually labeling the current one.
-        
-        Since labels are now applied immediately via _on_label_manually_selected(),
-        this just verifies the label was changed and moves to the next annotation.
-        """
-        if not self.current_annotation_item:
-            return
-            
-        item = self.current_annotation_item
-        current_label = getattr(item.annotation.label, 'short_label_code', '')
-        
-        # Check if the annotation was manually labeled (changed from Review)
-        if current_label and current_label != REVIEW_LABEL:
-            # The label was already applied via _on_label_manually_selected()
-            # Just track it as completed and move on
-            self.completed_annotation_ids.add(item.annotation.id)
-            
-            # Remove from predictions
-            if item.annotation.id in self.bulk_predictions:
-                del self.bulk_predictions[item.annotation.id]
-            
-            print(f"  → Confirmed and moving to next (total completed: {len(self.completed_annotation_ids)})")
-        else:
-            # Warning: Next button clicked but label is still 'Review'
-            QMessageBox.warning(
-                self,
-                "No Label Change Detected",
-                f"The annotation label is still '{current_label}'.\n\n"
-                "Please select a label in the Label Window before clicking 'Next', "
-                "or click 'Skip' to move on without labeling.",
-                QMessageBox.Ok
-            )
-            return  # Don't move to next annotation
         
         self._move_to_next_annotation()
     
