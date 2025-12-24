@@ -305,44 +305,52 @@ class AutoAnnotationWizard(QDialog):
         model_layout.addRow(self.param_stack)
         layout.addWidget(model_group)
         
+        # Training section
+        training_group = QGroupBox("Training")
+        training_layout = QVBoxLayout(training_group)
+        
+        # Status
+        self.training_status_label = QLabel("Ready to train model with your settings.")
+        self.training_status_label.setWordWrap(True)
+        training_layout.addWidget(self.training_status_label)
+        
+        # Progress
+        self.training_progress = QProgressBar()
+        self.training_progress.setVisible(False)
+        training_layout.addWidget(self.training_progress)
+        
+        # Train button
+        self.train_button = QPushButton("🎯 Train Model")
+        self.train_button.clicked.connect(self._train_model)
+        self.train_button.setStyleSheet("QPushButton { font-weight: bold; padding: 8px; }")
+        training_layout.addWidget(self.train_button)
+        
+        layout.addWidget(training_group)
+        
         layout.addStretch()
         
         return page
     
     def _create_training_page(self):
-        """Page 2: Train model and show metrics."""
+        """Page 2: Show training metrics and results."""
         page = QWidget()
         layout = QVBoxLayout(page)
         
         # Title
-        title = QLabel("<h2>Training: Model Performance</h2>")
+        title = QLabel("<h2>Training Results: Model Performance</h2>")
         layout.addWidget(title)
         
         # Information box
         info_box = QGroupBox("Information")
         info_layout = QVBoxLayout(info_box)
         info_text = QLabel(
-            "Train the model on your labeled annotations. The model will learn patterns from your existing labels "
-            "to predict labels for unlabeled annotations. Review the accuracy metrics and confusion matrix to assess "
-            "model performance before proceeding to annotation."
+            "Review the model's accuracy metrics and confusion matrix to assess performance. "
+            "A higher accuracy indicates better predictions. The confusion matrix shows which classes "
+            "the model confuses most often."
         )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         layout.addWidget(info_box)
-        
-        # Status
-        self.training_status_label = QLabel("Press 'Train Model' to begin...")
-        layout.addWidget(self.training_status_label)
-        
-        # Progress
-        self.training_progress = QProgressBar()
-        self.training_progress.setVisible(False)
-        layout.addWidget(self.training_progress)
-        
-        # Train button
-        self.train_button = QPushButton("Train Model")
-        self.train_button.clicked.connect(self._train_model)
-        layout.addWidget(self.train_button)
         
         # Metrics display
         metrics_group = QGroupBox("Model Metrics")
@@ -713,14 +721,17 @@ class AutoAnnotationWizard(QDialog):
         self.back_button.setEnabled(self.current_page > 0)
         
         if self.current_page == 0:
-            self.next_button.setText("Next >")
-            self.next_button.setEnabled(True)
-            self.retrain_now_button.setVisible(False)
-        elif self.current_page == 1:
-            self.next_button.setText("Start Annotating >")
+            # Setup page - can proceed once model is trained
+            self.next_button.setText("View Results >")
             self.next_button.setEnabled(self.trained_model is not None)
             self.retrain_now_button.setVisible(False)
+        elif self.current_page == 1:
+            # Results page - can proceed to annotation
+            self.next_button.setText("Start Annotating >")
+            self.next_button.setEnabled(True)
+            self.retrain_now_button.setVisible(False)
         elif self.current_page == 2:
+            # Annotation page
             self.next_button.setText("Exit")
             self.next_button.setEnabled(True)
             self.retrain_now_button.setVisible(True)
@@ -729,6 +740,13 @@ class AutoAnnotationWizard(QDialog):
         """Navigate to previous page."""
         if self.current_page > 0:
             self.current_page -= 1
+            self.page_stack.setCurrentIndex(self.current_page)
+            self._update_navigation_buttons()
+    
+    def _go_to_page(self, page_index):
+        """Navigate to a specific page."""
+        if 0 <= page_index < self.page_stack.count():
+            self.current_page = page_index
             self.page_stack.setCurrentIndex(self.current_page)
             self._update_navigation_buttons()
     
@@ -846,7 +864,9 @@ class AutoAnnotationWizard(QDialog):
             self.training_status_label.setText(
                 f"✓ Model trained successfully! Accuracy: {self.training_score:.2%}"
             )
-            self.next_button.setEnabled(True)
+            
+            # Auto-advance to results page
+            QTimer.singleShot(500, lambda: self._go_to_page(1))
             
         except Exception as e:
             self.training_status_label.setText(f"❌ Training failed: {str(e)}")
