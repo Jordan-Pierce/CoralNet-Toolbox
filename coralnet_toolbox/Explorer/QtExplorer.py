@@ -1751,10 +1751,15 @@ class ExplorerWindow(QMainWindow):
         If the EmbeddingViewer is in isolate mode, it will use only the visible
         (isolated) points as input for the pipeline.
         """
-        # Reset wizard state if it exists, as new embeddings invalidate current state
-        if self.auto_annotation_wizard is not None and self.auto_annotation_wizard.isVisible():
-            print("Resetting Auto-Annotation Wizard due to embedding changes...")
-            self.auto_annotation_wizard._reset_wizard()
+        # Destroy and recreate wizard if it exists, as new embeddings invalidate current state
+        if self.auto_annotation_wizard is not None:
+            print("Destroying Auto-Annotation Wizard due to embedding changes...")
+            was_visible = self.auto_annotation_wizard.isVisible()
+            self._destroy_and_recreate_wizard()
+            if was_visible:
+                # Reopen the wizard if it was visible
+                self.auto_annotation_wizard.show()
+                self.auto_annotation_wizard.raise_()
         
         items_to_embed = []
         if self.embedding_viewer.isolated_mode:
@@ -1990,6 +1995,16 @@ class ExplorerWindow(QMainWindow):
 
     def refresh_filters(self):
         """Refresh display: filter data and update annotation viewer."""
+        # Destroy and recreate wizard if it exists, as filter changes invalidate current state
+        if self.auto_annotation_wizard is not None:
+            print("Destroying Auto-Annotation Wizard due to filter changes...")
+            was_visible = self.auto_annotation_wizard.isVisible()
+            self._destroy_and_recreate_wizard()
+            if was_visible:
+                # Reopen the wizard if it was visible
+                self.auto_annotation_wizard.show()
+                self.auto_annotation_wizard.raise_()
+        
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.current_data_items = self.get_filtered_data_items()
@@ -2123,6 +2138,16 @@ class ExplorerWindow(QMainWindow):
         """
         Apply all pending label modifications to the main application's data.
         """
+        # Destroy and recreate wizard if it exists, as label changes invalidate current state
+        if self.auto_annotation_wizard is not None:
+            print("Destroying Auto-Annotation Wizard due to label changes...")
+            was_visible = self.auto_annotation_wizard.isVisible()
+            self._destroy_and_recreate_wizard()
+            if was_visible:
+                # Reopen the wizard if it was visible
+                self.auto_annotation_wizard.show()
+                self.auto_annotation_wizard.raise_()
+        
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # --- 1. Process Label Changes ---
@@ -2544,6 +2569,20 @@ class ExplorerWindow(QMainWindow):
                                                    2 if not hasattr(self.current_data_items[0], 'embedding_z') else 3)
         
         return count
+    
+    def _destroy_and_recreate_wizard(self):
+        """Destroy the current wizard instance and create a fresh one."""
+        if self.auto_annotation_wizard is not None:
+            # Hide and destroy the old wizard
+            self.auto_annotation_wizard.hide()
+            self.auto_annotation_wizard.deleteLater()
+            self.auto_annotation_wizard = None
+            print("Old wizard instance destroyed")
+        
+        # Create fresh wizard instance
+        self.auto_annotation_wizard = AutoAnnotationWizard(self, self)
+        self.auto_annotation_wizard.annotations_updated.connect(self._on_wizard_annotations_updated)
+        print("New wizard instance created")
     
     def open_auto_annotation_wizard(self):
         """Open the Auto-Annotation Wizard."""

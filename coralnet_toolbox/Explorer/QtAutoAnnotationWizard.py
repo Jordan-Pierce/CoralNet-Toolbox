@@ -1465,7 +1465,7 @@ class AutoAnnotationWizard(QDialog):
             ]
             self.annotations_updated.emit(updated_items)
             
-            # Reset and close
+            # Reset wizard to initial state and close
             self._reset_wizard()
             self.close()
     
@@ -1614,13 +1614,23 @@ class AutoAnnotationWizard(QDialog):
             self.close()
     
     def _reset_wizard(self):
-        """Reset wizard state to initial values for a fresh start."""
-        print("\n=== Resetting wizard state ===")
+        """Nuclear option: Destroy this wizard instance and tell ExplorerWindow to recreate it."""
+        print("\n=== NUCLEAR RESET: Destroying and recreating wizard ===")
         
         # Clear all preview labels from data items
         for item in self.explorer_window.current_data_items:
             if item.has_preview_changes():
                 item.clear_preview_label()
+        
+        # Clear any animations on data items
+        for item in self.explorer_window.current_data_items:
+            # Stop animations on graphics representations
+            if hasattr(item, 'graphics_item') and item.graphics_item:
+                if hasattr(item.graphics_item, 'deanimate'):
+                    item.graphics_item.deanimate()
+            if hasattr(item, 'widget') and item.widget:
+                if hasattr(item.widget, 'deanimate'):
+                    item.widget.deanimate()
         
         # Restore normal selection behavior
         self.explorer_window.embedding_viewer.selection_blocked = False
@@ -1640,70 +1650,29 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
         self.explorer_window.annotation_viewer.sort_combo.setCurrentText("None")
         
+        # Clear any isolated/ordered views
+        if hasattr(self.explorer_window.annotation_viewer, 'isolated_mode'):
+            if self.explorer_window.annotation_viewer.isolated_mode:
+                self.explorer_window.annotation_viewer.show_all_annotations()
+        if hasattr(self.explorer_window.annotation_viewer, 'active_ordered_ids'):
+            self.explorer_window.annotation_viewer.active_ordered_ids = []
+        
         # Update viewer to show all annotations
         self.explorer_window.annotation_viewer.update_annotations(self.explorer_window.current_data_items)
         
         # Stop any timers
         self.bulk_preview_timer.stop()
         
-        # Reset to first page
-        self.current_page = 0
-        self.page_stack.setCurrentIndex(0)
+        # Disconnect all signals to prevent memory leaks
+        try:
+            self.main_window.label_window.labelSelected.disconnect(self._on_label_manually_selected)
+        except TypeError:
+            pass  # Already disconnected
         
-        # Reset annotation mode and re-enable tabs
-        self.annotation_mode = 'active_learning'
-        self.annotation_tabs.setCurrentIndex(0)
-        self.annotation_tabs.setEnabled(True)
+        # Tell the explorer window to destroy this wizard instance
+        self.explorer_window._destroy_and_recreate_wizard()
         
-        # Clear model state
-        self.trained_model = None
-        self.scaler = None
-        self.label_classes = []
-        self.class_to_idx = {}
-        self.idx_to_class = {}
-        self.training_score = 0.0
-        
-        # Clear progress tracking
-        self.labeled_count = 0
-        self.auto_labeled_count = 0
-        self.current_annotation_item = None
-        
-        # Clear bulk labeling state
-        self.bulk_predictions = {}
-        self.bulk_confidence_threshold = 0.95
-        self.bulk_threshold_slider.setValue(95)
-        
-        # Reset completed annotations tracking
-        self.completed_annotation_ids = set()
-        
-        # Clear UI elements - Training page
-        self.metrics_text.clear()
-        self.confusion_table.setRowCount(0)
-        self.confusion_table.setColumnCount(0)
-        self.training_status_label.setText("Ready to train...")
-        self.training_progress.setVisible(False)
-        self.train_button.setEnabled(True)
-        
-        # Clear UI elements - Annotation page (Active Learning)
-        self.current_annotation_label.setText("No annotation selected")
-        self.current_label_display.setText("---")
-        self.current_label_display.setStyleSheet("")
-        self.predicted_label_label.setText("---")
-        self.confidence_label.setText("---")
-        self.confidence_bar.setValue(0)
-        self.confidence_bar.setStyleSheet("")
-        self.top_predictions_label.setText("---")
-        
-        # Re-enable buttons
-        self._enable_annotation_buttons(True)
-        
-        # Update navigation buttons
-        self._update_navigation_buttons()
-        
-        print("Wizard reset complete - ready for fresh session")
-        
-        # Update navigation buttons
-        self._update_navigation_buttons()
+        print("Wizard destruction complete - new instance will be created on next open")
     
     def showEvent(self, event):
         """Handle show event."""
