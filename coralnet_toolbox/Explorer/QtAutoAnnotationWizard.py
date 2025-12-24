@@ -691,7 +691,7 @@ class AutoAnnotationWizard(QDialog):
             self.next_button.setEnabled(self.trained_model is not None)
             self.retrain_now_button.setVisible(False)
         elif self.current_page == 2:
-            self.next_button.setText("Finish")
+            self.next_button.setText("Exit")
             self.next_button.setEnabled(True)
             self.retrain_now_button.setVisible(True)
     
@@ -720,8 +720,8 @@ class AutoAnnotationWizard(QDialog):
             self.current_page = 2
             self.page_stack.setCurrentIndex(self.current_page)
         elif self.current_page == 2:
-            # Finish
-            self._finish()
+            # Exit (user wants to leave early or is done)
+            self._exit()
             
         self._update_navigation_buttons()
     
@@ -792,6 +792,8 @@ class AutoAnnotationWizard(QDialog):
         self.training_progress.setRange(0, 0)  # Indeterminate
         self.train_button.setEnabled(False)
         
+        # Set busy cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         QApplication.processEvents()
         
         try:
@@ -826,6 +828,8 @@ class AutoAnnotationWizard(QDialog):
         finally:
             self.training_progress.setVisible(False)
             self.train_button.setEnabled(True)
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
         
         self._update_navigation_buttons()
     
@@ -907,6 +911,11 @@ class AutoAnnotationWizard(QDialog):
         if review_items:
             print(f"Generating predictions for {len(review_items)} review items")
             self._generate_predictions_for_items(review_items)
+        else:
+            print("No review items found - all annotations labeled")
+            # Set empty batch state
+            self.current_batch = []
+            self.current_batch_index = 0
         
         # Exit isolation mode if active and show all data items
         if self.explorer_window.annotation_viewer.isolated_mode:
@@ -959,6 +968,11 @@ class AutoAnnotationWizard(QDialog):
         if review_items and self.trained_model is not None:
             print(f"Generating/updating predictions for {len(review_items)} review items")
             self._generate_predictions_for_items(review_items)
+        elif not review_items:
+            print("No review items found - all annotations labeled")
+            # Set empty batch state
+            self.current_batch = []
+            self.current_batch_index = 0
         
         print(f"Have {len(self.bulk_predictions)} total predictions")
         
@@ -1255,11 +1269,25 @@ class AutoAnnotationWizard(QDialog):
     def _show_current_annotation(self):
         """Display information about current annotation."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
-            self.current_annotation_label.setText("✓ All Done! No more annotations in current batch.<br><small>Click 'Finish' to close the wizard.</small>")
-            self._enable_annotation_buttons(False)
-            # Clear any previous highlights
-            if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
-                self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
+            # Check if there are any remaining review annotations at all
+            total_review = sum(1 for i in self.explorer_window.current_data_items
+                             if i.annotation.id not in self.completed_annotation_ids
+                             and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+            
+            if total_review == 0:
+                # Truly done - no more review annotations
+                self.current_annotation_label.setText(
+                    "✓ All Done! No more uncertain annotations to label.<br>"
+                    "<small>All annotations have been processed.</small>"
+                )
+                self._cleanup_on_completion(auto_close=True)
+            else:
+                # Just out of batch, but more review annotations exist
+                self.current_annotation_label.setText(
+                    f"✓ Batch Complete! {total_review} 'Review' annotations remain.<br>"
+                    "<small>Click 'Exit' to close the wizard or get next batch.</small>"
+                )
+                self._cleanup_on_completion(auto_close=False)
             return
         
         item = self.current_batch[self.current_batch_index]
@@ -1403,6 +1431,82 @@ class AutoAnnotationWizard(QDialog):
         
         print(f"✓ Manual label applied: '{label_widget.short_label_code}' for annotation {item.annotation.id[:12]}...")
     
+    def _cleanup_on_completion(self, auto_close=False):
+        """Clean up UI state when annotation process is complete.
+        
+        Args:
+            auto_close (bool): If True, automatically close the wizard after showing success message
+        """
+        print("\n=== Cleaning up on completion ===")
+        
+        # Clear all selections in both viewers
+        if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
+            self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
+        
+        if hasattr(self.explorer_window.annotation_viewer, 'selected_widgets'):
+            for widget in list(self.explorer_window.annotation_viewer.selected_widgets):
+                widget.data_item.set_selected(False)
+                widget.update_selection_visuals()
+            self.explorer_window.annotation_viewer.selected_widgets.clear()
+        
+        # Reset annotation viewer sort to None and unlock it
+        if hasattr(self.explorer_window.annotation_viewer, 'sort_combo'):
+            self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
+            self.explorer_window.annotation_viewer.sort_combo.setCurrentText("None")
+        
+        # Update viewer to show all annotations in unsorted order
+        self.explorer_window.annotation_viewer.update_annotations(self.explorer_window.current_data_items)
+        
+        # Clear all annotation info displays
+        self.current_label_display.setText("---")
+        self.current_label_display.setStyleSheet("")
+        self.predicted_label_label.setText("---")
+        self.confidence_label.setText("---")
+        self.confidence_bar.setValue(0)
+        self.confidence_bar.setStyleSheet("")
+        self.top_predictions_label.setText("---")
+        
+        # Disable annotation action buttons
+        self._enable_annotation_buttons(False)
+        
+        # Hide retrain button
+        self.retrain_now_button.setVisible(False)
+        
+        # Disable mode switching tabs
+        if hasattr(self, 'annotation_tabs'):
+            self.annotation_tabs.setEnabled(False)
+        
+        print("Cleanup complete - ready to finish")
+        
+        # If auto-close is requested, show completion message and close
+        if auto_close:
+            # Count how many were labeled
+            completed_count = len(self.completed_annotation_ids)
+            total_review = sum(1 for i in self.explorer_window.current_data_items
+                             if getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+            
+            QMessageBox.information(
+                self,
+                "Annotation Complete! 🎉",
+                f"✓ All uncertain annotations have been labeled!\n\n"
+                f"Labeled in this session: {completed_count}\n"
+                f"Remaining 'Review' annotations: {total_review}\n\n"
+                f"No more uncertain annotations require attention.\n"
+                f"The wizard will now close.",
+                QMessageBox.Ok
+            )
+            
+            # Emit signal with all completed annotations
+            updated_items = [
+                item for item in self.explorer_window.current_data_items
+                if item.annotation.id in self.completed_annotation_ids
+            ]
+            self.annotations_updated.emit(updated_items)
+            
+            # Reset and close
+            self._reset_wizard()
+            self.close()
+    
     def _skip_annotation(self):
         """Skip the current annotation without labeling it (leaves as 'Review')."""
         if not self.current_batch or self.current_batch_index >= len(self.current_batch):
@@ -1476,15 +1580,12 @@ class AutoAnnotationWizard(QDialog):
                     self._show_current_annotation()
                     self._update_progress_display()
                     self._update_navigation_buttons()
-                    self.retrain_now_button.setVisible(False)
                     return
             else:
                 # User declined next batch - they're done for now
-                self._enable_annotation_buttons(False)
                 self._show_current_annotation()
                 self._update_progress_display()
                 self._update_navigation_buttons()
-                self.retrain_now_button.setVisible(False)
                 return
         
         self._update_progress_display()
@@ -1498,6 +1599,9 @@ class AutoAnnotationWizard(QDialog):
         self._update_navigation_buttons()
         
         self.training_status_label.setText("Retraining model...")
+        
+        # Set busy cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         QApplication.processEvents()
         
         try:
@@ -1538,6 +1642,9 @@ class AutoAnnotationWizard(QDialog):
                 
         except Exception as e:
             QMessageBox.warning(self, "Retrain Error", f"Failed to retrain: {str(e)}")
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
     
     def _get_label_by_code(self, label_code):
         """Get Label object from code."""
@@ -1546,14 +1653,14 @@ class AutoAnnotationWizard(QDialog):
                 return label
         return None
     
-    def _finish(self):
-        """Finish wizard and apply changes."""
+    def _exit(self):
+        """Exit wizard early (before completion)."""
         # Count completed annotations
         completed_count = len(self.completed_annotation_ids)
         
         reply = QMessageBox.question(
             self,
-            "Finish Wizard",
+            "Exit Wizard",
             f"Exit the Auto-Annotation Wizard?\n\n{completed_count} annotations were labeled in this session.\nAll changes have been saved.",
             QMessageBox.Yes | QMessageBox.No
         )
@@ -1573,13 +1680,34 @@ class AutoAnnotationWizard(QDialog):
             self.close()
     
     def _reset_wizard(self):
-        """Reset wizard state to initial values."""
+        """Reset wizard state to initial values for a fresh start."""
+        print("\n=== Resetting wizard state ===")
+        
+        # Clear all preview labels from data items
+        for item in self.explorer_window.current_data_items:
+            if item.has_preview_changes():
+                item.clear_preview_label()
+        
         # Restore normal selection behavior
         self.explorer_window.embedding_viewer.selection_blocked = False
         self.explorer_window.annotation_viewer.selection_blocked = False
         
-        # Re-enable sort combo
+        # Clear selections in both viewers
+        if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
+            self.explorer_window.embedding_viewer.graphics_scene.clearSelection()
+        
+        if hasattr(self.explorer_window.annotation_viewer, 'selected_widgets'):
+            for widget in list(self.explorer_window.annotation_viewer.selected_widgets):
+                widget.data_item.set_selected(False)
+                widget.update_selection_visuals()
+            self.explorer_window.annotation_viewer.selected_widgets.clear()
+        
+        # Re-enable and reset sort combo
         self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
+        self.explorer_window.annotation_viewer.sort_combo.setCurrentText("None")
+        
+        # Update viewer to show all annotations
+        self.explorer_window.annotation_viewer.update_annotations(self.explorer_window.current_data_items)
         
         # Stop any timers
         self.bulk_preview_timer.stop()
@@ -1588,9 +1716,10 @@ class AutoAnnotationWizard(QDialog):
         self.current_page = 0
         self.page_stack.setCurrentIndex(0)
         
-        # Reset annotation mode
+        # Reset annotation mode and re-enable tabs
         self.annotation_mode = 'active_learning'
         self.annotation_tabs.setCurrentIndex(0)
+        self.annotation_tabs.setEnabled(True)
         
         # Clear model state
         self.trained_model = None
@@ -1615,11 +1744,31 @@ class AutoAnnotationWizard(QDialog):
         # Reset completed annotations tracking
         self.completed_annotation_ids = set()
         
-        # Clear UI elements
+        # Clear UI elements - Training page
         self.metrics_text.clear()
         self.confusion_table.setRowCount(0)
         self.confusion_table.setColumnCount(0)
         self.training_status_label.setText("Ready to train...")
+        self.training_progress.setVisible(False)
+        self.train_button.setEnabled(True)
+        
+        # Clear UI elements - Annotation page (Active Learning)
+        self.current_annotation_label.setText("No annotation selected")
+        self.current_label_display.setText("---")
+        self.current_label_display.setStyleSheet("")
+        self.predicted_label_label.setText("---")
+        self.confidence_label.setText("---")
+        self.confidence_bar.setValue(0)
+        self.confidence_bar.setStyleSheet("")
+        self.top_predictions_label.setText("---")
+        
+        # Re-enable buttons
+        self._enable_annotation_buttons(True)
+        
+        # Update navigation buttons
+        self._update_navigation_buttons()
+        
+        print("Wizard reset complete - ready for fresh session")
         
         # Update navigation buttons
         self._update_navigation_buttons()

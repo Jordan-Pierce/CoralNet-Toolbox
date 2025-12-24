@@ -1751,6 +1751,11 @@ class ExplorerWindow(QMainWindow):
         If the EmbeddingViewer is in isolate mode, it will use only the visible
         (isolated) points as input for the pipeline.
         """
+        # Reset wizard state if it exists, as new embeddings invalidate current state
+        if self.auto_annotation_wizard is not None and self.auto_annotation_wizard.isVisible():
+            print("Resetting Auto-Annotation Wizard due to embedding changes...")
+            self.auto_annotation_wizard._reset_wizard()
+        
         items_to_embed = []
         if self.embedding_viewer.isolated_mode:
             items_to_embed = [point.data_item for point in self.embedding_viewer.isolated_points]
