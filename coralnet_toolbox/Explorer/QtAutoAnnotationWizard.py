@@ -422,20 +422,52 @@ class AutoAnnotationWizard(QDialog):
         current_label_layout.addStretch()
         current_layout.addLayout(current_label_layout)
         
-        pred_layout = QFormLayout()
-        self.predicted_label_label = QLabel("-")
-        self.predicted_label_label.setStyleSheet("QLabel { font-weight: bold; color: #1976d2; font-size: 12pt; }")
-        self.confidence_label = QLabel("-")
-        self.confidence_bar = QProgressBar()
-        self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #4caf50; }")
-        self.top_predictions_label = QLabel("-")
-        self.top_predictions_label.setWordWrap(True)
+        # Top 3 predictions with confidence bars
+        pred_group = QGroupBox("Top 3 Predictions")
+        pred_group_layout = QVBoxLayout(pred_group)
         
-        pred_layout.addRow("<b>Predicted Label:</b>", self.predicted_label_label)
-        pred_layout.addRow("<b>Confidence:</b>", self.confidence_label)
-        pred_layout.addRow("", self.confidence_bar)
-        pred_layout.addRow("<b>Alternatives:</b>", self.top_predictions_label)
-        current_layout.addLayout(pred_layout)
+        # Create 3 prediction rows with labels and bars
+        self.prediction_rows = []
+        for i in range(3):
+            row_widget = QWidget()
+            row_layout = QVBoxLayout(row_widget)
+            row_layout.setContentsMargins(5, 5, 5, 5)
+            row_layout.setSpacing(2)
+            
+            # Rank and label on one line
+            label_layout = QHBoxLayout()
+            rank_label = QLabel(f"<b>{i+1}.</b>")
+            rank_label.setFixedWidth(20)
+            label_layout.addWidget(rank_label)
+            
+            pred_label = QLabel("-")
+            pred_label.setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; }")
+            label_layout.addWidget(pred_label)
+            
+            conf_label = QLabel("-")
+            conf_label.setStyleSheet("QLabel { color: #666; }")
+            conf_label.setFixedWidth(60)
+            conf_label.setAlignment(Qt.AlignRight)
+            label_layout.addWidget(conf_label)
+            row_layout.addLayout(label_layout)
+            
+            # Confidence bar
+            conf_bar = QProgressBar()
+            conf_bar.setMaximumHeight(18)
+            conf_bar.setTextVisible(False)
+            row_layout.addWidget(conf_bar)
+            
+            pred_group_layout.addWidget(row_widget)
+            
+            # Store references
+            self.prediction_rows.append({
+                'widget': row_widget,
+                'label': pred_label,
+                'confidence_label': conf_label,
+                'confidence_bar': conf_bar
+            })
+        
+        current_layout.addWidget(pred_group)
         layout.addWidget(current_group)
         
         # Annotation actions
@@ -1275,32 +1307,43 @@ class AutoAnnotationWizard(QDialog):
             self.current_label_display.setText(current_label)
             self.current_label_display.setStyleSheet("QLabel { color: #388e3c; font-weight: bold; }")
         
-        # Show prediction
+        # Show top 3 predictions with confidence bars
         if hasattr(item, 'ml_prediction') and item.ml_prediction:
             pred = item.ml_prediction
-            self.predicted_label_label.setText(pred['label'])
-            self.confidence_label.setText(f"{pred['confidence']:.1%}")
-            self.confidence_bar.setValue(int(pred['confidence'] * 100))
+            top_predictions = pred['top_predictions'][:3]  # Get top 3
             
-            # Color code confidence bar
-            if pred['confidence'] >= 0.9:
-                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #4caf50; }")
-            elif pred['confidence'] >= 0.7:
-                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #ff9800; }")
-            else:
-                self.confidence_bar.setStyleSheet("QProgressBar::chunk { background-color: #f44336; }")
-            
-            # Format top predictions
-            top_3_text = "<br>".join([
-                f"<b>{i+1}.</b> {p['label']}: {p['confidence']:.1%}"
-                for i, p in enumerate(pred['top_predictions'][:3])
-            ])
-            self.top_predictions_label.setText(top_3_text)
+            # Update each prediction row
+            for i, row in enumerate(self.prediction_rows):
+                if i < len(top_predictions):
+                    p = top_predictions[i]
+                    row['widget'].setVisible(True)
+                    row['label'].setText(p['label'])
+                    row['confidence_label'].setText(f"{p['confidence']:.1%}")
+                    row['confidence_bar'].setValue(int(p['confidence'] * 100))
+                    
+                    # Color code confidence bars
+                    if i == 0:  # Top prediction
+                        if p['confidence'] >= 0.9:
+                            color = "#4caf50"  # Green
+                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #4caf50; }")
+                        elif p['confidence'] >= 0.7:
+                            color = "#ff9800"  # Orange
+                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #ff9800; }")
+                        else:
+                            color = "#f44336"  # Red
+                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #f44336; }")
+                    else:  # Alternative predictions
+                        color = "#2196f3"  # Blue
+                        row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #666; }")
+                    
+                    row['confidence_bar'].setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
+                else:
+                    # Hide unused rows
+                    row['widget'].setVisible(False)
         else:
-            self.predicted_label_label.setText("N/A")
-            self.confidence_label.setText("N/A")
-            self.confidence_bar.setValue(0)
-            self.top_predictions_label.setText("N/A")
+            # No prediction available - hide all rows
+            for row in self.prediction_rows:
+                row['widget'].setVisible(False)
         
         # Select and highlight in viewers
         self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
