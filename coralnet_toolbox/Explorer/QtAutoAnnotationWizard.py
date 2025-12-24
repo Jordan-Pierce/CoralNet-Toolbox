@@ -1,6 +1,6 @@
 import warnings
 
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QCursor
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QHBoxLayout,
                              QLabel, QListWidget, QPushButton, QRadioButton,
@@ -36,6 +36,39 @@ REVIEW_LABEL = 'Review'
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class ClickablePredictionRow(QWidget):
+    """Clickable widget for prediction rows that applies label when clicked."""
+    clicked = pyqtSignal(str)  # Emits the label code when clicked
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.label_code = None
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.is_hovered = False
+        
+    def set_label_code(self, label_code):
+        """Store the label code associated with this row."""
+        self.label_code = label_code
+        
+    def mousePressEvent(self, event):
+        """Handle mouse clicks."""
+        if event.button() == Qt.LeftButton and self.label_code:
+            self.clicked.emit(self.label_code)
+        super().mousePressEvent(event)
+    
+    def enterEvent(self, event):
+        """Handle mouse enter for hover effect."""
+        self.is_hovered = True
+        self.setStyleSheet("ClickablePredictionRow { background-color: #f0f0f0; border-radius: 4px; }")
+        super().enterEvent(event)
+    
+    def leaveEvent(self, event):
+        """Handle mouse leave to remove hover effect."""
+        self.is_hovered = False
+        self.setStyleSheet("")
+        super().leaveEvent(event)
 
 
 class AutoAnnotationError(Exception):
@@ -426,12 +459,17 @@ class AutoAnnotationWizard(QDialog):
         pred_group = QGroupBox("Top 3 Predictions")
         pred_group_layout = QVBoxLayout(pred_group)
         
+        hint_label = QLabel("<i><small>💡 Click on a prediction to apply that label</small></i>")
+        hint_label.setStyleSheet("QLabel { color: #666; }")
+        pred_group_layout.addWidget(hint_label)
+        
         # Create 3 prediction rows with labels and bars
         self.prediction_rows = []
         for i in range(3):
-            row_widget = QWidget()
+            row_widget = ClickablePredictionRow()
+            row_widget.clicked.connect(self._apply_label_from_prediction)
             row_layout = QVBoxLayout(row_widget)
-            row_layout.setContentsMargins(5, 5, 5, 5)
+            row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(2)
             
             # Rank and label on one line
@@ -1317,6 +1355,7 @@ class AutoAnnotationWizard(QDialog):
                 if i < len(top_predictions):
                     p = top_predictions[i]
                     row['widget'].setVisible(True)
+                    row['widget'].set_label_code(p['label'])  # Store label code for clicking
                     row['label'].setText(p['label'])
                     row['confidence_label'].setText(f"{p['confidence']:.1%}")
                     row['confidence_bar'].setValue(int(p['confidence'] * 100))
@@ -1362,47 +1401,55 @@ class AutoAnnotationWizard(QDialog):
         self.skip_button.setEnabled(enabled)
         self.next_button.setEnabled(enabled)
     
+    def _apply_label_from_prediction(self, label_code):
+        """Apply a label when a prediction row is clicked."""
+        if not self.current_annotation_item:
+            return
+        
+        item = self.current_annotation_item
+        label_obj = self._get_label_by_code(label_code)
+        
+        if label_obj:
+            # Update machine confidence from prediction if available
+            if hasattr(item, 'ml_prediction') and item.ml_prediction:
+                if 'probabilities' in item.ml_prediction:
+                    item.annotation.update_machine_confidence(
+                        item.ml_prediction['probabilities'],
+                        from_import=True
+                    )
+            
+            # Apply label directly and permanently
+            item.annotation.label = label_obj
+            item._effective_label = label_obj
+            
+            # Track as completed
+            self.completed_annotation_ids.add(item.annotation.id)
+            
+            # Remove from predictions
+            if item.annotation.id in self.bulk_predictions:
+                del self.bulk_predictions[item.annotation.id]
+            
+            # Emit update signal
+            self.annotations_updated.emit([item])
+            
+            # Update progress
+            self.labeled_count += 1
+            self._update_progress_display()
+            
+            # Move to next annotation
+            self._move_to_next_annotation()
+    
     def _accept_prediction(self):
-        """Accept the predicted label permanently."""
+        """Accept the predicted label permanently (top prediction)."""
         if not self.current_annotation_item:
             return
         
         item = self.current_annotation_item
         
         if hasattr(item, 'ml_prediction') and item.ml_prediction:
-            # Apply predicted label
+            # Apply the top predicted label
             predicted_label = item.ml_prediction['label']
-            label_obj = self._get_label_by_code(predicted_label)
-            
-            if label_obj:
-                # Update machine confidence from prediction first (before applying label)
-                if 'probabilities' in item.ml_prediction:
-                    item.annotation.update_machine_confidence(
-                        item.ml_prediction['probabilities'],
-                        from_import=True  # Don't overwrite the label we're about to apply
-                    )
-                
-                # Apply label directly and permanently (no preview)
-                item.annotation.label = label_obj
-                
-                # Update the data item's effective_label cache
-                item._effective_label = label_obj
-                
-                # Track this annotation as completed
-                self.completed_annotation_ids.add(item.annotation.id)
-                
-                # Remove from predictions since it's now labeled
-                if item.annotation.id in self.bulk_predictions:
-                    del self.bulk_predictions[item.annotation.id]
-                
-                # Update tooltip and visuals
-                if hasattr(item, 'widget') and item.widget:
-                    item.widget.update_tooltip()
-                if hasattr(item, 'graphics_item') and item.graphics_item:
-                    item.graphics_item.update_tooltip()
-    
-        # Move to next BEFORE refreshing viewers to avoid blocking
-        self._move_to_next_annotation()
+            self._apply_label_from_prediction(predicted_label)
     
     def _on_label_manually_selected(self, label_widget):
         """Handle when user manually selects a label from LabelWindow."""
