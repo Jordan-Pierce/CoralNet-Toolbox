@@ -1512,11 +1512,13 @@ class AutoAnnotationWizard(QDialog):
         # Clear all annotation info displays
         self.current_label_display.setText("---")
         self.current_label_display.setStyleSheet("")
-        self.predicted_label_label.setText("---")
-        self.confidence_label.setText("---")
-        self.confidence_bar.setValue(0)
-        self.confidence_bar.setStyleSheet("")
-        self.top_predictions_label.setText("---")
+        
+        # Clear prediction rows
+        for row in self.prediction_rows:
+            row['widget'].setVisible(False)
+            row['label'].setText("-")
+            row['confidence_label'].setText("-")
+            row['confidence_bar'].setValue(0)
         
         # Disable annotation action buttons
         self._enable_annotation_buttons(False)
