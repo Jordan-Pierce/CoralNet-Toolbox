@@ -86,6 +86,9 @@ class ExplorerWindow(QMainWindow):
         self.similarity_params = {'k': 50, 'same_label': False, 'same_image': False, 'min_confidence': 0.0}
         self.duplicate_params = {'threshold': 0.5, 'same_image': True, 'spatial_threshold': 100}
         
+        # Flag to track if features are ready for wizard (set after embedding pipeline completes)
+        self.features_ready_for_wizard = False
+        
         self.data_item_cache = {}  # Cache for AnnotationDataItem objects
 
         self.current_data_items = []
@@ -1878,6 +1881,9 @@ class ExplorerWindow(QMainWindow):
             progress_bar.set_busy_mode("Calculating quality metrics...")
             self._calculate_quality_metrics_silently()
             
+            # Mark features as ready for wizard
+            self.features_ready_for_wizard = True
+            
             # Enable auto-annotation wizard button now that features are available
             self._update_wizard_button_state()
 
@@ -2009,6 +2015,10 @@ class ExplorerWindow(QMainWindow):
         try:
             self.current_data_items = self.get_filtered_data_items()
             self.current_features = None
+            
+            # Clear the wizard ready flag since we're changing the annotation set
+            self.features_ready_for_wizard = False
+            
             self.annotation_viewer.update_annotations(self.current_data_items)
             self.embedding_viewer.clear_points()
             self.embedding_viewer.show_placeholder()
@@ -2018,6 +2028,9 @@ class ExplorerWindow(QMainWindow):
             
             # Update the annotation count in the label window
             self.label_window.update_annotation_count()
+            
+            # Update button states including wizard button
+            self.update_button_states()
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2133,6 +2146,9 @@ class ExplorerWindow(QMainWindow):
 
         # Find Similar button is now managed by embedding_viewer's _update_toolbar_state()
         # No need to manually update it here since it updates automatically on selection changes
+        
+        # Update auto-annotation wizard button state
+        self._update_wizard_button_state()
 
     def apply(self):
         """
@@ -2624,30 +2640,20 @@ class ExplorerWindow(QMainWindow):
     
     def _update_wizard_button_state(self):
         """Update the Auto-Annotation Wizard button state."""
-        # Check if we have features stored
-        has_features = bool(self.current_feature_generating_model)
+        # Simple check: button is enabled only if features are ready
+        should_enable = self.features_ready_for_wizard
         
-        # Check if embeddings have been calculated (viewer is not empty)
-        has_embeddings = False
-        if self.current_data_items:
-            # Check if any data items have embeddings
-            has_embeddings = any(
-                hasattr(item, 'embedding_x') and item.embedding_x is not None
-                for item in self.current_data_items
-            )
-        
-        # Only enable if we have either features or embeddings
-        should_enable = has_features or has_embeddings
+        print(f"[Wizard Button] Features ready: {should_enable}")
         self.auto_annotation_button.setEnabled(should_enable)
         
-        # Update tooltip to explain why it's disabled
-        if not should_enable:
+        # Update tooltip
+        if should_enable:
             self.auto_annotation_button.setToolTip(
-                "Generate features or run embedding pipeline first to enable auto-annotation"
+                "Open the ML-assisted annotation wizard"
             )
         else:
             self.auto_annotation_button.setToolTip(
-                "Open the ML-assisted annotation wizard (requires features/embeddings)"
+                "Run the embedding pipeline first to extract features for all annotations"
             )
             
     def _cleanup_resources(self):

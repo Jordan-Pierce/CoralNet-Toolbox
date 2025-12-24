@@ -506,16 +506,12 @@ class AutoAnnotationWizard(QDialog):
         
         current_layout.addWidget(pred_group)
         
-        # Skip button at bottom of current group
-        skip_layout = QHBoxLayout()
-        skip_layout.addStretch()
+        # Skip button at bottom of current group (full width)
         self.skip_button = QPushButton("⊘ Skip Annotation")
         self.skip_button.setToolTip("Skip this annotation without labeling (leaves as 'Review')")
         self.skip_button.clicked.connect(self._skip_annotation)
-        self.skip_button.setStyleSheet("QPushButton { padding: 6px 12px; }")
-        skip_layout.addWidget(self.skip_button)
-        skip_layout.addStretch()
-        current_layout.addLayout(skip_layout)
+        self.skip_button.setStyleSheet("QPushButton { padding: 8px; }")
+        current_layout.addWidget(self.skip_button)
         
         layout.addWidget(current_group)
         layout.addStretch()
