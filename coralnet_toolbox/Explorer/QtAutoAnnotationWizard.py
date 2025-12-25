@@ -976,7 +976,7 @@ class AutoAnnotationWizard(QDialog):
         self._update_progress_display()
         self._get_next_uncertain_annotation()
         self._show_current_annotation()
-        print("=== Active Learning Mode Ready ===")
+        print(f"=== Active Learning Mode Ready === Current annotation: {self.current_annotation_item.annotation.id[:12] if self.current_annotation_item else 'None'}...")
     
     def _enter_bulk_labeling_mode(self):
         """Enter Bulk Labeling mode."""
@@ -1396,6 +1396,9 @@ class AutoAnnotationWizard(QDialog):
         
         # Select and highlight in viewers
         self.explorer_window.embedding_viewer.render_selection_from_ids([item.annotation.id])
+        
+        # Isolate the current annotation in the annotation viewer
+        self.explorer_window.annotation_viewer.isolate_and_select_from_ids([item.annotation.id])
         
         # Highlight in viewers - call animate on the item's graphics representations
         if hasattr(item, 'graphics_item') and item.graphics_item:
