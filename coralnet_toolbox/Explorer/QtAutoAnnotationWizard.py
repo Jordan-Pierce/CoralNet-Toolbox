@@ -1252,11 +1252,20 @@ class AutoAnnotationWizard(QDialog):
             self._update_bulk_statistics()
             self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
             
-            QMessageBox.information(
-                self,
-                "Success",
-                f"Successfully applied {preview_count} labels.\n\n{len(review_items)} Review annotations remaining."
-            )
+            # Check if all annotations are now labeled
+            if len(review_items) == 0:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Successfully applied {preview_count} labels.\n\n✓ All annotations have been labeled!"
+                )
+                self._cleanup_on_completion(auto_close=True)
+            else:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Successfully applied {preview_count} labels.\n\n{len(review_items)} Review annotations remaining."
+                )
     
     def _get_next_uncertain_annotation(self):
         """Get the next most uncertain annotation to review."""
