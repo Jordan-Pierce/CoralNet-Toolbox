@@ -1483,13 +1483,16 @@ class AnnotationViewer(QWidget):
         else:
             text_color = "#555"
         
+        # Determine border color - black for Review bin
+        border_color = "#000000" if text == "Review" else (bg_color if color else '#ccc')
+        
         header.setStyleSheet(
             f"QLabel {{"
             f" font-weight: bold;"
             f" font-size: 12px;"
             f" color: {text_color};"
             f" background-color: {bg_color};"
-            f" border: 2px solid {bg_color if color else '#ccc'};"
+            f" border: 2px solid {border_color};"
             f" border-radius: 4px;"
             f" padding: 6px 10px;"
             f" margin: 2px 0px;"

@@ -230,7 +230,7 @@ class AutoAnnotationWizard(QDialog):
         
         # Feature selection
         feature_group = QGroupBox("Feature Type")
-        feature_layout = QVBoxLayout(feature_group)
+        feature_layout = QHBoxLayout(feature_group)
         
         self.feature_button_group = QButtonGroup()
         self.full_features_radio = QRadioButton("Full Features (Higher accuracy, slower)")
@@ -247,8 +247,8 @@ class AutoAnnotationWizard(QDialog):
         self.full_features_radio.toggled.connect(self._on_setup_changed)
         self.reduced_features_radio.toggled.connect(self._on_setup_changed)
         
-        feature_layout.addWidget(self.full_features_radio)
-        feature_layout.addWidget(self.reduced_features_radio)
+        feature_layout.addWidget(self.full_features_radio, 1)
+        feature_layout.addWidget(self.reduced_features_radio, 1)
         layout.addWidget(feature_group)
         
         # Model selection
@@ -721,17 +721,18 @@ class AutoAnnotationWizard(QDialog):
         self.back_button.setEnabled(self.current_page > 0)
         
         if self.current_page == 0:
-            # Setup page - can proceed once model is trained
-            self.next_button.setText("View Results >")
-            self.next_button.setEnabled(self.trained_model is not None)
+            # Setup page - train button handles progression, no next button needed
+            self.next_button.setVisible(False)
             self.retrain_now_button.setVisible(False)
         elif self.current_page == 1:
             # Results page - can proceed to annotation
+            self.next_button.setVisible(True)
             self.next_button.setText("Start Annotating >")
             self.next_button.setEnabled(True)
             self.retrain_now_button.setVisible(False)
         elif self.current_page == 2:
             # Annotation page
+            self.next_button.setVisible(True)
             self.next_button.setText("Exit")
             self.next_button.setEnabled(True)
             self.retrain_now_button.setVisible(True)
@@ -1359,26 +1360,32 @@ class AutoAnnotationWizard(QDialog):
                     p = top_predictions[i]
                     row['widget'].setVisible(True)
                     row['widget'].set_label_code(p['label'])  # Store label code for clicking
+                    
+                    # Get label object to access its color
+                    label_obj = self._get_label_by_code(p['label'])
+                    label_color = label_obj.color.name() if label_obj else "#999999"
+                    
+                    # Set label text (grey color, not colored by label)
                     row['label'].setText(p['label'])
-                    row['confidence_label'].setText(f"{p['confidence']:.1%}")
-                    row['confidence_bar'].setValue(int(p['confidence'] * 100))
+                    row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #666; }")
                     
-                    # Color code confidence bars
-                    if i == 0:  # Top prediction
-                        if p['confidence'] >= 0.9:
-                            color = "#4caf50"  # Green
-                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #4caf50; }")
-                        elif p['confidence'] >= 0.7:
-                            color = "#ff9800"  # Orange
-                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #ff9800; }")
-                        else:
-                            color = "#f44336"  # Red
-                            row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #f44336; }")
-                    else:  # Alternative predictions
-                        color = "#2196f3"  # Blue
-                        row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #666; }")
+                    # Color the percentage based on confidence level
+                    confidence = p['confidence']
+                    if confidence >= 0.75:
+                        conf_color = "#4caf50"  # Green
+                    elif confidence >= 0.50:
+                        conf_color = "#cddc39"  # Yellow
+                    elif confidence >= 0.25:
+                        conf_color = "#ff9800"  # Orange
+                    else:
+                        conf_color = "#f44336"  # Red
                     
-                    row['confidence_bar'].setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
+                    row['confidence_label'].setText(f"{confidence:.1%}")
+                    row['confidence_label'].setStyleSheet(f"QLabel {{ color: {conf_color}; font-weight: bold; }}")
+                    
+                    # Use label color for the confidence bar
+                    row['confidence_bar'].setValue(int(confidence * 100))
+                    row['confidence_bar'].setStyleSheet(f"QProgressBar::chunk {{ background-color: {label_color}; }}")
                 else:
                     # Hide unused rows
                     row['widget'].setVisible(False)
