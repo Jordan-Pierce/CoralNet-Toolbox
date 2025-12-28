@@ -668,24 +668,36 @@ class AutoAnnotationWizard(QDialog):
         This ensures that manually labeled annotations (changed outside the wizard)
         are properly tracked and excluded from future selections.
         
+        Also removes items from completed set if they've been relabeled back to 'Review'.
+        
         Returns:
             int: Number of newly detected manually labeled annotations
         """
         newly_labeled_count = 0
+        relabeled_to_review_count = 0
         
         for item in self.explorer_window.current_data_items:
-            # Check if this annotation is not in completed set but is also not 'Review'
-            if item.annotation.id not in self.completed_annotation_ids:
-                current_label = getattr(item.annotation.label, 'short_label_code', '')
+            current_label = getattr(item.annotation.label, 'short_label_code', '')
+            ann_id = item.annotation.id
+            
+            # Check if this annotation was completed but is now 'Review' again
+            if ann_id in self.completed_annotation_ids and current_label == REVIEW_LABEL:
+                # Remove from completed set - user relabeled it back to Review
+                self.completed_annotation_ids.remove(ann_id)
+                relabeled_to_review_count += 1
+                print(f"Annotation {ann_id} relabeled back to Review - removing from completed set")
                 
+                # Clear any existing prediction for this item
+                if ann_id in self.bulk_predictions:
+                    del self.bulk_predictions[ann_id]
+            
+            # Check if this annotation is not in completed set but is also not 'Review'
+            elif ann_id not in self.completed_annotation_ids:
                 # If it's not Review, it was manually labeled
                 if current_label and current_label != REVIEW_LABEL:
                     # Mark as completed
-                    self.completed_annotation_ids.add(item.annotation.id)
+                    self.completed_annotation_ids.add(ann_id)
                     newly_labeled_count += 1
-                    
-                    # Update the data item's effective_label cache
-                    item._effective_label = item.annotation.label
                     
                     # Remove from bulk predictions if it was there
                     if item.annotation.id in self.bulk_predictions:
