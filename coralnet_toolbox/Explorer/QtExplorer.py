@@ -419,8 +419,6 @@ class ExplorerWindow(QMainWindow):
         """
         if not self._ui_initialized:
             return
-
-        model_name, feature_mode = self.model_settings_widget.get_selected_model()
         
         # Update toolbar state when model changes
         self.embedding_viewer._update_toolbar_state()
@@ -521,11 +519,9 @@ class ExplorerWindow(QMainWindow):
         data_items_in_view = [p.data_item for p in items_in_view]
 
         # Get the model key used for the current embedding
-        model_info = self.model_settings_widget.get_selected_model()
-        model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
-        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
-        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
-        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        model_name = self.model_settings_widget.get_selected_model()
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_').replace('/', '_')
+        model_key = sanitized_model_name
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -669,11 +665,9 @@ class ExplorerWindow(QMainWindow):
         items_in_view = list(self.embedding_viewer.points_by_id.values())
         data_items_in_view = [p.data_item for p in items_in_view]
 
-        model_info = self.model_settings_widget.get_selected_model()
-        model_name, feature_mode = model_info if isinstance(model_info, tuple) else (model_info, "default")
-        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
-        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
-        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        model_name = self.model_settings_widget.get_selected_model()
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_').replace('/', '_')
+        model_key = sanitized_model_name
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -862,10 +856,9 @@ class ExplorerWindow(QMainWindow):
             return
 
         selected_data_items = [point.data_item for point in selected_points]
-        model_name, feature_mode = self.current_embedding_model_info
-        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
-        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
-        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        model_name = self.current_embedding_model_info
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_').replace('/', '_')
+        model_key = sanitized_model_name
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -1037,53 +1030,6 @@ class ExplorerWindow(QMainWindow):
         self._normalized_indexes[normalized_key] = normalized_index
         
         return normalized_index
-            
-    def _get_yolo_predictions_for_uncertainty(self, data_items, model_info):
-        """
-        Runs a YOLO classification model to get probabilities for uncertainty analysis.
-        This is a streamlined method that does NOT use the feature store.
-        """
-        model_name, feature_mode = model_info
-        
-        # Load the model
-        model = self._load_yolo_model(model_name, feature_mode)
-        if model is None:
-            QMessageBox.warning(self, 
-                                "Model Load Error",
-                                f"Could not load YOLO model '{model_name}'.")
-            return None
-        
-        # Prepare images from data items with proper resizing
-        image_list, valid_data_items = self._prepare_images_from_data_items(
-            data_items,
-            format='numpy',
-            target_size=(self.imgsz, self.imgsz)
-        )
-        
-        if not image_list:
-            return None
-        
-        try:
-            # We need probabilities for uncertainty analysis, so we always use predict
-            results = model.predict(image_list, 
-                                    stream=False,  # Use batch processing for uncertainty
-                                    imgsz=self.imgsz, 
-                                    half=True, 
-                                    device=self.device, 
-                                    verbose=False)
-                
-            _, probabilities_dict = self._process_model_results(results, valid_data_items, "Predictions")
-            return probabilities_dict
-            
-        except TypeError:
-            QMessageBox.warning(self, 
-                                "Invalid Model",
-                                "The selected model is not compatible with uncertainty analysis.")
-            return None
-            
-        finally:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
     def _ensure_cropped_images(self, annotations):
         """Ensures all provided annotations have a cropped image available."""
@@ -1115,40 +1061,23 @@ class ExplorerWindow(QMainWindow):
             progress_bar.stop_progress()
             progress_bar.close()
             
-    def _load_yolo_model(self, model_name, feature_mode):
+    def _load_yolo_model(self, model_name):
         """
         Helper function to load a YOLO model and cache it.
         
         Args:
             model_name (str): Path to the YOLO model file
-            feature_mode (str): Mode for feature extraction ("Embed Features" or "Predictions")
         
         Returns:
             ultralytics.yolo.engine.model.Model: The loaded YOLO model object, or None if loading fails.
         """
-        current_run_key = (model_name, feature_mode)
+        current_run_key = model_name
         
-        # Force a reload if the model path OR the feature mode has changed
+        # Force a reload if the model path has changed
         if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
-            print(f"Model or mode changed. Reloading {model_name} for '{feature_mode}'.")
+            print(f"Model changed. Reloading {model_name}.")
             try:
                 model = YOLO(model_name)
-                
-                # Check if the model task is compatible with the selected feature mode
-                if model.task != 'classify' and feature_mode == "Predictions":
-                    QMessageBox.warning(self, 
-                                        "Invalid Mode for Model",
-                                        f"The selected model is a '{model.task}' model. "
-                                        "The 'Predictions' feature mode is only available for 'classify' models. "
-                                        "Reverting to 'Embed Features' mode.")
-
-                    # Force the feature mode combo box back to "Embed Features"
-                    self.model_settings_widget.feature_mode_combo.setCurrentText("Embed Features")
-                    
-                    # On failure, reset the model cache
-                    self.loaded_model = None
-                    self.current_feature_generating_model = None
-                    return None
 
                 # Update the cache key to the new successful combination
                 self.current_feature_generating_model = current_run_key
@@ -1187,7 +1116,7 @@ class ExplorerWindow(QMainWindow):
         Returns:
             transformers.pipelines.base.Pipeline: The feature extractor pipeline object, or None if loading fails.
         """
-        current_run_key = (model_name, "transformer")
+        current_run_key = model_name
         
         # Force a reload if the model path has changed
         if current_run_key != self.current_feature_generating_model or self.loaded_model is None:
@@ -1292,84 +1221,29 @@ class ExplorerWindow(QMainWindow):
         
         return image_list, valid_data_items
 
-    def _process_model_results(self, results, valid_data_items, feature_mode, progress_bar=None):
+    def _process_model_results(self, results, valid_data_items, progress_bar=None):
         """
-        Process model results and update data item tooltips.
+        Process model results and extract embedding features.
         
         Args:
-            results: Model prediction results
+            results: Model embedding results
             valid_data_items (list): List of valid data items
-            feature_mode (str): Mode for feature extraction
             progress_bar (ProgressBar, optional): Progress bar for UI updates
         
         Returns:
-            tuple: (features_list, probabilities_dict)
+            list: List of feature vectors
         """
         features_list = []
-        probabilities_dict = {}
-        
-        # Get class names from the model for better tooltips
-        model = self.loaded_model.model if hasattr(self.loaded_model, 'model') else None
-        class_names = model.names if model and hasattr(model, 'names') else {}
         
         for i, result in enumerate(results):
-            if i >= len(valid_data_items):
-                break
-                
-            item = valid_data_items[i]
-            ann_id = item.annotation.id
+            # Extract embedding features
+            embedding = result.cpu().numpy().flatten()
+            features_list.append(embedding)
             
-            if feature_mode == "Embed Features":
-                embedding = result.cpu().numpy().flatten()
-                features_list.append(embedding)
-                
-            elif hasattr(result, 'probs') and result.probs is not None:
-                try:
-                    probs = result.probs.data.cpu().numpy().squeeze()
-                    features_list.append(probs)
-                    probabilities_dict[ann_id] = probs
-
-                    # Store the probabilities directly on the data item for confidence sorting
-                    item.prediction_probabilities = probs
-
-                    # Format and store prediction details for tooltips
-                    # This check will fail with a TypeError if probs is a scalar (unsized)
-                    if len(probs) > 0:
-                        # Get top 5 predictions
-                        top_indices = probs.argsort()[::-1][:5]
-                        top_probs = probs[top_indices]
-
-                        formatted_preds = ["<b>Top Predictions:</b>"]
-                        for idx, prob in zip(top_indices, top_probs):
-                            class_name = class_names.get(int(idx), f"Class {idx}")
-                            formatted_preds.append(f"{class_name}: {prob*100:.1f}%")
-
-                        item.prediction_details = "<br>".join(formatted_preds)
-                        
-                except TypeError:
-                    # This error is raised if len(probs) fails on a scalar value.
-                    raise TypeError(
-                        "The selected model is not compatible with 'Predictions' mode. "
-                        "Its output does not appear to be a list of class probabilities. "
-                        "Try using 'Embed Features' mode instead."
-                    )
-            else:
-                raise TypeError(
-                    "The 'Predictions' feature mode requires a classification model "
-                    "(e.g., 'yolov8n-cls.pt') that returns class probabilities. "
-                    "The selected model did not provide this output. "
-                    "Please use 'Embed Features' mode for this model."
-                )
-                
             if progress_bar:
                 progress_bar.update_progress()
         
-        # After processing is complete, update tooltips
-        for item in valid_data_items:
-            if hasattr(item, 'update_tooltip'):
-                item.update_tooltip()
-                
-        return features_list, probabilities_dict
+        return features_list
 
     def _extract_color_features(self, data_items, progress_bar=None, bins=32):
         """
@@ -1450,12 +1324,10 @@ class ExplorerWindow(QMainWindow):
 
         return np.array(features), valid_data_items
 
-    def _extract_yolo_features(self, data_items, model_info, progress_bar=None):
+    def _extract_yolo_features(self, data_items, model_name, progress_bar=None):
         """Extracts features from annotation crops using a YOLO model."""
-        model_name, feature_mode = model_info
-        
         # Load the model
-        model = self._load_yolo_model(model_name, feature_mode)
+        model = self._load_yolo_model(model_name)
         if model is None:
             return np.array([]), []
         
@@ -1470,7 +1342,7 @@ class ExplorerWindow(QMainWindow):
         if not valid_data_items:
             return np.array([]), []
         
-        # Set up prediction parameters
+        # Set up embedding parameters
         kwargs = {
             'stream': True,
             'imgsz': self.imgsz,
@@ -1479,21 +1351,17 @@ class ExplorerWindow(QMainWindow):
             'verbose': False
         }
         
-        # Get results based on feature mode
-        if feature_mode == "Embed Features":
-            results_generator = model.embed(image_list, **kwargs)
-        else:
-            results_generator = model.predict(image_list, **kwargs)
+        # Always use embed() for feature extraction
+        results_generator = model.embed(image_list, **kwargs)
         
         if progress_bar:
             progress_bar.set_title("Extracting features...")
             progress_bar.start_progress(len(valid_data_items))
         
         try:
-            features_list, _ = self._process_model_results(results_generator,
-                                                           valid_data_items,
-                                                           feature_mode,
-                                                           progress_bar=progress_bar)
+            features_list = self._process_model_results(results_generator,
+                                                        valid_data_items,
+                                                        progress_bar=progress_bar)
 
             return np.array(features_list), valid_data_items
 
@@ -1596,8 +1464,8 @@ class ExplorerWindow(QMainWindow):
 
     def _extract_features(self, data_items, progress_bar=None):
         """Dispatcher to call the appropriate feature extraction function."""
-        # Get the selected model and feature mode from the model settings widget
-        model_name, feature_mode = self.model_settings_widget.get_selected_model()
+        # Get the selected model from the model settings widget
+        model_name = self.model_settings_widget.get_selected_model()
 
         if isinstance(model_name, tuple):
             model_name = model_name[0]
@@ -1611,7 +1479,7 @@ class ExplorerWindow(QMainWindow):
 
         # Then check if it's a YOLO model (file path with .pt)
         elif is_yolo_model(model_name):
-            return self._extract_yolo_features(data_items, (model_name, feature_mode), progress_bar=progress_bar)
+            return self._extract_yolo_features(data_items, model_name, progress_bar=progress_bar)
         
         # Finally check if it's a transformer model using the shared utility function
         elif is_transformer_model(model_name):
@@ -1788,7 +1656,7 @@ class ExplorerWindow(QMainWindow):
         self.current_embedding_model_info = self.model_settings_widget.get_selected_model()
 
         embedding_params = self.embedding_settings_widget.get_embedding_parameters()
-        selected_model, selected_feature_mode = self.current_embedding_model_info
+        selected_model = self.current_embedding_model_info
 
         # If the model name is a path, use only its base name.
         if os.path.sep in selected_model or '/' in selected_model:
@@ -1797,11 +1665,9 @@ class ExplorerWindow(QMainWindow):
             sanitized_model_name = selected_model
 
         # Replace characters that might be problematic in filenames
-        sanitized_model_name = sanitized_model_name.replace(' ', '_')
-        # Also replace the forward slash to handle "N/A"
-        sanitized_feature_mode = selected_feature_mode.replace(' ', '_').replace('/', '_')
+        sanitized_model_name = sanitized_model_name.replace(' ', '_').replace('/', '_')
 
-        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        model_key = sanitized_model_name
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Processing Annotations")
@@ -1862,18 +1728,6 @@ class ExplorerWindow(QMainWindow):
             self.embedding_viewer.show_embedding()
             self.embedding_viewer.fit_view_to_points()
 
-            # Check if confidence scores are available to enable sorting
-            _, feature_mode = self.current_embedding_model_info
-            is_predict_mode = feature_mode == "Predictions"
-            if is_predict_mode:
-                self.annotation_viewer.set_confidence_sort_availability(True)
-
-            # If using Predictions mode, update data items with probabilities for confidence sorting
-            if is_predict_mode:
-                for item in self.current_data_items:
-                    if item.annotation.id in cached_features:
-                        item.prediction_probabilities = cached_features[item.annotation.id]
-
             # When a new embedding is run, any previous similarity sort becomes irrelevant
             self.annotation_viewer.active_ordered_ids = []
             
@@ -1908,10 +1762,9 @@ class ExplorerWindow(QMainWindow):
             return
 
         # Get the model key used for the current embedding
-        model_name, feature_mode = self.current_embedding_model_info
-        sanitized_model_name = os.path.basename(model_name).replace(' ', '_')
-        sanitized_feature_mode = feature_mode.replace(' ', '_').replace('/', '_')
-        model_key = f"{sanitized_model_name}_{sanitized_feature_mode}"
+        model_name = self.current_embedding_model_info
+        sanitized_model_name = os.path.basename(model_name).replace(' ', '_').replace('/', '_')
+        model_key = sanitized_model_name
 
         try:
             from sklearn.neighbors import LocalOutlierFactor

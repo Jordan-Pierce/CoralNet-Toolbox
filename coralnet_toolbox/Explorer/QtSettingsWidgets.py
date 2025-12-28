@@ -708,14 +708,6 @@ class ModelSettingsWidget(QGroupBox):
 
         main_layout.addWidget(self.tabs)
 
-        # === Feature Extraction Mode ===
-        feature_mode_layout = QFormLayout()
-        self.feature_mode_combo = QComboBox()
-        self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
-        self.feature_mode_combo.setCurrentText("Embed Features")
-        feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
-        main_layout.addLayout(feature_mode_layout)
-
         # --- ADD STRETCH TO PUSH CONTENT UP ---
         main_layout.addStretch(1)
 
@@ -723,7 +715,7 @@ class ModelSettingsWidget(QGroupBox):
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.tabs.currentChanged.connect(self._on_selection_changed)
         for widget in [self.category_combo, self.family_combo, self.size_combo, 
-                       self.transformer_combo, self.model_path_edit, self.feature_mode_combo]:
+                       self.transformer_combo, self.model_path_edit]:
             if isinstance(widget, QComboBox):
                 widget.currentTextChanged.connect(self._on_selection_changed)
             elif isinstance(widget, QLineEdit):
@@ -764,39 +756,10 @@ class ModelSettingsWidget(QGroupBox):
     @pyqtSlot()
     def _on_selection_changed(self):
         """Central slot to handle any change and emit a single signal."""
-        self._update_feature_mode_state()
         self.selection_changed.emit()
-
-    def _update_feature_mode_state(self):
-        """Update the enabled state and tooltip of the feature mode field."""
-        is_color_features = False
-        is_transformer = False
-        current_tab_index = self.tabs.currentIndex()
-        
-        if current_tab_index == 0:
-            category = self.category_combo.currentText()
-            is_color_features = (category == "Color Features")
-            is_transformer = (category == "Transformer Model")
-        
-        # Disable feature mode for Color Features and Transformer Models
-        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
-        
-        # If disabled categories are selected, force the combo to "Embed Features"
-        if is_color_features or is_transformer:
-            self.feature_mode_combo.setCurrentText("Embed Features")
-        
-        if is_color_features:
-            self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
-        elif is_transformer:
-            self.feature_mode_combo.setToolTip("Transformer models always output embedding features.")
-        else:
-            self.feature_mode_combo.setToolTip(
-                "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
-                "or 'Embed Features' for a general-purpose feature vector."
-            )
     
     def get_selected_model(self):
-        """Get the currently selected model name/path and feature mode."""
+        """Get the currently selected model name/path."""
         current_tab_index = self.tabs.currentIndex()
         model_name = ""
         
@@ -813,7 +776,7 @@ class ModelSettingsWidget(QGroupBox):
                 
                 # Add a guard clause to prevent crashing if a combo is empty.
                 if not family_text or not size_text:
-                    return "", "N/A"  # Return a safe default
+                    return ""  # Return a safe default
                 
                 # Create the display name format to look up in YOLO_MODELS
                 display_name = f"{family_text} ({size_text})"
@@ -834,8 +797,7 @@ class ModelSettingsWidget(QGroupBox):
         elif current_tab_index == 1:
             model_name = self.model_path_edit.text()
         
-        feature_mode = self.feature_mode_combo.currentText()
-        return model_name, feature_mode
+        return model_name
     
 
 class EmbeddingSettingsWidget(QGroupBox):
