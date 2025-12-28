@@ -453,6 +453,7 @@ class AnnotationImageWidget(QWidget):
         show_badge = (self.annotation_viewer and 
                       hasattr(self.annotation_viewer, 'show_confidence') and 
                       self.annotation_viewer.show_confidence)
+        
         confidence_score = self.data_item.get_effective_confidence()
         if show_badge and confidence_score > 0:
             # Badge dimensions - minimum size with fixed font
@@ -590,10 +591,8 @@ class AnnotationDataItem:
         # Calculate and store aspect ratio on initialization
         self.aspect_ratio = self._calculate_aspect_ratio()
         
-        # To store pre-formatted top-k prediction details
-        self.prediction_details = None
-        # To store prediction probabilities for sorting
-        self.prediction_probabilities = None
+        # sklearn predictions from Auto-Annotation Wizard (session-only, temporary)
+        self.sklearn_prediction = None  # Stores sklearn model predictions during Explorer session
         
         # Quality and anomaly metrics
         self.quality_score = None  # Composite quality metric (0-1)
@@ -698,9 +697,14 @@ class AnnotationDataItem:
             f"<b>Type:</b> {info['type']}"
         ]
 
-        # Add prediction details if they exist
-        if self.prediction_details:
-            tooltip_parts.append(f"<hr>{self.prediction_details}")
+        # Add sklearn prediction details if they exist (from Auto-Annotation Wizard)
+        if hasattr(self, 'sklearn_prediction') and self.sklearn_prediction:
+            pred = self.sklearn_prediction
+            if 'top_predictions' in pred:
+                pred_parts = ["<b>Model Predictions:</b>"]
+                for p in pred['top_predictions'][:3]:  # Top 3
+                    pred_parts.append(f"{p['label']}: {p['confidence']:.1%}")
+                tooltip_parts.append(f"<hr>{'<br>'.join(pred_parts)}")
         
         # Add quality information if available
         quality_info = self.get_quality_info()
@@ -716,26 +720,29 @@ class AnnotationDataItem:
 
     def get_effective_confidence(self):
         """
-        Get the effective confidence value, handling scalar, array, and vector predictions.
+        Get the effective confidence value with proper priority:
+        1. sklearn predictions (from Auto-Annotation Wizard, session-only)
+        2. External machine_confidence (from MainWindow, permanent)
+        3. Verified status (1.0 if verified)
+        4. Default (1.0)
+        
+        Returns:
+            float: Confidence value between 0 and 1
         """
-        # First check if prediction probabilities are available from model predictions
-        if hasattr(self, 'prediction_probabilities') and self.prediction_probabilities is not None:
-            probs = self.prediction_probabilities
-            try:
-                # This will succeed for lists and multi-element numpy arrays
-                if len(probs) > 0:
-                    return float(np.max(probs))
-            except TypeError:
-                # This will catch the error if `len()` is called on a scalar or 0-D array.
-                # In this case, the value of `probs` itself is the confidence score.
-                return float(probs)
-
-        # Fallback to existing confidence values
+        # Priority 1: sklearn predictions from Auto-Annotation Wizard (session-only)
+        if hasattr(self, 'sklearn_prediction') and self.sklearn_prediction is not None:
+            if isinstance(self.sklearn_prediction, dict) and 'confidence' in self.sklearn_prediction:
+                return float(self.sklearn_prediction['confidence'])
+        
+        # Priority 2: External machine_confidence (from CoralNet or other tools)
+        if hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
+            return list(self.annotation.machine_confidence.values())[0]
+        
+        # Priority 3: Verified status
         if self.annotation.verified:
             return 1.0
-        elif hasattr(self.annotation, 'machine_confidence') and self.annotation.machine_confidence:
-            return list(self.annotation.machine_confidence.values())[0]
             
+        # Default
         return 1.0
     
     def get_confidence_color(self, breaks=None):
@@ -756,33 +763,51 @@ class AnnotationDataItem:
         
         # Use provided breaks or default thresholds
         if breaks is None or len(breaks) < 2:
-            # Default 4-tier system
-            if confidence <= 0.50:
-                return QColor(220, 20, 60)  # Crimson red (<=50%)
-            elif confidence <= 0.75:
-                return QColor(255, 215, 0)  # Gold/yellow (50-75%)
-            elif confidence <= 0.90:
-                return QColor(144, 238, 144)  # Light green (75-90%)
+            # Default 6-tier system
+            if confidence <= 0.17:
+                return QColor(220, 20, 60)  # Crimson red (very low)
+            elif confidence <= 0.33:
+                return QColor(255, 99, 71)  # Tomato (low)
+            elif confidence <= 0.50:
+                return QColor(255, 165, 0)  # Orange (medium-low)
+            elif confidence <= 0.67:
+                return QColor(255, 215, 0)  # Gold (medium)
+            elif confidence <= 0.83:
+                return QColor(144, 238, 144)  # Light green (medium-high)
             else:
-                return QColor(34, 139, 34)  # Dark green (>90%)
+                return QColor(34, 139, 34)  # Dark green (high)
         else:
             # Use quantile breaks
-            if len(breaks) >= 3:
-                # 4 categories (3 breaks)
+            if len(breaks) >= 5:
+                # 6 categories (5 breaks)
                 if confidence <= breaks[0]:
                     return QColor(220, 20, 60)  # Crimson red
                 elif confidence <= breaks[1]:
-                    return QColor(255, 215, 0)  # Gold/yellow
+                    return QColor(255, 99, 71)  # Tomato
+                elif confidence <= breaks[2]:
+                    return QColor(255, 165, 0)  # Orange
+                elif confidence <= breaks[3]:
+                    return QColor(255, 215, 0)  # Gold
+                elif confidence <= breaks[4]:
+                    return QColor(144, 238, 144)  # Light green
+                else:
+                    return QColor(34, 139, 34)  # Dark green
+            elif len(breaks) >= 3:
+                # 4 categories (3 breaks) - fallback
+                if confidence <= breaks[0]:
+                    return QColor(220, 20, 60)  # Crimson red
+                elif confidence <= breaks[1]:
+                    return QColor(255, 165, 0)  # Orange
                 elif confidence <= breaks[2]:
                     return QColor(144, 238, 144)  # Light green
                 else:
                     return QColor(34, 139, 34)  # Dark green
             else:
-                # 2 categories (2 breaks)
+                # 2 categories (2 breaks or fewer) - fallback
                 if confidence <= breaks[0]:
                     return QColor(220, 20, 60)  # Crimson red
-                elif confidence <= breaks[1]:
-                    return QColor(255, 215, 0)  # Gold/yellow
+                elif len(breaks) > 1 and confidence <= breaks[1]:
+                    return QColor(255, 215, 0)  # Gold
                 else:
                     return QColor(34, 139, 34)  # Dark green
     
@@ -810,7 +835,7 @@ class AnnotationDataItem:
         scores = {}
         
         # 1. Model confidence score
-        if self.prediction_probabilities is not None:
+        if hasattr(self, 'sklearn_prediction') and self.sklearn_prediction is not None:
             confidence = self.get_effective_confidence()
             scores['confidence'] = confidence
         else:

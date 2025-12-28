@@ -150,6 +150,11 @@ class ExplorerWindow(QMainWindow):
 
         # Call the main cancellation method to revert any pending changes and clear selections.
         self.clear_preview_changes()
+        
+        # Clear session-only sklearn predictions
+        for item in self.data_item_cache.values():
+            if hasattr(item, 'sklearn_prediction'):
+                item.sklearn_prediction = None
 
         # Clean up the feature store by deleting its files
         if hasattr(self, 'feature_store') and self.feature_store:
@@ -2310,6 +2315,41 @@ class ExplorerWindow(QMainWindow):
                 'probabilities': {idx_to_class[j]: float(probs[j]) 
                                 for j in range(len(probs))}
             }
+    
+    def update_all_sklearn_predictions(self, model, scaler, class_to_idx, feature_type='full'):
+        """
+        Update sklearn predictions for ALL current data items (not just Review items).
+        This enables confidence sorting and display for all annotations.
+        
+        Args:
+            model: Trained sklearn model
+            scaler: Fitted scaler
+            class_to_idx: Class to index mapping
+            feature_type: Feature type to use ('full' or 'reduced')
+        """
+        if not self.current_data_items:
+            return
+        
+        idx_to_class = {idx: cls for cls, idx in class_to_idx.items()}
+        
+        # Get predictions for all items
+        self.predict_with_model(self.current_data_items, model, scaler, class_to_idx, idx_to_class, feature_type)
+        
+        # Copy ml_prediction to sklearn_prediction for all items
+        for item in self.current_data_items:
+            if hasattr(item, 'ml_prediction') and item.ml_prediction:
+                # Store as sklearn_prediction (session-only)
+                item.sklearn_prediction = item.ml_prediction.copy()
+                # Clear ml_prediction (it was just temporary storage)
+                item.ml_prediction = None
+        
+        # Update displays to show new confidence values
+        self.annotation_viewer.update_annotations(self.current_data_items)
+        
+        # Enable confidence sorting since we now have predictions
+        self.annotation_viewer.set_confidence_sort_availability(True)
+        
+        print(f"Updated sklearn predictions for {len(self.current_data_items)} annotations")
     
     def get_next_annotation_batch(self, model, scaler, class_to_idx, feature_type='full', batch_size=20):
         """

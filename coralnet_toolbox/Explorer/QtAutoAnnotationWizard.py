@@ -862,6 +862,14 @@ class AutoAnnotationWizard(QDialog):
             # Display metrics
             self._display_training_metrics(result)
             
+            # Update ALL annotations with sklearn predictions for confidence display
+            self.explorer_window.update_all_sklearn_predictions(
+                self.trained_model,
+                self.scaler,
+                self.class_to_idx,
+                self.feature_type
+            )
+            
             self.training_status_label.setText(
                 f"✓ Model trained successfully! Accuracy: {self.training_score:.2%}"
             )
@@ -1378,16 +1386,20 @@ class AutoAnnotationWizard(QDialog):
                     row['label'].setText(p['label'])
                     row['label'].setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; color: #666; }")
                     
-                    # Color the percentage based on confidence level
+                    # Color the percentage based on confidence level (matches badge colors)
                     confidence = p['confidence']
-                    if confidence >= 0.75:
-                        conf_color = "#4caf50"  # Green
+                    if confidence >= 0.83:
+                        conf_color = "#228B22"  # Dark green (34, 139, 34)
+                    elif confidence >= 0.67:
+                        conf_color = "#90EE90"  # Light green (144, 238, 144)
                     elif confidence >= 0.50:
-                        conf_color = "#cddc39"  # Yellow
-                    elif confidence >= 0.25:
-                        conf_color = "#ff9800"  # Orange
+                        conf_color = "#FFD700"  # Gold (255, 215, 0)
+                    elif confidence >= 0.33:
+                        conf_color = "#FFA500"  # Orange (255, 165, 0)
+                    elif confidence >= 0.17:
+                        conf_color = "#FF6347"  # Tomato (255, 99, 71)
                     else:
-                        conf_color = "#f44336"  # Red
+                        conf_color = "#DC143C"  # Crimson red (220, 20, 60)
                     
                     row['confidence_label'].setText(f"{confidence:.1%}")
                     row['confidence_label'].setStyleSheet(f"QLabel {{ color: {conf_color}; font-weight: bold; }}")
@@ -1614,6 +1626,14 @@ class AutoAnnotationWizard(QDialog):
                 
                 # Display training results
                 self._display_training_metrics(result)
+                
+                # Update ALL annotations with sklearn predictions for confidence display
+                self.explorer_window.update_all_sklearn_predictions(
+                    self.trained_model,
+                    self.scaler,
+                    self.class_to_idx,
+                    self.feature_type
+                )
                 
                 # Regenerate predictions for remaining Review annotations
                 self._generate_all_predictions()

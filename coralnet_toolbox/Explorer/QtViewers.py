@@ -928,7 +928,7 @@ class AnnotationViewer(QWidget):
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
         # Add new sort options for quality and anomaly scores
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Quality", "Anomaly"])
+        self.sort_combo.addItems(["None", "Label", "Image", "Quality", "Anomaly", "Confidence"])
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
@@ -1196,18 +1196,20 @@ class AnnotationViewer(QWidget):
         try:
             if JENKSPY_AVAILABLE and len(confidences) >= 5:
                 # Use Jenks Natural Breaks for optimal classification
-                # 4 classes means we get 3 internal breaks (plus min/max boundaries)
-                n_classes = 4
+                # 6 classes means we get 5 internal breaks (plus min/max boundaries)
+                n_classes = 6
                 jenks_breaks = jenkspy.jenks_breaks(confidences, n_classes=n_classes)
-                # jenks_breaks returns [min, break1, break2, break3, max]
-                # We want the internal breaks: [break1, break2, break3]
+                # jenks_breaks returns [min, break1, break2, break3, break4, break5, max]
+                # We want the internal breaks: [break1, break2, break3, break4, break5]
                 breaks = [float(b) for b in jenks_breaks[1:-1]]
             else:
-                # Fallback to quantile breaks
+                # Fallback to quantile breaks (6 categories)
                 breaks = [
-                    float(np.quantile(confidences, 0.25)),
+                    float(np.quantile(confidences, 0.17)),
+                    float(np.quantile(confidences, 0.33)),
                     float(np.quantile(confidences, 0.50)),
-                    float(np.quantile(confidences, 0.75))
+                    float(np.quantile(confidences, 0.67)),
+                    float(np.quantile(confidences, 0.83))
                 ]
             
             # Ensure breaks are unique and sorted
@@ -1238,13 +1240,34 @@ class AnnotationViewer(QWidget):
         mid_conf = (min_conf + max_conf) / 2
         
         # Determine color and category based on breaks
-        if breaks and len(breaks) >= 3:
+        if breaks and len(breaks) >= 5:
+            # 6 categories (5 breaks)
+            if mid_conf <= breaks[0]:
+                category = "Very Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Low Confidence"
+                color = QColor(255, 99, 71)
+            elif mid_conf <= breaks[2]:
+                category = "Medium-Low Confidence"
+                color = QColor(255, 165, 0)
+            elif mid_conf <= breaks[3]:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            elif mid_conf <= breaks[4]:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) >= 3:
+            # 4 categories (3 breaks) - fallback
             if mid_conf <= breaks[0]:
                 category = "Low Confidence"
                 color = QColor(220, 20, 60)
             elif mid_conf <= breaks[1]:
                 category = "Medium Confidence"
-                color = QColor(255, 215, 0)
+                color = QColor(255, 165, 0)
             elif mid_conf <= breaks[2]:
                 category = "Medium-High Confidence"
                 color = QColor(144, 238, 144)
@@ -1270,13 +1293,22 @@ class AnnotationViewer(QWidget):
                 category = "High Confidence"
                 color = QColor(34, 139, 34)
         else:
-            # Default thresholds
-            if mid_conf <= 0.50:
-                category = "Low Confidence"
+            # Default thresholds (6 categories)
+            if mid_conf <= 0.17:
+                category = "Very Low Confidence"
                 color = QColor(220, 20, 60)
-            elif mid_conf <= 0.75:
+            elif mid_conf <= 0.33:
+                category = "Low Confidence"
+                color = QColor(255, 99, 71)
+            elif mid_conf <= 0.50:
+                category = "Medium-Low Confidence"
+                color = QColor(255, 165, 0)
+            elif mid_conf <= 0.67:
                 category = "Medium Confidence"
                 color = QColor(255, 215, 0)
+            elif mid_conf <= 0.83:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
             else:
                 category = "High Confidence"
                 color = QColor(34, 139, 34)
@@ -1305,8 +1337,8 @@ class AnnotationViewer(QWidget):
         elif sort_type == "Image":
             items.sort(key=lambda i: os.path.basename(i.annotation.image_path))
         elif sort_type == "Confidence":
-            # Sort by confidence, descending. Handles cases with no confidence gracefully.
-            items.sort(key=lambda i: i.get_effective_confidence(), reverse=True)
+            # Sort by confidence, ascending (lowest confidence first)
+            items.sort(key=lambda i: i.get_effective_confidence(), reverse=False)
         elif sort_type == "Quality":
             # Sort by quality score, ascending (lowest quality first)
             items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=False)
@@ -1365,9 +1397,9 @@ class AnnotationViewer(QWidget):
                             bin_groups[i].append(item)
                             break
             
-            # Create labeled groups (highest confidence first)
+            # Create labeled groups (lowest confidence first)
             groups = []
-            for i in range(len(bin_groups) - 1, -1, -1):
+            for i in range(len(bin_groups)):
                 if bin_groups[i]:  # Only add non-empty groups
                     min_conf = max(0, bins[i])
                     max_conf = min(1, bins[i + 1])
