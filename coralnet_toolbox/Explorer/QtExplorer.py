@@ -1731,7 +1731,7 @@ class ExplorerWindow(QMainWindow):
             self._update_data_items_with_embedding(self.current_data_items, embedded_features)
             self.embedding_viewer.update_embeddings(self.current_data_items, embedded_features.shape[1])
             self.embedding_viewer.show_embedding()
-            self.embedding_viewer.fit_view_to_points()
+            self.embedding_viewer.reset_view()  # Reset view to center and fit all points
 
             # When a new embedding is run, any previous similarity sort becomes irrelevant
             self.annotation_viewer.active_ordered_ids = []
