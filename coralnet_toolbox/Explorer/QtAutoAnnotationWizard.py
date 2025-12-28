@@ -829,10 +829,10 @@ class AutoAnnotationWizard(QDialog):
         """Update dataset information display."""
         data_items = self.explorer_window.current_data_items
         total = len(data_items)
-        
-        review_count = sum(1 for item in data_items 
-                          if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
-        
+        review_count = sum(
+            1 for item in data_items
+            if getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+        )
         labeled_count = total - review_count
         
         # Count unique labels (excluding Review)
@@ -1432,8 +1432,8 @@ class AutoAnnotationWizard(QDialog):
         if not self.current_annotation_item:
             # Check if there are any remaining review annotations at all
             total_review = sum(1 for i in self.explorer_window.current_data_items
-                             if i.annotation.id not in self.completed_annotation_ids
-                             and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+                               if i.annotation.id not in self.completed_annotation_ids
+                               and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
             
             if total_review == 0:
                 # Truly done - no more review annotations
@@ -1455,10 +1455,10 @@ class AutoAnnotationWizard(QDialog):
         
         # Show annotation info
         total_review = sum(1 for i in self.explorer_window.current_data_items
-                          if i.annotation.id not in self.completed_annotation_ids
-                          and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+                           if i.annotation.id not in self.completed_annotation_ids
+                           and getattr(i.effective_label, 'short_label_code', '') == REVIEW_LABEL)
         
-        annotation_text = f"📍 Current Annotation"
+        annotation_text = "📍 Current Annotation"
         annotation_text += f"<br><small>ID: {item.annotation.id[:12]}... | {total_review} total remaining</small>"
         self.current_annotation_label.setText(annotation_text)
         
