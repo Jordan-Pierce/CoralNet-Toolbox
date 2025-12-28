@@ -1298,11 +1298,9 @@ class AutoAnnotationWizard(QDialog):
         if has_preview:
             # Currently shown as labeled - move to Review
             self.manual_bulk_overrides[ann_id] = 'forced_review'
-            print(f"Manual override: Moving annotation {ann_id} to Review (was {pred['label']} at {pred['confidence']:.2%})")
         else:
             # Currently in Review - accept at predicted label
             self.manual_bulk_overrides[ann_id] = 'forced_accept'
-            print(f"Manual override: Accepting annotation {ann_id} as {pred['label']} at {pred['confidence']:.2%}")
         
         # Reapply preview labels with the new override
         self._apply_bulk_preview_labels()
@@ -1312,8 +1310,7 @@ class AutoAnnotationWizard(QDialog):
     def _apply_bulk_labels_permanently(self):
         """Apply all bulk preview labels permanently."""
         # Count preview changes
-        preview_count = sum(1 for item in self.explorer_window.current_data_items
-                           if item.has_preview_changes())
+        preview_count = sum(1 for item in self.explorer_window.current_data_items if item.has_preview_changes())
         
         if preview_count == 0:
             QMessageBox.information(self, "No Changes", "No preview labels to apply.")
