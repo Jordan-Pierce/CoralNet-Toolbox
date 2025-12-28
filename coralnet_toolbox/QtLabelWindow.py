@@ -892,6 +892,11 @@ class LabelWindow(QWidget):
             selected_label: Can be either a Label widget or an object with an 'id' property.
                            If it has an id property but isn't a Label widget, we look it up by ID.
         """
+        # Handle None case - deselect active label
+        if selected_label is None:
+            self.deselect_active_label()
+            return
+        
         # Handle the case where we receive a label object instead of a Label widget
         # (e.g., from AnnotationDataItem.effective_label)
         if selected_label and not isinstance(selected_label, Label):
@@ -917,11 +922,17 @@ class LabelWindow(QWidget):
 
         # Make the selected label active
         self.active_label = selected_label
+        
+        # Safety check in case selected_label became None
+        if not self.active_label:
+            return
+            
         self.active_label.select()
         self.labelSelected.emit(selected_label)
 
         # Transparency changes are now instant - emit freely!
-        self.transparencyChanged.emit(self.active_label.transparency)
+        if self.active_label:
+            self.transparencyChanged.emit(self.active_label.transparency)
         
         # Skip expensive annotation updates in mask editing mode
         # Vector annotations don't need updates when switching labels in mask mode

@@ -1484,10 +1484,12 @@ class AutoAnnotationWizard(QDialog):
     
     def _on_label_manually_selected(self, label_widget):
         """Handle when user manually selects a label from LabelWindow."""
-        if not self.current_annotation_item:
+        # Ignore if we don't have a current annotation or label was deselected
+        if not self.current_annotation_item or not label_widget:
             return
         
-        if not label_widget:  # Label was deselected
+        # Ignore if wizard is not in annotation mode
+        if self.current_page != 2:  # Not on annotation page
             return
         
         item = self.current_annotation_item
@@ -1524,6 +1526,12 @@ class AutoAnnotationWizard(QDialog):
             auto_close (bool): If True, automatically close the wizard after showing success message
         """
         print("\n=== Cleaning up on completion ===")
+        
+        # Disconnect signal to prevent issues during cleanup
+        try:
+            self.main_window.label_window.labelSelected.disconnect(self._on_label_manually_selected)
+        except (TypeError, RuntimeError):
+            pass  # Signal was already disconnected or never connected
         
         # Clear all selections in both viewers
         if hasattr(self.explorer_window.embedding_viewer, 'graphics_scene'):
@@ -1765,6 +1773,12 @@ class AutoAnnotationWizard(QDialog):
     
     def closeEvent(self, event):
         """Handle close event."""
+        # Disconnect signal handler to prevent issues
+        try:
+            self.main_window.label_window.labelSelected.disconnect(self._on_label_manually_selected)
+        except (TypeError, RuntimeError):
+            pass  # Signal was already disconnected or never connected
+        
         # Restore normal selection behavior
         self.explorer_window.embedding_viewer.selection_blocked = False
         self.explorer_window.annotation_viewer.selection_blocked = False
