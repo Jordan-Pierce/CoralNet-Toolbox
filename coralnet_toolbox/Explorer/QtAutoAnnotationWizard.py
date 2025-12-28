@@ -120,6 +120,7 @@ class AutoAnnotationWizard(QDialog):
         # Bulk labeling state
         self.bulk_predictions = {}  # annotation_id -> prediction dict
         self.bulk_confidence_threshold = 0.95  # Reset each session
+        self.manual_bulk_overrides = {}  # annotation_id -> 'forced_review' or 'forced_accept'
         self.bulk_preview_timer = QTimer()
         self.bulk_preview_timer.setSingleShot(True)
         self.bulk_preview_timer.timeout.connect(self._apply_bulk_preview_labels)
@@ -535,6 +536,10 @@ class AutoAnnotationWizard(QDialog):
             "Interactively adjust the confidence threshold to preview automatic label assignments. "
             "Annotations are sorted by predicted label in the viewer below. "
             "Adjust the slider to see which annotations will be auto-labeled at different thresholds.<br><br>"
+            "<b>Click Annotations:</b> Click any annotation to manually override the threshold. "
+            "Clicking an annotation above the threshold moves it to 'Review'; "
+            "clicking an annotation in 'Review' accepts it at the predicted label. "
+            "All manual overrides are cleared when you adjust the threshold slider.<br><br>"
             "<b>Apply Auto-Labels:</b> Permanently applies all previewed labels to annotations. "
             "Once applied, labels cannot be undone within the wizard."
         )
@@ -748,6 +753,21 @@ class AutoAnnotationWizard(QDialog):
     def _go_back(self):
         """Navigate to previous page."""
         if self.current_page > 0:
+            # If going back from annotation page, restore original selection handler
+            if self.current_page == 2:
+                if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
+                    if self._bulk_click_handler_connected:
+                        self.explorer_window.annotation_viewer.handle_annotation_selection = self._original_selection_handler
+                        self._bulk_click_handler_connected = False
+                        delattr(self, '_original_selection_handler')
+                
+                # Clear manual overrides
+                self.manual_bulk_overrides.clear()
+                
+                # Re-enable sort combo if it was disabled
+                if hasattr(self.explorer_window.annotation_viewer, 'sort_combo'):
+                    self.explorer_window.annotation_viewer.sort_combo.setEnabled(True)
+            
             self.current_page -= 1
             self.page_stack.setCurrentIndex(self.current_page)
             self._update_navigation_buttons()
@@ -1037,6 +1057,17 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.annotation_viewer.sort_combo.setCurrentText("Label")
         self.explorer_window.annotation_viewer.sort_combo.setEnabled(False)
         
+        # Connect click handler for manual override functionality
+        # Store reference to disconnect later
+        if not hasattr(self, '_bulk_click_handler_connected'):
+            self._bulk_click_handler_connected = False
+        
+        if not self._bulk_click_handler_connected:
+            # We'll override the selection handler temporarily
+            self._original_selection_handler = self.explorer_window.annotation_viewer.handle_annotation_selection
+            self.explorer_window.annotation_viewer.handle_annotation_selection = self._on_bulk_annotation_clicked
+            self._bulk_click_handler_connected = True
+        
         # Update the viewer with only Review data items to show proper label bins
         self.explorer_window.annotation_viewer.update_annotations(review_items)
         
@@ -1158,6 +1189,9 @@ class AutoAnnotationWizard(QDialog):
         threshold = value / 100.0
         self.bulk_confidence_threshold = threshold
         
+        # Clear all manual overrides when threshold changes
+        self.manual_bulk_overrides.clear()
+        
         # Update label
         self.bulk_threshold_label.setText(f"<b>Current Threshold: {value}%</b>")
         
@@ -1166,17 +1200,19 @@ class AutoAnnotationWizard(QDialog):
         self.bulk_preview_timer.start(400)  # 400ms debounce
     
     def _apply_bulk_preview_labels(self):
-        """Apply preview labels based on current confidence threshold."""
+        """Apply preview labels based on current confidence threshold and manual overrides."""
         threshold = self.bulk_confidence_threshold
         count = 0
         above_threshold = 0
+        manual_review_count = 0
+        manual_accept_count = 0
         
         # Clear all previews first
         for item in self.explorer_window.current_data_items:
             if item.has_preview_changes():
                 item.clear_preview_label()
         
-        # Apply previews for annotations above threshold
+        # Apply previews for annotations above threshold, respecting manual overrides
         for item in self.explorer_window.current_data_items:
             ann_id = item.annotation.id
             
@@ -1188,17 +1224,37 @@ class AutoAnnotationWizard(QDialog):
                 continue
             
             pred = self.bulk_predictions[ann_id]
-            if pred['confidence'] >= threshold:
+            
+            # Check for manual override
+            override_state = self.manual_bulk_overrides.get(ann_id)
+            
+            if override_state == 'forced_review':
+                # User manually moved this to Review - skip it
+                manual_review_count += 1
+                continue
+            elif override_state == 'forced_accept':
+                # User manually accepted this - apply label regardless of threshold
+                manual_accept_count += 1
+                label_obj = self._get_label_by_code(pred['label'])
+                if label_obj:
+                    item.set_preview_label(label_obj)
+                    count += 1
+            elif pred['confidence'] >= threshold:
+                # Normal threshold-based labeling
                 above_threshold += 1
                 label_obj = self._get_label_by_code(pred['label'])
                 if label_obj:
                     item.set_preview_label(label_obj)
                     count += 1
         
-        print(f"Bulk Labeling: Threshold {threshold:.2f}, {above_threshold} above threshold, {count} labels applied")
+        print(f"Bulk Labeling: Threshold {threshold:.2f}, {above_threshold} above threshold, "
+              f"{manual_accept_count} manual accepts, {manual_review_count} manual reviews, {count} labels applied")
         
         # Update count display
-        self.bulk_count_label.setText(f"Annotations to be auto-labeled: {count}")
+        override_text = ""
+        if manual_accept_count > 0 or manual_review_count > 0:
+            override_text = f" ({manual_accept_count} manual accepts, {manual_review_count} forced reviews)"
+        self.bulk_count_label.setText(f"Annotations to be auto-labeled: {count}{override_text}")
         
         # Refresh annotation viewer to show preview changes
         self.explorer_window.annotation_viewer.recalculate_layout()
@@ -1211,6 +1267,47 @@ class AutoAnnotationWizard(QDialog):
         
         self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
         self.explorer_window.annotation_viewer.recalculate_layout()
+    
+    def _on_bulk_annotation_clicked(self, widget, event):
+        """Handle annotation clicks in bulk labeling mode to toggle manual overrides."""
+        # Only handle left-click
+        if event.button() != Qt.LeftButton:
+            # Restore original behavior for other buttons
+            if hasattr(self, '_original_selection_handler'):
+                self._original_selection_handler(widget, event)
+            return
+        
+        data_item = widget.data_item
+        ann_id = data_item.annotation.id
+        
+        # Only process annotations that have predictions
+        if ann_id not in self.bulk_predictions:
+            return
+        
+        pred = self.bulk_predictions[ann_id]
+        threshold = self.bulk_confidence_threshold
+        
+        # Determine current state
+        has_preview = data_item.has_preview_changes()
+        current_override = self.manual_bulk_overrides.get(ann_id)
+        
+        # Toggle logic:
+        # - If annotation has a preview label (above threshold or manually accepted): move to Review
+        # - If annotation is in Review (no preview): accept at predicted label
+        
+        if has_preview:
+            # Currently shown as labeled - move to Review
+            self.manual_bulk_overrides[ann_id] = 'forced_review'
+            print(f"Manual override: Moving annotation {ann_id} to Review (was {pred['label']} at {pred['confidence']:.2%})")
+        else:
+            # Currently in Review - accept at predicted label
+            self.manual_bulk_overrides[ann_id] = 'forced_accept'
+            print(f"Manual override: Accepting annotation {ann_id} as {pred['label']} at {pred['confidence']:.2%}")
+        
+        # Reapply preview labels with the new override
+        self._apply_bulk_preview_labels()
+        
+        event.accept()
     
     def _apply_bulk_labels_permanently(self):
         """Apply all bulk preview labels permanently."""
@@ -1527,6 +1624,13 @@ class AutoAnnotationWizard(QDialog):
         """
         print("\n=== Cleaning up on completion ===")
         
+        # Restore original selection handler if we replaced it
+        if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
+            if self._bulk_click_handler_connected:
+                self.explorer_window.annotation_viewer.handle_annotation_selection = self._original_selection_handler
+                self._bulk_click_handler_connected = False
+                delattr(self, '_original_selection_handler')
+        
         # Disconnect signal to prevent issues during cleanup
         try:
             self.main_window.label_window.labelSelected.disconnect(self._on_label_manually_selected)
@@ -1708,6 +1812,13 @@ class AutoAnnotationWizard(QDialog):
     def _reset_wizard(self):
         """Nuclear option: Destroy this wizard instance and tell ExplorerWindow to recreate it."""
         print("\n=== NUCLEAR RESET: Destroying and recreating wizard ===")
+        
+        # Restore original selection handler if we replaced it
+        if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
+            if self._bulk_click_handler_connected:
+                self.explorer_window.annotation_viewer.handle_annotation_selection = self._original_selection_handler
+                self._bulk_click_handler_connected = False
+                delattr(self, '_original_selection_handler')
         
         # Clear all preview labels from data items
         for item in self.explorer_window.current_data_items:
