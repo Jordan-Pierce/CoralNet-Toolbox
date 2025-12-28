@@ -1333,9 +1333,11 @@ class AnnotationViewer(QWidget):
         items = list(self.all_data_items)
 
         if sort_type == "Label":
-            items.sort(key=lambda i: i.effective_label.short_label_code)
+            # Sort by label, then by confidence within each label (lowest confidence first)
+            items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
-            items.sort(key=lambda i: os.path.basename(i.annotation.image_path))
+            # Sort by image, then by confidence within each image (lowest confidence first)
+            items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
         elif sort_type == "Confidence":
             # Sort by confidence, ascending (lowest confidence first)
             items.sort(key=lambda i: i.get_effective_confidence(), reverse=False)
