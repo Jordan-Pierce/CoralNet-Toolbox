@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QHBoxLayout,
                              QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
                              QTabWidget, QSlider)
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.svm import SVC
@@ -202,7 +204,7 @@ class AutoAnnotationWizard(QDialog):
         layout.addWidget(info_box)
         
         # Dataset info
-        info_group = QGroupBox("📊 Dataset Information")
+        info_group = QGroupBox("Dataset Information")
         info_layout = QVBoxLayout(info_group)
         
         # Create a more structured layout
@@ -308,11 +310,6 @@ class AutoAnnotationWizard(QDialog):
         # Training section
         training_group = QGroupBox("Training")
         training_layout = QVBoxLayout(training_group)
-        
-        # Status
-        self.training_status_label = QLabel("Ready to train model with your settings.")
-        self.training_status_label.setWordWrap(True)
-        training_layout.addWidget(self.training_status_label)
         
         # Progress
         self.training_progress = QProgressBar()
@@ -639,7 +636,6 @@ class AutoAnnotationWizard(QDialog):
         self.metrics_text.clear()
         self.confusion_table.setRowCount(0)
         self.confusion_table.setColumnCount(0)
-        self.training_status_label.setText("Model configuration changed. Please train the model again.")
         
         # Disable navigation to annotation page
         if self.current_page == 1:
@@ -844,7 +840,6 @@ class AutoAnnotationWizard(QDialog):
     
     def _train_model(self):
         """Train the ML model."""
-        self.training_status_label.setText("Training model...")
         self.training_progress.setVisible(True)
         self.training_progress.setRange(0, 0)  # Indeterminate
         self.train_button.setEnabled(False)
@@ -882,15 +877,10 @@ class AutoAnnotationWizard(QDialog):
                 self.feature_type
             )
             
-            self.training_status_label.setText(
-                f"✓ Model trained successfully! Accuracy: {self.training_score:.2%}"
-            )
-            
             # Auto-advance to results page
             QTimer.singleShot(500, lambda: self._go_to_page(1))
             
         except Exception as e:
-            self.training_status_label.setText(f"❌ Training failed: {str(e)}")
             QMessageBox.critical(self, "Training Error", str(e))
         finally:
             self.training_progress.setVisible(False)
@@ -1057,29 +1047,35 @@ class AutoAnnotationWizard(QDialog):
         self._apply_bulk_preview_labels()
         print("=== Bulk Labeling Mode Ready ===")
     
-    def _generate_predictions_for_items(self, items):
+    def _generate_predictions_for_items(self, items, progress_bar=None):
         """Generate predictions for specific items."""
         if not items:
             return
         
-        try:
-            # predict_with_model returns None but stores predictions in item.ml_prediction
-            self.explorer_window.predict_with_model(
-                items,
-                self.trained_model,
-                self.scaler,
-                self.class_to_idx,
-                self.idx_to_class,
-                self.feature_type
-            )
-            
-            # Collect the predictions that were stored in the items
-            for item in items:
+        total = len(items)
+        for i, item in enumerate(items):
+            try:
+                # predict_with_model returns None but stores predictions in item.ml_prediction
+                self.explorer_window.predict_with_model(
+                    [item],
+                    self.trained_model,
+                    self.scaler,
+                    self.class_to_idx,
+                    self.idx_to_class,
+                    self.feature_type
+                )
+                
+                # Collect the predictions that were stored in the items
                 if hasattr(item, 'ml_prediction') and item.ml_prediction:
                     self.bulk_predictions[item.annotation.id] = item.ml_prediction
                 
-        except Exception as e:
-            print(f"Failed to generate predictions: {str(e)}")
+                if progress_bar:
+                    percentage = int((i + 1) / total * 100)
+                    if percentage % 10 == 0 or i == total - 1:
+                        progress_bar.update_progress_percentage(percentage)
+                        
+            except Exception as e:
+                print(f"Failed to generate prediction for item {item.annotation.id}: {str(e)}")
     
     def _generate_all_predictions(self):
         """Generate predictions for all Review annotations, excluding completed ones."""
@@ -1102,7 +1098,10 @@ class AutoAnnotationWizard(QDialog):
             return
         
         print(f"Generating predictions for {len(review_items)} review items...")
-        self._generate_predictions_for_items(review_items)
+        progress_bar = ProgressBar(self, "Generating Predictions")
+        progress_bar.start_progress(100)
+        self._generate_predictions_for_items(review_items, progress_bar)
+        progress_bar.finish_progress()
         print(f"Successfully generated {len(self.bulk_predictions)} predictions")
     
     def _update_progress_display(self):
@@ -1613,8 +1612,6 @@ class AutoAnnotationWizard(QDialog):
         self.page_stack.setCurrentIndex(1)
         self._update_navigation_buttons()
         
-        self.training_status_label.setText("Retraining model...")
-        
         # Set busy cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
         QApplication.processEvents()
@@ -1649,11 +1646,6 @@ class AutoAnnotationWizard(QDialog):
                 
                 # Regenerate predictions for remaining Review annotations
                 self._generate_all_predictions()
-                
-                self.training_status_label.setText(
-                    f"✓ Model retrained successfully! Accuracy: {self.training_score:.2%}\n\n"
-                    "Review the updated metrics below, then click 'Start Annotating >' to continue."
-                )
                 
                 QMessageBox.information(
                     self,
