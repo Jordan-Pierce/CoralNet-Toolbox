@@ -1131,8 +1131,10 @@ class AutoAnnotationWizard(QDialog):
         print(f"Generating predictions for {len(review_items)} review items...")
         progress_bar = ProgressBar(self, "Generating Predictions")
         progress_bar.start_progress(100)
+        progress_bar.show()
         self._generate_predictions_for_items(review_items, progress_bar)
         progress_bar.finish_progress()
+        progress_bar.close()
         print(f"Successfully generated {len(self.bulk_predictions)} predictions")
     
     def _update_progress_display(self):
