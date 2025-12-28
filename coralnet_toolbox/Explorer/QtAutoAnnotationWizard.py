@@ -1513,6 +1513,9 @@ class AutoAnnotationWizard(QDialog):
         self._show_current_annotation()
         
         print(f"✓ Manual label applied: '{label_widget.short_label_code}' for annotation {item.annotation.id[:12]}...")
+        
+        # Move to next annotation automatically
+        self._move_to_next_annotation()
     
     def _cleanup_on_completion(self, auto_close=False):
         """Clean up UI state when annotation process is complete.
