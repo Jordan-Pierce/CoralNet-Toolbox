@@ -2,13 +2,12 @@ import warnings
 
 from PyQt5.QtGui import QFont, QCursor
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QHBoxLayout,
-                             QLabel, QListWidget, QPushButton, QRadioButton,
+from PyQt5.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout,
+                             QLabel, QPushButton, QRadioButton, QSlider,
                              QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
                              QDialog, QGroupBox, QComboBox, QDoubleSpinBox,
-                             QTextEdit, QProgressBar, QFormLayout, QGridLayout,
-                             QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QTabWidget, QSlider)
+                             QTextEdit, QProgressBar, QFormLayout, QTabWidget,
+                             QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -22,18 +21,15 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
     print("Warning: scikit-learn not installed. Auto-annotation wizard will not be available.")
-    
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-    
-    
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------------------------------------------------
 
-
 REVIEW_LABEL = 'Review'
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -653,8 +649,6 @@ class AutoAnnotationWizard(QDialog):
         
         # Rescan for any manually labeled annotations before entering new mode
         manually_labeled_count = self._rescan_for_manual_labels()
-        if manually_labeled_count > 0:
-            print(f"✓ Detected {manually_labeled_count} manually labeled annotation(s) before mode switch")
         
         if index == 0:
             self.annotation_mode = 'active_learning'
@@ -686,7 +680,6 @@ class AutoAnnotationWizard(QDialog):
                 # Remove from completed set - user relabeled it back to Review
                 self.completed_annotation_ids.remove(ann_id)
                 relabeled_to_review_count += 1
-                print(f"Annotation {ann_id} relabeled back to Review - removing from completed set")
                 
                 # Clear any existing prediction for this item
                 if ann_id in self.bulk_predictions:
@@ -709,8 +702,6 @@ class AutoAnnotationWizard(QDialog):
                         item.widget.update_tooltip()
                     if hasattr(item, 'graphics_item') and item.graphics_item:
                         item.graphics_item.update_tooltip()
-                    
-                    print(f"  Detected manual label: {current_label} for annotation {item.annotation.id[:12]}...")
         
         return newly_labeled_count
     
@@ -963,15 +954,10 @@ class AutoAnnotationWizard(QDialog):
         """Enter Active Learning mode."""
         # Check if model is trained
         if self.trained_model is None:
-            print("Warning: Model not trained yet")
             return
-        
-        print("\n=== Entering Active Learning Mode ===")
         
         # Rescan for manually labeled annotations before entering mode
         manually_labeled_count = self._rescan_for_manual_labels()
-        if manually_labeled_count > 0:
-            print(f"Found {manually_labeled_count} manually labeled annotations")
         
         # Clear any preview labels from bulk mode
         for item in self.explorer_window.current_data_items:
@@ -986,10 +972,8 @@ class AutoAnnotationWizard(QDialog):
         ]
         
         if review_items:
-            print(f"Generating predictions for {len(review_items)} review items")
             self._generate_predictions_for_items(review_items)
         else:
-            print("No review items found - all annotations labeled")
             self.current_annotation_item = None
         
         # Exit isolation mode if active and show all data items
@@ -1006,16 +990,12 @@ class AutoAnnotationWizard(QDialog):
         self._update_progress_display()
         self._get_next_uncertain_annotation()
         self._show_current_annotation()
-        print(f"=== Active Learning Mode Ready === Current annotation: {self.current_annotation_item.annotation.id[:12] if self.current_annotation_item else 'None'}...")
     
     def _enter_bulk_labeling_mode(self):
         """Enter Bulk Labeling mode."""
-        print("\n=== Entering Bulk Labeling Mode ===")
         
         # First, rescan for manually labeled annotations
         manually_labeled_count = self._rescan_for_manual_labels()
-        if manually_labeled_count > 0:
-            print(f"Found {manually_labeled_count} manually labeled annotations")
         
         # Clear all existing preview labels before entering mode
         for item in self.explorer_window.current_data_items:
@@ -1029,25 +1009,18 @@ class AutoAnnotationWizard(QDialog):
             and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
         ]
         
-        print(f"Found {len(review_items)} review items (excluded {len(self.completed_annotation_ids)} completed)")
-        
         # Clear any stale predictions for items that are no longer Review
         review_ids = {item.annotation.id for item in review_items}
         stale_ids = [ann_id for ann_id in self.bulk_predictions.keys() if ann_id not in review_ids]
         if stale_ids:
-            print(f"Clearing {len(stale_ids)} stale predictions")
             for ann_id in stale_ids:
                 del self.bulk_predictions[ann_id]
         
         # Regenerate predictions for all review items to ensure they're current
         if review_items and self.trained_model is not None:
-            print(f"Generating/updating predictions for {len(review_items)} review items")
             self._generate_predictions_for_items(review_items)
         elif not review_items:
-            print("No review items found - all annotations labeled")
             self.current_annotation_item = None
-        
-        print(f"Have {len(self.bulk_predictions)} total predictions")
         
         # Exit isolation mode if active
         if self.explorer_window.annotation_viewer.isolated_mode:
@@ -1076,7 +1049,6 @@ class AutoAnnotationWizard(QDialog):
         
         # Apply threshold to show preview labels
         self._apply_bulk_preview_labels()
-        print("=== Bulk Labeling Mode Ready ===")
     
     def _generate_predictions_for_items(self, items, progress_bar=None):
         """Generate predictions for specific items."""
@@ -1106,13 +1078,12 @@ class AutoAnnotationWizard(QDialog):
                         progress_bar.update_progress_percentage(percentage)
                         
             except Exception as e:
-                print(f"Failed to generate prediction for item {item.annotation.id}: {str(e)}")
+                print(f"Error generating prediction for annotation ID {item.annotation.id}: {e}")
     
     def _generate_all_predictions(self):
         """Generate predictions for all Review annotations, excluding completed ones."""
         # Validate model and scaler
         if self.trained_model is None or self.scaler is None:
-            print("Warning: Model or scaler not initialized. Skipping prediction generation.")
             return
         
         # Get review items excluding those completed in this session
@@ -1125,17 +1096,14 @@ class AutoAnnotationWizard(QDialog):
         ]
         
         if not review_items:
-            print("No review items found")
             return
         
-        print(f"Generating predictions for {len(review_items)} review items...")
         progress_bar = ProgressBar(self, "Generating Predictions")
         progress_bar.start_progress(100)
         progress_bar.show()
         self._generate_predictions_for_items(review_items, progress_bar)
         progress_bar.finish_progress()
         progress_bar.close()
-        print(f"Successfully generated {len(self.bulk_predictions)} predictions")
     
     def _update_progress_display(self):
         """Update progress statistics for Active Learning mode."""
@@ -1248,9 +1216,6 @@ class AutoAnnotationWizard(QDialog):
                 if label_obj:
                     item.set_preview_label(label_obj)
                     count += 1
-        
-        print(f"Bulk Labeling: Threshold {threshold:.2f}, {above_threshold} above threshold, "
-              f"{manual_accept_count} manual accepts, {manual_review_count} manual reviews, {count} labels applied")
         
         # Update count display
         override_text = ""
@@ -1386,7 +1351,6 @@ class AutoAnnotationWizard(QDialog):
         """Get the next most uncertain annotation to review."""
         # Validate model and scaler
         if self.trained_model is None or self.scaler is None:
-            print("Warning: Model or scaler not initialized")
             self.current_annotation_item = None
             return
         
@@ -1399,7 +1363,6 @@ class AutoAnnotationWizard(QDialog):
             ]
             
             if not review_items:
-                print("⚠ No more uncertain annotations available")
                 self.current_annotation_item = None
                 return
             
@@ -1417,16 +1380,13 @@ class AutoAnnotationWizard(QDialog):
             if most_uncertain is None:
                 # No predictions available, just take first review item
                 most_uncertain = review_items[0]
-                print(f"No predictions found, using first review item")
             
             self.current_annotation_item = most_uncertain
-            print(f"✓ Selected annotation with {lowest_confidence:.1%} confidence")
             
             # Highlight in embedding viewer
             self.explorer_window.embedding_viewer.render_selection_from_ids([most_uncertain.annotation.id])
             
         except Exception as e:
-            print(f"Error getting uncertain annotation: {str(e)}")
             self.current_annotation_item = None
     
     def _show_current_annotation(self):
@@ -1610,8 +1570,6 @@ class AutoAnnotationWizard(QDialog):
         # Refresh UI to show the change immediately
         self._show_current_annotation()
         
-        print(f"✓ Manual label applied: '{label_widget.short_label_code}' for annotation {item.annotation.id[:12]}...")
-        
         # Move to next annotation automatically
         self._move_to_next_annotation()
     
@@ -1621,7 +1579,6 @@ class AutoAnnotationWizard(QDialog):
         Args:
             auto_close (bool): If True, automatically close the wizard after showing success message
         """
-        print("\n=== Cleaning up on completion ===")
         
         # Restore original selection handler if we replaced it
         if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
@@ -1675,8 +1632,6 @@ class AutoAnnotationWizard(QDialog):
         if hasattr(self, 'annotation_tabs'):
             self.annotation_tabs.setEnabled(False)
         
-        print("Cleanup complete - ready to finish")
-        
         # If auto-close is requested, show completion message and close
         if auto_close:
             
@@ -1706,7 +1661,6 @@ class AutoAnnotationWizard(QDialog):
             return
             
         item = self.current_annotation_item
-        print(f"⊘ Skipped annotation {item.annotation.id[:12]}... (no label applied)")
         
         self._move_to_next_annotation()
     
@@ -1810,7 +1764,6 @@ class AutoAnnotationWizard(QDialog):
     
     def _reset_wizard(self):
         """Nuclear option: Destroy this wizard instance and tell ExplorerWindow to recreate it."""
-        print("\n=== NUCLEAR RESET: Destroying and recreating wizard ===")
         
         # Restore original selection handler if we replaced it
         if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
@@ -1873,8 +1826,6 @@ class AutoAnnotationWizard(QDialog):
         
         # Tell the explorer window to destroy this wizard instance
         self.explorer_window._destroy_and_recreate_wizard()
-        
-        print("Wizard destruction complete - new instance will be created on next open")
     
     def showEvent(self, event):
         """Handle show event."""
