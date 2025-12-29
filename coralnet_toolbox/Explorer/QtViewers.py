@@ -4,6 +4,13 @@ import os
 
 import numpy as np
 
+try:
+    import jenkspy
+    JENKSPY_AVAILABLE = True
+except ImportError:
+    JENKSPY_AVAILABLE = False
+    print("Warning: jenkspy not available, falling back to quantile breaks for confidence sorting")
+
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtCore import Qt, QTimer, QRect, QRectF, QPointF, pyqtSignal, QSignalBlocker, pyqtSlot, QEvent
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGraphicsView, QScrollArea,
@@ -15,7 +22,7 @@ from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import SimilaritySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import UncertaintySettingsWidget
-from coralnet_toolbox.Explorer.QtSettingsWidgets import MislabelSettingsWidget
+from coralnet_toolbox.Explorer.QtSettingsWidgets import AnomalySettingsWidget
 from coralnet_toolbox.Explorer.QtSettingsWidgets import DuplicateSettingsWidget
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -40,12 +47,12 @@ class EmbeddingViewer(QWidget):
     """Custom QGraphicsView for interactive embedding visualization with an isolate mode."""
     selection_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
-    find_mislabels_requested = pyqtSignal()
-    mislabel_parameters_changed = pyqtSignal(dict) 
-    find_uncertain_requested = pyqtSignal()
-    uncertainty_parameters_changed = pyqtSignal(dict)
+    find_anomalies_requested = pyqtSignal()
+    anomaly_parameters_changed = pyqtSignal(dict)
     find_duplicates_requested = pyqtSignal()
     duplicate_parameters_changed = pyqtSignal(dict)
+    find_similar_requested = pyqtSignal()
+    similarity_parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         """Initialize the EmbeddingViewer widget."""
@@ -85,15 +92,23 @@ class EmbeddingViewer(QWidget):
         self.isolated_mode = False
         self.isolated_points = set()
         
+        # Selection blocking for wizard mode
+        self.selection_blocked = False
+        
         # Properties for display mode
         self.display_mode = 'dots'  # Can be 'dots' or 'sprites'
-        
-        self.is_uncertainty_analysis_available = False
 
         # New timer for virtualization
         self.view_update_timer = QTimer(self)
         self.view_update_timer.setSingleShot(True)
         self.view_update_timer.timeout.connect(self._update_visible_points)
+        
+        # Location indicator lines and timer
+        self.locate_lines = []
+        self.locate_graphics_item = None  # Track which item is being located
+        self.locate_timer = QTimer(self)
+        self.locate_timer.setSingleShot(True)
+        self.locate_timer.timeout.connect(self._clear_location_indicator)
 
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
         
@@ -133,65 +148,35 @@ class EmbeddingViewer(QWidget):
         
         toolbar_layout.addWidget(self._create_separator())
                 
-        # Create a QToolButton to have both a primary action and a dropdown menu
-        self.find_mislabels_button = QToolButton()
-        self.find_mislabels_button.setText("Find Potential Mislabels")
-        self.find_mislabels_button.setPopupMode(QToolButton.MenuButtonPopup)  # Key change for split-button style
-        self.find_mislabels_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_mislabels_button.setStyleSheet(
-            "QToolButton::menu-indicator {"
-            " subcontrol-position: right center;"
-            " subcontrol-origin: padding;"
-            " left: -4px;"
-            " }"
+        # Create a QToolButton for similarity search
+        self.find_similar_button = QToolButton()
+        self.find_similar_button.setText("Find Similar")
+        self.find_similar_button.setToolTip(
+            "Find annotations with similar visual features to the selection.\n"
+            "Uses cosine similarity on high-dimensional feature vectors."
         )
-
-        # The primary action (clicking the button) triggers the analysis
-        run_analysis_action = QAction("Find Potential Mislabels", self)
-        run_analysis_action.triggered.connect(self.find_mislabels_requested.emit)
-        self.find_mislabels_button.setDefaultAction(run_analysis_action)
-
-        # The dropdown menu contains the settings
-        mislabel_settings_widget = MislabelSettingsWidget()
-        settings_menu = QMenu(self)
-        widget_action = QWidgetAction(settings_menu)
-        widget_action.setDefaultWidget(mislabel_settings_widget)
-        settings_menu.addAction(widget_action)
-        self.find_mislabels_button.setMenu(settings_menu)
-        
-        # Connect the widget's signal to the viewer's signal
-        mislabel_settings_widget.parameters_changed.connect(self.mislabel_parameters_changed.emit)
-        toolbar_layout.addWidget(self.find_mislabels_button)
-        
-        # Create a QToolButton for uncertainty analysis
-        self.find_uncertain_button = QToolButton()
-        self.find_uncertain_button.setText("Review Uncertain")
-        self.find_uncertain_button.setToolTip(
-            "Find annotations where the model is least confident.\n"
-            "Requires a .pt classification model and 'Predictions' mode."
-        )
-        self.find_uncertain_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_uncertain_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_uncertain_button.setStyleSheet(
+        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_similar_button.setStyleSheet(
             "QToolButton::menu-indicator { "
             "subcontrol-position: right center; "
             "subcontrol-origin: padding; "
             "left: -4px; }"
         )
         
-        run_uncertainty_action = QAction("Review Uncertain", self)
-        run_uncertainty_action.triggered.connect(self.find_uncertain_requested.emit)
-        self.find_uncertain_button.setDefaultAction(run_uncertainty_action)
+        run_similar_action = QAction("Find Similar", self)
+        run_similar_action.triggered.connect(self.find_similar_requested.emit)
+        self.find_similar_button.setDefaultAction(run_similar_action)
 
-        uncertainty_settings_widget = UncertaintySettingsWidget()
-        uncertainty_menu = QMenu(self)
-        uncertainty_widget_action = QWidgetAction(uncertainty_menu)
-        uncertainty_widget_action.setDefaultWidget(uncertainty_settings_widget)
-        uncertainty_menu.addAction(uncertainty_widget_action)
-        self.find_uncertain_button.setMenu(uncertainty_menu)
+        self.similarity_settings_widget = SimilaritySettingsWidget()
+        similarity_menu = QMenu(self)
+        similarity_widget_action = QWidgetAction(similarity_menu)
+        similarity_widget_action.setDefaultWidget(self.similarity_settings_widget)
+        similarity_menu.addAction(similarity_widget_action)
+        self.find_similar_button.setMenu(similarity_menu)
         
-        uncertainty_settings_widget.parameters_changed.connect(self.uncertainty_parameters_changed.emit)
-        toolbar_layout.addWidget(self.find_uncertain_button)
+        self.similarity_settings_widget.parameters_changed.connect(self.similarity_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_similar_button)
         
         # Create a QToolButton for duplicate detection
         self.find_duplicates_button = QToolButton()
@@ -221,10 +206,51 @@ class EmbeddingViewer(QWidget):
         
         duplicate_settings_widget.parameters_changed.connect(self.duplicate_parameters_changed.emit)
         toolbar_layout.addWidget(self.find_duplicates_button)
+        
+        # Create a QToolButton for anomaly detection with settings dropdown
+        self.find_anomalies_button = QToolButton()
+        self.find_anomalies_button.setText("Find Anomalies")
+        self.find_anomalies_button.setToolTip(
+            "Detect anomalous annotations using LOF and Isolation Forest.\n"
+            "Scores each annotation and selects outliers."
+        )
+        self.find_anomalies_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.find_anomalies_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.find_anomalies_button.setStyleSheet(
+            "QToolButton::menu-indicator {"
+            " subcontrol-position: right center;"
+            " subcontrol-origin: padding;"
+            " left: -4px;"
+            " }"
+        )
+
+        # The primary action (clicking the button) triggers the analysis
+        run_analysis_action = QAction("Find Anomalies", self)
+        run_analysis_action.triggered.connect(self.find_anomalies_requested.emit)
+        self.find_anomalies_button.setDefaultAction(run_analysis_action)
+
+        # The dropdown menu contains the settings
+        anomaly_settings_widget = AnomalySettingsWidget()
+        settings_menu = QMenu(self)
+        widget_action = QWidgetAction(settings_menu)
+        widget_action.setDefaultWidget(anomaly_settings_widget)
+        settings_menu.addAction(widget_action)
+        self.find_anomalies_button.setMenu(settings_menu)
+        
+        # Connect the widget's signal to the viewer's signal
+        anomaly_settings_widget.parameters_changed.connect(self.anomaly_parameters_changed.emit)
+        toolbar_layout.addWidget(self.find_anomalies_button)
     
         # Add a stretch and separator
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self._create_separator())
+
+        # Locate annotation button
+        self.locate_button = QPushButton()
+        self.locate_button.setIcon(get_icon("location.png"))
+        self.locate_button.setToolTip("Show location indicator for selected annotation")
+        self.locate_button.clicked.connect(self._on_locate_clicked)
+        toolbar_layout.addWidget(self.locate_button)
 
         # Center on selection button
         self.center_on_selection_button = QPushButton()
@@ -346,9 +372,10 @@ class EmbeddingViewer(QWidget):
         selection_exists = bool(self.graphics_scene.selectedItems())
         points_exist = bool(self.points_by_id)
 
-        self.find_mislabels_button.setEnabled(points_exist)
-        self.find_uncertain_button.setEnabled(points_exist and self.is_uncertainty_analysis_available)
+        self.find_anomalies_button.setEnabled(points_exist)
+        self.find_similar_button.setEnabled(points_exist and selection_exists)
         self.find_duplicates_button.setEnabled(points_exist)
+        self.locate_button.setEnabled(points_exist and selection_exists)
         self.center_on_selection_button.setEnabled(points_exist and selection_exists)
 
         if self.isolated_mode:
@@ -372,8 +399,8 @@ class EmbeddingViewer(QWidget):
         """Centers the view on selected point(s) or maintains the current view if no points are selected."""
         selected_items = self.graphics_scene.selectedItems()
         if not selected_items:
-            # No selection, show a message
-            QMessageBox.information(self, "No Selection", "Please select one or more points first.")
+            # No selection - silently return without blocking modal dialog
+            # This can happen during rapid UI updates in the wizard
             return
             
         # Create a bounding rect that encompasses all selected points
@@ -400,15 +427,20 @@ class EmbeddingViewer(QWidget):
             
             # Fit the view to the selection rect
             self.graphics_view.fitInView(selection_rect, Qt.KeepAspectRatio)
+            
+            # Update location indicator lines if active
+            if self.locate_graphics_item:
+                self._update_location_lines()
 
     def show_placeholder(self):
         """Show the placeholder message and hide the graphics view."""
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
+        self.locate_button.setEnabled(False)  # Disable locate button
         self.center_on_selection_button.setEnabled(False)  # Disable center button
-        self.find_mislabels_button.setEnabled(False)
-        self.find_uncertain_button.setEnabled(False)
+        self.find_anomalies_button.setEnabled(False)
+        self.find_similar_button.setEnabled(False)
         self.find_duplicates_button.setEnabled(False)
 
         self.isolate_button.show()
@@ -478,6 +510,18 @@ class EmbeddingViewer(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse press for selection, panning, and rotation."""
+        
+        # Block selection changes when wizard is active, but allow navigation
+        if self.selection_blocked:
+            # Allow right-click panning
+            if event.button() == Qt.RightButton and event.modifiers() != Qt.ControlModifier:
+                self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+                left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
+                QGraphicsView.mousePressEvent(self.graphics_view, left_event)
+                return
+            # Block all other mouse press events
+            event.ignore()
+            return
         
         # Ctrl+Right-Click Drag for rotation
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
@@ -550,6 +594,11 @@ class EmbeddingViewer(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         """Handle double-click to clear selection and reset the main view."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            event.ignore()
+            return
+            
         if event.button() == Qt.LeftButton:
             if self.graphics_scene.selectedItems():
                 self.graphics_scene.clearSelection()
@@ -561,6 +610,7 @@ class EmbeddingViewer(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move for dynamic selection, panning, and rotation."""
         
+        # Allow rotation and panning even when selection is blocked
         if self.is_rotating:
             delta = event.pos() - self.last_mouse_pos
             self.last_mouse_pos = event.pos()
@@ -588,6 +638,11 @@ class EmbeddingViewer(QWidget):
         elif event.buttons() == Qt.RightButton:
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
+            
+            # Update location indicator lines if active
+            if self.locate_graphics_item:
+                self._update_location_lines()
+            
             self._schedule_view_update()
         else:
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
@@ -599,6 +654,15 @@ class EmbeddingViewer(QWidget):
             self.is_rotating = False
             self.graphics_view.unsetCursor()
             event.accept()
+            return
+        
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            # Clean up any lingering UI elements but don't change selection
+            if self.rubber_band:
+                self.graphics_scene.removeItem(self.rubber_band)
+                self.rubber_band = None
+                self.selection_at_press = None
             return
 
         if self.rubber_band:
@@ -638,6 +702,11 @@ class EmbeddingViewer(QWidget):
         # Translate view to keep mouse position stable
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
+        
+        # Update location indicator lines if active
+        if self.locate_graphics_item:
+            self._update_location_lines()
+        
         self._schedule_view_update()
 
     def update_embeddings(self, data_items, n_dims):
@@ -724,6 +793,102 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
+    
+    def _on_locate_clicked(self):
+        """Handle locate button click."""
+        selected_items = self.graphics_scene.selectedItems()
+        if not selected_items:
+            return
+        
+        # Use the first selected item
+        first_item = selected_items[0]
+        if isinstance(first_item, EmbeddingPointItem):
+            self.show_annotation_location(first_item)
+    
+    def show_annotation_location(self, graphics_item):
+        """Show convergent lines from viewport edges to annotation location.
+        
+        Args:
+            graphics_item: The EmbeddingPointItem to locate
+        """
+        from PyQt5.QtCore import QTimer
+        
+        # Clear any existing location indicators
+        self._clear_location_indicator()
+        
+        # Store the graphics item reference for updating lines on viewport changes
+        self.locate_graphics_item = graphics_item
+        
+        # Defer line creation slightly to ensure viewport is updated after any recent transforms
+        QTimer.singleShot(50, self._update_location_lines)
+        
+        # Start timer to auto-remove after 1.5 seconds
+        self.locate_timer.start(1500)
+    
+    def _update_location_lines(self):
+        """Update or create location indicator lines based on current viewport."""
+        from PyQt5.QtWidgets import QGraphicsLineItem
+        from PyQt5.QtCore import QLineF
+        
+        if not self.locate_graphics_item:
+            return
+        
+        # Remove existing lines but keep the graphics_item reference
+        for line in self.locate_lines:
+            self.graphics_scene.removeItem(line)
+        self.locate_lines.clear()
+        
+        # Get the annotation's position in scene coordinates
+        # Use pos() which returns the item's position (set via setPos with embedding_x, embedding_y)
+        # This is the actual center point in the scene
+        target_pos = self.locate_graphics_item.pos()
+        target_x = target_pos.x()
+        target_y = target_pos.y()
+        
+        # Get the visible rectangle in scene coordinates
+        visible_rect = self.graphics_view.mapToScene(
+            self.graphics_view.viewport().rect()
+        ).boundingRect()
+        
+        # Calculate edge center points
+        top_x = target_x
+        top_y = visible_rect.top()
+        
+        bottom_x = target_x
+        bottom_y = visible_rect.bottom()
+        
+        left_x = visible_rect.left()
+        left_y = target_y
+        
+        right_x = visible_rect.right()
+        right_y = target_y
+        
+        # Create 4 lines from edges to target
+        lines_data = [
+            QLineF(top_x, top_y, target_x, target_y),        # From top
+            QLineF(bottom_x, bottom_y, target_x, target_y),  # From bottom
+            QLineF(left_x, left_y, target_x, target_y),      # From left
+            QLineF(right_x, right_y, target_x, target_y),    # From right
+        ]
+        
+        # Use black dashed lines
+        pen = QPen(QColor(0, 0, 0), 3, Qt.DashLine)
+        pen.setCosmetic(True)  # Width stays constant regardless of zoom
+        
+        # Add lines to scene
+        for line_data in lines_data:
+            line_item = QGraphicsLineItem(line_data)
+            line_item.setPen(pen)
+            self.graphics_scene.addItem(line_item)
+            self.locate_lines.append(line_item)
+    
+    def _clear_location_indicator(self):
+        """Remove all location indicator lines from the scene."""
+        for line in self.locate_lines:
+            self.graphics_scene.removeItem(line)
+        self.locate_lines.clear()
+        self.locate_graphics_item = None
+        self.locate_timer.stop()
             
     def _apply_rotation_and_projection(self):
         """
@@ -806,7 +971,6 @@ class AnnotationViewer(QWidget):
     selection_changed = pyqtSignal(list)
     preview_changed = pyqtSignal(list)
     reset_view_requested = pyqtSignal()
-    find_similar_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         """Initialize the AnnotationViewer widget."""
@@ -829,10 +993,12 @@ class AnnotationViewer(QWidget):
         self.original_label_assignments = {}
         self.isolated_mode = False
         self.isolated_widgets = set()
+        self.show_confidence = False  # Default to not showing confidence badges
 
         # State for sorting options
         self.active_ordered_ids = []
-        self.is_confidence_sort_available = False
+        self.is_confidence_sort_available = True  # Enable confidence sorting by default
+        self.confidence_breaks = None  # For confidence-based grouping
 
         # New attributes for virtualization
         self.all_data_items = []
@@ -840,6 +1006,9 @@ class AnnotationViewer(QWidget):
         self.update_timer = QTimer(self)
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_visible_widgets)
+        
+        # Selection blocking for wizard mode
+        self.selection_blocked = False
 
         self.setup_ui()
 
@@ -884,37 +1053,15 @@ class AnnotationViewer(QWidget):
         sort_label = QLabel("Sort By:")
         toolbar_layout.addWidget(sort_label)
         self.sort_combo = QComboBox()
-        # Remove "Similarity" as it's now an implicit action
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence"])
-        self.sort_combo.insertSeparator(3)  # Add separator before "Confidence"
+        # Add new sort options for quality and anomaly scores
+        self.sort_combo.addItems(["None", "Label", "Image", "Quality", "Anomaly", "Confidence"])
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         toolbar_layout.addWidget(self.sort_combo)
         
         toolbar_layout.addWidget(self._create_separator())
         
-        self.find_similar_button = QToolButton()
-        self.find_similar_button.setText("Find Similar")
-        self.find_similar_button.setToolTip("Find annotations visually similar to the selection.")
-        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.find_similar_button.setStyleSheet(
-            "QToolButton::menu-indicator { subcontrol-position: right center; subcontrol-origin: padding; left: -4px; }"
-        )
-
-        run_similar_action = QAction("Find Similar", self)
-        run_similar_action.triggered.connect(self.find_similar_requested.emit)
-        self.find_similar_button.setDefaultAction(run_similar_action)
-        
-        self.similarity_settings_widget = SimilaritySettingsWidget()
-        settings_menu = QMenu(self)
-        widget_action = QWidgetAction(settings_menu)
-        widget_action.setDefaultWidget(self.similarity_settings_widget)
-        settings_menu.addAction(widget_action)
-        self.find_similar_button.setMenu(settings_menu)
-        toolbar_layout.addWidget(self.find_similar_button)
-        
         toolbar_layout.addStretch()
-
+        
         size_label = QLabel("Size:")
         toolbar_layout.addWidget(size_label)
         self.size_slider = QSlider(Qt.Horizontal)
@@ -929,6 +1076,20 @@ class AnnotationViewer(QWidget):
         self.size_value_label = QLabel("96")
         self.size_value_label.setMinimumWidth(30)
         toolbar_layout.addWidget(self.size_value_label)
+        
+        toolbar_layout.addWidget(self._create_separator())
+        
+        # Confidence badge toggle button
+        self.confidence_toggle_button = QPushButton()
+        self.confidence_toggle_button.setIcon(get_icon("percentage.png"))
+        self.confidence_toggle_button.setToolTip("Toggle confidence badge visibility")
+        self.confidence_toggle_button.setCheckable(True)
+        self.confidence_toggle_button.setChecked(False)  # Start with badges hidden
+        self.confidence_toggle_button.clicked.connect(self.on_confidence_toggle_changed)
+        toolbar_layout.addWidget(self.confidence_toggle_button)
+
+        
+        # Add the toolbar to the main layout
         main_layout.addWidget(toolbar_widget)
         
         # Create the scroll area which will contain the content
@@ -1119,12 +1280,171 @@ class AnnotationViewer(QWidget):
     def on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []  # Clear any special ordering
+        
+        # Clear confidence breaks when not sorting by confidence
+        if sort_type != "Confidence":
+            self.confidence_breaks = None
+        
         self.recalculate_layout()
 
     def set_confidence_sort_availability(self, is_available):
         """Sets the availability of the confidence sort option."""
         self.is_confidence_sort_available = is_available
         self._update_sort_options_state()
+    
+    def _calculate_confidence_breaks(self, data_items):
+        """
+        Calculate quantile-based breaks for confidence scores.
+        
+        Args:
+            data_items (list): List of AnnotationDataItem objects
+        
+        Returns:
+            list: Break points for confidence categories (e.g., [0.5, 0.75, 0.9])
+        """
+        # Collect all confidence scores
+        confidences = []
+        for item in data_items:
+            conf = item.get_effective_confidence()
+            if conf > 0:  # Only include annotations with confidence scores
+                confidences.append(conf)
+        
+        if not confidences:
+            return None
+        
+        confidences = np.array(confidences)
+        
+        # Special case: if all confidences are 1.0 (100% verified), create a single bin
+        if np.all(confidences == 1.0):
+            return [0.99]  # Single break point to create one bin for 100%
+        
+        # Use Jenks Natural Breaks if available, otherwise fall back to quantiles
+        try:
+            if JENKSPY_AVAILABLE and len(confidences) >= 5:
+                # Use Jenks Natural Breaks for optimal classification
+                # 6 classes means we get 5 internal breaks (plus min/max boundaries)
+                n_classes = 6
+                jenks_breaks = jenkspy.jenks_breaks(confidences, n_classes=n_classes)
+                # jenks_breaks returns [min, break1, break2, break3, break4, break5, max]
+                # We want the internal breaks: [break1, break2, break3, break4, break5]
+                breaks = [float(b) for b in jenks_breaks[1:-1]]
+            else:
+                # Fallback to quantile breaks (6 categories)
+                breaks = [
+                    float(np.quantile(confidences, 0.17)),
+                    float(np.quantile(confidences, 0.33)),
+                    float(np.quantile(confidences, 0.50)),
+                    float(np.quantile(confidences, 0.67)),
+                    float(np.quantile(confidences, 0.83))
+                ]
+            
+            # Ensure breaks are unique and sorted
+            breaks = sorted(list(set(breaks)))
+            # Allow single break for special cases (e.g., all 100% verified)
+            return breaks if len(breaks) >= 1 else None
+        except Exception as e:
+            print(f"Error calculating confidence breaks: {e}")
+            return None
+    
+    def _get_confidence_range_label(self, min_conf, max_conf, breaks):
+        """
+        Get a formatted label for a confidence range with color coding.
+        
+        Args:
+            min_conf (float): Minimum confidence in range (0-1)
+            max_conf (float): Maximum confidence in range (0-1)
+            breaks (list): Confidence break points
+        
+        Returns:
+            tuple: (label_text, color)
+        """
+        # Special case: 100% verified annotations
+        if min_conf >= 0.99 and max_conf >= 1.0:
+            return ("100% Verified", QColor(0, 100, 0))  # Dark green for 100%
+        
+        # Determine category based on midpoint
+        mid_conf = (min_conf + max_conf) / 2
+        
+        # Determine color and category based on breaks
+        if breaks and len(breaks) >= 5:
+            # 6 categories (5 breaks)
+            if mid_conf <= breaks[0]:
+                category = "Very Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Low Confidence"
+                color = QColor(255, 99, 71)
+            elif mid_conf <= breaks[2]:
+                category = "Medium-Low Confidence"
+                color = QColor(255, 165, 0)
+            elif mid_conf <= breaks[3]:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            elif mid_conf <= breaks[4]:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) >= 3:
+            # 4 categories (3 breaks) - fallback
+            if mid_conf <= breaks[0]:
+                category = "Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Medium Confidence"
+                color = QColor(255, 165, 0)
+            elif mid_conf <= breaks[2]:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) == 2:
+            if mid_conf <= breaks[0]:
+                category = "Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= breaks[1]:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        elif breaks and len(breaks) == 1:
+            # Single break (e.g., all 100% verified)
+            if mid_conf <= breaks[0]:
+                category = "Lower Range"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        else:
+            # Default thresholds (6 categories)
+            if mid_conf <= 0.17:
+                category = "Very Low Confidence"
+                color = QColor(220, 20, 60)
+            elif mid_conf <= 0.33:
+                category = "Low Confidence"
+                color = QColor(255, 99, 71)
+            elif mid_conf <= 0.50:
+                category = "Medium-Low Confidence"
+                color = QColor(255, 165, 0)
+            elif mid_conf <= 0.67:
+                category = "Medium Confidence"
+                color = QColor(255, 215, 0)
+            elif mid_conf <= 0.83:
+                category = "Medium-High Confidence"
+                color = QColor(144, 238, 144)
+            else:
+                category = "High Confidence"
+                color = QColor(34, 139, 34)
+        
+        # Format percentage range
+        min_pct = int(min_conf * 100)
+        max_pct = int(max_conf * 100)
+        label = f"{category}: {min_pct}-{max_pct}%"
+        
+        return label, color
 
     def _get_sorted_data_items(self):
         """Get data items sorted according to the current sort setting."""
@@ -1139,12 +1459,20 @@ class AnnotationViewer(QWidget):
         items = list(self.all_data_items)
 
         if sort_type == "Label":
-            items.sort(key=lambda i: i.effective_label.short_label_code)
+            # Sort by label, then by confidence within each label (lowest confidence first)
+            items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
-            items.sort(key=lambda i: os.path.basename(i.annotation.image_path))
+            # Sort by image, then by confidence within each image (lowest confidence first)
+            items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
         elif sort_type == "Confidence":
-            # Sort by confidence, descending. Handles cases with no confidence gracefully.
-            items.sort(key=lambda i: i.get_effective_confidence(), reverse=True)
+            # Sort by confidence, ascending (lowest confidence first)
+            items.sort(key=lambda i: i.get_effective_confidence(), reverse=False)
+        elif sort_type == "Quality":
+            # Sort by quality score, ascending (lowest quality first)
+            items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=False)
+        elif sort_type == "Anomaly":
+            # Sort by anomaly score, descending (most anomalous first)
+            items.sort(key=lambda i: i.anomaly_score if i.anomaly_score is not None else 0.0, reverse=True)
 
         return items
 
@@ -1160,32 +1488,127 @@ class AnnotationViewer(QWidget):
     def _group_data_items_by_sort_key(self, data_items):
         """Group data items by the current sort key."""
         sort_type = self.sort_combo.currentText()
-        if not self.active_ordered_ids and sort_type == "None":
-            return [("", data_items)]
-
-        if self.active_ordered_ids:  # Don't show group headers for similarity results
-            return [("", data_items)]
-
+        
+        # No grouping for "None" sort or similarity results
+        if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
+            return [("", None, data_items)]
+        
+        if sort_type == "Confidence":
+            # Calculate confidence breaks
+            self.confidence_breaks = self._calculate_confidence_breaks(data_items)
+            
+            if not self.confidence_breaks:
+                # No confidence data, return single group
+                return [("", None, data_items)]
+            
+            # Create bins based on breaks
+            bins = [-0.001] + self.confidence_breaks + [1.001]  # Add edges
+            
+            # Group items by confidence bin
+            bin_groups = [[] for _ in range(len(bins) - 1)]
+            
+            for item in data_items:
+                conf = item.get_effective_confidence()
+                if conf == 0:
+                    continue  # Skip items without confidence
+                    
+                # Find which bin this confidence falls into
+                for i in range(len(bins) - 1):
+                    # First bin: inclusive on both ends
+                    # Other bins: exclusive lower, inclusive upper (so break points go in lower bin)
+                    if i == 0:
+                        if bins[i] <= conf <= bins[i + 1]:
+                            bin_groups[i].append(item)
+                            break
+                    else:
+                        if bins[i] < conf <= bins[i + 1]:
+                            bin_groups[i].append(item)
+                            break
+            
+            # Create labeled groups (lowest confidence first)
+            groups = []
+            for i in range(len(bin_groups)):
+                if bin_groups[i]:  # Only add non-empty groups
+                    min_conf = max(0, bins[i])
+                    max_conf = min(1, bins[i + 1])
+                    label, color = self._get_confidence_range_label(min_conf, max_conf, self.confidence_breaks)
+                    groups.append((label, color, bin_groups[i]))
+            
+            return groups
+        
+        # Quality and Anomaly grouping logic
+        if sort_type == "Quality":
+            # Group by quality ranges
+            high_quality = [item for item in data_items if item.quality_score is not None and item.quality_score >= 0.8]
+            good_quality = [item for item in data_items if item.quality_score is not None and 0.6 <= item.quality_score < 0.8]
+            fair_quality = [item for item in data_items if item.quality_score is not None and 0.4 <= item.quality_score < 0.6]
+            poor_quality = [item for item in data_items if item.quality_score is not None and item.quality_score < 0.4]
+            unknown_quality = [item for item in data_items if item.quality_score is None]
+            
+            groups = []
+            if poor_quality:
+                groups.append(("Poor Quality (<40%)", QColor(220, 20, 60), poor_quality))
+            if fair_quality:
+                groups.append(("Fair Quality (40-60%)", QColor(255, 215, 0), fair_quality))
+            if good_quality:
+                groups.append(("Good Quality (60-80%)", QColor(144, 238, 144), good_quality))
+            if high_quality:
+                groups.append(("Excellent Quality (≥80%)", QColor(34, 139, 34), high_quality))
+            if unknown_quality:
+                groups.append(("Unknown Quality", None, unknown_quality))
+            
+            return groups
+        
+        if sort_type == "Anomaly":
+            # Group by anomaly ranges
+            very_anomalous = [item for item in data_items if item.anomaly_score is not None and item.anomaly_score >= 0.8]
+            anomalous = [item for item in data_items if item.anomaly_score is not None and 0.6 <= item.anomaly_score < 0.8]
+            slightly_anomalous = [item for item in data_items if item.anomaly_score is not None and 0.4 <= item.anomaly_score < 0.6]
+            normal = [item for item in data_items if item.anomaly_score is not None and item.anomaly_score < 0.4]
+            unknown_anomaly = [item for item in data_items if item.anomaly_score is None]
+            
+            groups = []
+            if very_anomalous:
+                groups.append(("Very Anomalous (≥80%)", QColor(220, 20, 60), very_anomalous))
+            if anomalous:
+                groups.append(("Anomalous (60-80%)", QColor(255, 140, 0), anomalous))
+            if slightly_anomalous:
+                groups.append(("Slightly Anomalous (40-60%)", QColor(255, 215, 0), slightly_anomalous))
+            if normal:
+                groups.append(("Normal (<40%)", QColor(144, 238, 144), normal))
+            if unknown_anomaly:
+                groups.append(("Unknown Anomaly", None, unknown_anomaly))
+            
+            return groups
+        
+        # Original grouping logic for Label and Image
         groups = []
         current_group = []
         current_key = None
+        current_color = None
         for item in data_items:
             if sort_type == "Label":
                 key = item.effective_label.short_label_code
+                color = item.effective_color
             elif sort_type == "Image":
                 key = os.path.basename(item.annotation.image_path)
+                color = None
             else:
-                key = "" # No headers for Confidence or None
+                key = ""
+                color = None
             
             if key and current_key != key:
                 if current_group:
-                    groups.append((current_key, current_group))
+                    groups.append((current_key, current_color, current_group))
                 current_group = [item]
                 current_key = key
+                current_color = color
             else:
                 current_group.append(item)
+        
         if current_group:
-            groups.append((current_key, current_group))
+            groups.append((current_key, current_color, current_group))
+        
         return groups
 
     def _clear_separator_labels(self):
@@ -1196,24 +1619,46 @@ class AnnotationViewer(QWidget):
                 header.deleteLater()
         self._group_headers = []
 
-    def _create_group_header(self, text):
-        """Create a group header label."""
+    def _create_group_header(self, text, color=None):
+        """
+        Create a group header label.
+        
+        Args:
+            text (str): Header text
+            color (QColor, optional): Background color for the header
+        """
         if not hasattr(self, '_group_headers'):
             self._group_headers = []
+        
         header = QLabel(text, self.content_widget)
+        
+        # Base style
+        bg_color = color.name() if color else "#f0f0f0"
+        
+        # Determine text color based on background brightness
+        if color:
+            # Calculate luminance
+            luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255
+            text_color = "#ffffff" if luminance < 0.5 else "#000000"
+        else:
+            text_color = "#555"
+        
+        # Determine border color - black for Review bin
+        border_color = "#000000" if text == "Review" else (bg_color if color else '#ccc')
+        
         header.setStyleSheet(
-            "QLabel {"
-            " font-weight: bold;"
-            " font-size: 12px;"
-            " color: #555;"
-            " background-color: #f0f0f0;"
-            " border: 1px solid #ccc;"
-            " border-radius: 3px;"
-            " padding: 5px 8px;"
-            " margin: 2px 0px;"
-            " }"
+            f"QLabel {{"
+            f" font-weight: bold;"
+            f" font-size: 12px;"
+            f" color: {text_color};"
+            f" background-color: {bg_color};"
+            f" border: 2px solid {border_color};"
+            f" border-radius: 4px;"
+            f" padding: 6px 10px;"
+            f" margin: 2px 0px;"
+            f"}}"
         )
-        header.setFixedHeight(30)
+        header.setFixedHeight(32)
         header.setMinimumWidth(self.scroll_area.viewport().width() - 20)
         header.show()
         self._group_headers.append(header)
@@ -1227,6 +1672,13 @@ class AnnotationViewer(QWidget):
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         self.recalculate_layout()
+    
+    def on_confidence_toggle_changed(self):
+        """Handle confidence badge visibility toggle."""
+        self.show_confidence = self.confidence_toggle_button.isChecked()
+        # Trigger repaint of all widgets
+        for widget in self.annotation_widgets_by_id.values():
+            widget.update()
 
     def _schedule_update(self):
         """Schedules a delayed update of visible widgets to avoid performance issues during rapid scrolling."""
@@ -1298,13 +1750,21 @@ class AnnotationViewer(QWidget):
         self.widget_positions.clear()
 
         # Calculate positions
-        for group_name, group_data_items in groups:
+        for group_data in groups:
+            # Handle both old format (name, items) and new format (name, color, items)
+            if len(group_data) == 3:
+                group_name, group_color, group_data_items = group_data
+            else:
+                group_name, group_data_items = group_data
+                group_color = None
+            
+            # Add header if there's a group name and not in "None" sort
             if group_name and self.sort_combo.currentText() != "None":
                 if x > spacing:
                     x = spacing
                     y += max_height_in_row + spacing
                     max_height_in_row = 0
-                header_label = self._create_group_header(group_name)
+                header_label = self._create_group_header(group_name, group_color)
                 header_label.move(x, y)
                 y += header_label.height() + spacing
                 x = spacing
@@ -1358,6 +1818,11 @@ class AnnotationViewer(QWidget):
         self.all_data_items = data_items
         self.selected_widgets.clear()
         self.last_selected_item_id = None
+        
+        # Check if any annotations have machine confidence and enable sorting
+        has_confidence = True  # Always enable confidence sorting
+        
+        self.set_confidence_sort_availability(has_confidence)
 
         self.recalculate_layout()
         self._update_toolbar_state()
@@ -1407,6 +1872,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_press(self, event):
         """Handle mouse press inside the viewport for selection."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return False  # Let event propagate for scrolling
+            
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             # Start rubber band selection
             self.selection_at_press = set(self.selected_widgets)
@@ -1435,6 +1904,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_double_click(self, event):
         """Handle double-click in the viewport to clear selection and reset view."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return False
+            
         if event.button() == Qt.LeftButton:
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
@@ -1448,6 +1921,10 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_move(self, event):
         """Handle mouse move in the viewport for dynamic rubber band selection."""
+        # Block rubber band selection when wizard is active
+        if self.selection_blocked:
+            return False
+            
         if (
             self.rubber_band_origin is None or
             event.buttons() != Qt.LeftButton or
@@ -1502,6 +1979,16 @@ class AnnotationViewer(QWidget):
 
     def viewport_mouse_release(self, event):
         """Handle mouse release in the viewport to finalize rubber band selection."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            # Clean up any lingering UI elements
+            if self.rubber_band:
+                self.rubber_band.hide()
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+            self.rubber_band_origin = None
+            return False
+            
         if self.rubber_band_origin is not None and event.button() == Qt.LeftButton:
             if self.rubber_band and self.rubber_band.isVisible():
                 self.rubber_band.hide()
@@ -1513,6 +2000,10 @@ class AnnotationViewer(QWidget):
 
     def handle_annotation_selection(self, widget, event):
         """Handle selection of annotation widgets with different modes (single, ctrl, shift)."""
+        # Block selection changes when wizard is active
+        if self.selection_blocked:
+            return
+            
         # The list for range selection should be based on the sorted data items
         sorted_data_items = self._get_sorted_data_items()
 

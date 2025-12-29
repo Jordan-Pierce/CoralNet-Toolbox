@@ -11,6 +11,7 @@ scikit-learn
 scikit-image
 umap-learn
 faiss-cpu
+jenkspy
 pycocotools
 ujson
 timm==0.9.2

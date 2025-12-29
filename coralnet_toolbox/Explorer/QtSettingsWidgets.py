@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, 
                              QWidget, QGroupBox, QSlider, QListWidget, QTabWidget, 
                              QLineEdit, QFileDialog, QFormLayout, QSpinBox, QDoubleSpinBox,
-                             QToolBox)
+                             QToolBox, QCheckBox)
 
 from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS
 from coralnet_toolbox.Explorer.yolo_models import YOLO_MODELS
@@ -91,14 +91,101 @@ class UncertaintySettingsWidget(QWidget):
         }
         
 
-class MislabelSettingsWidget(QWidget):
-    """A widget for configuring mislabel detection parameters."""
+class AnomalySettingsWidget(QWidget):
+    """A widget for configuring anomaly detection parameters."""
     parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
-        # Set a default value to prevent the menu from closing on interaction
+        self.n_neighbors_spinbox.setFocusPolicy(Qt.StrongFocus)
+        self.contamination_slider.setFocusPolicy(Qt.StrongFocus)
+        self.threshold_slider.setFocusPolicy(Qt.StrongFocus)
+
+    def setup_ui(self):
+        """Creates the UI controls for the parameters."""
+        main_layout = QFormLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
+
+        # 1. Number of Neighbors for LOF
+        self.n_neighbors_spinbox = QSpinBox()
+        self.n_neighbors_spinbox.setMinimum(5)
+        self.n_neighbors_spinbox.setMaximum(100)
+        self.n_neighbors_spinbox.setValue(20)
+        self.n_neighbors_spinbox.setToolTip(
+            "Number of neighbors for Local Outlier Factor (LOF) calculation.\n"
+            "Higher values = more global context, lower = more local sensitivity."
+        )
+        main_layout.addRow("Neighbors:", self.n_neighbors_spinbox)
+
+        # 2. Contamination (Expected anomaly proportion)
+        contamination_layout = QHBoxLayout()
+        self.contamination_slider = QSlider(Qt.Horizontal)
+        self.contamination_slider.setMinimum(1)
+        self.contamination_slider.setMaximum(50)
+        self.contamination_slider.setValue(10)
+        self.contamination_slider.setToolTip(
+            "Expected proportion of anomalies in the dataset.\n"
+            "Used to calibrate anomaly detection algorithms.\n"
+            "Higher values = more items flagged as anomalous."
+        )
+        self.contamination_label = QLabel("10%")
+        self.contamination_label.setMinimumWidth(40)
+        contamination_layout.addWidget(self.contamination_slider)
+        contamination_layout.addWidget(self.contamination_label)
+        main_layout.addRow("Contamination:", contamination_layout)
+
+        # 3. Selection Threshold (Percentile)
+        threshold_layout = QHBoxLayout()
+        self.threshold_slider = QSlider(Qt.Horizontal)
+        self.threshold_slider.setMinimum(50)
+        self.threshold_slider.setMaximum(99)
+        self.threshold_slider.setValue(75)
+        self.threshold_slider.setToolTip(
+            "Percentile threshold for selecting anomalies.\n"
+            "Only items with anomaly scores above this percentile are selected.\n"
+            "75 = top 25% most anomalous, 90 = top 10% most anomalous."
+        )
+        self.threshold_label = QLabel("75th")
+        self.threshold_label.setMinimumWidth(40)
+        threshold_layout.addWidget(self.threshold_slider)
+        threshold_layout.addWidget(self.threshold_label)
+        main_layout.addRow("Select Above:", threshold_layout)
+        
+        # Connect signals
+        self.n_neighbors_spinbox.valueChanged.connect(self._emit_parameters)
+        self.contamination_slider.valueChanged.connect(self._emit_parameters)
+        self.threshold_slider.valueChanged.connect(self._emit_parameters)
+        self.contamination_slider.valueChanged.connect(
+            lambda v: self.contamination_label.setText(f"{v}%")
+        )
+        self.threshold_slider.valueChanged.connect(
+            lambda v: self.threshold_label.setText(f"{v}th")
+        )
+    
+    @pyqtSlot()
+    def _emit_parameters(self):
+        """Gathers current values and emits them in a dictionary."""
+        params = self.get_parameters()
+        self.parameters_changed.emit(params)
+
+    def get_parameters(self):
+        """Returns the current parameters as a dictionary."""
+        return {
+            'n_neighbors': self.n_neighbors_spinbox.value(),
+            'contamination': self.contamination_slider.value() / 100.0,
+            'threshold': self.threshold_slider.value()
+        }
+
+
+class MislabelSettingsWidget(QWidget):
+    """DEPRECATED: Use AnomalySettingsWidget instead. Kept for backward compatibility."""
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
         self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
         self.threshold_slider.setFocusPolicy(Qt.StrongFocus)
 
@@ -156,13 +243,16 @@ class MislabelSettingsWidget(QWidget):
         
 
 class SimilaritySettingsWidget(QWidget):
-    """A widget for configuring similarity search parameters (number of neighbors)."""
+    """A widget for configuring similarity search parameters with filtering options."""
     parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
         self.k_spinbox.setFocusPolicy(Qt.StrongFocus)
+        self.same_label_checkbox.setFocusPolicy(Qt.StrongFocus)
+        self.same_image_checkbox.setFocusPolicy(Qt.StrongFocus)
+        self.min_confidence_slider.setFocusPolicy(Qt.StrongFocus)
 
     def setup_ui(self):
         """Creates the UI controls for the parameters."""
@@ -170,16 +260,54 @@ class SimilaritySettingsWidget(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(15)
 
+        # Same Label Filter (moved to top)
+        self.same_label_checkbox = QCheckBox("Same label only")
+        self.same_label_checkbox.setChecked(False)
+        self.same_label_checkbox.setToolTip(
+            "Only find items with the same label as the selection."
+        )
+        main_layout.addRow("", self.same_label_checkbox)
+        
+        # Same Image Filter (moved to top)
+        self.same_image_checkbox = QCheckBox("Same image only")
+        self.same_image_checkbox.setChecked(False)
+        self.same_image_checkbox.setToolTip(
+            "Only find items from the same image as the selection."
+        )
+        main_layout.addRow("", self.same_image_checkbox)
+        
         # K (Number of Neighbors)
         self.k_spinbox = QSpinBox()
         self.k_spinbox.setMinimum(1)
         self.k_spinbox.setMaximum(200)
-        self.k_spinbox.setValue(10)
+        self.k_spinbox.setValue(50)
         self.k_spinbox.setToolTip("Number of similar items to find (K).")
         main_layout.addRow("Neighbors (K):", self.k_spinbox)
+        
+        # Minimum Confidence Filter
+        confidence_layout = QHBoxLayout()
+        self.min_confidence_slider = QSlider(Qt.Horizontal)
+        self.min_confidence_slider.setMinimum(0)
+        self.min_confidence_slider.setMaximum(100)
+        self.min_confidence_slider.setValue(0)
+        self.min_confidence_slider.setToolTip(
+            "Minimum confidence threshold for results.\n"
+            "0 = no filtering, 100 = only show highly confident items."
+        )
+        self.min_confidence_label = QLabel("0%")
+        self.min_confidence_label.setMinimumWidth(40)
+        confidence_layout.addWidget(self.min_confidence_slider)
+        confidence_layout.addWidget(self.min_confidence_label)
+        main_layout.addRow("Min Confidence:", confidence_layout)
 
         # Connect signals
         self.k_spinbox.valueChanged.connect(self._emit_parameters)
+        self.same_label_checkbox.stateChanged.connect(self._emit_parameters)
+        self.same_image_checkbox.stateChanged.connect(self._emit_parameters)
+        self.min_confidence_slider.valueChanged.connect(self._emit_parameters)
+        self.min_confidence_slider.valueChanged.connect(
+            lambda v: self.min_confidence_label.setText(f"{v}%")
+        )
 
     @pyqtSlot()
     def _emit_parameters(self):
@@ -188,49 +316,82 @@ class SimilaritySettingsWidget(QWidget):
 
     def get_parameters(self):
         return {
-            'k': self.k_spinbox.value()
+            'k': self.k_spinbox.value(),
+            'same_label': self.same_label_checkbox.isChecked(),
+            'same_image': self.same_image_checkbox.isChecked(),
+            'min_confidence': self.min_confidence_slider.value() / 100.0
         }
         
         
 class DuplicateSettingsWidget(QWidget):
-    """Widget for configuring duplicate detection parameters."""
+    """Widget for configuring duplicate detection parameters with multi-stage filtering."""
     parameters_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super(DuplicateSettingsWidget, self).__init__(parent)
-        layout = QVBoxLayout(self)
+        layout = QFormLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(15)
         
-        # Using a DoubleSpinBox for the distance threshold
+        # 1. Same Image Only checkbox (moved to top)
+        self.same_image_checkbox = QCheckBox("Same image only")
+        self.same_image_checkbox.setChecked(True)  # Default: checked
+        self.same_image_checkbox.setToolTip(
+            "Only consider annotations from the same image as duplicates.\n"
+            "Uncheck to find duplicates across different images."
+        )
+        self.same_image_checkbox.stateChanged.connect(self._emit_parameters)
+        layout.addRow("", self.same_image_checkbox)
+        
+        # 2. Visual Similarity Threshold (Feature distance)
         self.threshold_spinbox = QDoubleSpinBox()
         self.threshold_spinbox.setDecimals(3)
         self.threshold_spinbox.setRange(0.0, 10.0)
         self.threshold_spinbox.setSingleStep(0.01)
-        self.threshold_spinbox.setValue(0.1)  # Default value for squared L2 distance
+        self.threshold_spinbox.setValue(0.5)
         self.threshold_spinbox.setToolTip(
-            "Similarity Threshold (Squared L2 Distance).\n"
-            "Lower values mean more similar.\n"
-            "A value of 0 means identical features."
+            "Visual Similarity Threshold (Squared L2 Distance).\n"
+            "Lower values = must be more visually similar to be duplicates.\n"
+            "0 = identical features, >1 = very different."
         )
-        
         self.threshold_spinbox.valueChanged.connect(self._emit_parameters)
-
-        form_layout = QHBoxLayout()
-        form_layout.addWidget(QLabel("Threshold:"))
-        form_layout.addWidget(self.threshold_spinbox)
-        layout.addLayout(form_layout)
+        layout.addRow("Visual Threshold:", self.threshold_spinbox)
+        
+        # 3. Spatial Proximity Threshold (pixels) - only relevant when same image is checked
+        self.spatial_spinbox = QSpinBox()
+        self.spatial_spinbox.setRange(10, 1000)
+        self.spatial_spinbox.setSingleStep(10)
+        self.spatial_spinbox.setValue(100)
+        self.spatial_spinbox.setToolTip(
+            "Maximum distance in pixels between annotation centers.\n"
+            "Duplicates must be within this distance (same image only).\n"
+            "Lower values = stricter proximity requirement."
+        )
+        self.spatial_spinbox.valueChanged.connect(self._emit_parameters)
+        layout.addRow("Max Distance (px):", self.spatial_spinbox)
+        
+        # Add info label
+        info_label = QLabel(
+            "<i>Multi-stage filtering:</i><br>"
+            "1. Optional: Same image only<br>"
+            "2. Visual similarity<br>"
+            "3. Optional: Spatial proximity"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: gray; font-size: 9pt;")
+        layout.addRow("", info_label)
 
     def _emit_parameters(self):
         """Emits the current parameters."""
-        params = {
-            'threshold': self.threshold_spinbox.value()
-        }
+        params = self.get_parameters()
         self.parameters_changed.emit(params)
 
     def get_parameters(self):
         """Returns the current parameters as a dictionary."""
         return {
-            'threshold': self.threshold_spinbox.value()
+            'threshold': self.threshold_spinbox.value(),
+            'same_image': self.same_image_checkbox.isChecked(),
+            'spatial_threshold': self.spatial_spinbox.value()
         }
 
 
@@ -547,14 +708,6 @@ class ModelSettingsWidget(QGroupBox):
 
         main_layout.addWidget(self.tabs)
 
-        # === Feature Extraction Mode ===
-        feature_mode_layout = QFormLayout()
-        self.feature_mode_combo = QComboBox()
-        self.feature_mode_combo.addItems(["Predictions", "Embed Features"])
-        self.feature_mode_combo.setCurrentText("Embed Features")
-        feature_mode_layout.addRow("Feature Mode:", self.feature_mode_combo)
-        main_layout.addLayout(feature_mode_layout)
-
         # --- ADD STRETCH TO PUSH CONTENT UP ---
         main_layout.addStretch(1)
 
@@ -562,7 +715,7 @@ class ModelSettingsWidget(QGroupBox):
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.tabs.currentChanged.connect(self._on_selection_changed)
         for widget in [self.category_combo, self.family_combo, self.size_combo, 
-                       self.transformer_combo, self.model_path_edit, self.feature_mode_combo]:
+                       self.transformer_combo, self.model_path_edit]:
             if isinstance(widget, QComboBox):
                 widget.currentTextChanged.connect(self._on_selection_changed)
             elif isinstance(widget, QLineEdit):
@@ -603,39 +756,10 @@ class ModelSettingsWidget(QGroupBox):
     @pyqtSlot()
     def _on_selection_changed(self):
         """Central slot to handle any change and emit a single signal."""
-        self._update_feature_mode_state()
         self.selection_changed.emit()
-
-    def _update_feature_mode_state(self):
-        """Update the enabled state and tooltip of the feature mode field."""
-        is_color_features = False
-        is_transformer = False
-        current_tab_index = self.tabs.currentIndex()
-        
-        if current_tab_index == 0:
-            category = self.category_combo.currentText()
-            is_color_features = (category == "Color Features")
-            is_transformer = (category == "Transformer Model")
-        
-        # Disable feature mode for Color Features and Transformer Models
-        self.feature_mode_combo.setEnabled(not (is_color_features or is_transformer))
-        
-        # If disabled categories are selected, force the combo to "Embed Features"
-        if is_color_features or is_transformer:
-            self.feature_mode_combo.setCurrentText("Embed Features")
-        
-        if is_color_features:
-            self.feature_mode_combo.setToolTip("Feature Mode is not applicable for Color Features.")
-        elif is_transformer:
-            self.feature_mode_combo.setToolTip("Transformer models always output embedding features.")
-        else:
-            self.feature_mode_combo.setToolTip(
-                "Choose 'Predictions' for class probabilities (for uncertainty analysis)\n"
-                "or 'Embed Features' for a general-purpose feature vector."
-            )
     
     def get_selected_model(self):
-        """Get the currently selected model name/path and feature mode."""
+        """Get the currently selected model name/path."""
         current_tab_index = self.tabs.currentIndex()
         model_name = ""
         
@@ -652,7 +776,7 @@ class ModelSettingsWidget(QGroupBox):
                 
                 # Add a guard clause to prevent crashing if a combo is empty.
                 if not family_text or not size_text:
-                    return "", "N/A"  # Return a safe default
+                    return ""  # Return a safe default
                 
                 # Create the display name format to look up in YOLO_MODELS
                 display_name = f"{family_text} ({size_text})"
@@ -673,8 +797,7 @@ class ModelSettingsWidget(QGroupBox):
         elif current_tab_index == 1:
             model_name = self.model_path_edit.text()
         
-        feature_mode = self.feature_mode_combo.currentText()
-        return model_name, feature_mode
+        return model_name
     
 
 class EmbeddingSettingsWidget(QGroupBox):
