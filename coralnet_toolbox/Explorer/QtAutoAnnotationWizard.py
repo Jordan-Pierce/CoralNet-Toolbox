@@ -11,17 +11,6 @@ from PyQt5.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout,
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-try:
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.svm import SVC
-    from sklearn.neighbors import KNeighborsClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    print("Warning: scikit-learn not installed. Auto-annotation wizard will not be available.")
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -125,7 +114,10 @@ class AutoAnnotationWizard(QDialog):
         self.model_params = {
             'random_forest': {'n_estimators': 100, 'max_depth': 10},
             'svc': {'C': 1.0, 'kernel': 'rbf', 'probability': True},
-            'knn': {'n_neighbors': 5}
+            'knn': {'n_neighbors': 5},
+            'gradient_boosting': {'n_estimators': 100, 'learning_rate': 0.1, 'max_depth': 10},
+            'adaboost': {'n_estimators': 50, 'learning_rate': 1.0},
+            'extra_trees': {'n_estimators': 100, 'max_depth': 10}
         }
         
         # Thresholds
@@ -258,7 +250,10 @@ class AutoAnnotationWizard(QDialog):
         self.model_combo.addItems([
             "Random Forest (Recommended)",
             "Support Vector Machine",
-            "K-Nearest Neighbors"
+            "K-Nearest Neighbors",
+            "Gradient Boosting",
+            "AdaBoost",
+            "Extra Trees"
         ])
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.model_combo.currentIndexChanged.connect(self._on_setup_changed)
@@ -300,6 +295,49 @@ class AutoAnnotationWizard(QDialog):
         self.knn_neighbors.setValue(5)
         knn_layout.addRow("Neighbors:", self.knn_neighbors)
         self.param_stack.addWidget(knn_widget)
+        
+        # Gradient Boosting params
+        gb_widget = QWidget()
+        gb_layout = QFormLayout(gb_widget)
+        self.gb_n_estimators = QSpinBox()
+        self.gb_n_estimators.setRange(10, 500)
+        self.gb_n_estimators.setValue(100)
+        self.gb_learning_rate = QDoubleSpinBox()
+        self.gb_learning_rate.setRange(0.01, 1.0)
+        self.gb_learning_rate.setValue(0.1)
+        self.gb_max_depth = QSpinBox()
+        self.gb_max_depth.setRange(3, 50)
+        self.gb_max_depth.setValue(10)
+        gb_layout.addRow("Trees:", self.gb_n_estimators)
+        gb_layout.addRow("Learning Rate:", self.gb_learning_rate)
+        gb_layout.addRow("Max Depth:", self.gb_max_depth)
+        self.param_stack.addWidget(gb_widget)
+        
+        # AdaBoost params
+        ab_widget = QWidget()
+        ab_layout = QFormLayout(ab_widget)
+        self.ab_n_estimators = QSpinBox()
+        self.ab_n_estimators.setRange(10, 500)
+        self.ab_n_estimators.setValue(50)
+        self.ab_learning_rate = QDoubleSpinBox()
+        self.ab_learning_rate.setRange(0.01, 2.0)
+        self.ab_learning_rate.setValue(1.0)
+        ab_layout.addRow("Trees:", self.ab_n_estimators)
+        ab_layout.addRow("Learning Rate:", self.ab_learning_rate)
+        self.param_stack.addWidget(ab_widget)
+        
+        # Extra Trees params
+        et_widget = QWidget()
+        et_layout = QFormLayout(et_widget)
+        self.et_n_estimators = QSpinBox()
+        self.et_n_estimators.setRange(10, 500)
+        self.et_n_estimators.setValue(100)
+        self.et_max_depth = QSpinBox()
+        self.et_max_depth.setRange(3, 50)
+        self.et_max_depth.setValue(10)
+        et_layout.addRow("Trees:", self.et_n_estimators)
+        et_layout.addRow("Max Depth:", self.et_max_depth)
+        self.param_stack.addWidget(et_widget)
         
         model_layout.addRow(self.param_stack)
         layout.addWidget(model_group)
@@ -648,7 +686,7 @@ class AutoAnnotationWizard(QDialog):
         self._clear_animations_and_selections()
         
         # Rescan for any manually labeled annotations before entering new mode
-        manually_labeled_count = self._rescan_for_manual_labels()
+        self._rescan_for_manual_labels()
         
         if index == 0:
             self.annotation_mode = 'active_learning'
@@ -748,7 +786,8 @@ class AutoAnnotationWizard(QDialog):
             if self.current_page == 2:
                 if hasattr(self, '_original_selection_handler') and hasattr(self, '_bulk_click_handler_connected'):
                     if self._bulk_click_handler_connected:
-                        self.explorer_window.annotation_viewer.handle_annotation_selection = self._original_selection_handler
+                        handler = self.explorer_window.annotation_viewer.handle_annotation_selection
+                        self.explorer_window.annotation_viewer.handle_annotation_selection = handler
                         self._bulk_click_handler_connected = False
                         delattr(self, '_original_selection_handler')
                 
@@ -800,7 +839,7 @@ class AutoAnnotationWizard(QDialog):
         
         # Get model type
         model_index = self.model_combo.currentIndex()
-        model_types = ['random_forest', 'svc', 'knn']
+        model_types = ['random_forest', 'svc', 'knn', 'gradient_boosting', 'adaboost', 'extra_trees']
         self.model_type = model_types[model_index]
         
         # Get model parameters
@@ -812,6 +851,16 @@ class AutoAnnotationWizard(QDialog):
             self.model_params['svc']['kernel'] = self.svc_kernel.currentText()
         elif self.model_type == 'knn':
             self.model_params['knn']['n_neighbors'] = self.knn_neighbors.value()
+        elif self.model_type == 'gradient_boosting':
+            self.model_params['gradient_boosting']['n_estimators'] = self.gb_n_estimators.value()
+            self.model_params['gradient_boosting']['learning_rate'] = self.gb_learning_rate.value()
+            self.model_params['gradient_boosting']['max_depth'] = self.gb_max_depth.value()
+        elif self.model_type == 'adaboost':
+            self.model_params['adaboost']['n_estimators'] = self.ab_n_estimators.value()
+            self.model_params['adaboost']['learning_rate'] = self.ab_learning_rate.value()
+        elif self.model_type == 'extra_trees':
+            self.model_params['extra_trees']['n_estimators'] = self.et_n_estimators.value()
+            self.model_params['extra_trees']['max_depth'] = self.et_max_depth.value()
         
         # Update dataset info
         self._update_dataset_info()
@@ -957,7 +1006,7 @@ class AutoAnnotationWizard(QDialog):
             return
         
         # Rescan for manually labeled annotations before entering mode
-        manually_labeled_count = self._rescan_for_manual_labels()
+        self._rescan_for_manual_labels()
         
         # Clear any preview labels from bulk mode
         for item in self.explorer_window.current_data_items:
@@ -995,7 +1044,7 @@ class AutoAnnotationWizard(QDialog):
         """Enter Bulk Labeling mode."""
         
         # First, rescan for manually labeled annotations
-        manually_labeled_count = self._rescan_for_manual_labels()
+        self._rescan_for_manual_labels()
         
         # Clear all existing preview labels before entering mode
         for item in self.explorer_window.current_data_items:
@@ -1112,8 +1161,8 @@ class AutoAnnotationWizard(QDialog):
         
         # Count review items excluding completed annotations
         review_count = sum(1 for item in data_items
-                          if item.annotation.id not in self.completed_annotation_ids
-                          and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
+                           if item.annotation.id not in self.completed_annotation_ids
+                           and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL)
         
         labeled = total - review_count
         
@@ -1250,13 +1299,9 @@ class AutoAnnotationWizard(QDialog):
         # Only process annotations that have predictions
         if ann_id not in self.bulk_predictions:
             return
-        
-        pred = self.bulk_predictions[ann_id]
-        threshold = self.bulk_confidence_threshold
-        
+                
         # Determine current state
         has_preview = data_item.has_preview_changes()
-        current_override = self.manual_bulk_overrides.get(ann_id)
         
         # Toggle logic:
         # - If annotation has a preview label (above threshold or manually accepted): move to Review
@@ -1638,9 +1683,9 @@ class AutoAnnotationWizard(QDialog):
             QMessageBox.information(
                 self,
                 "Annotation Complete",
-                f"All 'Review'' annotations have been labeled!\n\n"
-                f"No more 'Review' annotations require attention.\n"
-                f"The wizard will now close.",
+                "All 'Review'' annotations have been labeled!\n\n"
+                "No more 'Review' annotations require attention.\n"
+                "The wizard will now close.",
                 QMessageBox.Ok
             )
             
@@ -1659,9 +1704,7 @@ class AutoAnnotationWizard(QDialog):
         """Skip the current annotation without labeling it (leaves as 'Review')."""
         if not self.current_annotation_item:
             return
-            
-        item = self.current_annotation_item
-        
+                    
         self._move_to_next_annotation()
     
     def _move_to_next_annotation(self):

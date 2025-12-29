@@ -396,8 +396,6 @@ class ExplorerWindow(QMainWindow):
 
         self.update_label_window_selection()
         self.update_button_states()
-
-        print("Reset view: cleared selections and exited isolation mode")
         
     @pyqtSlot(dict)
     def on_anomaly_params_changed(self, params):
@@ -2126,7 +2124,7 @@ class ExplorerWindow(QMainWindow):
         
         Args:
             feature_type: 'full' or 'reduced'
-            model_type: 'random_forest', 'svc', or 'knn'
+            model_type: 'random_forest', 'svc', 'knn', 'gradient_boosting', 'adaboost', 'extra_trees'
             model_params: Dictionary of model-specific parameters
             
         Returns:
@@ -2134,6 +2132,9 @@ class ExplorerWindow(QMainWindow):
         """
         try:
             from sklearn.ensemble import RandomForestClassifier
+            from sklearn.ensemble import GradientBoostingClassifier
+            from sklearn.ensemble import AdaBoostClassifier
+            from sklearn.ensemble import ExtraTreesClassifier
             from sklearn.svm import SVC
             from sklearn.neighbors import KNeighborsClassifier
             from sklearn.preprocessing import StandardScaler
@@ -2218,6 +2219,26 @@ class ExplorerWindow(QMainWindow):
         elif model_type == 'knn':
             model = KNeighborsClassifier(
                 n_neighbors=min(model_params.get('n_neighbors', 5), len(labeled_items) - 1)
+            )
+        elif model_type == 'gradient_boosting':
+            model = GradientBoostingClassifier(
+                n_estimators=model_params.get('n_estimators', 100),
+                learning_rate=model_params.get('learning_rate', 0.1),
+                max_depth=model_params.get('max_depth', 10),
+                random_state=42
+            )
+        elif model_type == 'adaboost':
+            model = AdaBoostClassifier(
+                n_estimators=model_params.get('n_estimators', 50),
+                learning_rate=model_params.get('learning_rate', 1.0),
+                random_state=42
+            )
+        elif model_type == 'extra_trees':
+            model = ExtraTreesClassifier(
+                n_estimators=model_params.get('n_estimators', 100),
+                max_depth=model_params.get('max_depth', 10),
+                random_state=42,
+                class_weight='balanced'
             )
         else:
             raise AutoAnnotationError(f"Unknown model type: {model_type}")
@@ -2486,12 +2507,10 @@ class ExplorerWindow(QMainWindow):
             self.auto_annotation_wizard.hide()
             self.auto_annotation_wizard.deleteLater()
             self.auto_annotation_wizard = None
-            print("Old wizard instance destroyed")
         
         # Create fresh wizard instance
         self.auto_annotation_wizard = AutoAnnotationWizard(self, self)
         self.auto_annotation_wizard.annotations_updated.connect(self._on_wizard_annotations_updated)
-        print("New wizard instance created")
     
     def open_auto_annotation_wizard(self):
         """Open the Auto-Annotation Wizard."""
@@ -2535,8 +2554,6 @@ class ExplorerWindow(QMainWindow):
         """Update the Auto-Annotation Wizard button state."""
         # Simple check: button is enabled only if features are ready
         should_enable = self.features_ready_for_wizard
-        
-        print(f"[Wizard Button] Features ready: {should_enable}")
         self.auto_annotation_button.setEnabled(should_enable)
         
         # Update tooltip
