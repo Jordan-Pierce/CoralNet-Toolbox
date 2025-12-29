@@ -102,6 +102,13 @@ class EmbeddingViewer(QWidget):
         self.view_update_timer = QTimer(self)
         self.view_update_timer.setSingleShot(True)
         self.view_update_timer.timeout.connect(self._update_visible_points)
+        
+        # Location indicator lines and timer
+        self.locate_lines = []
+        self.locate_graphics_item = None  # Track which item is being located
+        self.locate_timer = QTimer(self)
+        self.locate_timer.setSingleShot(True)
+        self.locate_timer.timeout.connect(self._clear_location_indicator)
 
         self.graphics_scene.selectionChanged.connect(self.on_selection_changed)
         
@@ -238,6 +245,13 @@ class EmbeddingViewer(QWidget):
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self._create_separator())
 
+        # Locate annotation button
+        self.locate_button = QPushButton()
+        self.locate_button.setIcon(get_icon("location.png"))
+        self.locate_button.setToolTip("Show location indicator for selected annotation")
+        self.locate_button.clicked.connect(self._on_locate_clicked)
+        toolbar_layout.addWidget(self.locate_button)
+
         # Center on selection button
         self.center_on_selection_button = QPushButton()
         self.center_on_selection_button.setIcon(get_icon("target.png"))
@@ -361,6 +375,7 @@ class EmbeddingViewer(QWidget):
         self.find_anomalies_button.setEnabled(points_exist)
         self.find_similar_button.setEnabled(points_exist and selection_exists)
         self.find_duplicates_button.setEnabled(points_exist)
+        self.locate_button.setEnabled(points_exist and selection_exists)
         self.center_on_selection_button.setEnabled(points_exist and selection_exists)
 
         if self.isolated_mode:
@@ -412,12 +427,17 @@ class EmbeddingViewer(QWidget):
             
             # Fit the view to the selection rect
             self.graphics_view.fitInView(selection_rect, Qt.KeepAspectRatio)
+            
+            # Update location indicator lines if active
+            if self.locate_graphics_item:
+                self._update_location_lines()
 
     def show_placeholder(self):
         """Show the placeholder message and hide the graphics view."""
         self.graphics_view.setVisible(False)
         self.placeholder_label.setVisible(True)
         self.home_button.setEnabled(False)
+        self.locate_button.setEnabled(False)  # Disable locate button
         self.center_on_selection_button.setEnabled(False)  # Disable center button
         self.find_anomalies_button.setEnabled(False)
         self.find_similar_button.setEnabled(False)
@@ -618,6 +638,11 @@ class EmbeddingViewer(QWidget):
         elif event.buttons() == Qt.RightButton:
             left_event = QMouseEvent(event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers())
             QGraphicsView.mouseMoveEvent(self.graphics_view, left_event)
+            
+            # Update location indicator lines if active
+            if self.locate_graphics_item:
+                self._update_location_lines()
+            
             self._schedule_view_update()
         else:
             QGraphicsView.mouseMoveEvent(self.graphics_view, event)
@@ -677,6 +702,11 @@ class EmbeddingViewer(QWidget):
         # Translate view to keep mouse position stable
         delta = new_pos - old_pos
         self.graphics_view.translate(delta.x(), delta.y())
+        
+        # Update location indicator lines if active
+        if self.locate_graphics_item:
+            self._update_location_lines()
+        
         self._schedule_view_update()
 
     def update_embeddings(self, data_items, n_dims):
@@ -763,6 +793,102 @@ class EmbeddingViewer(QWidget):
             self.graphics_view.fitInView(self.graphics_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         else:
             self.graphics_view.fitInView(-2500, -2500, 5000, 5000, Qt.KeepAspectRatio)
+    
+    def _on_locate_clicked(self):
+        """Handle locate button click."""
+        selected_items = self.graphics_scene.selectedItems()
+        if not selected_items:
+            return
+        
+        # Use the first selected item
+        first_item = selected_items[0]
+        if isinstance(first_item, EmbeddingPointItem):
+            self.show_annotation_location(first_item)
+    
+    def show_annotation_location(self, graphics_item):
+        """Show convergent lines from viewport edges to annotation location.
+        
+        Args:
+            graphics_item: The EmbeddingPointItem to locate
+        """
+        from PyQt5.QtCore import QTimer
+        
+        # Clear any existing location indicators
+        self._clear_location_indicator()
+        
+        # Store the graphics item reference for updating lines on viewport changes
+        self.locate_graphics_item = graphics_item
+        
+        # Defer line creation slightly to ensure viewport is updated after any recent transforms
+        QTimer.singleShot(50, self._update_location_lines)
+        
+        # Start timer to auto-remove after 1.5 seconds
+        self.locate_timer.start(1500)
+    
+    def _update_location_lines(self):
+        """Update or create location indicator lines based on current viewport."""
+        from PyQt5.QtWidgets import QGraphicsLineItem
+        from PyQt5.QtCore import QLineF
+        
+        if not self.locate_graphics_item:
+            return
+        
+        # Remove existing lines but keep the graphics_item reference
+        for line in self.locate_lines:
+            self.graphics_scene.removeItem(line)
+        self.locate_lines.clear()
+        
+        # Get the annotation's position in scene coordinates
+        # Use pos() which returns the item's position (set via setPos with embedding_x, embedding_y)
+        # This is the actual center point in the scene
+        target_pos = self.locate_graphics_item.pos()
+        target_x = target_pos.x()
+        target_y = target_pos.y()
+        
+        # Get the visible rectangle in scene coordinates
+        visible_rect = self.graphics_view.mapToScene(
+            self.graphics_view.viewport().rect()
+        ).boundingRect()
+        
+        # Calculate edge center points
+        top_x = target_x
+        top_y = visible_rect.top()
+        
+        bottom_x = target_x
+        bottom_y = visible_rect.bottom()
+        
+        left_x = visible_rect.left()
+        left_y = target_y
+        
+        right_x = visible_rect.right()
+        right_y = target_y
+        
+        # Create 4 lines from edges to target
+        lines_data = [
+            QLineF(top_x, top_y, target_x, target_y),        # From top
+            QLineF(bottom_x, bottom_y, target_x, target_y),  # From bottom
+            QLineF(left_x, left_y, target_x, target_y),      # From left
+            QLineF(right_x, right_y, target_x, target_y),    # From right
+        ]
+        
+        # Use black dashed lines
+        pen = QPen(QColor(0, 0, 0), 3, Qt.DashLine)
+        pen.setCosmetic(True)  # Width stays constant regardless of zoom
+        
+        # Add lines to scene
+        for line_data in lines_data:
+            line_item = QGraphicsLineItem(line_data)
+            line_item.setPen(pen)
+            self.graphics_scene.addItem(line_item)
+            self.locate_lines.append(line_item)
+    
+    def _clear_location_indicator(self):
+        """Remove all location indicator lines from the scene."""
+        for line in self.locate_lines:
+            self.graphics_scene.removeItem(line)
+        self.locate_lines.clear()
+        self.locate_graphics_item = None
+        self.locate_timer.stop()
             
     def _apply_rotation_and_projection(self):
         """

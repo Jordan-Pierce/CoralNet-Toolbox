@@ -2191,36 +2191,26 @@ class ExplorerWindow(QMainWindow):
         if insufficient_classes:
             if len(sufficient_classes) < 2:
                 # Not enough classes remain even after filtering
-                class_list = "\n".join([f"• {code}: {count} sample(s)" 
-                                       for code, count in insufficient_classes])
                 raise AutoAnnotationError(
-                    f"The following classes have fewer than {min_samples_required} examples:\n\n"
-                    f"{class_list}\n\n"
+                    f"{len(insufficient_classes)} class(es) have fewer than {min_samples_required} examples.\n\n"
                     f"After excluding these classes, fewer than 2 classes remain.\n"
                     f"Cannot train model. Please add more labeled annotations."
                 )
             
             # Ask user if they want to continue without insufficient classes
-            class_list = "\n".join([f"• {code}: {count} sample(s)" 
-                                   for code, count in insufficient_classes])
-            
-            msg_box = QMessageBox()
+            msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle("Insufficient Training Data")
             msg_box.setText(
-                f"The following classes have fewer than {min_samples_required} examples "
-                f"and will be excluded from training:"
-            )
-            msg_box.setInformativeText(
-                f"{class_list}\n\n"
-                f"{len(sufficient_classes)} class(es) with sufficient data will be used for training.\n\n"
-                f"Do you want to continue training without these classes?"
+                f"{len(sufficient_classes)} class(es) will be used for training, "
+                f"as {len(insufficient_classes)} class(es) have fewer than {min_samples_required} samples.\n\n"
+                f"Do you want to continue?"
             )
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             msg_box.setDefaultButton(QMessageBox.No)
             
-            # Adjust dialog size to fit content
-            msg_box.setStyleSheet("QLabel{min-width: 400px;}")
+            # Ensure dialog appears on top
+            msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
             
             response = msg_box.exec_()
             
