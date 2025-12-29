@@ -682,18 +682,23 @@ class AutoAnnotationWizard(QDialog):
     
     def _on_annotation_mode_changed(self, index):
         """Handle switching between Active Learning and Bulk Labeling modes."""
-        # Clear animations and selections when switching modes
-        self._clear_animations_and_selections()
-        
-        # Rescan for any manually labeled annotations before entering new mode
-        self._rescan_for_manual_labels()
-        
-        if index == 0:
-            self.annotation_mode = 'active_learning'
-            self._enter_active_learning_mode()
-        elif index == 1:
-            self.annotation_mode = 'bulk_labeling'
-            self._enter_bulk_labeling_mode()
+        # Set busy cursor for potentially slow operations
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Clear animations and selections when switching modes
+            self._clear_animations_and_selections()
+            
+            # Rescan for any manually labeled annotations before entering new mode
+            self._rescan_for_manual_labels()
+            
+            if index == 0:
+                self.annotation_mode = 'active_learning'
+                self._enter_active_learning_mode()
+            elif index == 1:
+                self.annotation_mode = 'bulk_labeling'
+                self._enter_bulk_labeling_mode()
+        finally:
+            QApplication.restoreOverrideCursor()
     
     def _rescan_for_manual_labels(self):
         """Scan all annotations and mark any that are no longer 'Review' as completed.
@@ -986,18 +991,23 @@ class AutoAnnotationWizard(QDialog):
         self.explorer_window.embedding_viewer.selection_blocked = True
         self.explorer_window.annotation_viewer.selection_blocked = True
         
-        # Generate predictions for all Review annotations (if not already done)
-        if not self.bulk_predictions:
-            self._generate_all_predictions()
-        
-        # Initialize based on current mode (from the active tab)
-        current_tab = self.annotation_tabs.currentIndex()
-        if current_tab == 0:
-            self.annotation_mode = 'active_learning'
-            self._enter_active_learning_mode()
-        else:
-            self.annotation_mode = 'bulk_labeling'
-            self._enter_bulk_labeling_mode()
+        # Set busy cursor for potentially slow operations
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Generate predictions for all Review annotations (if not already done)
+            if not self.bulk_predictions:
+                self._generate_all_predictions()
+            
+            # Initialize based on current mode (from the active tab)
+            current_tab = self.annotation_tabs.currentIndex()
+            if current_tab == 0:
+                self.annotation_mode = 'active_learning'
+                self._enter_active_learning_mode()
+            else:
+                self.annotation_mode = 'bulk_labeling'
+                self._enter_bulk_labeling_mode()
+        finally:
+            QApplication.restoreOverrideCursor()
     
     def _enter_active_learning_mode(self):
         """Enter Active Learning mode."""
@@ -1104,6 +1114,9 @@ class AutoAnnotationWizard(QDialog):
         if not items:
             return
         
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         total = len(items)
         for i, item in enumerate(items):
             try:
@@ -1128,6 +1141,9 @@ class AutoAnnotationWizard(QDialog):
                         
             except Exception as e:
                 print(f"Error generating prediction for annotation ID {item.annotation.id}: {e}")
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
     
     def _generate_all_predictions(self):
         """Generate predictions for all Review annotations, excluding completed ones."""
@@ -1336,61 +1352,67 @@ class AutoAnnotationWizard(QDialog):
         )
         
         if reply == QMessageBox.Yes:
-            # Apply all previews permanently and track completed IDs
-            for item in self.explorer_window.current_data_items:
-                if item.has_preview_changes():
-                    # Apply the preview label permanently
-                    item.apply_preview_permanently()
-                    
-                    # Update the data item's effective_label cache
-                    item._effective_label = item.annotation.label
-                    
-                    # Track as completed
-                    self.completed_annotation_ids.add(item.annotation.id)
-                    
-                    # Remove from predictions
-                    if item.annotation.id in self.bulk_predictions:
-                        del self.bulk_predictions[item.annotation.id]
-                    
-                    # Update tooltip and visuals
-                    if hasattr(item, 'widget') and item.widget:
-                        item.widget.update_tooltip()
-                    if hasattr(item, 'graphics_item') and item.graphics_item:
-                        item.graphics_item.update_tooltip()
-            
-            # Get remaining review items (excluding completed ones)
-            # completed_annotation_ids is the authoritative exclusion list
-            review_items = [
-                item for item in self.explorer_window.current_data_items
-                if item.annotation.id not in self.completed_annotation_ids
-                and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
-            ]
-            
-            # Regenerate predictions for remaining items
-            if review_items:
-                self._generate_predictions_for_items(review_items)
-            
-            # Update viewer with remaining items
-            self.explorer_window.annotation_viewer.update_annotations(review_items)
-            
-            # Update statistics
-            self._update_bulk_statistics()
-            self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
-            
-            # Check if all annotations are now labeled
-            if len(review_items) == 0:
-                QMessageBox.information(
-                    self,
-                    "Success",
-                    f"Successfully applied {preview_count} labels.\n\n✓ All annotations have been labeled!"
-                )
-                self._cleanup_on_completion(auto_close=True)
-            else:
-                QMessageBox.information(
-                    self,
-                    "Success",
-                    f"Successfully applied {preview_count} labels.\n\n{len(review_items)} Review annotations remaining."
-                )
+            # Set busy cursor for potentially slow operations
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                # Apply all previews permanently and track completed IDs
+                for item in self.explorer_window.current_data_items:
+                    if item.has_preview_changes():
+                        # Apply the preview label permanently
+                        item.apply_preview_permanently()
+                        
+                        # Update the data item's effective_label cache
+                        item._effective_label = item.annotation.label
+                        
+                        # Track as completed
+                        self.completed_annotation_ids.add(item.annotation.id)
+                        
+                        # Remove from predictions
+                        if item.annotation.id in self.bulk_predictions:
+                            del self.bulk_predictions[item.annotation.id]
+                        
+                        # Update tooltip and visuals
+                        if hasattr(item, 'widget') and item.widget:
+                            item.widget.update_tooltip()
+                        if hasattr(item, 'graphics_item') and item.graphics_item:
+                            item.graphics_item.update_tooltip()
+                
+                # Get remaining review items (excluding completed ones)
+                # completed_annotation_ids is the authoritative exclusion list
+                review_items = [
+                    item for item in self.explorer_window.current_data_items
+                    if item.annotation.id not in self.completed_annotation_ids
+                    and getattr(item.effective_label, 'short_label_code', '') == REVIEW_LABEL
+                ]
+                
+                # Regenerate predictions for remaining items
+                if review_items:
+                    self._generate_predictions_for_items(review_items)
+                
+                # Update viewer with remaining items
+                self.explorer_window.annotation_viewer.update_annotations(review_items)
+                
+                # Update statistics
+                self._update_bulk_statistics()
+                self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
+                
+                # Check if all annotations are now labeled
+                if len(review_items) == 0:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"Successfully applied {preview_count} labels.\n\n✓ All annotations have been labeled!"
+                    )
+                    self._cleanup_on_completion(auto_close=True)
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"Successfully applied {preview_count} labels."
+                        f"\n\n{len(review_items)} Review annotations remaining."
+                    )
+            finally:
+                QApplication.restoreOverrideCursor()
     
     def _get_next_uncertain_annotation(self):
         """Get the next most uncertain annotation to review."""

@@ -624,8 +624,8 @@ class ExplorerWindow(QMainWindow):
             
             # Select anomalous items and sort by anomaly score (most anomalous first)
             sorted_anomalous_ids = sorted(anomalous_ann_ids, 
-                                         key=lambda aid: self.data_item_cache[aid].anomaly_score, 
-                                         reverse=True)
+                                          key=lambda aid: self.data_item_cache[aid].anomaly_score, 
+                                          reverse=True)
             
             self.annotation_viewer.display_and_isolate_ordered_results(sorted_anomalous_ids)
             self.embedding_viewer.render_selection_from_ids(set(sorted_anomalous_ids))
@@ -729,6 +729,7 @@ class ExplorerWindow(QMainWindow):
                         return distance
                 except (AttributeError, TypeError):
                     pass
+                
                 return float('inf')
 
             # Stage 2 & 3: Filter by spatial proximity and metadata
@@ -805,10 +806,15 @@ class ExplorerWindow(QMainWindow):
                     })
             
             # Sort results by number of duplicates per group (most duplicates first)
+            def get_duplicate_count(aid):
+                for info in duplicate_info:
+                    if aid in info['duplicates']:
+                        return info['count']
+                return 0
+            
             sorted_copies = sorted(copies_to_select, 
-                                  key=lambda aid: next((info['count'] for info in duplicate_info 
-                                                       if aid in info['duplicates']), 0),
-                                  reverse=True)
+                                   key=get_duplicate_count,
+                                   reverse=True)
             
             self.annotation_viewer.display_and_isolate_ordered_results(sorted_copies)
             self.embedding_viewer.render_selection_from_ids(set(sorted_copies))
@@ -845,17 +851,21 @@ class ExplorerWindow(QMainWindow):
         min_confidence = self.similarity_params.get('min_confidence', 0.0)
 
         # Get selected items from embedding viewer
-        selected_points = [point for point in self.embedding_viewer.graphics_scene.selectedItems()
-                          if isinstance(point, EmbeddingPointItem)]
+        selected_points = [
+            point for point in self.embedding_viewer.graphics_scene.selectedItems()
+            if isinstance(point, EmbeddingPointItem)
+        ]
         
         if not selected_points:
-            QMessageBox.information(self, "No Selection", 
-                                  "Please select one or more points in the embedding viewer first.")
+            QMessageBox.information(self, 
+                                    "No Selection", 
+                                    "Please select one or more points in the embedding viewer first.")
             return
 
         if not self.current_embedding_model_info:
-            QMessageBox.warning(self, "No Embedding", 
-                              "Please run an embedding before searching for similar items.")
+            QMessageBox.warning(self, 
+                                "No Embedding", 
+                                "Please run an embedding before searching for similar items.")
             return
 
         selected_data_items = [point.data_item for point in selected_points]
@@ -869,8 +879,8 @@ class ExplorerWindow(QMainWindow):
             features_dict, _ = self.feature_store.get_features(selected_data_items, model_key)
             if not features_dict:
                 QMessageBox.warning(self, 
-                                  "Features Not Found", 
-                                  "Could not retrieve feature vectors for the selected items.")
+                                    "Features Not Found", 
+                                    "Could not retrieve feature vectors for the selected items.")
                 return
 
             # Create confidence-weighted query vector
@@ -904,8 +914,8 @@ class ExplorerWindow(QMainWindow):
             
             if index is None or not faiss_idx_to_ann_id:
                 QMessageBox.warning(self, 
-                                  "Index Error", 
-                                  "Could not find a valid feature index for the current model.")
+                                    "Index Error", 
+                                    "Could not find a valid feature index for the current model.")
                 return
 
             # Search for more candidates than needed to account for filtering
@@ -958,8 +968,8 @@ class ExplorerWindow(QMainWindow):
 
             if not similar_items:
                 QMessageBox.information(self, 
-                                      "No Results", 
-                                      "No similar items found matching the filter criteria.")
+                                        "No Results", 
+                                        "No similar items found matching the filter criteria.")
                 return
 
             # Sort by similarity (highest first) and get IDs
@@ -988,10 +998,10 @@ class ExplorerWindow(QMainWindow):
             filter_str = " + ".join(filter_text) if filter_text else "no filters"
             
             QMessageBox.information(self,
-                                  "Similar Items Found",
-                                  f"Found {len(similar_items)} similar items (requested: {k})\n"
-                                  f"Filters: {filter_str}\n"
-                                  f"Using cosine similarity on confidence-weighted query.")
+                                    "Similar Items Found",
+                                    f"Found {len(similar_items)} similar items (requested: {k})\n"
+                                    f"Filters: {filter_str}\n"
+                                    f"Using cosine similarity on confidence-weighted query.")
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -1761,7 +1771,8 @@ class ExplorerWindow(QMainWindow):
         n_neighbors = min(self.anomaly_params.get('n_neighbors', 20), len(self.current_data_items) - 1)
         
         if len(self.current_data_items) < n_neighbors:
-            print(f"Not enough data items ({len(self.current_data_items)}) for quality calculation (needs {n_neighbors}).")
+            print(f"Not enough data items ({len(self.current_data_items)}) for quality calculation "
+                  f"(needs {n_neighbors}).")
             return
 
         # Get the model key used for the current embedding
@@ -2164,12 +2175,72 @@ class ExplorerWindow(QMainWindow):
         if len(classes) < 2:
             raise AutoAnnotationError("Need at least 2 different classes to train model")
         
-        # Check for cold start / class imbalance
+        # Check for classes with insufficient samples
+        min_samples_required = 2
+        insufficient_classes = []
+        sufficient_classes = []
+        
+        for label_code in classes:
+            sample_count = len(label_to_items[label_code])
+            if sample_count < min_samples_required:
+                insufficient_classes.append((label_code, sample_count))
+            else:
+                sufficient_classes.append(label_code)
+        
+        # If there are insufficient classes, ask user if they want to continue
+        if insufficient_classes:
+            if len(sufficient_classes) < 2:
+                # Not enough classes remain even after filtering
+                class_list = "\n".join([f"• {code}: {count} sample(s)" 
+                                       for code, count in insufficient_classes])
+                raise AutoAnnotationError(
+                    f"The following classes have fewer than {min_samples_required} examples:\n\n"
+                    f"{class_list}\n\n"
+                    f"After excluding these classes, fewer than 2 classes remain.\n"
+                    f"Cannot train model. Please add more labeled annotations."
+                )
+            
+            # Ask user if they want to continue without insufficient classes
+            class_list = "\n".join([f"• {code}: {count} sample(s)" 
+                                   for code, count in insufficient_classes])
+            
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Insufficient Training Data")
+            msg_box.setText(
+                f"The following classes have fewer than {min_samples_required} examples "
+                f"and will be excluded from training:"
+            )
+            msg_box.setInformativeText(
+                f"{class_list}\n\n"
+                f"{len(sufficient_classes)} class(es) with sufficient data will be used for training.\n\n"
+                f"Do you want to continue training without these classes?"
+            )
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            
+            # Adjust dialog size to fit content
+            msg_box.setStyleSheet("QLabel{min-width: 400px;}")
+            
+            response = msg_box.exec_()
+            
+            if response != QMessageBox.Yes:
+                # User chose not to continue
+                return None
+            
+            # Filter out items from insufficient classes
+            labeled_items = [
+                item for item in labeled_items
+                if item.effective_label.short_label_code in sufficient_classes
+            ]
+            
+            # Rebuild label_to_items with only sufficient classes
+            label_to_items = {code: label_to_items[code] for code in sufficient_classes}
+            classes = sorted(sufficient_classes)
+        
+        # Check for class imbalance among remaining classes
         min_samples = min(len(items) for items in label_to_items.values())
         max_samples = max(len(items) for items in label_to_items.values())
-        
-        if min_samples < 2:
-            raise AutoAnnotationError(f"Some classes have fewer than 2 examples. Cannot train.")
         
         warnings_text = []
         if min_samples < 5:
@@ -2333,8 +2404,7 @@ class ExplorerWindow(QMainWindow):
                 'confidence': float(top_conf),
                 'margin': float(margin),
                 'top_predictions': top_predictions,
-                'probabilities': {idx_to_class[j]: float(probs[j]) 
-                                for j in range(len(probs))}
+                'probabilities': {idx_to_class[j]: float(probs[j]) for j in range(len(probs))}
             }
     
     def update_all_sklearn_predictions(self, model, scaler, class_to_idx, feature_type='full'):
@@ -2424,8 +2494,8 @@ class ExplorerWindow(QMainWindow):
             
             # Combined score (weighted average)
             combined_score = (0.4 * uncertainty_score + 
-                            0.4 * margin_score + 
-                            0.2 * diversity_score)
+                              0.4 * margin_score + 
+                              0.2 * diversity_score)
             
             scored_items.append((combined_score, item))
         
@@ -2435,8 +2505,8 @@ class ExplorerWindow(QMainWindow):
         
         return batch
     
-    def auto_label_confident_predictions(self, model, scaler, class_to_idx, idx_to_class, 
-                                        feature_type='full', threshold=0.95):
+    def auto_label_confident_predictions(self, model, scaler, class_to_idx, idx_to_class, feature_type='full',  
+                                         threshold=0.95):
         """
         Automatically apply labels to high-confidence predictions.
         
@@ -2495,8 +2565,8 @@ class ExplorerWindow(QMainWindow):
         # Update displays
         if count > 0:
             self.annotation_viewer.update_annotations(self.current_data_items)
-            self.embedding_viewer.update_embeddings(self.current_data_items, 
-                                                   2 if not hasattr(self.current_data_items[0], 'embedding_z') else 3)
+            n_dims = 2 if not hasattr(self.current_data_items[0], 'embedding_z') else 3
+            self.embedding_viewer.update_embeddings(self.current_data_items, n_dims)
         
         return count
     
