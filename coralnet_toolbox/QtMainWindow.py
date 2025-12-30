@@ -116,6 +116,14 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
+from coralnet_toolbox.Z import (
+    DeployModelDialog as ZDeployModelDialog,
+)
+
+from coralnet_toolbox.Common import (
+    CollapsibleSection,
+)
+
 from coralnet_toolbox.BreakTime import (
     SnakeGame,
     BreakoutGame,
@@ -306,6 +314,9 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Transformers)
         self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
+        
+        # Create dialogs (Z-Inference)
+        self.z_deploy_model_dialog = ZDeployModelDialog(self)
 
         # Create dialogs (Batch Inference - Consolidated)
         # This is accessed via ImageWindow right-click context menu
@@ -1080,16 +1091,10 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
         
-        # Z button and Z label
-        self.z_action = QAction(self.z_icon, "", self)
-        self.z_action.setCheckable(False)  # TODO
-        self.z_action.setChecked(False)
-        self.z_action.setToolTip("Depth Estimation (In Progress)")
-        # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
-
-        # Create button to hold the Z action
-        self.z_button = QToolButton()
-        self.z_button.setDefaultAction(self.z_action)
+        # ----------------------------------------
+        # Z Inference section
+        # ----------------------------------------
+        # Created with Z Deploy Model Dialog
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1111,7 +1116,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
-        self.parameters_section = CollapsibleSection("Parameters")
+        self.parameters_section = CollapsibleSection("Parameters", "parameters.png")
 
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
@@ -1195,7 +1200,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addWidget(self.z_button)
+        self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
@@ -2521,10 +2526,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_depth_dialog(self):
-        """Open the Depth Dialog"""
-        # TODO: Implement depth dialog functionality
-        pass
+    def open_z_deploy_model_dialog(self):
+        """Open the Z-Deploy Model Dialog"""
+        self.z_deploy_model_dialog.toggle_content()
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
@@ -3246,59 +3250,6 @@ class MainWindow(QMainWindow):
             self.lightcycle_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-
-class CollapsibleSection(QWidget):
-    def __init__(self, title, parent=None):
-        super().__init__(parent)
-        self.setLayout(QVBoxLayout())
-        self.layout().setContentsMargins(0, 0, 0, 0)
-        self.layout().setSpacing(0)
-
-        # Create the action
-        self.toggle_action = QAction(QIcon(get_icon('parameters.png')), title, self)
-        self.toggle_action.setCheckable(False)
-        self.toggle_action.triggered.connect(self.toggle_content)
-
-        # Header button using the action
-        self.toggle_button = QToolButton()
-        self.toggle_button.setDefaultAction(self.toggle_action)
-        self.toggle_button.setCheckable(False)
-        self.toggle_button.setAutoRaise(True)  # Gives a flat appearance until clicked
-
-        # Popup frame
-        self.popup = QFrame(self.window())
-        self.popup.setWindowFlags(Qt.Popup)
-        self.popup.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.popup.setLayout(QVBoxLayout())
-        self.popup.layout().setContentsMargins(5, 5, 5, 5)
-        self.popup.hide()
-
-        # Add button to layout
-        self.layout().addWidget(self.toggle_button)
-
-    def toggle_content(self):
-        if self.popup.isVisible():
-            self.popup.hide()
-        else:
-            # Position popup below and to the left of the button
-            pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
-            popup_width = self.popup.sizeHint().width()
-            self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
-                            pos.y() + self.toggle_button.height())
-            self.popup.show()
-
-    def add_widget(self, widget, title=None):
-        group_box = QGroupBox()
-        group_box.setTitle(title)
-        group_box.setLayout(QVBoxLayout())
-        group_box.layout().addWidget(widget)
-        self.popup.layout().addWidget(group_box)
-
-    def hideEvent(self, event):
-        self.popup.hide()
-        self.toggle_action.setChecked(False)
-        super().hideEvent(event)
 
 
 class DeviceSelectionDialog(QDialog):

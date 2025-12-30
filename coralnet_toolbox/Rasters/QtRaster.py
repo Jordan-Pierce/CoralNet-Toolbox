@@ -294,16 +294,14 @@ class Raster(QObject):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
         
-    def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
+    def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None):
         """
         Add or update depth/elevation channel data.
-        
-        Note: z_unit should be set separately via load_z_channel_from_file() or manually.
-        This method does not modify z_unit.
         
         Args:
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
+            z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
         """
         if not isinstance(z_data, np.ndarray):
             raise ValueError("Z channel data must be a numpy array")
@@ -316,17 +314,22 @@ class Raster(QObject):
                              f"({self.height}, {self.width})")
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
-        # Note: z_unit is NOT set here; it should be set before calling add_z_channel()
         
-    def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None):
+        # Set z_unit if provided, normalizing to standard format
+        if z_unit is not None:
+            from coralnet_toolbox.utilities import normalize_z_unit
+            self.z_unit = normalize_z_unit(z_unit)
+        
+    def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None):
         """
         Update the depth/elevation channel data.
         
         Args:
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
+            z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
         """
-        self.add_z_channel(z_data, z_path)  # Same validation as add
+        self.add_z_channel(z_data, z_path, z_unit)  # Same validation as add
         
     def set_z_channel_path(self, z_path: str, auto_load: bool = True):
         """

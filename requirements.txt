@@ -30,3 +30,5 @@ dill
 seaborn
 GPUtil
 psutil
+depth-anything-3
+addict
