@@ -103,6 +103,8 @@ class Raster(QObject):
         self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
         self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
+        self.z_data_type: Optional[str] = None  # Type of z-channel data: 'depth', 'elevation', or 'dem'
+        self.z_inversion_reference: Optional[float] = None  # Reference max value for depth<->elevation conversions
         
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
@@ -294,7 +296,8 @@ class Raster(QObject):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
         
-    def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None):
+    def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None, 
+                      z_data_type: Optional[str] = None):
         """
         Add or update depth/elevation channel data.
         
@@ -302,6 +305,7 @@ class Raster(QObject):
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
+            z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
         """
         if not isinstance(z_data, np.ndarray):
             raise ValueError("Z channel data must be a numpy array")
@@ -312,6 +316,9 @@ class Raster(QObject):
         if z_data.shape != (self.height, self.width):
             raise ValueError(f"Z channel dimensions {z_data.shape} must match image dimensions "
                              f"({self.height}, {self.width})")
+        if z_data_type is not None and z_data_type not in ['depth', 'elevation', 'dem']:
+            raise ValueError(f"z_data_type must be 'depth', 'elevation', or 'dem', got '{z_data_type}'")
+            
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
         
@@ -319,8 +326,13 @@ class Raster(QObject):
         if z_unit is not None:
             from coralnet_toolbox.utilities import normalize_z_unit
             self.z_unit = normalize_z_unit(z_unit)
+            
+        # Set z_data_type if provided
+        if z_data_type is not None:
+            self.z_data_type = z_data_type
         
-    def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None):
+    def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None,
+                         z_data_type: Optional[str] = None):
         """
         Update the depth/elevation channel data.
         
@@ -328,8 +340,9 @@ class Raster(QObject):
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
+            z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
         """
-        self.add_z_channel(z_data, z_path, z_unit)  # Same validation as add
+        self.add_z_channel(z_data, z_path, z_unit, z_data_type)  # Same validation as add
         
     def set_z_channel_path(self, z_path: str, auto_load: bool = True):
         """
@@ -354,6 +367,59 @@ class Raster(QObject):
         self.z_channel_path = None
         self.z_unit = None
         self.z_nodata = None
+        self.z_data_type = None
+        self.z_inversion_reference = None
+        
+    def convert_z_data_type(self, target_type: str) -> bool:
+        """
+        Convert z-channel data between depth and elevation representations.
+        
+        For downward-facing cameras:
+        - depth -> elevation: Inverts values (elevation = max_depth - depth)
+        - elevation -> depth: Inverts values (depth = max_elevation - elevation)
+        
+        Args:
+            target_type (str): Target data type ('depth' or 'elevation')
+            
+        Returns:
+            bool: True if conversion was successful, False otherwise
+        """
+        if self.z_channel is None:
+            print("No z-channel data to convert")
+            return False
+            
+        if target_type not in ['depth', 'elevation']:
+            print(f"Invalid target type: {target_type}. Must be 'depth' or 'elevation'")
+            return False
+            
+        if self.z_data_type == target_type:
+            print(f"Z-channel is already {target_type} data")
+            return False
+            
+        # Perform inversion for float32 data
+        if self.z_channel.dtype == np.float32:
+            # Use stored reference value if available, otherwise calculate and store it
+            if self.z_inversion_reference is None:
+                # First conversion - store the max value as reference
+                self.z_inversion_reference = float(np.nanmax(self.z_channel))
+                max_val = self.z_inversion_reference
+            else:
+                # Subsequent conversions - use stored reference for reversibility
+                max_val = self.z_inversion_reference
+            
+            # Invert: new_value = max - old_value
+            # Preserve NaN values
+            inverted_data = max_val - self.z_channel
+            
+            # Update the z_channel data
+            self.z_channel = inverted_data
+            self.z_data_type = target_type
+            
+            print(f"Converted z-channel to {target_type} (using reference value: {max_val:.3f})")
+            return True
+        else:
+            print(f"Conversion only supported for float32 data, got {self.z_channel.dtype}")
+            return False
         
     def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
         """
@@ -863,6 +929,14 @@ class Raster(QObject):
         # Include z_unit if available
         if self.z_unit is not None:
             raster_data['z_unit'] = self.z_unit
+            
+        # Include z_data_type if available
+        if self.z_data_type is not None:
+            raster_data['z_data_type'] = self.z_data_type
+            
+        # Include z_inversion_reference if available
+        if self.z_inversion_reference is not None:
+            raster_data['z_inversion_reference'] = float(self.z_inversion_reference)
         
         if self.z_channel is not None:
             raster_data['has_z_channel'] = True
@@ -946,6 +1020,16 @@ class Raster(QObject):
         z_unit = raster_dict.get('z_unit')
         if z_unit:
             raster.z_unit = z_unit
+            
+        # Load z_data_type if available
+        z_data_type = raster_dict.get('z_data_type')
+        if z_data_type:
+            raster.z_data_type = z_data_type
+            
+        # Load z_inversion_reference if available
+        z_inversion_reference = raster_dict.get('z_inversion_reference')
+        if z_inversion_reference is not None:
+            raster.z_inversion_reference = float(z_inversion_reference)
         
         return raster
     
@@ -1010,6 +1094,16 @@ class Raster(QObject):
         z_unit = raster_dict.get('z_unit')
         if z_unit:
             self.z_unit = z_unit
+            
+        # Update z_data_type if available
+        z_data_type = raster_dict.get('z_data_type')
+        if z_data_type:
+            self.z_data_type = z_data_type
+            
+        # Update z_inversion_reference if available
+        z_inversion_reference = raster_dict.get('z_inversion_reference')
+        if z_inversion_reference is not None:
+            self.z_inversion_reference = float(z_inversion_reference)
         
         # Note: z_channel data is not loaded from dictionary as it's typically stored separately
         

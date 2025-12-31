@@ -11,9 +11,12 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
                              QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem, QFileDialog)
 
-from coralnet_toolbox.Rasters import RasterManager, ImageFilter, RasterTableModel
+from coralnet_toolbox.Rasters import RasterManager
+from coralnet_toolbox.Rasters import ImageFilter
+from coralnet_toolbox.Rasters import RasterTableModel
 
-from coralnet_toolbox.Common.QtZChannelImport import ZPairingWidget
+from coralnet_toolbox.Z import ZImportDialog
+from coralnet_toolbox.Z import ZExportDialog
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -1159,6 +1162,16 @@ class ImageWindow(QWidget):
             lambda: self.import_z_channel_highlighted_images()
         )
 
+        # Add export z-channel action
+        export_z_channel_action = context_menu.addAction(
+            f"Export Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        export_z_channel_action.triggered.connect(
+            lambda: self.export_z_channel_highlighted_images()
+        )
+
+        context_menu.addSeparator()
+
         # Add remove z-channel action
         remove_z_channel_action = context_menu.addAction(
             f"Remove Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
@@ -1214,7 +1227,7 @@ class ImageWindow(QWidget):
         batch_dialog.exec_()
         
     def import_z_channel_highlighted_images(self):
-        """Open file dialog and ZPairingWidget to import z-channel files for highlighted images."""
+        """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
         # Get all highlighted paths
         highlighted_paths = self.table_model.get_highlighted_paths()
         
@@ -1249,13 +1262,13 @@ class ImageWindow(QWidget):
         if not z_files:
             return
         
-        # Create and show ZPairingWidget with highlighted image paths and selected z-files
+        # Create and show ZImportDialog with highlighted image paths and selected z-files
         # Sort both lists for consistent ordering
         image_paths = sorted(highlighted_paths)
         z_channel_files = sorted(z_files)
         
         # Create the pairing widget and keep a reference to prevent garbage collection
-        self.pairing_widget = ZPairingWidget(image_paths, z_channel_files)
+        self.pairing_widget = ZImportDialog(image_paths, z_channel_files)
         
         # Connect the mapping_confirmed signal to handle the confirmed mapping
         self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
@@ -1264,10 +1277,10 @@ class ImageWindow(QWidget):
         self.pairing_widget.show()
     
     def on_z_channel_mapping_confirmed(self, mapping):
-        """Handle confirmed z-channel mapping from ZPairingWidget.
+        """Handle confirmed z-channel mapping from ZImportDialog.
         
         Args:
-            mapping (dict): {image_path: {"z_path": z_channel_path, "units": unit_str}}
+            mapping (dict): {image_path: {"z_path": z_channel_path, "units": unit_str, "z_data_type": type_str}}
         """
         if not mapping:
             return
@@ -1285,14 +1298,16 @@ class ImageWindow(QWidget):
         try:
             # Apply the z-channel to each raster
             for image_path, z_info in mapping.items():
-                # Extract z_path and units from mapping
+                # Extract z_path, units, and z_data_type from mapping
                 if isinstance(z_info, dict):
                     z_channel_path = z_info.get("z_path")
                     z_unit = z_info.get("units")
+                    z_data_type = z_info.get("z_data_type")
                 else:
                     # Fallback for old-style mappings (just paths)
                     z_channel_path = z_info
                     z_unit = None
+                    z_data_type = None
                 
                 raster = self.raster_manager.get_raster(image_path)
                 if raster:
@@ -1300,6 +1315,9 @@ class ImageWindow(QWidget):
                         # Load z-channel from file with units
                         success = raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
                         if success:
+                            # Set z_data_type if provided
+                            if z_data_type:
+                                raster.z_data_type = z_data_type
                             successful_count += 1
                             # Emit signal to update UI
                             self.raster_manager.rasterUpdated.emit(image_path)
@@ -1399,6 +1417,28 @@ class ImageWindow(QWidget):
                 progress_bar.stop_progress()
                 progress_bar.close()
                 QApplication.restoreOverrideCursor()
+    
+    def export_z_channel_highlighted_images(self):
+        """Export z-channels from the highlighted images."""
+        # Get all highlighted paths
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        if not highlighted_paths:
+            return
+        
+        # Get rasters for highlighted images
+        highlighted_rasters = []
+        for path in highlighted_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster:
+                highlighted_rasters.append(raster)
+        
+        if not highlighted_rasters:
+            return
+        
+        # Create and show ZExportDialog
+        self.export_dialog = ZExportDialog(highlighted_rasters, parent=self)
+        self.export_dialog.show()
         
     def delete_highlighted_images(self):
         """Delete the highlighted images."""

@@ -184,6 +184,8 @@ class MainWindow(QMainWindow):
         self.opaque_icon = get_icon("opaque.png")
         self.z_icon = get_icon("z.png")
         self.dynamic_icon = get_icon("dynamic.png")
+        self.depth_icon = get_icon("depth.png")
+        self.elevation_icon = get_icon("elevation.png")
         self.parameters_icon = get_icon("parameters.png")
         self.system_monitor_icon = get_icon("system_monitor.png")
         self.add_icon = get_icon("add.png")
@@ -367,7 +369,11 @@ class MainWindow(QMainWindow):
         # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
         # Connect the imageLoaded signal from ImageWindow to check z-channel status
-        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
+        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)        
+        # Connect image signals to update Z-Inference deploy button state
+        self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
+        # Connect imageChanged signal to update Z-Inference deploy button state
+        self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
 
         # ----------------------------------------
         # Create the menu bar
@@ -1076,7 +1082,7 @@ class MainWindow(QMainWindow):
         # Z colormap dropdown for visualization
         self.z_colormap_dropdown = QComboBox()
         self.z_colormap_dropdown.addItems([
-            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'
+            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo',
         ])
         self.z_colormap_dropdown.setCurrentText('None')
         self.z_colormap_dropdown.setFixedWidth(100)
@@ -1090,6 +1096,13 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z type conversion button (depth <-> elevation)
+        self.z_type_button = QToolButton()
+        self.z_type_button.setCheckable(False)  # Non-toggle button, just shows current state
+        self.z_type_button.setIcon(self.depth_icon)
+        self.z_type_button.setEnabled(False)  # Disabled by default until Z data is available
+        self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
         
         # ----------------------------------------
         # Z Inference section
@@ -1200,6 +1213,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
+        self.status_bar_layout.addWidget(self.z_type_button)
         self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
@@ -1269,6 +1283,7 @@ class MainWindow(QMainWindow):
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
         self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
+        self.z_type_button.clicked.connect(self.on_z_type_toggled)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -2005,12 +2020,26 @@ class MainWindow(QMainWindow):
             self.z_unit_dropdown.setEnabled(False)
             self.z_colormap_dropdown.setEnabled(False)
             self.z_dynamic_button.setEnabled(False)
+            self.z_type_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
         elif raster and raster.z_channel is not None:
             # Image has z-channel, enable UI elements
             self.z_label.setEnabled(True)
             self.z_unit_dropdown.setEnabled(True)
             self.z_colormap_dropdown.setEnabled(True)
+            # Enable type conversion button for float32 data
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if raster and raster.z_channel is not None and raster.z_channel.dtype == np.float32:
+                self.z_type_button.setEnabled(True)
+                # Update button icon/tooltip based on current data type
+                if raster.z_data_type == 'elevation':
+                    self.z_type_button.setIcon(self.elevation_icon)
+                    self.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
+                else:
+                    self.z_type_button.setIcon(self.depth_icon)
+                    self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
+            else:
+                self.z_type_button.setEnabled(False)
             # Only enable dynamic button if colormap is not set to "None"
             if self.z_colormap_dropdown.currentText() != "None":
                 self.z_dynamic_button.setEnabled(True)
@@ -2032,6 +2061,7 @@ class MainWindow(QMainWindow):
             self.z_unit_dropdown.setEnabled(False)
             self.z_colormap_dropdown.setEnabled(False)
             self.z_dynamic_button.setEnabled(False)
+            self.z_type_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
 
     def update_project_label(self):
@@ -2183,6 +2213,9 @@ class MainWindow(QMainWindow):
                     self.z_label.setEnabled(True)
                     self.z_unit_dropdown.setEnabled(True)
                     self.z_colormap_dropdown.setEnabled(True)
+                    # Enable type conversion button for float32 data
+                    if raster.z_channel.dtype == np.float32:
+                        self.z_type_button.setEnabled(True)
                     # Only enable dynamic button if colormap is not set to "None"
                     if self.z_colormap_dropdown.currentText() != "None":
                         self.z_dynamic_button.setEnabled(True)
@@ -2263,6 +2296,34 @@ class MainWindow(QMainWindow):
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
         self.annotation_window.toggle_dynamic_z_scaling(checked)
+        
+    def on_z_type_toggled(self, checked):
+        """Handle z-type conversion button click (depth <-> elevation)."""
+        current_raster = self.image_window.current_raster
+        if current_raster is None or current_raster.z_channel is None:
+            return
+            
+        # Determine target type based on current type
+        current_type = current_raster.z_data_type or 'depth'
+        
+        if current_type == 'depth':
+            # Convert to elevation
+            target_type = 'elevation'
+            success = current_raster.convert_z_data_type(target_type)
+            if success:
+                self.z_type_button.setIcon(self.elevation_icon)
+                self.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
+                # Refresh visualization
+                self.annotation_window.refresh_z_channel_visualization()
+        else:
+            # Convert to depth
+            target_type = 'depth'
+            success = current_raster.convert_z_data_type(target_type)
+            if success:
+                self.z_type_button.setIcon(self.depth_icon)
+                self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
+                # Refresh visualization
+                self.annotation_window.refresh_z_channel_visualization()
         
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""

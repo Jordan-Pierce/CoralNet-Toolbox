@@ -155,7 +155,8 @@ class DeployModelDialog(CollapsibleSection):
             self.status_label.setText(f"Model loaded: {model_name}")
             self.load_button.setEnabled(False)
             self.deactivate_button.setEnabled(True)
-            self.deploy_button.setEnabled(True)
+            # Only enable deploy button if an image is currently loaded
+            self.deploy_button.setEnabled(self.main_window.image_window.current_raster is not None)
             
             progress_bar.finish_progress()
             QMessageBox.information(self.annotation_window, 
@@ -198,6 +199,13 @@ class DeployModelDialog(CollapsibleSection):
                                      "Error", 
                                      f"Error deactivating model: {e}")
                 
+    def update_deploy_button_state(self):
+        """Update deploy button enabled state based on model and image availability."""
+        # Enable only if model is loaded AND image is loaded
+        has_model = self.loaded_model is not None
+        has_image = self.main_window.image_window.current_raster is not None
+        self.deploy_button.setEnabled(has_model and has_image)
+                
     def deploy_model(self):
         """Deploy the model on the current image to generate Z-channel."""
         if self.loaded_model is None:
@@ -220,21 +228,18 @@ class DeployModelDialog(CollapsibleSection):
             
             if reply == "cancel":
                 return
-            elif reply == "scale_inpaint":
-                # Placeholder for future implementation
-                QMessageBox.information(self.annotation_window, 
-                                        "Not Implemented", 
-                                        "Scale & Inpaint is not yet implemented")
-                return
-            # If reply == "overwrite", continue with deployment
+            # Pass the mode directly to predict
+            overwrite_mode = reply
+        else:
+            overwrite_mode = "overwrite"
             
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Deploying Model")
         progress_bar.show()
         
         try:
-            # Use the predict method with a single image
-            self.predict([current_raster.image_path], progress_bar, overwrite_mode="overwrite")
+            # Use the predict method with the selected overwrite mode
+            self.predict([current_raster.image_path], progress_bar, overwrite_mode=overwrite_mode)
             progress_bar.finish_progress()
 
         except Exception as e:
@@ -260,7 +265,7 @@ class DeployModelDialog(CollapsibleSection):
                            "prompt" - ask user once (for batch)
                            "overwrite" - overwrite without asking
                            "skip" - skip images with existing z-channels
-                           "scale_inpaint" - use scale & inpaint (not implemented)
+                           "smart_fill" - fill NaN values with scaled predictions
         """
         if self.loaded_model is None:
             raise ValueError("No model loaded")
@@ -277,12 +282,6 @@ class DeployModelDialog(CollapsibleSection):
             if has_z_channel:
                 reply = self._show_overwrite_dialog()
                 if reply == "cancel":
-                    return
-                elif reply == "scale_inpaint":
-                    # Placeholder for future implementation
-                    QMessageBox.information(self.annotation_window, 
-                                            "Not Implemented", 
-                                            "Scale & Inpaint is not yet implemented")
                     return
                 # Update overwrite mode based on user choice
                 overwrite_mode = reply
@@ -303,12 +302,32 @@ class DeployModelDialog(CollapsibleSection):
                 if raster.z_channel is not None:
                     if overwrite_mode == "skip":
                         continue
-                    elif overwrite_mode == "scale_inpaint":
-                        # Not implemented yet
+                    elif overwrite_mode == "smart_fill":
+                        # Run prediction first
+                        image_array = raster.get_numpy()
+                        if image_array is None:
+                            print(f"Failed to get image array from raster for {image_path}")
+                            continue
+                        
+                        z_predicted = self.loaded_model.predict(image_array)
+                        
+                        # Apply Smart Fill
+                        self._handle_smart_fill(raster, z_predicted)
+                        
+                        # Refresh visualization if this is the current raster
+                        if raster == self.main_window.image_window.current_raster:
+                            self.annotation_window.refresh_z_channel_visualization()
+                            # Update z_type_button based on current type
+                            if raster.z_data_type == 'elevation':
+                                self.main_window.z_type_button.setIcon(self.main_window.elevation_icon)
+                                self.main_window.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
+                            else:
+                                self.main_window.z_type_button.setIcon(self.main_window.depth_icon)
+                                self.main_window.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
                         continue
-                    # If overwrite_mode == "overwrite", continue with prediction
+                    # If overwrite_mode == "overwrite", continue with prediction below
                 
-                # Get numpy array from raster (could also be done via image path)
+                # Get numpy array from raster
                 image_array = raster.get_numpy()
                 
                 if image_array is None:
@@ -318,8 +337,8 @@ class DeployModelDialog(CollapsibleSection):
                 # Run prediction
                 z_channel = self.loaded_model.predict(image_array)
                 
-                # Add z-channel to raster
-                raster.add_z_channel(z_channel, z_unit='meters')
+                # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
+                raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth')
                 
                 # If this is the current raster, refresh visualization and enable controls
                 if raster == self.main_window.image_window.current_raster:
@@ -331,6 +350,11 @@ class DeployModelDialog(CollapsibleSection):
                     self.main_window.z_label.setEnabled(True)
                     self.main_window.z_colormap_dropdown.setEnabled(True)
                     self.main_window.z_dynamic_button.setEnabled(True)
+                    self.main_window.z_type_button.setEnabled(True)  # Enable depth/elevation conversion
+                    
+                    # Set button to show depth mode
+                    self.main_window.z_type_button.setIcon(self.main_window.depth_icon)
+                    self.main_window.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
                     
                     # Set colormap to Turbo
                     turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
@@ -348,7 +372,7 @@ class DeployModelDialog(CollapsibleSection):
         Show dialog when Z-channel already exists.
         
         Returns:
-            str: "cancel", "overwrite", or "scale_inpaint"
+            str: "cancel", "overwrite", or "smart_fill"
         """
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
@@ -362,7 +386,16 @@ class DeployModelDialog(CollapsibleSection):
         
         cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
         overwrite_btn = msg.addButton("Overwrite", QMessageBox.AcceptRole)
-        scale_inpaint_btn = msg.addButton("Scale && Inpaint", QMessageBox.ActionRole)
+        smart_fill_btn = msg.addButton("Smart Fill", QMessageBox.ActionRole)
+        
+        # Add tooltips to each button
+        cancel_btn.setToolTip("Do nothing and return to the main window")
+        overwrite_btn.setToolTip("Replace the entire existing Z-channel with new predictions")
+        smart_fill_btn.setToolTip(
+            "Preserve valid depth/elevation values and fill only NaN/missing areas "
+            "with scaled predictions matched to existing data. \nAutomatically handles "
+            "depth/elevation conversion and unit conversion to meters."
+        )
         
         msg.exec_()
         
@@ -370,37 +403,142 @@ class DeployModelDialog(CollapsibleSection):
             return "cancel"
         elif msg.clickedButton() == overwrite_btn:
             return "overwrite"
-        elif msg.clickedButton() == scale_inpaint_btn:
-            return "scale_inpaint"
+        elif msg.clickedButton() == smart_fill_btn:
+            return "smart_fill"
         else:
             return "cancel"
             
-    def _handle_cancel(self):
-        """Handle cancel action (do nothing)."""
-        pass
-        
-    def _handle_overwrite(self, raster, z_data):
+    def _handle_smart_fill(self, raster, z_predicted):
         """
-        Handle overwrite action - replace existing z-channel.
+        Handle Smart Fill - fill NaN values in existing z-channel with scaled predictions.
+        
+        This method:
+        1. Converts existing Z-channel to meters if needed
+        2. Converts predictions from depth to elevation if existing data is elevation type
+        3. Computes scale and offset to map predicted range to existing range
+        4. Fills only the NaN values with scaled predictions
+        
+        This preserves known-good depth measurements while filling gaps with model predictions.
         
         Args:
-            raster: The raster object
-            z_data: New z-channel data as numpy array
+            raster: The raster object with existing z_channel
+            z_predicted: New z-channel predictions from the model (numpy array, depth in meters)
         """
-        raster.add_z_channel(z_data, z_unit='meters')
+        import numpy as np
+        from coralnet_toolbox.utilities import convert_scale_units
         
-    def _handle_scale_inpaint(self, raster, z_data):
-        """
-        Handle scale & inpaint action - blend new depth with existing.
+        if raster.z_channel is None:
+            print("No existing z-channel to fill")
+            return
+            
+        if raster.z_channel.dtype != np.float32:
+            print("Smart Fill only works with float32 z-channels (not uint8)")
+            QMessageBox.warning(self.annotation_window, 
+                                "Incompatible Data Type", 
+                                "Smart Fill only works with float32 depth data, not uint8.")
+            return
         
-        This is a placeholder for future implementation that will:
-        - Scale new depth data to match existing z-channel range
-        - Inpaint/blend the differences
-        - Use advanced algorithms (linear scaling, histogram matching, Poisson blending)
+        # Step 1: Check for NaN values first (before modifying anything)
+        z_existing = raster.z_channel.copy()
+        valid_mask = ~np.isnan(z_existing)
+        nan_mask = np.isnan(z_existing)
         
-        Args:
-            raster: The raster object
-            z_data: New z-channel data as numpy array
-        """
-        # TODO: Implement scale and inpaint functionality
-        raise NotImplementedError("Scale & Inpaint functionality not yet implemented")
+        num_valid = np.sum(valid_mask)
+        num_nans = np.sum(nan_mask)
+        total_pixels = z_existing.size
+        
+        # Early return if no NaN values to fill
+        if num_nans == 0:
+            QMessageBox.information(self.annotation_window,
+                                    "No Gaps to Fill",
+                                    "The existing Z-channel has no missing (NaN) values to fill.")
+            return
+        
+        # Step 2: Convert existing z-channel to meters if needed
+        original_unit = raster.z_unit or 'meters'
+        
+        if original_unit != 'meters':
+            print(f"Converting existing Z-channel from {original_unit} to meters")
+            # Convert each value from original_unit to meters
+            for i in range(z_existing.shape[0]):
+                for j in range(z_existing.shape[1]):
+                    if not np.isnan(z_existing[i, j]):
+                        z_existing[i, j] = convert_scale_units(z_existing[i, j], original_unit, 'meters')
+            print(f"Converted {original_unit} -> meters")
+        
+        # Step 3: Convert predictions to elevation if existing data is elevation
+        z_predicted_adjusted = z_predicted.copy()
+        if raster.z_data_type == 'elevation':
+            if raster.z_inversion_reference is None:
+                print("Warning: Elevation data without inversion reference, cannot convert predictions")
+                QMessageBox.warning(self.annotation_window,
+                                    "Missing Reference",
+                                    "Elevation data is missing inversion reference. Cannot perform Smart Fill.")
+                return
+            
+            # Convert depth predictions to elevation using existing's inversion reference
+            # elevation = reference - depth
+            print(f"Converting predictions from depth to elevation using reference: {raster.z_inversion_reference:.3f}")
+            z_predicted_adjusted = raster.z_inversion_reference - z_predicted
+        
+        # Step 4: Check if we have enough valid pixels to compute scaling
+        valid_percentage = (num_valid / total_pixels) * 100
+        
+        if num_valid < 100 or valid_percentage < 1.0:
+            QMessageBox.warning(self.annotation_window, 
+                                "Insufficient Data", 
+                                f"Not enough valid depth data to compute scaling.\n"
+                                f"Found {num_valid} valid pixels ({valid_percentage:.1f}% coverage).\n"
+                                f"Need at least 100 valid pixels and 1% coverage.")
+            return
+        
+        print(f"Smart Fill: Found {num_valid} valid pixels ({valid_percentage:.1f}%), {num_nans} NaN pixels to fill")
+        
+        # Step 5: Extract valid values from both datasets for scaling computation
+        existing_valid = z_existing[valid_mask]
+        predicted_valid = z_predicted_adjusted[valid_mask]
+        
+        # Compute statistics for scaling using percentiles (more robust than min/max)
+        # Use 5th and 95th percentiles to avoid outliers
+        existing_p05 = np.percentile(existing_valid, 5)
+        existing_p95 = np.percentile(existing_valid, 95)
+        predicted_p05 = np.percentile(predicted_valid, 5)
+        predicted_p95 = np.percentile(predicted_valid, 95)
+        
+        existing_range = existing_p95 - existing_p05
+        predicted_range = predicted_p95 - predicted_p05
+        
+        # Step 5: Compute linear scaling: z_scaled = scale * z_predicted + offset
+        # Map predicted range to existing range
+        if predicted_range > 1e-6:  # Avoid division by zero
+            scale = existing_range / predicted_range
+            offset = existing_p05 - (scale * predicted_p05)
+        else:
+            print("Warning: Predicted depth range is too small, using 1:1 scaling")
+            scale = 1.0
+            offset = np.mean(existing_valid) - np.mean(predicted_valid)
+        
+        # Apply scaling to predicted data
+        z_scaled = scale * z_predicted_adjusted + offset
+        
+        print(f"Scaling parameters: scale={scale:.4f}, offset={offset:.4f}")
+        print(f"Existing range: [{existing_p05:.3f}, {existing_p95:.3f}] meters")
+        print(f"Predicted range: [{predicted_p05:.3f}, {predicted_p95:.3f}] -> "
+              f"[{scale * predicted_p05 + offset:.3f}, {scale * predicted_p95 + offset:.3f}] meters")
+        
+        # Step 6: Fill NaN values with scaled predictions
+        print(f"Filling {num_nans} NaN pixels ({(num_nans/total_pixels)*100:.1f}% of image)")
+        
+        # Create result by copying existing and filling NaNs
+        z_result = z_existing.copy()
+        z_result[nan_mask] = z_scaled[nan_mask]
+        
+        # Step 7: Update the z-channel with the filled result
+        # Preserve existing metadata (z_data_type, z_inversion_reference)
+        # Update unit to meters
+        raster.z_channel = z_result
+        raster.z_unit = 'meters'
+        # z_data_type and z_inversion_reference are preserved
+        
+        print(f"Smart Fill complete: preserved {num_valid} pixels, filled {num_nans} pixels")
+        print(f"Result type: {raster.z_data_type}, unit: {raster.z_unit}")
