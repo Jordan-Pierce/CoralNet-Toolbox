@@ -2031,11 +2031,14 @@ class MainWindow(QMainWindow):
             raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and raster.z_channel is not None and raster.z_channel.dtype == np.float32:
                 self.z_type_button.setEnabled(True)
-                # Update button icon/tooltip based on current data type
-                if raster.z_data_type == 'elevation':
+                # Update button icon/tooltip based on current direction in z_settings
+                direction = raster.z_settings.get('direction', 1)
+                if direction == -1:
+                    # Currently viewing as elevation
                     self.z_type_button.setIcon(self.elevation_icon)
                     self.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
                 else:
+                    # Currently viewing as depth
                     self.z_type_button.setIcon(self.depth_icon)
                     self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
             else:
@@ -2165,7 +2168,7 @@ class MainWindow(QMainWindow):
         # Update z_label with z-channel value at current mouse position
         self.update_z_value_at_mouse_position(raster)
     
-    def update_z_value_at_mouse_position(self, raster):
+    def update_z_value_at_mouse_position(self, raster):  
         """Update the z_label with z-channel value at current mouse position."""
         if raster and raster.z_channel_lazy is not None:
             # Check if mouse coordinates are within image bounds
@@ -2173,38 +2176,26 @@ class MainWindow(QMainWindow):
                 0 <= self.current_mouse_y < raster.height):
                 
                 try:
-                    # Get z-channel value at mouse position (stored as height, width array)
-                    z_channel = raster.z_channel_lazy
-                    z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
+                    # Get transformed z-value using non-destructive pipeline
+                    z_value_transformed = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
                     
-                    # Check if the value is NaN (only possible for float types)
-                    # Use try-except to handle both float and integer types safely
-                    is_nan = False
-                    try:
-                        is_nan = np.isnan(z_value)
-                    except (TypeError, ValueError):
-                        # isnan() fails on integer types, which is expected
-                        is_nan = False
-                    
-                    # Check if the value matches the nodata value
-                    is_nodata = (raster.z_nodata is not None and float(z_value) == float(raster.z_nodata))
-                    
-                    if is_nan or is_nodata:
+                    if z_value_transformed is None:
+                        # Value is NaN or nodata
                         self.z_label.setText("Z: ----")
                     else:
-                        # Cache the raw z-value for re-conversion if unit dropdown changes
-                        self.current_z_value = z_value
+                        # Cache the transformed z-value for unit conversion
+                        self.current_z_value = z_value_transformed
                         
                         # Get the original unit from the raster
                         original_unit = raster.z_unit if raster.z_unit else 'm'
                         
                         # Convert to selected unit if different from original
-                        display_value = z_value
+                        display_value = z_value_transformed
                         if self.current_unit_z != original_unit:
-                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                            display_value = convert_scale_units(z_value_transformed, original_unit, self.current_unit_z)
                         
                         # Format the display based on data type
-                        if z_channel.dtype == np.float32:
+                        if raster.z_channel.dtype == np.float32:
                             self.z_label.setText(f"Z: {display_value:.3f}")
                         else:
                             self.z_label.setText(f"Z: {int(display_value)}")
@@ -2303,28 +2294,29 @@ class MainWindow(QMainWindow):
         if current_raster is None or current_raster.z_channel is None:
             return
             
-        # Determine target type based on current type
-        current_type = current_raster.z_data_type or 'depth'
+        # Toggle direction in z_settings (non-destructive)
+        current_direction = current_raster.z_settings.get('direction', 1)
+        new_direction = -current_direction
+        current_raster.z_settings['direction'] = new_direction
         
-        if current_type == 'depth':
-            # Convert to elevation
-            target_type = 'elevation'
-            success = current_raster.convert_z_data_type(target_type)
-            if success:
-                self.z_type_button.setIcon(self.elevation_icon)
-                self.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
-                # Refresh visualization
-                self.annotation_window.refresh_z_channel_visualization()
+        # Update z_data_type to reflect the semantic meaning
+        if new_direction == 1:
+            # Direction 1 = depth (high values = far)
+            current_raster.z_data_type = 'depth'
+            self.z_type_button.setIcon(self.depth_icon)
+            self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
         else:
-            # Convert to depth
-            target_type = 'depth'
-            success = current_raster.convert_z_data_type(target_type)
-            if success:
-                self.z_type_button.setIcon(self.depth_icon)
-                self.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
-                # Refresh visualization
-                self.annotation_window.refresh_z_channel_visualization()
+            # Direction -1 = elevation (high values = close/up)
+            current_raster.z_data_type = 'elevation'
+            self.z_type_button.setIcon(self.elevation_icon)
+            self.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
         
+        # Refresh the z-channel visualization to apply the direction change
+        self.annotation_window.refresh_z_channel_visualization()
+        
+        # Update the z-value display at current mouse position
+        self.update_z_value_at_mouse_position(current_raster)
+
     def get_transparency_value(self):
         """Get the current transparency value from the slider"""
         return self.transparency_slider.value()

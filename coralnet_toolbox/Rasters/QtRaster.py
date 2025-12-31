@@ -104,7 +104,14 @@ class Raster(QObject):
         self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
         self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
         self.z_data_type: Optional[str] = None  # Type of z-channel data: 'depth', 'elevation', or 'dem'
-        self.z_inversion_reference: Optional[float] = None  # Reference max value for depth<->elevation conversions
+        
+        # Z-channel transform settings (non-destructive calibration pipeline)
+        # Formula: Z_display = Direction × (RawPixel × Scalar) + Offset
+        self.z_settings: dict = {
+            'scalar': 1.0,   # Calibration scaling factor (e.g., relative 0-1 to metric)
+            'offset': 0.0,   # Absolute datum offset (e.g., sea level reference)
+            'direction': 1   # Semantic direction: 1 for depth (high=far), -1 for elevation (high=close)
+        }
         
         # Camera calibration information
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
@@ -297,7 +304,7 @@ class Raster(QObject):
         self.extrinsics = None
         
     def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None, 
-                      z_data_type: Optional[str] = None):
+                      z_data_type: Optional[str] = None, z_direction: Optional[int] = None):
         """
         Add or update depth/elevation channel data.
         
@@ -306,6 +313,8 @@ class Raster(QObject):
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
             z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
+            z_direction (int, optional): Initial direction (1 for depth/far, -1 for elevation/close). 
+                                        Defaults to 1 for depth, -1 for elevation/dem if z_data_type is provided
         """
         if not isinstance(z_data, np.ndarray):
             raise ValueError("Z channel data must be a numpy array")
@@ -331,8 +340,23 @@ class Raster(QObject):
         if z_data_type is not None:
             self.z_data_type = z_data_type
         
+        # Reset transform settings to defaults when adding new z-channel
+        self.z_settings = {
+            'scalar': 1.0,
+            'offset': 0.0,
+            'direction': 1  # Default to depth (high values = far)
+        }
+        
+        # Set direction based on explicit parameter or infer from z_data_type
+        if z_direction is not None:
+            self.z_settings['direction'] = z_direction
+        elif z_data_type in ['elevation', 'dem']:
+            # Elevation/DEM: high values = close/up
+            self.z_settings['direction'] = -1
+        # else: keep default direction = 1 for depth
+        
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None,
-                         z_data_type: Optional[str] = None):
+                         z_data_type: Optional[str] = None, z_direction: Optional[int] = None):
         """
         Update the depth/elevation channel data.
         
@@ -341,8 +365,9 @@ class Raster(QObject):
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
             z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
+            z_direction (int, optional): Initial direction (1 for depth, -1 for elevation)
         """
-        self.add_z_channel(z_data, z_path, z_unit, z_data_type)  # Same validation as add
+        self.add_z_channel(z_data, z_path, z_unit, z_data_type, z_direction)  # Same validation as add
         
     def set_z_channel_path(self, z_path: str, auto_load: bool = True):
         """
@@ -368,58 +393,52 @@ class Raster(QObject):
         self.z_unit = None
         self.z_nodata = None
         self.z_data_type = None
-        self.z_inversion_reference = None
-        
-    def convert_z_data_type(self, target_type: str) -> bool:
+        # Reset transform settings to defaults
+        self.z_settings = {
+            'scalar': 1.0,
+            'offset': 0.0,
+            'direction': 1
+        }
+    
+    def get_z_value(self, x: int, y: int) -> Optional[float]:
         """
-        Convert z-channel data between depth and elevation representations.
-        
-        For downward-facing cameras:
-        - depth -> elevation: Inverts values (elevation = max_depth - depth)
-        - elevation -> depth: Inverts values (depth = max_elevation - elevation)
+        Get the transformed z-channel value at a specific pixel coordinate.
+        Applies the non-destructive transform pipeline: Z_display = Direction × (RawPixel × Scalar) + Offset
         
         Args:
-            target_type (str): Target data type ('depth' or 'elevation')
+            x (int): X coordinate (column)
+            y (int): Y coordinate (row)
             
         Returns:
-            bool: True if conversion was successful, False otherwise
+            Optional[float]: Transformed z-value, or None if out of bounds or no z-channel
         """
-        if self.z_channel is None:
-            print("No z-channel data to convert")
-            return False
+        # Use lazy loading property
+        z_data = self.z_channel_lazy
+        if z_data is None:
+            return None
             
-        if target_type not in ['depth', 'elevation']:
-            print(f"Invalid target type: {target_type}. Must be 'depth' or 'elevation'")
-            return False
+        # Check bounds
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return None
             
-        if self.z_data_type == target_type:
-            print(f"Z-channel is already {target_type} data")
-            return False
+        try:
+            # Get raw pixel value
+            raw_value = float(z_data[int(y), int(x)])
             
-        # Perform inversion for float32 data
-        if self.z_channel.dtype == np.float32:
-            # Use stored reference value if available, otherwise calculate and store it
-            if self.z_inversion_reference is None:
-                # First conversion - store the max value as reference
-                self.z_inversion_reference = float(np.nanmax(self.z_channel))
-                max_val = self.z_inversion_reference
-            else:
-                # Subsequent conversions - use stored reference for reversibility
-                max_val = self.z_inversion_reference
+            # Check for NaN or nodata
+            if np.isnan(raw_value) or (self.z_nodata is not None and raw_value == self.z_nodata):
+                return None
             
-            # Invert: new_value = max - old_value
-            # Preserve NaN values
-            inverted_data = max_val - self.z_channel
+            # Apply transform: (raw * scalar * direction) + offset
+            scalar = self.z_settings.get('scalar', 1.0)
+            offset = self.z_settings.get('offset', 0.0)
+            direction = self.z_settings.get('direction', 1)
             
-            # Update the z_channel data
-            self.z_channel = inverted_data
-            self.z_data_type = target_type
+            transformed = (raw_value * scalar * direction) + offset
+            return transformed
             
-            print(f"Converted z-channel to {target_type} (using reference value: {max_val:.3f})")
-            return True
-        else:
-            print(f"Conversion only supported for float32 data, got {self.z_channel.dtype}")
-            return False
+        except (IndexError, ValueError, TypeError):
+            return None
         
     def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
         """
@@ -934,9 +953,9 @@ class Raster(QObject):
         if self.z_data_type is not None:
             raster_data['z_data_type'] = self.z_data_type
             
-        # Include z_inversion_reference if available
-        if self.z_inversion_reference is not None:
-            raster_data['z_inversion_reference'] = float(self.z_inversion_reference)
+        # Include z_settings (transform parameters)
+        if self.z_settings:
+            raster_data['z_settings'] = self.z_settings.copy()
         
         if self.z_channel is not None:
             raster_data['has_z_channel'] = True
@@ -1026,10 +1045,10 @@ class Raster(QObject):
         if z_data_type:
             raster.z_data_type = z_data_type
             
-        # Load z_inversion_reference if available
-        z_inversion_reference = raster_dict.get('z_inversion_reference')
-        if z_inversion_reference is not None:
-            raster.z_inversion_reference = float(z_inversion_reference)
+        # Load z_settings (transform parameters) if available
+        z_settings = raster_dict.get('z_settings')
+        if z_settings:
+            raster.z_settings = z_settings.copy()
         
         return raster
     

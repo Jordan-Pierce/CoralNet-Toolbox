@@ -190,7 +190,8 @@ class ZImportDialog(QWidget):
             # Smart sort z_files to align with image order
             self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
             # Extended mapping to include z_data_type
-            self.mapping = {}  # {image_path: {"z_path": path, "units": unit_str, "z_data_type": type_str, "status": status}}
+            # {image_path: {"z_path": path, "units": unit_str, "z_data_type": type_str, "status": status}}
+            self.mapping = {}  
             
             # Broadened suffixes to cover DEMs, Height maps, etc.
             self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']

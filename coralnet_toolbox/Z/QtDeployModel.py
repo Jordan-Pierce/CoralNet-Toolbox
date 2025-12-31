@@ -338,7 +338,8 @@ class DeployModelDialog(CollapsibleSection):
                 z_channel = self.loaded_model.predict(image_array)
                 
                 # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
-                raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth')
+                # Set direction=1 explicitly (high values = far, which is depth semantics)
+                raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
                 
                 # If this is the current raster, refresh visualization and enable controls
                 if raster == self.main_window.image_window.current_raster:

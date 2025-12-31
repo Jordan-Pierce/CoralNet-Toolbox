@@ -1318,6 +1318,13 @@ class ImageWindow(QWidget):
                             # Set z_data_type if provided
                             if z_data_type:
                                 raster.z_data_type = z_data_type
+                                # Set direction based on z_data_type
+                                if z_data_type in ['elevation', 'dem']:
+                                    raster.z_settings['direction'] = -1
+                                elif z_data_type == 'depth':
+                                    raster.z_settings['direction'] = 1
+                                else:
+                                    raster.z_settings['direction'] = 1
                             successful_count += 1
                             # Emit signal to update UI
                             self.raster_manager.rasterUpdated.emit(image_path)

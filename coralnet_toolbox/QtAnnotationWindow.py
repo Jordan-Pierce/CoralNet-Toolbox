@@ -797,28 +797,44 @@ class AnnotationWindow(QGraphicsView):
         try:
             z_data = raster.z_channel_lazy
             
-            # Store raw Z-channel data for dynamic range calculations
-            self.z_data_raw = z_data.copy()
+            # Apply transform pipeline before visualization
+            # Formula: Z_display = Direction × (RawPixel × Scalar) + Offset
+            scalar = raster.z_settings.get('scalar', 1.0)
+            offset = raster.z_settings.get('offset', 0.0)
+            direction = raster.z_settings.get('direction', 1)
+            
+            # Apply transform to get semantic z-values
+            z_transformed = (z_data * scalar * direction) + offset
+            
+            # Store raw AND transformed Z-channel data for dynamic range calculations
+            self.z_data_raw = z_data.copy()  # Keep raw for potential future use
+            self.z_data_transformed = z_transformed.copy()  # Store transformed for calculations
             self.z_data_shape = z_data.shape
             
-            # Normalize the Z-channel data to 0-255 range for colormap
-            # This handles both float32 and uint8 data
+            # Normalize the TRANSFORMED Z-channel data to 0-255 range for colormap
+            # This ensures colormap reflects semantic meaning (direction flip = visual flip)
             if z_data.dtype == np.float32:
-                # For float32, normalize to 0-255 range
-                self.z_data_min = np.nanmin(z_data)
-                self.z_data_max = np.nanmax(z_data)
+                # For float32, normalize transformed values to 0-255 range
+                self.z_data_min = np.nanmin(z_transformed)
+                self.z_data_max = np.nanmax(z_transformed)
                 if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
+                    z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
                 else:
                     z_diff = self.z_data_max - self.z_data_min
                     z_norm = (
-                        (z_data - self.z_data_min) / z_diff * 255
+                        (z_transformed - self.z_data_min) / z_diff * 255
                     ).astype(np.uint8)
             else:
-                # For uint8, use as-is
-                self.z_data_min = np.nanmin(z_data)
-                self.z_data_max = np.nanmax(z_data)
-                z_norm = z_data.astype(np.uint8)
+                # For uint8, apply transform and normalize
+                self.z_data_min = np.nanmin(z_transformed)
+                self.z_data_max = np.nanmax(z_transformed)
+                if self.z_data_min == self.z_data_max:
+                    z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
+                else:
+                    z_diff = self.z_data_max - self.z_data_min
+                    z_norm = (
+                        (z_transformed - self.z_data_min) / z_diff * 255
+                    ).astype(np.uint8)
             
             # Store normalized data for colormap application
             self.z_data_normalized = z_norm
@@ -1014,8 +1030,9 @@ class AnnotationWindow(QGraphicsView):
             return
         
         try:
-            # Get normalized Z-channel data
-            z_data = self.z_data_normalized
+            # Use transformed Z-channel data (not raw) for dynamic range
+            # This ensures contrast enhancement respects the semantic meaning
+            z_data = self.z_data_transformed if hasattr(self, 'z_data_transformed') else self.z_data_normalized
             if z_data is None:
                 return
             
@@ -1033,7 +1050,7 @@ class AnnotationWindow(QGraphicsView):
             if x1 >= x2 or y1 >= y2:
                 return
             
-            # Extract visible region and calculate min/max
+            # Extract visible region and calculate min/max on TRANSFORMED data
             visible_region = z_data[y1:y2, x1:x2]
             z_vis_min = np.nanmin(visible_region)
             z_vis_max = np.nanmax(visible_region)
@@ -1051,7 +1068,7 @@ class AnnotationWindow(QGraphicsView):
                 colormap = pg.colormap.get(colormap_name)
                 lut = colormap.getLookupTable(nPts=256)
                 
-                # Create a rescaled version of the normalized data
+                # Create a rescaled version of the transformed data
                 # to span the full 0-255 range based on visible min/max
                 z_rescaled = (
                     (z_data - z_vis_min) / (z_vis_max - z_vis_min) * 255
