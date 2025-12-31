@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
         self.tile_icon = get_icon("tile.png")
         self.workarea_icon = get_icon("workarea.png")
         self.scale_icon = get_icon("scale.png")
+        self.spatial_icon = get_icon("spatial.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -797,6 +798,14 @@ class MainWindow(QMainWindow):
                       "• Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.\n"
                       "• Preferred units can be set in the Status Bar."),
 
+            "spatial": ("Spatial Measurement Tool\n\n"
+                        "Measure 2D/3D distances and areas with rugosity calculations.\n"
+                        "Requires scale to be set on the current image.\n"
+                        "• Measure Line: Draw a line to measure linear distances and rugosity.\n"
+                        "• Measure Rectangle: Draw a rectangle to measure area and areal rugosity.\n"
+                        "• If Z-channel data is available, 3D metrics will be calculated.\n"
+                        "• Press Escape to cancel the current measurement."),
+
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
@@ -909,6 +918,12 @@ class MainWindow(QMainWindow):
         self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
         self.scale_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.scale_tool_action)
+
+        self.spatial_tool_action = QAction(self.spatial_icon, "Spatial", self)
+        self.spatial_tool_action.setCheckable(True)
+        self.spatial_tool_action.setToolTip(self.tool_descriptions["spatial"])
+        self.spatial_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.spatial_tool_action)
 
         self.toolbar.addSeparator()
         
@@ -1677,6 +1692,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
                 self.scale_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("see_anything")
             else:
@@ -1695,6 +1711,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.scale_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("work_area")
             else:
@@ -1713,8 +1730,46 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("scale")
+            else:
+                self.toolChanged.emit(None)
+
+        elif action == self.spatial_tool_action:
+            # Check if scale is set on current image
+            image_path = self.annotation_window.current_image_path
+            if not image_path:
+                self.spatial_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "No Image Loaded",
+                                    "Please load an image before using the Spatial Measurement Tool.")
+                return
+            
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if not raster or not raster.scale_x or not raster.scale_y:
+                self.spatial_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "Scale Not Set",
+                                    "The Spatial Measurement Tool requires scale to be set on the current image.\n\n"
+                                    "Please use the Scale Tool to set the scale first.")
+                return
+            
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+                self.scale_tool_action.setChecked(False)
+
+                self.toolChanged.emit("spatial")
             else:
                 self.toolChanged.emit(None)
 
@@ -1728,6 +1783,7 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.spatial_tool_action.setChecked(False)
         self.brush_tool_action.setChecked(False)
         self.erase_tool_action.setChecked(False)
         self.dropper_tool_action.setChecked(False)
@@ -1758,6 +1814,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
@@ -1772,6 +1829,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -1787,6 +1845,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -1801,6 +1860,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "brush":
             self.select_tool_action.setChecked(False)
@@ -1815,6 +1875,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "erase":
             self.select_tool_action.setChecked(False)
@@ -1829,6 +1890,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "dropper":
             self.select_tool_action.setChecked(False)
@@ -1843,6 +1905,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "fill":
             self.select_tool_action.setChecked(False)
@@ -1857,6 +1920,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -1871,6 +1935,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
@@ -1885,6 +1950,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "work_area":
             self.select_tool_action.setChecked(False)
@@ -1899,6 +1965,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
             
         elif tool == "scale":
             self.select_tool_action.setChecked(False)
@@ -1913,6 +1980,22 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(True)
+            self.spatial_tool_action.setChecked(False)
+        
+        elif tool == "spatial":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(True)
 
         else:
             self.select_tool_action.setChecked(False)
@@ -1927,6 +2010,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
     
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""

@@ -33,7 +33,8 @@ from coralnet_toolbox.Tools import (
     SelectTool,
     ZoomTool,
     WorkAreaTool,
-    ScaleTool
+    ScaleTool,
+    SpatialTool
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -192,6 +193,7 @@ class AnnotationWindow(QGraphicsView):
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
             "scale": ScaleTool(self),
+            "spatial": SpatialTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self),
