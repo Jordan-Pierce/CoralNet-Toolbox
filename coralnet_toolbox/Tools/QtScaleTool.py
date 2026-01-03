@@ -77,7 +77,7 @@ class ScaleToolDialog(QDialog):
         self.pixel_length_label = QLabel("Draw a line on the image")
         self.pixel_length_label.setToolTip("The length of the drawn line in pixels.")
         
-        self.calculated_scale_label = QLabel("Scale: N/A")
+        self.calculated_scale_label = QLabel("N/A")
         self.calculated_scale_label.setToolTip("The resulting scale in meters per pixel.")
 
         scale_layout.addRow("Known Length:", self.known_length_input)
@@ -128,7 +128,7 @@ class ScaleToolDialog(QDialog):
     def reset_fields(self):
         """Resets the dialog fields to their default state."""
         self.pixel_length_label.setText("Draw a line on the image")
-        self.calculated_scale_label.setText("Scale: N/A")
+        self.calculated_scale_label.setText("N/A")
 
     def update_status_label(self):
         """Update the status label to show the number of images highlighted."""
@@ -182,7 +182,7 @@ class ScaleTool(Tool):
         # --- Graphics Items ---
         # Line for scale setting
         self.preview_line = QGraphicsLineItem()
-        pen = QPen(QColor(255, 0, 0), 2, Qt.DashLine)
+        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)  # Blood red dashed line
         pen.setCosmetic(True)  # Make pen width independent of zoom level
         self.preview_line.setPen(pen)
         self.preview_line.setZValue(100)
@@ -193,21 +193,34 @@ class ScaleTool(Tool):
         """Loads and displays existing scale data for the current image if available."""
         current_path = self.annotation_window.current_image_path
         if not current_path:
+            # No image loaded, show N/A
+            self.dialog.calculated_scale_label.setText("N/A")
             return
         
         raster = self.main_window.image_window.raster_manager.get_raster(current_path)
         if not raster or raster.scale_x is None:
             # No scale data available
-            self.dialog.calculated_scale_label.setText("Scale: N/A")
+            self.dialog.calculated_scale_label.setText("N/A")
             return
         
         # Display the existing scale
         scale_value = raster.scale_x  # Assuming square pixels
         units = raster.scale_units if raster.scale_units else "metre"
         
+        # Convert full unit names to abbreviations for display
+        unit_reverse_mapping = {
+            'millimetre': 'mm',
+            'centimetre': 'cm',
+            'metre': 'm',
+            'kilometre': 'km',
+            'inch': 'in',
+            'foot': 'ft',
+            'yard': 'yd',
+            'mile': 'mi'
+        }
+        
         # Standardize unit display
-        if units == "metre":
-            units = "m"
+        units = unit_reverse_mapping.get(units, units)
         
         # Format the scale text
         scale_text = f"{scale_value:.6f} {units}/pixel"
@@ -312,7 +325,7 @@ class ScaleTool(Tool):
         if event.key() == Qt.Key_Backspace:
             self.stop_current_drawing()
             self.dialog.pixel_length_label.setText("Draw a line on the image")
-            self.dialog.calculated_scale_label.setText("Scale: N/A")
+            self.dialog.calculated_scale_label.setText("N/A")
 
     def calculate_scale(self):
         """Calculate the scale based on the drawn line."""
@@ -389,15 +402,32 @@ class ScaleTool(Tool):
         
         # Apply scale to each highlighted image
         raster_manager = self.main_window.image_window.raster_manager
+        current_image_path = self.annotation_window.current_image_path
+        current_image_affected = False
+        
         for image_path in highlighted_paths:
             raster = raster_manager.get_raster(image_path)
             if raster:
-                raster.scale_x = scale_value
-                raster.scale_y = scale_value
-                raster.scale_units = scale_units
+                # Use the proper update_scale method instead of directly setting properties
+                raster.update_scale(scale_value, scale_value, scale_units)
+                # Emit signal to notify the UI that this raster was updated
+                raster_manager.rasterUpdated.emit(image_path)
+                
+                # Check if the current image is being updated
+                if image_path == current_image_path:
+                    current_image_affected = True
+        
+        # If the currently displayed image was updated, refresh the view to show new scale
+        if current_image_affected:
+            width, height = self.annotation_window.get_image_dimensions()
+            if width and height:
+                self.main_window.update_view_dimensions(width, height)
         
         QMessageBox.information(self.dialog, "Scale Applied",
                               f"Scale applied to {len(highlighted_paths)} image(s).")
+        
+        # Reload the scale display to show the newly applied scale
+        self.load_existing_scale()
         
         # Clear drawing after applying scale
         self.stop_current_drawing()
@@ -412,23 +442,39 @@ class ScaleTool(Tool):
                               "Please highlight at least one image to remove the scale.")
             return
         
-        reply = QMessageBox.question(self.dialog, "Confirm Removal",
-                                   f"Remove scale from {len(highlighted_paths)} image(s)?",
-                                   QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(self.dialog, 
+                                     "Confirm Removal",
+                                     f"Remove scale from {len(highlighted_paths)} image(s)?",
+                                     QMessageBox.Yes | QMessageBox.No)
         
         if reply != QMessageBox.Yes:
             return
         
         # Remove scale from each highlighted image
         raster_manager = self.main_window.image_window.raster_manager
+        current_image_path = self.annotation_window.current_image_path
+        current_image_affected = False
+        
         for image_path in highlighted_paths:
             raster = raster_manager.get_raster(image_path)
             if raster:
-                raster.scale_x = None
-                raster.scale_y = None
-                raster.scale_units = None
+                # Use the proper remove_scale method instead of directly setting properties
+                raster.remove_scale()
+                # Emit signal to notify the UI that this raster was updated
+                raster_manager.rasterUpdated.emit(image_path)
+                
+                # Check if the current image is being updated
+                if image_path == current_image_path:
+                    current_image_affected = True
+        
+        # If the currently displayed image was updated, refresh the view to hide scale
+        if current_image_affected:
+            width, height = self.annotation_window.get_image_dimensions()
+            if width and height:
+                self.main_window.update_view_dimensions(width, height)
         
         QMessageBox.information(self.dialog, "Scale Removed",
                               f"Scale removed from {len(highlighted_paths)} image(s).")
         
+        # Reload the scale display to reflect the removal
         self.load_existing_scale()
