@@ -413,133 +413,71 @@ class DeployModelDialog(CollapsibleSection):
         """
         Handle Smart Fill - fill NaN values in existing z-channel with scaled predictions.
         
-        This method:
-        1. Converts existing Z-channel to meters if needed
-        2. Converts predictions from depth to elevation if existing data is elevation type
-        3. Computes scale and offset to map predicted range to existing range
-        4. Fills only the NaN values with scaled predictions
-        
-        This preserves known-good depth measurements while filling gaps with model predictions.
+        This method uses the smart_fill_z_channel utility function to preserve known-good
+        depth measurements while filling gaps with model predictions.
         
         Args:
             raster: The raster object with existing z_channel
             z_predicted: New z-channel predictions from the model (numpy array, depth in meters)
         """
         import numpy as np
-        from coralnet_toolbox.utilities import convert_scale_units
+        from coralnet_toolbox.utilities import smart_fill_z_channel
         
         if raster.z_channel is None:
             print("No existing z-channel to fill")
             return
+        
+        try:
+            # Perform smart fill using utility function
+            z_result, stats = smart_fill_z_channel(
+                existing_z=raster.z_channel,
+                predicted_z=z_predicted,
+                existing_unit=raster.z_unit or 'meters',
+                existing_type=raster.z_data_type or 'depth',
+                inversion_reference=raster.z_inversion_reference
+            )
             
-        if raster.z_channel.dtype != np.float32:
-            print("Smart Fill only works with float32 z-channels (not uint8)")
-            QMessageBox.warning(self.annotation_window, 
-                                "Incompatible Data Type", 
-                                "Smart Fill only works with float32 depth data, not uint8.")
-            return
-        
-        # Step 1: Check for NaN values first (before modifying anything)
-        z_existing = raster.z_channel.copy()
-        valid_mask = ~np.isnan(z_existing)
-        nan_mask = np.isnan(z_existing)
-        
-        num_valid = np.sum(valid_mask)
-        num_nans = np.sum(nan_mask)
-        total_pixels = z_existing.size
-        
-        # Early return if no NaN values to fill
-        if num_nans == 0:
-            QMessageBox.information(self.annotation_window,
-                                    "No Gaps to Fill",
-                                    "The existing Z-channel has no missing (NaN) values to fill.")
-            return
-        
-        # Step 2: Convert existing z-channel to meters if needed
-        original_unit = raster.z_unit or 'meters'
-        
-        if original_unit != 'meters':
-            print(f"Converting existing Z-channel from {original_unit} to meters")
-            # Convert each value from original_unit to meters
-            for i in range(z_existing.shape[0]):
-                for j in range(z_existing.shape[1]):
-                    if not np.isnan(z_existing[i, j]):
-                        z_existing[i, j] = convert_scale_units(z_existing[i, j], original_unit, 'meters')
-            print(f"Converted {original_unit} -> meters")
-        
-        # Step 3: Convert predictions to elevation if existing data is elevation
-        z_predicted_adjusted = z_predicted.copy()
-        if raster.z_data_type == 'elevation':
-            if raster.z_inversion_reference is None:
-                print("Warning: Elevation data without inversion reference, cannot convert predictions")
+            # Update the raster with filled result
+            raster.z_channel = z_result
+            raster.z_unit = 'meters'
+            # z_data_type and z_inversion_reference are preserved
+            
+            # Print statistics
+            print(f"Smart Fill complete:")
+            print(f"  - Preserved {stats['num_valid']} pixels ({stats['valid_percentage']:.1f}%)")
+            print(f"  - Filled {stats['num_filled']} pixels")
+            print(f"  - Scale: {stats['scale']:.4f}, Offset: {stats['offset']:.4f}")
+            print(f"  - Existing range: [{stats['existing_range'][0]:.3f}, {stats['existing_range'][1]:.3f}] meters")
+            print(f"  - Predicted range: [{stats['predicted_range'][0]:.3f}, {stats['predicted_range'][1]:.3f}] meters")
+            print(f"  - Result type: {raster.z_data_type}, unit: {raster.z_unit}")
+            
+        except ValueError as e:
+            # Handle errors from smart_fill_z_channel
+            error_msg = str(e)
+            print(f"Smart Fill error: {error_msg}")
+            
+            if "only works with float32" in error_msg:
+                QMessageBox.warning(self.annotation_window, 
+                                    "Incompatible Data Type", 
+                                    "Smart Fill only works with float32 depth data, not uint8.")
+            elif "No valid" in error_msg or "Insufficient" in error_msg:
+                QMessageBox.information(self.annotation_window,
+                                        "No Gaps to Fill" if "No valid" in error_msg else "Insufficient Data",
+                                        error_msg)
+            elif "requires inversion reference" in error_msg:
                 QMessageBox.warning(self.annotation_window,
                                     "Missing Reference",
                                     "Elevation data is missing inversion reference. Cannot perform Smart Fill.")
-                return
-            
-            # Convert depth predictions to elevation using existing's inversion reference
-            # elevation = reference - depth
-            print(f"Converting predictions from depth to elevation using reference: {raster.z_inversion_reference:.3f}")
-            z_predicted_adjusted = raster.z_inversion_reference - z_predicted
-        
-        # Step 4: Check if we have enough valid pixels to compute scaling
-        valid_percentage = (num_valid / total_pixels) * 100
-        
-        if num_valid < 100 or valid_percentage < 1.0:
-            QMessageBox.warning(self.annotation_window, 
-                                "Insufficient Data", 
-                                f"Not enough valid depth data to compute scaling.\n"
-                                f"Found {num_valid} valid pixels ({valid_percentage:.1f}% coverage).\n"
-                                f"Need at least 100 valid pixels and 1% coverage.")
+            else:
+                QMessageBox.warning(self.annotation_window, 
+                                    "Smart Fill Error", 
+                                    error_msg)
             return
-        
-        print(f"Smart Fill: Found {num_valid} valid pixels ({valid_percentage:.1f}%), {num_nans} NaN pixels to fill")
-        
-        # Step 5: Extract valid values from both datasets for scaling computation
-        existing_valid = z_existing[valid_mask]
-        predicted_valid = z_predicted_adjusted[valid_mask]
-        
-        # Compute statistics for scaling using percentiles (more robust than min/max)
-        # Use 5th and 95th percentiles to avoid outliers
-        existing_p05 = np.percentile(existing_valid, 5)
-        existing_p95 = np.percentile(existing_valid, 95)
-        predicted_p05 = np.percentile(predicted_valid, 5)
-        predicted_p95 = np.percentile(predicted_valid, 95)
-        
-        existing_range = existing_p95 - existing_p05
-        predicted_range = predicted_p95 - predicted_p05
-        
-        # Step 5: Compute linear scaling: z_scaled = scale * z_predicted + offset
-        # Map predicted range to existing range
-        if predicted_range > 1e-6:  # Avoid division by zero
-            scale = existing_range / predicted_range
-            offset = existing_p05 - (scale * predicted_p05)
-        else:
-            print("Warning: Predicted depth range is too small, using 1:1 scaling")
-            scale = 1.0
-            offset = np.mean(existing_valid) - np.mean(predicted_valid)
-        
-        # Apply scaling to predicted data
-        z_scaled = scale * z_predicted_adjusted + offset
-        
-        print(f"Scaling parameters: scale={scale:.4f}, offset={offset:.4f}")
-        print(f"Existing range: [{existing_p05:.3f}, {existing_p95:.3f}] meters")
-        print(f"Predicted range: [{predicted_p05:.3f}, {predicted_p95:.3f}] -> "
-              f"[{scale * predicted_p05 + offset:.3f}, {scale * predicted_p95 + offset:.3f}] meters")
-        
-        # Step 6: Fill NaN values with scaled predictions
-        print(f"Filling {num_nans} NaN pixels ({(num_nans/total_pixels)*100:.1f}% of image)")
-        
-        # Create result by copying existing and filling NaNs
-        z_result = z_existing.copy()
-        z_result[nan_mask] = z_scaled[nan_mask]
-        
-        # Step 7: Update the z-channel with the filled result
-        # Preserve existing metadata (z_data_type, z_inversion_reference)
-        # Update unit to meters
-        raster.z_channel = z_result
-        raster.z_unit = 'meters'
-        # z_data_type and z_inversion_reference are preserved
-        
-        print(f"Smart Fill complete: preserved {num_valid} pixels, filled {num_nans} pixels")
-        print(f"Result type: {raster.z_data_type}, unit: {raster.z_unit}")
+        except Exception as e:
+            print(f"Unexpected error in Smart Fill: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self.annotation_window,
+                                 "Smart Fill Error",
+                                 f"An unexpected error occurred: {e}")
+            return

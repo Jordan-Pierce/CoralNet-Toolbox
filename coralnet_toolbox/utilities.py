@@ -1086,6 +1086,262 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
     sys.exit(1)
 
 
+def calculate_z_scalar(raw_difference, known_difference):
+    """
+    Calculate scalar for Z-scale calibration.
+    
+    Args:
+        raw_difference (float): The raw Z-difference measured in the image
+        known_difference (float): The known real-world Z-difference
+        
+    Returns:
+        float: The calculated scalar value
+        
+    Raises:
+        ValueError: If raw_difference is too small or if values are invalid
+    """
+    if abs(raw_difference) < 1e-6:
+        raise ValueError("Raw Z-difference is too small (near zero). Cannot calculate scalar.")
+    
+    if known_difference <= 0:
+        raise ValueError("Known difference must be positive.")
+    
+    scalar = known_difference / abs(raw_difference)
+    
+    # Warn about extreme scalars
+    if scalar > 10000 or scalar < 0.0001:
+        import warnings
+        warnings.warn(f"Calculated scalar {scalar:.2f} is extreme. Please verify your measurements.")
+    
+    return scalar
+
+
+def calculate_z_offset(current_value, target_value):
+    """
+    Calculate offset for Z-anchor calibration.
+    
+    Args:
+        current_value (float): The current Z-value at the anchor point
+        target_value (float): The desired Z-value at the anchor point
+        
+    Returns:
+        float: The calculated offset value
+    """
+    offset = target_value - current_value
+    
+    # Warn about extreme offsets
+    if abs(offset) > 1000:
+        import warnings
+        warnings.warn(f"Calculated offset {offset:.2f} is extreme. Please verify your measurements.")
+    
+    return offset
+
+
+def validate_line_angle(start_point, end_point, warn_threshold=45.0):
+    """
+    Validate line angle and warn if too horizontal for Z-scale calibration.
+    
+    Args:
+        start_point (QPointF): Start point of the line
+        end_point (QPointF): End point of the line
+        warn_threshold (float): Angle threshold in degrees (default 45°)
+        
+    Returns:
+        tuple: (is_valid, angle_degrees, vertical_component, warning_message)
+            - is_valid (bool): True if line can be used
+            - angle_degrees (float): Angle from horizontal in degrees
+            - vertical_component (float): Vertical distance component
+            - warning_message (str): Warning message if applicable, else None
+    """
+    import math
+    
+    # Calculate components
+    dx = end_point.x() - start_point.x()
+    dy = end_point.y() - start_point.y()
+    
+    # Calculate angle from horizontal
+    angle_rad = math.atan2(abs(dy), abs(dx))
+    angle_deg = math.degrees(angle_rad)
+    
+    # Vertical component is the absolute Y difference
+    vertical_component = abs(dy)
+    
+    # Check if too horizontal
+    warning_message = None
+    is_valid = True
+    
+    if angle_deg < warn_threshold:
+        warning_message = (
+            f"Warning: Line angle ({angle_deg:.1f}°) is less than {warn_threshold}° from horizontal. "
+            f"For best results, draw a more vertical line."
+        )
+    
+    if vertical_component < 1.0:
+        is_valid = False
+        warning_message = "Error: Line is too short vertically. Please draw a longer line."
+    
+    return is_valid, angle_deg, vertical_component, warning_message
+
+
+def calculate_linear_transform_from_percentiles(source_data, target_min, target_max, 
+                                                  min_percentile=5, max_percentile=95):
+    """
+    Calculate linear transform (scale and offset) to map source data to target range.
+    Uses percentiles for robust range estimation (avoids outliers).
+    
+    This computes: z_transformed = scale * z_source + offset
+    
+    Args:
+        source_data (numpy.ndarray): Source data array
+        target_min (float): Target minimum value
+        target_max (float): Target maximum value
+        min_percentile (float): Lower percentile for range calculation (default 5)
+        max_percentile (float): Upper percentile for range calculation (default 95)
+        
+    Returns:
+        tuple: (scale, offset, source_p_min, source_p_max)
+            - scale (float): Multiplicative scaling factor
+            - offset (float): Additive offset
+            - source_p_min (float): Source data value at min percentile
+            - source_p_max (float): Source data value at max percentile
+            
+    Raises:
+        ValueError: If source data range is too small or invalid
+    """
+    import numpy as np
+    
+    # Remove NaN values for percentile calculation
+    valid_data = source_data[~np.isnan(source_data)]
+    
+    if len(valid_data) == 0:
+        raise ValueError("No valid (non-NaN) data to compute transform")
+    
+    # Calculate percentiles
+    source_p_min = np.percentile(valid_data, min_percentile)
+    source_p_max = np.percentile(valid_data, max_percentile)
+    
+    source_range = source_p_max - source_p_min
+    target_range = target_max - target_min
+    
+    if source_range < 1e-6:
+        raise ValueError("Source data range is too small (nearly constant values)")
+    
+    if target_range < 1e-6:
+        raise ValueError("Target range is too small")
+    
+    # Calculate linear transform
+    scale = target_range / source_range
+    offset = target_min - (scale * source_p_min)
+    
+    return scale, offset, source_p_min, source_p_max
+
+
+def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', 
+                        existing_type='depth', inversion_reference=None):
+    """
+    Fill NaN values in existing Z-channel with scaled predictions.
+    
+    This function:
+    1. Converts existing Z-channel to meters if needed
+    2. Converts predictions from depth to elevation if existing data is elevation type
+    3. Computes scale and offset to map predicted range to existing range using percentiles
+    4. Fills only the NaN values with scaled predictions
+    
+    Args:
+        existing_z (numpy.ndarray): Existing Z-channel with NaN values to fill
+        predicted_z (numpy.ndarray): New Z-channel predictions (depth in meters)
+        existing_unit (str): Unit of existing data (default 'meters')
+        existing_type (str): Type of existing data ('depth' or 'elevation')
+        inversion_reference (float): Reference value for depth/elevation conversion
+        
+    Returns:
+        tuple: (filled_z, stats_dict)
+            - filled_z (numpy.ndarray): Z-channel with NaN values filled
+            - stats_dict (dict): Statistics about the fill operation
+            
+    Raises:
+        ValueError: If incompatible data or insufficient valid pixels
+    """
+    import numpy as np
+    
+    if existing_z.dtype != np.float32:
+        raise ValueError("Smart Fill only works with float32 z-channels (not uint8)")
+    
+    # Step 1: Check for NaN values first
+    z_existing = existing_z.copy()
+    valid_mask = ~np.isnan(z_existing)
+    nan_mask = np.isnan(z_existing)
+    
+    num_valid = np.sum(valid_mask)
+    num_nans = np.sum(nan_mask)
+    total_pixels = z_existing.size
+    valid_percentage = (num_valid / total_pixels) * 100
+    
+    # Early return if no NaN values to fill
+    if num_nans == 0:
+        return z_existing, {
+            'num_valid': num_valid,
+            'num_filled': 0,
+            'valid_percentage': 100.0,
+            'scale': 1.0,
+            'offset': 0.0
+        }
+    
+    # Step 2: Convert existing z-channel to meters if needed
+    if existing_unit != 'meters':
+        for i in range(z_existing.shape[0]):
+            for j in range(z_existing.shape[1]):
+                if not np.isnan(z_existing[i, j]):
+                    z_existing[i, j] = convert_scale_units(z_existing[i, j], existing_unit, 'meters')
+    
+    # Step 3: Convert predictions to elevation if existing data is elevation
+    z_predicted_adjusted = predicted_z.copy()
+    if existing_type == 'elevation':
+        if inversion_reference is None:
+            raise ValueError("Elevation data requires inversion reference for Smart Fill")
+        # Convert depth predictions to elevation: elevation = reference - depth
+        z_predicted_adjusted = inversion_reference - predicted_z
+    
+    # Step 4: Check if we have enough valid pixels
+    if num_valid < 100 or valid_percentage < 1.0:
+        raise ValueError(
+            f"Insufficient valid data: {num_valid} pixels ({valid_percentage:.1f}% coverage). "
+            f"Need at least 100 valid pixels and 1% coverage."
+        )
+    
+    # Step 5: Compute scaling using percentiles
+    existing_valid = z_existing[valid_mask]
+    predicted_valid = z_predicted_adjusted[valid_mask]
+    
+    scale, offset, existing_p05, existing_p95 = calculate_linear_transform_from_percentiles(
+        predicted_valid,
+        np.percentile(existing_valid, 5),
+        np.percentile(existing_valid, 95),
+        min_percentile=5,
+        max_percentile=95
+    )
+    
+    # Apply scaling to predicted data
+    z_scaled = scale * z_predicted_adjusted + offset
+    
+    # Step 6: Fill NaN values with scaled predictions
+    z_result = z_existing.copy()
+    z_result[nan_mask] = z_scaled[nan_mask]
+    
+    # Return result and statistics
+    stats = {
+        'num_valid': num_valid,
+        'num_filled': num_nans,
+        'valid_percentage': valid_percentage,
+        'scale': scale,
+        'offset': offset,
+        'existing_range': (existing_p05, existing_p95),
+        'predicted_range': (np.percentile(predicted_valid, 5), np.percentile(predicted_valid, 95))
+    }
+    
+    return z_result, stats
+
+
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
     """Convert a PyTorch model to Ultralytics format"""
     src_state_dict = ultralytics_model.model.model.state_dict()

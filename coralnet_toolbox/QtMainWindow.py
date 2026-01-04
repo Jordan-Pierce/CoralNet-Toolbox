@@ -790,13 +790,20 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Delete to remove selected annotations."),
             
             "scale": ("Scale Tool\n\n"
-                      "Provide scale to the image(s), and measure distances on the current image.\n"
-                      "• Left-click to set the starting point.\n"
-                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
-                      "• Press Backspace to cancel drawing the scale line."
-                      "• The scale will be calculated based on the known provided length and pixel length.\n"
-                      "• Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.\n"
-                      "• Preferred units can be set in the Status Bar."),
+                      "Calibrate spatial and depth/elevation measurements across three tabs:\n\n"
+                      "Set Scale Tab:\n"
+                      "• Calibrate XY scale (meters/pixel) for area and distance measurements.\n"
+                      "• Draw a line across a known distance and enter the measurement.\n"
+                      "• Applies to all highlighted images in the batch operation.\n\n"
+                      "Z-Scale Tab:\n"
+                      "• Adjust vertical scale by drawing a line across a feature with known height/depth difference.\n"
+                      "• Best practice: Draw near-vertical lines (warnings appear for angles <45° from horizontal).\n"
+                      "• Modifies the scalar in the Z-channel transform equation: Z = direction × (raw × scalar) + offset.\n\n"
+                      "Z-Anchor Tab:\n"
+                      "• Set absolute depth/elevation by clicking a reference point with known Z-value.\n"
+                      "• Tare button zeros the offset for relative measurements.\n"
+                      "• Direction toggle switches between depth (down = positive) and elevation (up = positive).\n"
+                      "• Modifies the offset in the Z-channel transform equation."),
 
             "spatial": ("Spatial Measurement Tool\n\n"
                         "Measure 2D/3D distances and areas with rugosity calculations.\n"
@@ -2266,6 +2273,7 @@ class MainWindow(QMainWindow):
                     if z_value_transformed is None:
                         # Value is NaN or nodata
                         self.z_label.setText("Z: ----")
+                        self.z_label.setToolTip("No valid Z-value at this location")
                     else:
                         # Cache the transformed z-value for unit conversion
                         self.current_z_value = z_value_transformed
@@ -2283,6 +2291,22 @@ class MainWindow(QMainWindow):
                             self.z_label.setText(f"Z: {display_value:.3f}")
                         else:
                             self.z_label.setText(f"Z: {int(display_value)}")
+                        
+                        # Set tooltip showing Z-channel transformation settings
+                        z_settings = raster.z_settings
+                        scalar = z_settings.get('scalar', 1.0)
+                        offset = z_settings.get('offset', 0.0)
+                        direction = z_settings.get('direction', 1)
+                        direction_str = "Depth (positive down)" if direction == 1 else "Elevation (positive up)"
+                        
+                        tooltip_text = (
+                            f"Z-Channel Transformation:\n\n"
+                            f"  Scalar: {scalar:.6f}\n"
+                            f"  Offset: {offset:.6f}\n"
+                            f"  Direction: {direction_str}\n\n"
+                            f"Formula: Z_display = {direction} × (raw × {scalar:.6f}) + {offset:.6f}"
+                        )
+                        self.z_label.setToolTip(tooltip_text)
                     
                     # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
