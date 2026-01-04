@@ -317,13 +317,6 @@ class DeployModelDialog(CollapsibleSection):
                         # Refresh visualization if this is the current raster
                         if raster == self.main_window.image_window.current_raster:
                             self.annotation_window.refresh_z_channel_visualization()
-                            # Update z_type_button based on current type
-                            if raster.z_data_type == 'elevation':
-                                self.main_window.z_type_button.setIcon(self.main_window.elevation_icon)
-                                self.main_window.z_type_button.setToolTip("Current: Elevation\nClick to convert to Depth")
-                            else:
-                                self.main_window.z_type_button.setIcon(self.main_window.depth_icon)
-                                self.main_window.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
                         continue
                     # If overwrite_mode == "overwrite", continue with prediction below
                 
@@ -351,11 +344,6 @@ class DeployModelDialog(CollapsibleSection):
                     self.main_window.z_label.setEnabled(True)
                     self.main_window.z_colormap_dropdown.setEnabled(True)
                     self.main_window.z_dynamic_button.setEnabled(True)
-                    self.main_window.z_type_button.setEnabled(True)  # Enable depth/elevation conversion
-                    
-                    # Set button to show depth mode
-                    self.main_window.z_type_button.setIcon(self.main_window.depth_icon)
-                    self.main_window.z_type_button.setToolTip("Current: Depth\nClick to convert to Elevation")
                     
                     # Set colormap to Turbo
                     turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
