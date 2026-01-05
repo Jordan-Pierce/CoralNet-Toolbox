@@ -39,7 +39,7 @@ COLOR_CONFLICT = QColor(255, 200, 150)  # Orange
 class ZDropTable(QTableWidget):
     """
     A specialized TableWidget that accepts drops from the sidebar list.
-    Renamed to generic 'Z' to handle Depth, Height, DEM, etc.
+    Renamed to generic 'Z' to handle Depth and Elevation data.
     """
     fileDropped = pyqtSignal(int, str)  # row, filepath
     clearMapping = pyqtSignal(list)  # list of rows
@@ -167,10 +167,10 @@ class ZImportDialog(QWidget):
     """
     Z-Channel Import Widget.
     
-    Allows users to pair image files with z-channel files (depth, height, DEM, etc).
+    Allows users to pair image files with z-channel files (depth and elevation).
     Supports automatic matching with manual override via drag-and-drop.
     
-    Input: list of image paths, list of z_files (depth/height/dem)
+    Input: list of image paths, list of z_files (depth/elevation)
     Output: signal 'mapping_confirmed' carrying dict {img_path: {"z_path": path, "units": unit, "z_data_type": type}}
     """
     mapping_confirmed = pyqtSignal(dict)
@@ -193,8 +193,8 @@ class ZImportDialog(QWidget):
             # {image_path: {"z_path": path, "units": unit_str, "z_data_type": type_str, "status": status}}
             self.mapping = {}  
             
-            # Broadened suffixes to cover DEMs, Height maps, etc.
-            self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']
+            # Broadened suffixes to cover Elevation maps, etc.
+            self.suffixes = ['_depth', '_z', '_d', 'depth', 'z']
             
             # Main layout
             self.main_layout = QVBoxLayout(self)
@@ -279,7 +279,7 @@ class ZImportDialog(QWidget):
         layout.setContentsMargins(10, 5, 10, 5)
         
         info_text = (
-            "Import Z-channel files (Depth, Height, DEM) and pair them with your images.<br><br>"
+            "Import Z-channel files (Depth and Elevation) and pair them with your images.<br><br>"
             "<b>Automatic Matching:</b> The system will attempt to match files using exact names, "
             "suffixes, or fuzzy matching.<br><br>"
             "<b>Manual Correction:</b> Drag Z-channel files from the right panel onto table rows "
@@ -492,7 +492,7 @@ class ZImportDialog(QWidget):
             data_type_display = z_data_type if z_data_type else "(Set)"
             item_data_type = QTableWidgetItem(data_type_display)
             item_data_type.setTextAlignment(Qt.AlignCenter)
-            item_data_type.setToolTip("Double-click to set data type (depth/elevation/dem)")
+            item_data_type.setToolTip("Double-click to set data type (depth/elevation)")
             self.table.setItem(r, 3, item_data_type)
             
             # Column 4: Status
@@ -684,12 +684,13 @@ class ZImportDialog(QWidget):
         from PyQt5.QtWidgets import QInputDialog
         
         img_path = self.image_files[row]
-        data_types = ["depth", "elevation", "dem"]
+        # SIMPLIFICATION: Removed 'dem', kept only directional types
+        data_types = ["depth", "elevation"]
         
         selected, ok = QInputDialog.getItem(
             self,
             "Select Z-Channel Data Type",
-            f"Data type for {os.path.basename(img_path)}:",
+            f"Data type for {os.path.basename(img_path)}:\n(Select 'Elevation' for DEMs or Height Maps)",
             data_types,
             editable=False
         )
@@ -736,12 +737,13 @@ class ZImportDialog(QWidget):
         """
         from PyQt5.QtWidgets import QInputDialog
         
-        data_types = ["depth", "elevation", "dem"]
+        # SIMPLIFICATION: Removed 'dem'
+        data_types = ["depth", "elevation"]
         
         selected, ok = QInputDialog.getItem(
             self,
             "Set Z-Channel Data Type for Multiple Rows",
-            f"Set data type for {len(rows)} selected row{'s' if len(rows) > 1 else ''}:",
+            f"Set data type for {len(rows)} selected row{'s' if len(rows) > 1 else ''}:\n(Select 'Elevation' for DEMs)",
             data_types,
             editable=False
         )
@@ -852,7 +854,7 @@ class ZImportDialog(QWidget):
             reply = QMessageBox.warning(
                 self,
                 "Missing Z-Channel Data Types",
-                f"{missing_data_type_count} paired image(s) have no data type set (depth/elevation/dem).\n\n"
+                f"{missing_data_type_count} paired image(s) have no data type set (depth/elevation).\n\n"
                 f"Data type is required for proper z-channel handling. Please set data types before confirming.",
                 QMessageBox.Ok
             )

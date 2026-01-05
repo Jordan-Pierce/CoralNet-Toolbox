@@ -788,20 +788,18 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Delete to remove selected annotations."),
             
             "scale": ("Scale Tool\n\n"
-                      "Calibrate spatial and depth/elevation measurements across three tabs:\n\n"
-                      "Set Scale Tab:\n"
+                      "Calibrate spatial and depth/elevation measurements across two tabs:\n\n"
+                      "XY Scale Tab (Pixel Size):\n"
                       "• Calibrate XY scale (meters/pixel) for area and distance measurements.\n"
                       "• Draw a line across a known distance and enter the measurement.\n"
                       "• Applies to all highlighted images in the batch operation.\n\n"
-                      "Z-Scale Tab:\n"
-                      "• Adjust vertical scale by drawing a line across a feature with known height/depth difference.\n"
-                      "• Best practice: Draw near-vertical lines (warnings appear for angles <45° from horizontal).\n"
-                      "• Modifies the scalar in the Z-channel transform equation: Z = direction × (raw × scalar) + offset.\n\n"
-                      "Z-Anchor Tab:\n"
-                      "• Set absolute depth/elevation by clicking a reference point with known Z-value.\n"
-                      "• Tare button zeros the offset for relative measurements.\n"
-                      "• Direction toggle switches between depth (down = positive) and elevation (up = positive).\n"
-                      "• Modifies the offset in the Z-channel transform equation."),
+                      "Z-Calibration Tab (Depth/Elevation):\n"
+                      "• Unified tool for vertical measurements and visualization.\n"
+                      "• Step A (Scale): Draw a line to calibrate vertical magnitude (scalar).\n"
+                      "• Step B (Anchor): Click a reference point to set absolute depth/elevation (offset).\n"
+                      "• View Mode: Non-destructively toggle between 'Depth' (from camera) and \n"
+                      "  'Relative Elevation' (height above bottom).\n"
+                      "• Z-Fence: Real-time 3D cross-section visualization appears while drawing."),
 
             "spatial": ("Spatial Measurement Tool\n\n"
                         "Measure 2D/3D distances and areas with rugosity calculations.\n"

@@ -1,11 +1,15 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QLineF
-from PyQt5.QtGui import QMouseEvent, QPen, QColor
+
+import math
+import numpy as np
+
+from PyQt5.QtCore import Qt, QLineF, QPointF
+from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPainterPath, QPen, QColor, QBrush, QLinearGradient
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QFormLayout, 
-                             QDoubleSpinBox, QComboBox, QLabel,
+                             QDoubleSpinBox, QComboBox, QLabel, QHBoxLayout,
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
-                             QGroupBox, QPushButton, QTabWidget)
+                             QGroupBox, QPushButton, QTabWidget, QGraphicsPathItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Icons import get_icon
@@ -14,14 +18,146 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# ScaleToolDialog Class
+# Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
+class ZProfilePathItem(QGraphicsPathItem):
+    """
+    Renders a 'Z-Fence' overlay along a drawn line.
+    Visualizes depth/elevation profile by projecting it perpendicular to the drawing path.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setZValue(150)  # Below the main line (100) but above image
+        
+        # Visual Styling
+        self.max_height_px = 80  # Max visual height of the profile in pixels
+        
+        # Gradient Brush (Cyan to Transparent Blue)
+        self.start_color = QColor(0, 255, 255, 120)  # Bright Cyan
+        self.end_color = QColor(0, 100, 255, 40)     # Faded Blue
+        self.border_color = QColor(0, 255, 255, 200)
+
+    def update_profile(self, p1, p2, raster):
+        """
+        Calculate and draw the profile polygon.
+        
+        Args:
+            p1 (QPointF): Start point of the line
+            p2 (QPointF): End point of the line
+            raster (Raster): The raster object containing Z-data
+        """
+        if not raster or raster.z_channel_lazy is None:
+            self.setPath(QPainterPath())
+            return
+
+        # 1. Geometry Setup
+        line_vec = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
+        length = math.hypot(line_vec.x(), line_vec.y())
+        if length < 5:  # Don't draw for tiny lines
+            self.setPath(QPainterPath())
+            return
+
+        # Calculate Normal Vector (Perpendicular to line)
+        # We normalize it to length 1
+        dx, dy = line_vec.x() / length, line_vec.y() / length
+        normal_vec = QPointF(-dy, dx) # Perpendicular rotation (-y, x)
+
+        # 2. Sampling
+        num_samples = min(int(length), 100) # Sample every pixel or capped at 100
+        if num_samples < 2: 
+            return
+            
+        x_steps = np.linspace(p1.x(), p2.x(), num_samples)
+        y_steps = np.linspace(p1.y(), p2.y(), num_samples)
+        
+        z_values = []
+        path_points = []
+        
+        # Collect Z data
+        for x, y in zip(x_steps, y_steps):
+            # Using get_z_value ensures we are visualizing the transformed (semantic) data
+            z = raster.get_z_value(int(x), int(y))
+            if z is not None:
+                z_values.append(z)
+                path_points.append(QPointF(x, y))
+            else:
+                # Handle gaps by replicating last known or 0
+                val = z_values[-1] if z_values else 0
+                z_values.append(val)
+                path_points.append(QPointF(x, y))
+
+        if not z_values:
+            self.setPath(QPainterPath())
+            return
+
+        # 3. Normalization (Map Z range to pixel height)
+        z_min = min(z_values)
+        z_max = max(z_values)
+        z_range = z_max - z_min
+        
+        if z_range == 0:
+            z_range = 1.0
+
+        # 4. Construct the "Fence" Polygon
+        # The path starts at P1, goes along the line to P2,
+        # then loops back "above" the line using the Z-offsets.
+        
+        path = QPainterPath()
+        if not path_points:
+            self.setPath(QPainterPath())
+            return
+            
+        path.moveTo(path_points[0]) # Start at P1 (base)
+        
+        # Draw the base line
+        for pt in path_points[1:]:
+            path.lineTo(pt)
+            
+        # Draw the profile "top" (in reverse order to close loop)
+        # We project OUTWARD using the normal vector
+        for i in range(len(path_points) - 1, -1, -1):
+            pt = path_points[i]
+            z = z_values[i]
+            
+            # Normalize Z to 0.0 - 1.0 relative to min value in selection
+            rel_z = (z - z_min) / z_range
+            
+            # Calculate pixel offset scaling
+            pixel_offset = rel_z * self.max_height_px
+            
+            # Project point: Original + (Normal * Offset)
+            proj_x = pt.x() + (normal_vec.x() * pixel_offset)
+            proj_y = pt.y() + (normal_vec.y() * pixel_offset)
+            
+            path.lineTo(proj_x, proj_y)
+
+        path.closeSubpath()
+        self.setPath(path)
+        
+        # 5. Dynamic Gradient coloring
+        # We set the gradient to align with the normal vector (base to top)
+        grad_start = p1
+        grad_end = QPointF(p1.x() + normal_vec.x() * self.max_height_px, 
+                           p1.y() + normal_vec.y() * self.max_height_px)
+                           
+        grad = QLinearGradient(grad_start, grad_end)
+        grad.setColorAt(0, self.end_color)     # Base of wall (low Z / base line)
+        grad.setColorAt(1, self.start_color)   # Top of wall (high Z)
+        
+        self.setBrush(QBrush(grad))
+        self.setPen(QPen(self.border_color, 1))
+        
+        
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 class ScaleToolDialog(QDialog):
     """
     A modeless dialog for the ScaleTool, allowing user input for scale calculation
-    and propagation, including Z-channel calibration.
+    and propagation, including unified Z-channel calibration.
     """
     def __init__(self, tool, parent=None):
         super().__init__(parent)
@@ -44,13 +180,11 @@ class ScaleToolDialog(QDialog):
         
         # Create tabs
         self.scale_tab = self.create_scale_tab()
-        self.z_scale_tab = self.create_z_scale_tab()
-        self.z_anchor_tab = self.create_z_anchor_tab()
+        self.z_cal_tab = self.create_z_calibration_tab()
         
         # Add tabs to tab widget
-        self.tab_widget.addTab(self.scale_tab, "Set Scale")
-        self.tab_widget.addTab(self.z_scale_tab, "Z-Scale")
-        self.tab_widget.addTab(self.z_anchor_tab, "Z-Anchor")
+        self.tab_widget.addTab(self.scale_tab, "XY Scale (Pixel Size)")
+        self.tab_widget.addTab(self.z_cal_tab, "Z-Calibration (Depth/Elevation)")
         
         # Connect tab change signal
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
@@ -60,7 +194,6 @@ class ScaleToolDialog(QDialog):
         # --- Dialog Buttons ---
         self.button_box = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
         
-        # Rename "Apply" to "Set Scale" for clarity
         self.apply_button = self.button_box.button(QDialogButtonBox.Apply)
         self.apply_button.setText("Apply")
         
@@ -75,25 +208,22 @@ class ScaleToolDialog(QDialog):
         self._signal_connected = False
         
         # Track current interaction mode
-        self.current_mode = None  # 'xy_scale', 'z_scale', or 'z_anchor'
+        # Modes: 'xy_scale', 'z_scale', 'z_anchor'
+        self.current_mode = 'xy_scale'
 
     def create_scale_tab(self):
         """Create the 'Set Scale' tab for XY calibration."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # Add Information groupbox at top
+        # Add Information groupbox
         info_groupbox = QGroupBox("Information")
         info_layout = QVBoxLayout()
         instruction_label = QLabel(
-            "Draw a line across a known distance to calibrate image scale.\n\n"
-            "Instructions:\n"
-            "  1. Select the measurement unit (mm, cm, m, etc.)\n"
-            "  2. Enter the known real-world length of your reference object\n"
-            "  3. Click once on the image to start drawing a line\n"
-            "  4. Click again to finish the line across the reference object\n"
-            "  5. Click 'Apply' to calibrate the highlighted images\n\n"
-            "Tips: Use scale bars or known objects for best accuracy."
+            "Draw a line across a known distance to calibrate image pixel size.\n\n"
+            "1. Enter the known real-world length.\n"
+            "2. Draw a line across that object in the image.\n"
+            "3. Click 'Apply' to calibrate highlighted images."
         )
         instruction_label.setWordWrap(True)
         instruction_label.setStyleSheet("color: #333; font-size: 10pt;")
@@ -103,7 +233,7 @@ class ScaleToolDialog(QDialog):
         
         scale_layout = QFormLayout()
         
-        # Units at top
+        # Units
         self.units_combo = QComboBox()
         self.units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
         self.units_combo.setCurrentText("m")
@@ -116,7 +246,7 @@ class ScaleToolDialog(QDialog):
         self.known_length_input.setDecimals(3)
         scale_layout.addRow("Known Length:", self.known_length_input)
 
-        # Pixel length (measured from drawn line)
+        # Pixel length
         self.pixel_length_label = QLabel("Draw a line on the image")
         scale_layout.addRow("Pixel Length:", self.pixel_length_label)
         
@@ -131,7 +261,7 @@ class ScaleToolDialog(QDialog):
         self.clear_line_button.clicked.connect(self.clear_scale_line)
         layout.addWidget(self.clear_line_button)
         
-        # --- Danger Zone (Collapsible) ---
+        # Danger Zone
         self.danger_zone_group_box = QGroupBox("Danger Zone")
         self.danger_zone_group_box.setCheckable(True)
         self.danger_zone_group_box.setChecked(False)
@@ -141,15 +271,12 @@ class ScaleToolDialog(QDialog):
         danger_zone_layout.setContentsMargins(0, 0, 0, 0)
 
         self.remove_highlighted_button = QPushButton("Remove Scale from Highlighted Images")
-        self.remove_highlighted_button.setStyleSheet(
-            "background-color: #D9534F; color: white; font-weight: bold;"
-        )
+        self.remove_highlighted_button.setStyleSheet("background-color: #D9534F; color: white; font-weight: bold;")
         danger_zone_layout.addWidget(self.remove_highlighted_button)
 
         group_layout = QVBoxLayout()
         group_layout.addWidget(danger_zone_container)
         self.danger_zone_group_box.setLayout(group_layout)
-
         self.danger_zone_group_box.toggled.connect(danger_zone_container.setVisible)
         danger_zone_container.setVisible(False)
 
@@ -158,326 +285,213 @@ class ScaleToolDialog(QDialog):
         
         return tab
 
-    def create_z_scale_tab(self):
-        """Create the 'Z-Scale' tab for vertical scale calibration."""
+    def create_z_calibration_tab(self):
+        """
+        Create the unified 'Z-Calibration' tab.
+        Handles Vertical Scaling, View Mode (Depth/Elevation), and Anchoring.
+        """
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # Add Information groupbox at top
-        info_groupbox = QGroupBox("Information")
-        info_layout = QVBoxLayout()
-        instruction_label = QLabel(
-            "Adjust vertical scale by drawing a line across a feature with known height/depth difference.\n\n"
-            "Instructions:\n"
-            "  1. Select the measurement unit for vertical measurements\n"
-            "  2. Enter the known real-world vertical difference (height or depth)\n"
-            "  3. Draw a line from bottom to top of a feature with known height\n"
-            "  4. The tool will calculate a scalar multiplier for all Z-values\n"
-            "  5. Click 'Apply' to calibrate the highlighted images\n\n"
-            "Tips: Draw vertical lines (<45° from vertical) for best results.\n"
-            "This adjusts RELATIVE accuracy (shape is correct, size is wrong)."
+        # --- 1. View Mode (The Toggle) ---
+        view_group = QGroupBox("1. View Mode")
+        view_layout = QHBoxLayout()
+        
+        self.view_mode_combo = QComboBox()
+        self.view_mode_combo.addItem("Depth (from Camera)", "depth")
+        self.view_mode_combo.addItem("Relative Elevation (from Bottom)", "elevation")
+        self.view_mode_combo.setToolTip(
+            "Depth: Standard depth map. Positive values = farther away.\n"
+            "Elevation: Elevation map. Positive values = elevation above lowest point."
         )
-        instruction_label.setWordWrap(True)
-        instruction_label.setStyleSheet("color: #333; font-size: 10pt;")
-        info_layout.addWidget(instruction_label)
-        info_groupbox.setLayout(info_layout)
-        layout.addWidget(info_groupbox)
+        self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
         
-        scale_layout = QFormLayout()
+        view_layout.addWidget(QLabel("Display As:"))
+        view_layout.addWidget(self.view_mode_combo)
+        view_group.setLayout(view_layout)
+        layout.addWidget(view_group)
         
-        # Units at top
+        # --- 2. Interaction Mode Selector ---
+        interaction_group = QGroupBox("2. Calibration Tool")
+        interaction_layout = QVBoxLayout()
+        
+        # Radio buttons to switch between Scaling (Line) and Anchoring (Point)
+        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
+        self.interaction_bg = QButtonGroup(self)
+        
+        self.radio_scale = QRadioButton("Step A: Vertical Scale (Draw Line)")
+        self.radio_scale.setChecked(True) # Default
+        self.radio_scale.setToolTip("Draw a line to define the vertical scale (magnitude).")
+        self.interaction_bg.addButton(self.radio_scale)
+        
+        self.radio_anchor = QRadioButton("Step B: Reference Anchor (Click Point)")
+        self.radio_anchor.setToolTip("Click a point to set the absolute reference value (offset).")
+        self.interaction_bg.addButton(self.radio_anchor)
+        
+        self.interaction_bg.buttonClicked.connect(self.on_interaction_mode_changed)
+        
+        interaction_layout.addWidget(self.radio_scale)
+        interaction_layout.addWidget(self.radio_anchor)
+        interaction_group.setLayout(interaction_layout)
+        layout.addWidget(interaction_group)
+
+        # --- 3. Dynamic Controls (Stack) ---
+        # We stack the Scale controls and Anchor controls and show only one set
+        from PyQt5.QtWidgets import QStackedWidget
+        self.controls_stack = QStackedWidget()
+        
+        # [Page 0] Vertical Scaling Controls
+        scale_widget = QWidget()
+        scale_form = QFormLayout(scale_widget)
+        scale_form.setContentsMargins(0, 5, 0, 5)
+        
         self.z_units_combo = QComboBox()
-        self.z_units_combo.addItems(["mm", "cm", "m", "km", "in", "ft", "yd", "mi"])
+        self.z_units_combo.addItems(["mm", "cm", "m", "in", "ft"])
         self.z_units_combo.setCurrentText("m")
-        scale_layout.addRow("Units:", self.z_units_combo)
+        scale_form.addRow("Vertical Units:", self.z_units_combo)
         
-        # Known Z-difference
-        self.z_known_difference_input = QDoubleSpinBox()
-        self.z_known_difference_input.setRange(0.001, 1000000.0)
-        self.z_known_difference_input.setValue(1.0)
-        self.z_known_difference_input.setDecimals(3)
-        scale_layout.addRow("Known Z-Difference:", self.z_known_difference_input)
-
-        # Raw Z-difference (measured from line)
-        self.z_raw_difference_label = QLabel("Draw a line on the image")
-        scale_layout.addRow("Raw Z-Difference:", self.z_raw_difference_label)
+        self.z_known_diff_input = QDoubleSpinBox()
+        self.z_known_diff_input.setRange(0.001, 1000000.0)
+        self.z_known_diff_input.setValue(1.0)
+        self.z_known_diff_input.setDecimals(3)
+        scale_form.addRow("Known Diff:", self.z_known_diff_input)
         
-        # Calculated scalar
-        self.z_calculated_scalar_label = QLabel("N/A")
-        scale_layout.addRow("Calculated Scalar:", self.z_calculated_scalar_label)
+        self.z_raw_diff_label = QLabel("Draw a line...")
+        scale_form.addRow("Measured Diff:", self.z_raw_diff_label)
         
-        layout.addLayout(scale_layout)
+        self.z_scalar_label = QLabel("N/A")
+        scale_form.addRow("Calculated Scalar:", self.z_scalar_label)
         
-        # Clear Line button
-        self.clear_z_line_button = QPushButton("Clear Line")
-        self.clear_z_line_button.clicked.connect(self.clear_z_scale_line)
-        layout.addWidget(self.clear_z_line_button)
+        self.controls_stack.addWidget(scale_widget)
         
-        # --- Danger Zone (Collapsible) ---
-        self.z_scale_danger_zone = QGroupBox("Danger Zone")
-        self.z_scale_danger_zone.setCheckable(True)
-        self.z_scale_danger_zone.setChecked(False)
-
-        danger_zone_container = QWidget()
-        danger_zone_layout = QVBoxLayout(danger_zone_container)
-        danger_zone_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.reset_z_scalar_button = QPushButton("Reset Z-Scalar to Default (1.0)")
-        self.reset_z_scalar_button.setStyleSheet(
-            "background-color: #D9534F; color: white; font-weight: bold;"
-        )
-        danger_zone_layout.addWidget(self.reset_z_scalar_button)
-
-        group_layout = QVBoxLayout()
-        group_layout.addWidget(danger_zone_container)
-        self.z_scale_danger_zone.setLayout(group_layout)
-
-        self.z_scale_danger_zone.toggled.connect(danger_zone_container.setVisible)
-        danger_zone_container.setVisible(False)
-
-        layout.addWidget(self.z_scale_danger_zone)
-        layout.addStretch()
+        # [Page 1] Anchor Controls
+        anchor_widget = QWidget()
+        anchor_form = QFormLayout(anchor_widget)
+        anchor_form.setContentsMargins(0, 5, 0, 5)
         
-        return tab
-
-    def create_z_anchor_tab(self):
-        """Create the 'Z-Anchor' tab for datum offset calibration."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Add Information groupbox at top
-        info_groupbox = QGroupBox("Information")
-        info_layout = QVBoxLayout()
-        instruction_label = QLabel(
-            "Set the absolute depth/elevation by clicking a reference point with known Z-value.\n\n"
-            "Instructions:\n"
-            "  1. Enter the known Z-value at your reference point (e.g., seafloor depth)\n"
-            "  2. Click 'Tare to Zero' for quick zero-referencing (optional)\n"
-            "  3. Click anywhere on the image to set an anchor point\n"
-            "  4. The tool will calculate an offset to shift all Z-values\n"
-            "  5. Select the Z-direction convention (depth vs elevation)\n"
-            "  6. Click 'Apply' to calibrate the highlighted images\n\n"
-            "Tips: Use known reference points like seafloor depth or surface elevation.\n"
-            "This adjusts ABSOLUTE accuracy (sets the zero point or datum)."
-        )
-        instruction_label.setWordWrap(True)
-        instruction_label.setStyleSheet("color: #333; font-size: 10pt;")
-        info_layout.addWidget(instruction_label)
-        info_groupbox.setLayout(info_layout)
-        layout.addWidget(info_groupbox)
-        
-        anchor_layout = QFormLayout()
-        
-        # Current Z-value (at clicked point)
-        self.z_current_value_label = QLabel("Click on the image")
-        anchor_layout.addRow("Current Z-Value:", self.z_current_value_label)
-        
-        # Target Z-value input
-        self.z_target_value_input = QDoubleSpinBox()
-        self.z_target_value_input.setRange(-100000.0, 100000.0)
-        self.z_target_value_input.setValue(0.0)
-        self.z_target_value_input.setDecimals(3)
-        anchor_layout.addRow("Target Z-Value:", self.z_target_value_input)
+        self.z_target_val_input = QDoubleSpinBox()
+        self.z_target_val_input.setRange(-10000.0, 10000.0)
+        self.z_target_val_input.setValue(0.0)
+        self.z_target_val_input.setDecimals(3)
+        anchor_form.addRow("Target Value:", self.z_target_val_input)
         
         # Tare button
-        self.z_tare_button = QPushButton("Tare to Zero")
-        self.z_tare_button.clicked.connect(self.tare_to_zero)
-        anchor_layout.addRow("", self.z_tare_button)
+        self.z_tare_btn = QPushButton("Tare to 0.0")
+        self.z_tare_btn.clicked.connect(lambda: self.z_target_val_input.setValue(0.0))
+        anchor_form.addRow("", self.z_tare_btn)
         
-        # Calculated offset
-        self.z_calculated_offset_label = QLabel("N/A")
-        anchor_layout.addRow("Calculated Offset:", self.z_calculated_offset_label)
+        self.z_current_val_label = QLabel("Click a point...")
+        anchor_form.addRow("Current Value:", self.z_current_val_label)
         
-        # Direction toggle
-        self.z_direction_combo = QComboBox()
-        self.z_direction_combo.addItem("Depth (positive down)", 1)
-        self.z_direction_combo.addItem("Elevation (positive up)", -1)
-        self.z_direction_combo.setCurrentIndex(0)
-        anchor_layout.addRow("Direction:", self.z_direction_combo)
+        self.z_offset_label = QLabel("N/A")
+        anchor_form.addRow("Calculated Offset:", self.z_offset_label)
         
-        # Invert Direction button
-        self.z_invert_direction_button = QPushButton("Invert Direction")
-        self.z_invert_direction_button.clicked.connect(self.invert_z_direction)
-        anchor_layout.addRow("", self.z_invert_direction_button)
+        self.controls_stack.addWidget(anchor_widget)
         
-        layout.addLayout(anchor_layout)
+        layout.addWidget(self.controls_stack)
         
-        # --- Danger Zone (Collapsible) ---
-        self.z_anchor_danger_zone = QGroupBox("Danger Zone")
-        self.z_anchor_danger_zone.setCheckable(True)
-        self.z_anchor_danger_zone.setChecked(False)
-
-        danger_zone_container = QWidget()
-        danger_zone_layout = QVBoxLayout(danger_zone_container)
-        danger_zone_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.reset_z_offset_button = QPushButton("Reset Z-Offset to Default (0.0)")
-        self.reset_z_offset_button.setStyleSheet(
-            "background-color: #D9534F; color: white; font-weight: bold;"
-        )
-        danger_zone_layout.addWidget(self.reset_z_offset_button)
-
-        group_layout = QVBoxLayout()
-        group_layout.addWidget(danger_zone_container)
-        self.z_anchor_danger_zone.setLayout(group_layout)
-
-        self.z_anchor_danger_zone.toggled.connect(danger_zone_container.setVisible)
-        danger_zone_container.setVisible(False)
-
-        layout.addWidget(self.z_anchor_danger_zone)
+        # --- 4. Danger Zone (Reset) ---
+        self.z_danger_zone = QGroupBox("Reset")
+        self.z_danger_zone.setCheckable(True)
+        self.z_danger_zone.setChecked(False)
+        
+        danger_layout = QVBoxLayout()
+        self.reset_z_btn = QPushButton("Reset All Z-Settings (Scalar=1, Offset=0)")
+        self.reset_z_btn.setStyleSheet("background-color: #D9534F; color: white;")
+        danger_layout.addWidget(self.reset_z_btn)
+        self.z_danger_zone.setLayout(danger_layout)
+        
+        layout.addWidget(self.z_danger_zone)
         layout.addStretch()
         
         return tab
 
     def on_tab_changed(self, index):
         """Handle tab changes to update interaction mode."""
-        # Clear any current drawings when switching tabs
-        if hasattr(self.tool, 'stop_current_drawing'):
-            self.tool.stop_current_drawing()
-        
-        # Reset fields for the tab being left
+        self.tool.stop_current_drawing()
         self.reset_fields()
         
-        # Update mode based on tab
         if index == 0:
+            # XY Scale Tab
             self.current_mode = 'xy_scale'
-            self.apply_button.setText("Apply")
-        elif index == 1:
-            self.current_mode = 'z_scale'
-            self.apply_button.setText("Apply")
-        elif index == 2:
-            self.current_mode = 'z_anchor'
-            self.apply_button.setText("Apply")
-        
-        # Update tab states
+            self.apply_button.setText("Apply Scale")
+            self.apply_button.setToolTip("Apply pixel calibration to highlighted images")
+        else:
+            # Z-Calibration Tab
+            # Set mode based on active radio button
+            self.on_interaction_mode_changed()
+            
         self.update_z_tab_states()
-    
+
+    def on_interaction_mode_changed(self):
+        """Switch between Z-Scaling and Z-Anchoring modes."""
+        if self.tab_widget.currentIndex() != 1:
+            return
+
+        self.tool.stop_current_drawing()
+        
+        if self.radio_scale.isChecked():
+            self.current_mode = 'z_scale'
+            self.controls_stack.setCurrentIndex(0)
+            self.apply_button.setText("Apply Z-Scale")
+            self.apply_button.setToolTip("Update the vertical multiplier (scalar) for highlighted images")
+        else:
+            self.current_mode = 'z_anchor'
+            self.controls_stack.setCurrentIndex(1)
+            self.apply_button.setText("Apply Anchor")
+            self.apply_button.setToolTip("Update the reference zero-point (offset) for highlighted images")
+
+    def on_view_mode_changed(self, index):
+        """
+        Handle switching between Depth and Relative Elevation view modes.
+        Triggers immediate non-destructive update on the current image.
+        """
+        mode = self.view_mode_combo.currentData() # 'depth' or 'elevation'
+        self.tool.set_z_view_mode(mode)
+
     def update_z_tab_states(self):
-        """Enable/disable Z tabs based on whether current image has Z-channel."""
+        """Enable/disable Z tab based on whether current image has Z-channel."""
         current_raster = self.main_window.image_window.current_raster
         has_z_channel = current_raster is not None and current_raster.z_channel is not None
         
-        # Enable/disable Z tabs
-        self.tab_widget.setTabEnabled(1, has_z_channel)  # Z-Scale tab
-        self.tab_widget.setTabEnabled(2, has_z_channel)  # Z-Anchor tab
+        # Set tab enabled state
+        self.tab_widget.setTabEnabled(1, has_z_channel)
         
-        # If current tab is disabled, switch to first tab
-        if not has_z_channel and self.tab_widget.currentIndex() > 0:
+        # If disabled and currently selected, switch to XY tab
+        if not has_z_channel and self.tab_widget.currentIndex() == 1:
             self.tab_widget.setCurrentIndex(0)
-    
-    def tare_to_zero(self):
-        """Set target value to 0.0 (tare button)."""
-        self.z_target_value_input.setValue(0.0)
-    
-    def invert_z_direction(self):
-        """Invert the Z-direction for all highlighted images."""
-        highlighted_paths = self.get_selected_image_paths()
-        
-        if not highlighted_paths:
-            QMessageBox.warning(self, "No Images Selected",
-                                "Please highlight at least one image to invert direction.")
-            return
-        
-        # Confirmation dialog
-        reply = QMessageBox.question(
-            self,
-            "Confirm Direction Inversion",
-            f"Invert Z-direction (Depth ↔ Elevation) for {len(highlighted_paths)} image(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # Invert direction for each highlighted image
-        raster_manager = self.main_window.image_window.raster_manager
-        
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster and raster.z_channel is not None:
-                # Invert the direction: 1 -> -1, -1 -> 1
-                current_direction = raster.z_settings.get('direction', 1)
-                raster.z_settings['direction'] = -current_direction
-                raster_manager.rasterUpdated.emit(image_path)
-        
-        # Refresh Z-channel visualization if current image was affected
-        current_image_path = self.tool.annotation_window.current_image_path
-        if current_image_path in highlighted_paths:
-            self.tool.annotation_window.refresh_z_channel_visualization()
-        
-        QMessageBox.information(self, "Direction Inverted",
-                              f"Z-direction inverted for {len(highlighted_paths)} image(s).")
-    
-    def clear_scale_line(self):
-        """Clear the XY scale line and reset measurements."""
-        if hasattr(self.tool, 'stop_current_drawing'):
-            self.tool.stop_current_drawing()
-        self.pixel_length_label.setText("Draw a line on the image")
-        # Reload existing scale instead of showing N/A
-        if hasattr(self.tool, 'load_existing_scale'):
-            self.tool.load_existing_scale()
-        else:
-            self.calculated_scale_label.setText("N/A")
-    
-    def clear_z_scale_line(self):
-        """Clear the Z-scale line and reset measurements."""
-        if hasattr(self.tool, 'stop_current_drawing'):
-            self.tool.stop_current_drawing()
-        self.z_raw_difference_label.setText("Draw a line on the image")
-        self.z_calculated_scalar_label.setText("N/A")
 
     def get_selected_image_paths(self):
-        """
-        Get the selected image paths - only highlighted rows.
-        
-        :return: List of highlighted image paths
-        """
-        # Get highlighted image paths from the table model
+        """Get the selected image paths - only highlighted rows."""
         return self.main_window.image_window.table_model.get_highlighted_paths()
 
-    def reset_fields(self):
-        """Resets the dialog fields to their default state based on current tab."""
-        # XY Scale tab
-        self.pixel_length_label.setText("Draw a line on the image")
-        self.calculated_scale_label.setText("N/A")
-        
-        # Z-Scale tab
-        self.z_raw_difference_label.setText("Draw a line on the image")
-        self.z_calculated_scalar_label.setText("N/A")
-        
-        # Z-Anchor tab
-        self.z_current_value_label.setText("Click on the image")
-        self.z_calculated_offset_label.setText("N/A")
-
     def update_status_label(self):
-        """Update the status label to show the number of images highlighted."""
+        """Update the status label."""
         highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
         count = len(highlighted_paths)
-        if count == 0:
-            self.status_label.setText("No images highlighted")
-        elif count == 1:
-            self.status_label.setText("1 image highlighted")
-        else:
-            self.status_label.setText(f"{count} images highlighted")
+        self.status_label.setText(f"{count} images highlighted" if count != 1 else "1 image highlighted")
+
+    def reset_fields(self):
+        """Resets the dialog fields."""
+        # XY Scale
+        self.pixel_length_label.setText("Draw a line on the image")
+        self.calculated_scale_label.setText("N/A")
+        # Z Scale
+        self.z_raw_diff_label.setText("Draw a line...")
+        self.z_scalar_label.setText("N/A")
+        # Z Anchor
+        self.z_current_val_label.setText("Click a point...")
+        self.z_offset_label.setText("N/A")
+
+    def clear_scale_line(self):
+        self.tool.stop_current_drawing()
+        self.reset_fields()
+        self.tool.load_existing_scale()
 
     def closeEvent(self, event):
-        """
-        Handle the dialog close event (e.g., user clicks 'X').
-        This clears any drawings and deactivates the tool.
-        """
-        # Clear any current drawings
-        if hasattr(self.tool, 'stop_current_drawing'):
-            self.tool.stop_current_drawing()
-        
-        # Deactivate the tool
+        self.tool.stop_current_drawing()
         self.tool.deactivate()
         event.accept()
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# ScaleTool Class
-# ----------------------------------------------------------------------------------------------------------------------
-
 
 class ScaleTool(Tool):
     """
@@ -498,11 +512,8 @@ class ScaleTool(Tool):
         # XY Scale tab connections
         self.dialog.remove_highlighted_button.clicked.connect(self.remove_scale_highlighted)
         
-        # Z-Scale tab connections
-        self.dialog.reset_z_scalar_button.clicked.connect(self.reset_z_scalar)
-        
-        # Z-Anchor tab connections
-        self.dialog.reset_z_offset_button.clicked.connect(self.reset_z_offset)
+        # Z-Calibration Reset
+        self.dialog.reset_z_btn.clicked.connect(self.reset_z_settings)
 
         # --- Drawing State ---
         self.is_drawing = False
@@ -514,58 +525,27 @@ class ScaleTool(Tool):
         self.z_anchor_point = None
 
         # --- Graphics Items ---
-        # Line for scale setting and Z-scale
+        # Line for scale setting
         self.preview_line = QGraphicsLineItem()
         pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)  # Blood red dashed line
-        pen.setCosmetic(True)  # Make pen width independent of zoom level
+        pen.setCosmetic(True)
         self.preview_line.setPen(pen)
         self.preview_line.setZValue(100)
 
-        self.show_crosshair = True  # Enable crosshair for precise measurements
-
-    def load_existing_scale(self):
-        """Loads and displays existing scale data for the current image if available."""
-        current_path = self.annotation_window.current_image_path
-        if not current_path:
-            # No image loaded, show N/A
-            self.dialog.calculated_scale_label.setText("N/A")
-            return
+        # Initialize the Z-Fence Overlay
+        self.z_fence = ZProfilePathItem()
+        self.z_fence.setVisible(False)
         
-        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
-        if not raster or raster.scale_x is None:
-            # No scale data available
-            self.dialog.calculated_scale_label.setText("N/A")
-            return
-        
-        # Display the existing scale
-        scale_value = raster.scale_x  # Assuming square pixels
-        units = raster.scale_units if raster.scale_units else "metre"
-        
-        # Convert full unit names to abbreviations for display
-        unit_reverse_mapping = {
-            'millimetre': 'mm',
-            'centimetre': 'cm',
-            'metre': 'm',
-            'kilometre': 'km',
-            'inch': 'in',
-            'foot': 'ft',
-            'yard': 'yd',
-            'mile': 'mi'
-        }
-        
-        # Standardize unit display
-        units = unit_reverse_mapping.get(units, units)
-        
-        # Format the scale text (just the value, no "Scale:" prefix)
-        scale_text = f"{scale_value:.6f} {units}/pixel"
-        self.dialog.calculated_scale_label.setText(scale_text)
+        self.show_crosshair = True
 
     def activate(self):
         super().activate()
         
-        # Add preview line to scene
+        # Add items to scene
         if not self.preview_line.scene():
             self.annotation_window.scene.addItem(self.preview_line)
+        if not self.z_fence.scene():
+            self.annotation_window.scene.addItem(self.z_fence)
         
         self.stop_current_drawing()
         self.dialog.reset_fields()
@@ -579,37 +559,28 @@ class ScaleTool(Tool):
         # Automatically highlight the current image if one is loaded
         current_image_path = self.annotation_window.current_image_path
         if current_image_path:
-            # Check if current image is already highlighted
             highlighted_paths = self.main_window.image_window.table_model.get_highlighted_paths()
             if current_image_path not in highlighted_paths:
-                # Highlight only the current image
                 self.main_window.image_window.table_model.set_highlighted_paths([current_image_path])
         
-        # Update status label with highlighted count
         self.dialog.update_status_label()
-
-        # Load and display existing scale if present
         self.load_existing_scale()
-        
-        # Update Z-tab states
         self.dialog.update_z_tab_states()
+        
+        # Sync View Mode UI with current raster settings
+        self.sync_view_mode_ui()
 
         self.dialog.show()
         self.dialog.activateWindow()
 
     def deactivate(self):
-        # This function is called when another tool is selected
-        # or when the dialog's "Close" button is clicked.
         if not self.active:
             return
-            
         super().deactivate()
         self.dialog.hide()
         self.preview_line.hide()
-        
+        self.z_fence.setVisible(False)
         self.is_drawing = False
-        
-        # Untoggle all tools when closing the scale tool
         self.main_window.untoggle_all_tools()
 
     def stop_current_drawing(self):
@@ -619,505 +590,375 @@ class ScaleTool(Tool):
         self.end_point = None
         self.pixel_length = 0.0
         
-        # Remove graphics
         if self.preview_line.scene():
             self.preview_line.hide()
+            
+        self.z_fence.setVisible(False)
+        self.z_fence.setPath(QPainterPath())
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press for starting scale line or Z-anchor point."""
+        """Handle mouse press."""
         if event.button() == Qt.LeftButton:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             
-            # Handle based on current mode
-            if self.dialog.current_mode == 'xy_scale' or self.dialog.current_mode == 'z_scale':
+            # Line Drawing Mode (XY Scale or Z-Scale)
+            if self.dialog.current_mode in ['xy_scale', 'z_scale']:
                 if not self.is_drawing:
-                    # Start new line
                     self.start_point = scene_pos
                     self.end_point = scene_pos
                     self.is_drawing = True
                 else:
-                    # Finish line
                     self.end_point = scene_pos
                     self.is_drawing = False
+                    
                     if self.dialog.current_mode == 'xy_scale':
                         self.calculate_scale()
                     else:
                         self.calculate_z_scale()
                         
+            # Point Click Mode (Z-Anchor)
             elif self.dialog.current_mode == 'z_anchor':
-                # Click to set anchor point
                 self.set_z_anchor_point(scene_pos)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        """Handle mouse move for drawing scale line."""
+        """Handle mouse move for drawing."""
         if self.is_drawing and self.start_point:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.end_point = scene_pos
             
-            # Update graphics
+            # Update Line
             line = QLineF(self.start_point, self.end_point)
             self.preview_line.setLine(line)
             self.preview_line.show()
             
-            # Update pixel length label
-            pixel_length = line.length()
-            self.dialog.pixel_length_label.setText(f"{pixel_length:.2f} pixels")
+            # Update Text
+            if self.dialog.current_mode == 'xy_scale':
+                pixel_length = line.length()
+                self.dialog.pixel_length_label.setText(f"{pixel_length:.2f} pixels")
+            
+            # Update Z-Fence (only in Z modes)
+            if self.dialog.current_mode in ['z_scale', 'z_anchor']:
+                current_raster = self.main_window.image_window.current_raster
+                if current_raster and current_raster.z_channel is not None:
+                    self.z_fence.setVisible(True)
+                    self.z_fence.update_profile(self.start_point, self.end_point, current_raster)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        """Handle mouse release."""
         pass
 
     def keyPressEvent(self, event):
-        """Handle key press events."""
         if event.key() == Qt.Key_Backspace:
             self.stop_current_drawing()
-            self.dialog.pixel_length_label.setText("Draw a line on the image")
+            self.dialog.reset_fields()
+
+    # --- XY Scale Logic (Unchanged) ---
+    def load_existing_scale(self):
+        """Loads and displays existing scale data."""
+        current_path = self.annotation_window.current_image_path
+        if not current_path:
             self.dialog.calculated_scale_label.setText("N/A")
+            return
+        
+        raster = self.main_window.image_window.raster_manager.get_raster(current_path)
+        if not raster or raster.scale_x is None:
+            self.dialog.calculated_scale_label.setText("N/A")
+            return
+        
+        scale_value = raster.scale_x
+        units = raster.scale_units if raster.scale_units else "metre"
+        self.dialog.calculated_scale_label.setText(f"{scale_value:.6f} {units}/pixel")
 
     def calculate_scale(self):
-        """Calculate the scale based on the drawn line."""
-        if not self.start_point or not self.end_point:
-            return
-        
+        """Calculate pixel scale."""
+        if not self.start_point or not self.end_point: return
         line = QLineF(self.start_point, self.end_point)
         pixel_length = line.length()
+        if pixel_length == 0: return
         
-        if pixel_length == 0:
-            QMessageBox.warning(self.dialog, 
-                                "Invalid Line", 
-                                "Please draw a line with non-zero length.")
-            self.stop_current_drawing()
-            return
-        
-        # Get known length and units from dialog
         known_length = self.dialog.known_length_input.value()
         units = self.dialog.units_combo.currentText()
-        
-        # Calculate scale (real-world units per pixel)
         scale = known_length / pixel_length
-        
-        # Update label (just the value, no "Scale:" prefix)
-        scale_text = f"{scale:.6f} {units}/pixel"
-        self.dialog.calculated_scale_label.setText(scale_text)
+        self.dialog.calculated_scale_label.setText(f"{scale:.6f} {units}/pixel")
         self.dialog.pixel_length_label.setText(f"{pixel_length:.2f} pixels")
 
     def apply_scale(self):
-        """Apply the calculated scale to highlighted images."""
-        # Get highlighted image paths
+        """Apply XY scale to highlighted images."""
         highlighted_paths = self.dialog.get_selected_image_paths()
+        if not highlighted_paths: return
         
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to apply the scale.")
-            return
-        
-        # Get calculated scale
         scale_text = self.dialog.calculated_scale_label.text()
-        if "N/A" in scale_text:
-            QMessageBox.warning(self.dialog, "No Scale Set",
-                              "Please draw a line and calculate the scale before applying it.")
-            return
-        
-        # Parse scale from label
-        parts = scale_text.split()
-        if len(parts) < 2:
-            QMessageBox.warning(self.dialog, "Invalid Scale",
-                              "Could not parse the scale value.")
-            return
+        if "N/A" in scale_text: return
         
         try:
-            scale_value = float(parts[1])
-            units_and_ratio = parts[2]
-            units = units_and_ratio.split('/')[0]  # Extract unit before '/pixel'
-        except (ValueError, IndexError):
-            QMessageBox.warning(self.dialog, "Invalid Scale",
-                              "Could not parse the scale value.")
-            return
-        
-        # Standardize units to 'metre'
-        unit_mapping = {
-            'mm': 'millimetre',
-            'cm': 'centimetre',
-            'm': 'metre',
-            'km': 'kilometre',
-            'in': 'inch',
-            'ft': 'foot',
-            'yd': 'yard',
-            'mi': 'mile'
-        }
-        
+            scale_value = float(scale_text.split()[0])
+            units = scale_text.split()[1].split('/')[0]
+        except: return
+
+        # Standardize units
+        unit_mapping = {'mm': 'millimetre', 'cm': 'centimetre', 'm': 'metre', 
+                       'km': 'kilometre', 'in': 'inch', 'ft': 'foot', 'yd': 'yard', 'mi': 'mile'}
         scale_units = unit_mapping.get(units, 'metre')
         
-        # Apply scale to each highlighted image
         raster_manager = self.main_window.image_window.raster_manager
-        current_image_path = self.annotation_window.current_image_path
-        current_image_affected = False
+        current_path = self.annotation_window.current_image_path
         
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
+        for path in highlighted_paths:
+            raster = raster_manager.get_raster(path)
             if raster:
-                # Use the proper update_scale method instead of directly setting properties
                 raster.update_scale(scale_value, scale_value, scale_units)
-                # Emit signal to notify the UI that this raster was updated
-                raster_manager.rasterUpdated.emit(image_path)
+                raster_manager.rasterUpdated.emit(path)
                 
-                # Check if the current image is being updated
-                if image_path == current_image_path:
-                    current_image_affected = True
+        if current_path in highlighted_paths:
+            # Refresh view dimensions
+            w, h = self.annotation_window.get_image_dimensions()
+            self.main_window.update_view_dimensions(w, h)
+            
+        QMessageBox.information(self.dialog, "Applied", f"Scale applied to {len(highlighted_paths)} images.")
+        self.stop_current_drawing()
+
+    def remove_scale_highlighted(self):
+        """Remove scale from highlighted."""
+        highlighted_paths = self.dialog.get_selected_image_paths()
+        if not highlighted_paths: return
         
-        # If the currently displayed image was updated, refresh the view to show new scale
-        if current_image_affected:
-            width, height = self.annotation_window.get_image_dimensions()
-            if width and height:
-                self.main_window.update_view_dimensions(width, height)
+        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: return
         
-        QMessageBox.information(self.dialog, "Scale Applied",
-                              f"Scale applied to {len(highlighted_paths)} image(s).")
+        raster_manager = self.main_window.image_window.raster_manager
+        current_path = self.annotation_window.current_image_path
         
-        # Reload the scale display to show the newly applied scale
+        for path in highlighted_paths:
+            raster = raster_manager.get_raster(path)
+            if raster:
+                raster.remove_scale()
+                raster_manager.rasterUpdated.emit(path)
+                
+        if current_path in highlighted_paths:
+            w, h = self.annotation_window.get_image_dimensions()
+            self.main_window.update_view_dimensions(w, h)
+        
         self.load_existing_scale()
+
+    # --- Z-Calibration Logic (New) ---
+
+    def calculate_z_scale(self):
+        """Calculate Z scalar from line."""
+        from coralnet_toolbox.utilities import calculate_z_scalar, validate_line_angle
         
-        # Clear drawing after applying scale
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel is None: return
+
+        # Validate line
+        is_valid, _, _, warning = validate_line_angle(self.start_point, self.end_point)
+        if not is_valid:
+            QMessageBox.warning(self.dialog, "Invalid Line", warning)
+            self.stop_current_drawing()
+            return
+            
+        # Get Z values (using semantic values which respect current scalar)
+        # Note: To calculate a NEW scalar, we ideally want raw difference.
+        # But get_z_value applies current scalar. We can reverse it or just use raw data.
+        # Let's use raw data for pure calibration.
+        
+        x1, y1 = int(self.start_point.x()), int(self.start_point.y())
+        x2, y2 = int(self.end_point.x()), int(self.end_point.y())
+        
+        # Access raw z-channel directly
+        try:
+            z1 = float(current_raster.z_channel_lazy[y1, x1])
+            z2 = float(current_raster.z_channel_lazy[y2, x2])
+        except: return
+        
+        raw_diff = abs(z1 - z2)
+        known_diff = self.dialog.z_known_diff_input.value()
+        
+        try:
+            scalar = calculate_z_scalar(raw_diff, known_diff)
+            self.dialog.z_raw_diff_label.setText(f"{raw_diff:.4f} (raw units)")
+            self.dialog.z_scalar_label.setText(f"{scalar:.6f}")
+        except ValueError as e:
+            QMessageBox.warning(self.dialog, "Error", str(e))
+
+    def apply_z_scale(self):
+        """Apply scalar to highlighted images."""
+        highlighted = self.dialog.get_selected_image_paths()
+        if not highlighted: return
+        
+        scalar_text = self.dialog.z_scalar_label.text()
+        if "N/A" in scalar_text: return
+        
+        try:
+            scalar = float(scalar_text)
+        except: return
+        
+        raster_manager = self.main_window.image_window.raster_manager
+        current_path = self.annotation_window.current_image_path
+        
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                # Update scalar, preserve offset/direction
+                raster.z_settings['scalar'] = scalar
+                # Recalculate auto-offset if in Elevation mode? 
+                # Ideally yes, but for now let's just update scalar. 
+                # User can re-toggle view mode to refresh auto-offset if needed.
+                raster_manager.rasterUpdated.emit(path)
+                
+        if current_path in highlighted:
+            self.annotation_window.refresh_z_channel_visualization()
+            
+        QMessageBox.information(self.dialog, "Applied", f"Z-Scale applied to {len(highlighted)} images.")
         self.stop_current_drawing()
         self.dialog.reset_fields()
 
-    def remove_scale_highlighted(self):
-        """Remove scale data from highlighted images."""
-        highlighted_paths = self.dialog.get_selected_image_paths()
+    def set_z_anchor_point(self, pos):
+        """Handle anchor point click."""
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel is None: return
         
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to remove the scale.")
+        # Get current semantic value (includes current offset/direction)
+        current_z = current_raster.get_z_value(int(pos.x()), int(pos.y()))
+        if current_z is None: return
+        
+        self.dialog.z_current_val_label.setText(f"{current_z:.3f}")
+        
+        # Calculate required offset change
+        target = self.dialog.z_target_val_input.value()
+        
+        # The equation is: Z_display = Base + Offset
+        # We want: Target = Base + NewOffset
+        # Current = Base + OldOffset
+        # So: NewOffset = OldOffset + (Target - Current)
+        
+        old_offset = current_raster.z_settings.get('offset', 0.0)
+        delta = target - current_z
+        new_offset = old_offset + delta
+        
+        self.dialog.z_offset_label.setText(f"{new_offset:.4f}")
+
+    def apply_z_anchor(self):
+        """Apply new offset to highlighted images."""
+        highlighted = self.dialog.get_selected_image_paths()
+        if not highlighted: 
             return
         
-        reply = QMessageBox.question(self.dialog, 
-                                     "Confirm Removal",
-                                     f"Remove scale from {len(highlighted_paths)} image(s)?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        
-        if reply != QMessageBox.Yes:
+        offset_text = self.dialog.z_offset_label.text()
+        if "N/A" in offset_text: 
             return
         
-        # Remove scale from each highlighted image
+        try: 
+            offset = float(offset_text)
+        except: 
+            return
+        
         raster_manager = self.main_window.image_window.raster_manager
-        current_image_path = self.annotation_window.current_image_path
-        current_image_affected = False
+        current_path = self.annotation_window.current_image_path
         
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster:
-                # Use the proper remove_scale method instead of directly setting properties
-                raster.remove_scale()
-                # Emit signal to notify the UI that this raster was updated
-                raster_manager.rasterUpdated.emit(image_path)
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                raster.z_settings['offset'] = offset
+                raster_manager.rasterUpdated.emit(path)
                 
-                # Check if the current image is being updated
-                if image_path == current_image_path:
-                    current_image_affected = True
+        if current_path in highlighted:
+            self.annotation_window.refresh_z_channel_visualization()
+            
+        QMessageBox.information(self.dialog, "Applied", f"Z-Anchor applied to {len(highlighted)} images.")
+        self.dialog.reset_fields()
+
+    def set_z_view_mode(self, mode):
+        """
+        Toggle between Depth and Elevation view modes non-destructively.
+        Updates 'direction' and 'offset' in z_settings.
+        """
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel_lazy is None: return
         
-        # If the currently displayed image was updated, refresh the view to hide scale
-        if current_image_affected:
-            width, height = self.annotation_window.get_image_dimensions()
-            if width and height:
-                self.main_window.update_view_dimensions(width, height)
+        settings = current_raster.z_settings
+        scalar = settings.get('scalar', 1.0)
         
-        QMessageBox.information(self.dialog, "Scale Removed",
-                              f"Scale removed from {len(highlighted_paths)} image(s).")
+        if mode == 'depth':
+            # Standard Depth Mode
+            settings['direction'] = 1  # Positive = farther
+            settings['offset'] = 0.0   # Zero at camera
+            
+        elif mode == 'elevation':
+            # Relative Elevation Mode
+            # 1. Set Direction to -1 (Positive = closer/up)
+            settings['direction'] = -1
+            
+            # 2. Auto-Tare: Find max raw value to set as zero-point (seafloor)
+            # We use the raw data directly for robustness
+            raw_data = current_raster.z_channel_lazy
+            
+            # Simple max ignoring NaNs
+            try:
+                max_raw = float(np.nanmax(raw_data))
+            except:
+                max_raw = 0.0
+                
+            # Offset = Max_Raw * Scalar
+            # Explanation: Raw=10, Scalar=1. Depth=10. 
+            # We want Elevation=0 at Depth=10.
+            # Elev = -1 * (10*1) + Offset = 0  =>  Offset = 10
+            settings['offset'] = max_raw * scalar
+            
+        # Refresh visuals
+        self.annotation_window.refresh_z_channel_visualization()
         
-        # Reload the scale display to reflect the removal
-        self.load_existing_scale()
+        # Emit update so other UI components refresh
+        self.main_window.image_window.raster_manager.rasterUpdated.emit(current_raster.image_path)
+
+    def sync_view_mode_ui(self):
+        """Update dropdown selection to match current raster settings."""
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or not current_raster.z_channel is None: 
+            return
+        
+        direction = current_raster.z_settings.get('direction', 1)
+        
+        # If direction is 1, we assume Depth mode
+        # If direction is -1, we assume Elevation mode
+        index = 0 if direction == 1 else 1
+        
+        self.dialog.view_mode_combo.blockSignals(True)
+        self.dialog.view_mode_combo.setCurrentIndex(index)
+        self.dialog.view_mode_combo.blockSignals(False)
+
+    def reset_z_settings(self):
+        """Reset Z-settings to defaults."""
+        highlighted = self.dialog.get_selected_image_paths()
+        if not highlighted: 
+            return
+        
+        if QMessageBox.question(self.dialog, "Confirm", "Reset Z-settings for highlighted?") != QMessageBox.Yes:
+            return
+            
+        raster_manager = self.main_window.image_window.raster_manager
+        current_path = self.annotation_window.current_image_path
+        
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                raster.z_settings = {'scalar': 1.0, 'offset': 0.0, 'direction': 1}
+                raster_manager.rasterUpdated.emit(path)
+                
+        if current_path in highlighted:
+            self.annotation_window.refresh_z_channel_visualization()
+            self.sync_view_mode_ui()
+        
+        self.dialog.reset_fields()
 
     def handle_apply(self):
-        """Handle the Apply button click based on current tab/mode."""
+        """Route 'Apply' button to correct function."""
         if self.dialog.current_mode == 'xy_scale':
             self.apply_scale()
         elif self.dialog.current_mode == 'z_scale':
             self.apply_z_scale()
         elif self.dialog.current_mode == 'z_anchor':
             self.apply_z_anchor()
-    
+
     def on_image_changed(self):
-        """Handle image change to update Z-tab states and load existing data."""
         self.dialog.update_z_tab_states()
         self.load_existing_scale()
         self.stop_current_drawing()
-    
-    def calculate_z_scale(self):
-        """Calculate the Z-scale scalar based on the drawn line."""
-        from coralnet_toolbox.utilities import calculate_z_scalar, validate_line_angle
-        
-        if not self.start_point or not self.end_point:
-            return
-        
-        # Validate line angle
-        is_valid, angle_deg, vertical_component, warning_message = validate_line_angle(
-            self.start_point, self.end_point, warn_threshold=45.0
-        )
-        
-        if not is_valid:
-            QMessageBox.warning(self.dialog, "Invalid Line", warning_message)
-            self.stop_current_drawing()
-            return
-        
-        # Get Z-values at start and end points
-        current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None:
-            QMessageBox.warning(self.dialog, "No Z-Channel",
-                              "Current image does not have a Z-channel.")
-            self.stop_current_drawing()
-            return
-        
-        # Get raw Z-values
-        start_x, start_y = int(self.start_point.x()), int(self.start_point.y())
-        end_x, end_y = int(self.end_point.x()), int(self.end_point.y())
-        
-        start_z = current_raster.get_z_value(start_x, start_y)
-        end_z = current_raster.get_z_value(end_x, end_y)
-        
-        if start_z is None or end_z is None:
-            QMessageBox.warning(self.dialog, "Invalid Z-Values",
-                              "Could not read Z-values at the selected points.")
-            self.stop_current_drawing()
-            return
-        
-        raw_difference = abs(end_z - start_z)
-        
-        # Get known difference from dialog
-        known_difference = self.dialog.z_known_difference_input.value()
-        units = self.dialog.z_units_combo.currentText()
-        
-        try:
-            scalar = calculate_z_scalar(raw_difference, known_difference)
-            
-            # Update labels
-            self.dialog.z_raw_difference_label.setText(f"{raw_difference:.4f} units")
-            self.dialog.z_calculated_scalar_label.setText(f"{scalar:.4f}")
-            
-        except ValueError as e:
-            QMessageBox.warning(self.dialog, "Calculation Error", str(e))
-            self.stop_current_drawing()
-    
-    def apply_z_scale(self):
-        """Apply the calculated Z-scalar to highlighted images."""
-        highlighted_paths = self.dialog.get_selected_image_paths()
-        
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to apply the Z-scale.")
-            return
-        
-        # Get calculated scalar
-        scalar_text = self.dialog.z_calculated_scalar_label.text()
-        if "N/A" in scalar_text:
-            QMessageBox.warning(self.dialog, "No Scalar Calculated",
-                              "Please draw a line and calculate the scalar before applying it.")
-            return
-        
-        try:
-            scalar = float(scalar_text)
-        except ValueError:
-            QMessageBox.warning(self.dialog, "Invalid Scalar",
-                              "Could not parse the scalar value.")
-            return
-        
-        # Confirmation dialog
-        reply = QMessageBox.question(
-            self.dialog,
-            "Confirm Z-Scale",
-            f"Apply scalar {scalar:.4f} to {len(highlighted_paths)} image(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # Apply scalar to each highlighted image
-        raster_manager = self.main_window.image_window.raster_manager
-        
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster and raster.z_channel is not None:
-                # Update the scalar in z_settings
-                raster.z_settings['scalar'] = scalar
-                raster_manager.rasterUpdated.emit(image_path)
-        
-        # Refresh Z-channel visualization if current image was affected
-        if self.annotation_window.current_image_path in highlighted_paths:
-            self.annotation_window.refresh_z_channel_visualization()
-        
-        QMessageBox.information(self.dialog, "Z-Scale Applied",
-                              f"Z-scalar applied to {len(highlighted_paths)} image(s).")
-        
-        # Clear drawing
-        self.stop_current_drawing()
-        self.dialog.z_raw_difference_label.setText("Draw a line on the image")
-        self.dialog.z_calculated_scalar_label.setText("N/A")
-    
-    def set_z_anchor_point(self, scene_pos):
-        """Set the Z-anchor point and calculate the current Z-value."""
-        current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None:
-            QMessageBox.warning(self.dialog, "No Z-Channel",
-                              "Current image does not have a Z-channel.")
-            return
-        
-        # Get Z-value at clicked point
-        x, y = int(scene_pos.x()), int(scene_pos.y())
-        current_z = current_raster.get_z_value(x, y)
-        
-        if current_z is None:
-            QMessageBox.warning(self.dialog, "Invalid Point",
-                              "Could not read Z-value at the selected point.")
-            return
-        
-        # Store anchor point
-        self.z_anchor_point = scene_pos
-        
-        # Update current value label
-        z_unit = current_raster.z_unit if current_raster.z_unit else "units"
-        self.dialog.z_current_value_label.setText(f"{current_z:.4f} {z_unit}")
-        
-        # Calculate and display offset
-        target_value = self.dialog.z_target_value_input.value()
-        from coralnet_toolbox.utilities import calculate_z_offset
-        offset = calculate_z_offset(current_z, target_value)
-        self.dialog.z_calculated_offset_label.setText(f"{offset:.4f} {z_unit}")
-    
-    def apply_z_anchor(self):
-        """Apply the calculated Z-offset to highlighted images."""
-        highlighted_paths = self.dialog.get_selected_image_paths()
-        
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to apply the Z-anchor.")
-            return
-        
-        # Get calculated offset
-        offset_text = self.dialog.z_calculated_offset_label.text()
-        if "N/A" in offset_text:
-            QMessageBox.warning(self.dialog, "No Offset Calculated",
-                              "Please click on the image to set an anchor point before applying.")
-            return
-        
-        try:
-            # Parse offset value (strip units)
-            offset = float(offset_text.split()[0])
-        except (ValueError, IndexError):
-            QMessageBox.warning(self.dialog, "Invalid Offset",
-                              "Could not parse the offset value.")
-            return
-        
-        # Get direction
-        direction = self.dialog.z_direction_combo.currentData()
-        
-        # Confirmation dialog
-        reply = QMessageBox.question(
-            self.dialog,
-            "Confirm Z-Anchor",
-            f"Apply offset {offset:.4f} and direction {direction} to {len(highlighted_paths)} image(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # Apply offset and direction to each highlighted image
-        raster_manager = self.main_window.image_window.raster_manager
-        
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster and raster.z_channel is not None:
-                # Update the offset and direction in z_settings
-                raster.z_settings['offset'] = offset
-                raster.z_settings['direction'] = direction
-                raster_manager.rasterUpdated.emit(image_path)
-        
-        # Refresh Z-channel visualization if current image was affected
-        if self.annotation_window.current_image_path in highlighted_paths:
-            self.annotation_window.refresh_z_channel_visualization()
-        
-        QMessageBox.information(self.dialog, "Z-Anchor Applied",
-                              f"Z-anchor applied to {len(highlighted_paths)} image(s).")
-        
-        # Clear state
-        self.z_anchor_point = None
-        self.dialog.z_current_value_label.setText("Click on the image")
-        self.dialog.z_calculated_offset_label.setText("N/A")
-    
-    def reset_z_scalar(self):
-        """Reset Z-scalar to default (1.0) for highlighted images."""
-        highlighted_paths = self.dialog.get_selected_image_paths()
-        
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to reset the Z-scalar.")
-            return
-        
-        # Confirmation dialog
-        reply = QMessageBox.question(
-            self.dialog,
-            "Confirm Reset",
-            f"Reset Z-scalar to 1.0 for {len(highlighted_paths)} image(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # Reset scalar for each highlighted image
-        raster_manager = self.main_window.image_window.raster_manager
-        
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster and raster.z_channel is not None:
-                raster.z_settings['scalar'] = 1.0
-                raster_manager.rasterUpdated.emit(image_path)
-        
-        # Refresh Z-channel visualization if current image was affected
-        if self.annotation_window.current_image_path in highlighted_paths:
-            self.annotation_window.refresh_z_channel_visualization()
-        
-        QMessageBox.information(self.dialog, "Z-Scalar Reset",
-                              f"Z-scalar reset for {len(highlighted_paths)} image(s).")
-        
-        # Clear UI
-        self.dialog.z_calculated_scalar_label.setText("N/A")
-    
-    def reset_z_offset(self):
-        """Reset Z-offset to default (0.0) for highlighted images."""
-        highlighted_paths = self.dialog.get_selected_image_paths()
-        
-        if not highlighted_paths:
-            QMessageBox.warning(self.dialog, "No Images Selected",
-                              "Please highlight at least one image to reset the Z-offset.")
-            return
-        
-        # Confirmation dialog
-        reply = QMessageBox.question(
-            self.dialog,
-            "Confirm Reset",
-            f"Reset Z-offset to 0.0 for {len(highlighted_paths)} image(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        # Reset offset for each highlighted image
-        raster_manager = self.main_window.image_window.raster_manager
-        
-        for image_path in highlighted_paths:
-            raster = raster_manager.get_raster(image_path)
-            if raster and raster.z_channel is not None:
-                raster.z_settings['offset'] = 0.0
-                raster_manager.rasterUpdated.emit(image_path)
-        
-        # Refresh Z-channel visualization if current image was affected
-        if self.annotation_window.current_image_path in highlighted_paths:
-            self.annotation_window.refresh_z_channel_visualization()
-        
-        QMessageBox.information(self.dialog, "Z-Offset Reset",
-                              f"Z-offset reset for {len(highlighted_paths)} image(s).")
-        
-        # Clear UI
-        self.dialog.z_calculated_offset_label.setText("N/A")
+        self.sync_view_mode_ui()

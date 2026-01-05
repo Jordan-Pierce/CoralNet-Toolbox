@@ -103,7 +103,7 @@ class Raster(QObject):
         self.z_channel_path: Optional[str] = None  # Path to z_channel file if saved separately
         self.z_unit: Optional[str] = None  # Units for z_channel data (e.g., 'meters', 'feet')
         self.z_nodata: Optional[float] = None  # Nodata value for z_channel (NULL/missing data indicator)
-        self.z_data_type: Optional[str] = None  # Type of z-channel data: 'depth', 'elevation', or 'dem'
+        self.z_data_type: Optional[str] = None  # Type of z-channel data: 'depth', or 'elevation'
         
         # Z-channel transform settings (non-destructive calibration pipeline)
         # Formula: Z_display = Direction × (RawPixel × Scalar) + Offset
@@ -312,9 +312,9 @@ class Raster(QObject):
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
-            z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
+            z_data_type (str, optional): Type of z-channel data: 'depth' or 'elevation'
             z_direction (int, optional): Initial direction (1 for depth/far, -1 for elevation/close). 
-                                        Defaults to 1 for depth, -1 for elevation/dem if z_data_type is provided
+                                        Defaults to 1 for depth, -1 for elevation if z_data_type is provided
         """
         if not isinstance(z_data, np.ndarray):
             raise ValueError("Z channel data must be a numpy array")
@@ -325,8 +325,8 @@ class Raster(QObject):
         if z_data.shape != (self.height, self.width):
             raise ValueError(f"Z channel dimensions {z_data.shape} must match image dimensions "
                              f"({self.height}, {self.width})")
-        if z_data_type is not None and z_data_type not in ['depth', 'elevation', 'dem']:
-            raise ValueError(f"z_data_type must be 'depth', 'elevation', or 'dem', got '{z_data_type}'")
+        if z_data_type is not None and z_data_type not in ['depth', 'elevation']:
+            raise ValueError(f"z_data_type must be 'depth' or 'elevation', got '{z_data_type}'")
             
         self.z_channel = z_data.copy()
         self.z_channel_path = z_path
@@ -350,8 +350,8 @@ class Raster(QObject):
         # Set direction based on explicit parameter or infer from z_data_type
         if z_direction is not None:
             self.z_settings['direction'] = z_direction
-        elif z_data_type in ['elevation', 'dem']:
-            # Elevation/DEM: high values = close/up
+        elif z_data_type == 'elevation':
+            # Elevation: high values = close/up
             self.z_settings['direction'] = -1
         # else: keep default direction = 1 for depth
         
@@ -364,7 +364,7 @@ class Raster(QObject):
             z_data (np.ndarray): 2D numpy array containing depth or elevation data (float32 or uint8)
             z_path (str, optional): Path to the z_channel file if saved separately
             z_unit (str, optional): Unit of measurement for z-channel data (e.g., 'm', 'ft', 'meters')
-            z_data_type (str, optional): Type of z-channel data: 'depth', 'elevation', or 'dem'
+            z_data_type (str, optional): Type of z-channel data: 'depth' or 'elevation'
             z_direction (int, optional): Initial direction (1 for depth, -1 for elevation)
         """
         self.add_z_channel(z_data, z_path, z_unit, z_data_type, z_direction)  # Same validation as add
@@ -449,7 +449,7 @@ class Raster(QObject):
         - uint8: Relative depth/height values (0-255 range)
         
         Args:
-            z_channel_path (str): Path to the depth/height/DEM file
+            z_channel_path (str): Path to the depth/height file
             z_unit (str, optional): Unit of measurement for z-channel data
                                    If not provided, will attempt to detect from file
             

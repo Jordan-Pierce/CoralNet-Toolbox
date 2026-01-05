@@ -662,14 +662,14 @@ def convert_scale_units(value, from_unit, to_unit):
 
 def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
     """
-    Load a depth map / height map / DEM from file using rasterio.
+    Load a depth map / elevation map from file using rasterio.
     
     The z_channel data will be either:
     - float32: Actual depth/height values (e.g., meters, feet, etc.)
     - uint8: Relative depth/height values (0-255 range)
     
     Args:
-        z_channel_path (str): Path to the depth/height/DEM file
+        z_channel_path (str): Path to the depth/elevation file
         target_width (int, optional): Target width to match raster dimensions
         target_height (int, optional): Target height to match raster dimensions
         

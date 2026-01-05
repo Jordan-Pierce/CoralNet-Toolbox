@@ -85,7 +85,7 @@ class ZExportDialog(QWidget):
             f"<b>Ready to export {len(self.exportable_rasters)} z-channel file(s)</b><br><br>"
             "Z-channels will be exported as compressed TIFF files (DEFLATE compression) "
             "preserving float32 data type and all metadata including:<br>"
-            "• Z-channel data type (depth/elevation/dem)<br>"
+            "• Z-channel data type (depth/elevation)<br>"
             "• Z-channel units (m, cm, ft, etc.)<br>"
             "• Nodata values<br>"
             "• Georeferencing information (if available)"

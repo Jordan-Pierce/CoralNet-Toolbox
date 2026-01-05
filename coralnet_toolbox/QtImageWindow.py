@@ -1319,7 +1319,7 @@ class ImageWindow(QWidget):
                             if z_data_type:
                                 raster.z_data_type = z_data_type
                                 # Set direction based on z_data_type
-                                if z_data_type in ['elevation', 'dem']:
+                                if z_data_type == 'elevation':
                                     raster.z_settings['direction'] = -1
                                 elif z_data_type == 'depth':
                                     raster.z_settings['direction'] = 1
