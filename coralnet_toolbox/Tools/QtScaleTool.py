@@ -375,10 +375,24 @@ class ScaleToolDialog(QDialog):
         self.z_target_val_input.setDecimals(3)
         anchor_form.addRow("Target Value:", self.z_target_val_input)
         
-        # Tare button
+        # Buttons
+        button_widget = QWidget()
+        button_layout = QHBoxLayout(button_widget)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.z_set_min_btn = QPushButton("Set to Min")
+        self.z_set_min_btn.clicked.connect(self.set_target_to_min)
+        button_layout.addWidget(self.z_set_min_btn)
+        
+        self.z_set_max_btn = QPushButton("Set to Max")
+        self.z_set_max_btn.clicked.connect(self.set_target_to_max)
+        button_layout.addWidget(self.z_set_max_btn)
+        
         self.z_tare_btn = QPushButton("Tare to 0.0")
         self.z_tare_btn.clicked.connect(lambda: self.z_target_val_input.setValue(0.0))
-        anchor_form.addRow("", self.z_tare_btn)
+        button_layout.addWidget(self.z_tare_btn)
+        
+        anchor_form.addRow("", button_widget)
         
         self.z_current_val_label = QLabel("Click a point...")
         anchor_form.addRow("Current Value:", self.z_current_val_label)
@@ -413,6 +427,26 @@ class ScaleToolDialog(QDialog):
         layout.addStretch()
         
         return tab
+
+    def set_target_to_min(self):
+        """Set the anchor point to the location of the minimum Z value."""
+        current_raster = self.main_window.image_window.current_raster
+        if current_raster and current_raster.z_channel is not None:
+            row, col = np.unravel_index(np.argmin(current_raster.z_channel), current_raster.z_channel.shape)
+            pos = QPointF(col, row)
+            self.tool.set_z_anchor_point(pos)
+        else:
+            QMessageBox.warning(self, "No Z-Channel", "No Z-channel data available for the current image.")
+
+    def set_target_to_max(self):
+        """Set the anchor point to the location of the maximum Z value."""
+        current_raster = self.main_window.image_window.current_raster
+        if current_raster and current_raster.z_channel is not None:
+            row, col = np.unravel_index(np.argmax(current_raster.z_channel), current_raster.z_channel.shape)
+            pos = QPointF(col, row)
+            self.tool.set_z_anchor_point(pos)
+        else:
+            QMessageBox.warning(self, "No Z-Channel", "No Z-channel data available for the current image.")
 
     def on_tab_changed(self, index):
         """Handle tab changes to update interaction mode."""

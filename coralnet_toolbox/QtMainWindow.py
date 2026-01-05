@@ -2626,6 +2626,31 @@ class MainWindow(QMainWindow):
 
     def open_z_deploy_model_dialog(self):
         """Open the Z-Deploy Model Dialog"""
+        # Check if depth-anything-3 is installed
+        try:
+            from depth_anything_3.api import DepthAnything3
+            
+        except ImportError:
+            QMessageBox.warning(self, 
+                                "Missing Package", 
+                                "The 'depth-anything-3' package is required for Z-Inference.\n\n"
+                                "Please install it using: pip install depth-anything-3")
+            return
+        
+        # Check if HF_TOKEN environment variable is set
+        import os
+        hf_token = os.getenv("HF_TOKEN")
+        
+        if not hf_token or not hf_token.strip():
+            QMessageBox.warning(self, 
+                                "HuggingFace Access Required", 
+                                "Access to Depth-Anything-3 model weights requires HuggingFace approval.\n\n"
+                                "Please:\n"
+                                "1. Request access to 'depth-anything/DA3NESTED-GIANT-LARGE-1.1' on HuggingFace\n"
+                                "2. Set your HF_TOKEN environment variable: export HF_TOKEN=your_token_here\n"
+                                "3. Restart the application")
+            return
+        
         self.z_deploy_model_dialog.toggle_content()
 
     def open_explorer_window(self):
