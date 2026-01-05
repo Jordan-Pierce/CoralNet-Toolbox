@@ -250,9 +250,9 @@ class ScaleToolDialog(QDialog):
         self.pixel_length_label = QLabel("Draw a line on the image")
         scale_layout.addRow("Pixel Length:", self.pixel_length_label)
         
-        # Calculated scale
+        # Current/New scale
         self.calculated_scale_label = QLabel("N/A")
-        scale_layout.addRow("Calculated Scale:", self.calculated_scale_label)
+        scale_layout.addRow("Scale:", self.calculated_scale_label)
         
         layout.addLayout(scale_layout)
         
@@ -391,15 +391,23 @@ class ScaleToolDialog(QDialog):
         layout.addWidget(self.controls_stack)
         
         # --- 4. Danger Zone (Reset) ---
-        self.z_danger_zone = QGroupBox("Reset")
+        self.z_danger_zone = QGroupBox("Danger Zone")
         self.z_danger_zone.setCheckable(True)
         self.z_danger_zone.setChecked(False)
-        
-        danger_layout = QVBoxLayout()
+
+        danger_zone_container = QWidget()
+        danger_zone_layout = QVBoxLayout(danger_zone_container)
+        danger_zone_layout.setContentsMargins(0, 0, 0, 0)
+
         self.reset_z_btn = QPushButton("Reset All Z-Settings (Scalar=1, Offset=0)")
-        self.reset_z_btn.setStyleSheet("background-color: #D9534F; color: white;")
-        danger_layout.addWidget(self.reset_z_btn)
-        self.z_danger_zone.setLayout(danger_layout)
+        self.reset_z_btn.setStyleSheet("background-color: #D9534F; color: white; font-weight: bold;")
+        danger_zone_layout.addWidget(self.reset_z_btn)
+
+        group_layout = QVBoxLayout()
+        group_layout.addWidget(danger_zone_container)
+        self.z_danger_zone.setLayout(group_layout)
+        self.z_danger_zone.toggled.connect(danger_zone_container.setVisible)
+        danger_zone_container.setVisible(False)
         
         layout.addWidget(self.z_danger_zone)
         layout.addStretch()
@@ -475,7 +483,7 @@ class ScaleToolDialog(QDialog):
         """Resets the dialog fields."""
         # XY Scale
         self.pixel_length_label.setText("Draw a line on the image")
-        self.calculated_scale_label.setText("N/A")
+        # Don't reset scale label - keep showing current scale
         # Z Scale
         self.z_raw_diff_label.setText("Draw a line...")
         self.z_scalar_label.setText("N/A")
