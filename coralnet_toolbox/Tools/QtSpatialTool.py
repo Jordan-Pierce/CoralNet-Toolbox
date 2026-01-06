@@ -343,6 +343,7 @@ class SpatialToolDialog(QDialog):
 
     def closeEvent(self, event):
         """Handle dialog close"""
+        self.tool.stop_current_drawing()
         self.tool.deactivate()
         event.accept()
 
@@ -526,10 +527,14 @@ class SpatialTool(Tool):
 
     def deactivate(self):
         """Deactivate the spatial measurement tool"""
-        self.stop_current_drawing()
-        if self.dialog:
-            self.dialog.close()
+        if not self.active:
+            return
         super().deactivate()
+        if self.dialog:
+            self.dialog.hide()
+        self.clear_all_graphics()
+        self.is_drawing = False
+        self.main_window.untoggle_all_tools()
 
     def on_tab_changed(self, index):
         """Handle tab changes - save current measurements and restore previous ones"""
@@ -567,6 +572,41 @@ class SpatialTool(Tool):
         if self.wireframe_graphic and self.wireframe_graphic.scene():
             scene.removeItem(self.wireframe_graphic)
             self.wireframe_graphic = None
+
+    def clear_all_graphics(self):
+        """Clear all graphics including recorded measurements from the scene"""
+        scene = self.annotation_window.scene
+        
+        # Clear current drawing graphics
+        self.stop_current_drawing()
+        
+        # Clear all recorded line measurements
+        for measurement in self.recorded_line_measurements:
+            for key in ['line', 'start_dot', 'end_dot']:
+                if key in measurement and measurement[key]:
+                    if measurement[key].scene() == scene:
+                        scene.removeItem(measurement[key])
+        self.recorded_line_measurements.clear()
+        
+        # Clear all recorded rect measurements
+        for measurement in self.recorded_rect_measurements:
+            for key in ['rect', 'tl_dot', 'br_dot']:
+                if key in measurement and measurement[key]:
+                    if measurement[key].scene() == scene:
+                        scene.removeItem(measurement[key])
+        self.recorded_rect_measurements.clear()
+        
+        # Close profile dialog if open
+        if self.profile_dialog:
+            self.profile_dialog.close()
+            self.profile_dialog = None
+        
+        # Clear profile data
+        self.current_profiles.clear()
+        
+        # Reset totals
+        self.line_total_distance = 0.0
+        self.rect_total_area = 0.0
 
     def update_z_controls(self):
         """Enable/disable Z-controls based on data availability"""

@@ -667,7 +667,7 @@ class AnnotationWindow(QGraphicsView):
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
-            if self.selected_tool == "scale":
+            if self.selected_tool in ["scale", "spatial"]:
                 self.main_window.untoggle_all_tools()
                     
         # Clean up (This is the ONLY scene clear)
