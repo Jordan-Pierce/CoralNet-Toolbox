@@ -193,30 +193,17 @@ class SpatialToolDialog(QDialog):
 
         self.main_layout = QVBoxLayout(self)
 
-        # --- Tab Widget ---
-        self.tab_widget = QTabWidget()
-        
-        # --- Tab 1: Measure Line ---
-        self.line_tab = QWidget()
-        self.setup_line_tab(self.line_tab)
-        self.tab_widget.addTab(self.line_tab, "Measure Line")
+        # --- Main Content ---
+        self.rugosity_tab = QWidget()
+        self.setup_rugosity_tab(self.rugosity_tab)
+        self.main_layout.addWidget(self.rugosity_tab)
 
-        # --- Tab 2: Measure Rectangle ---
-        self.rect_tab = QWidget()
-        self.setup_rect_tab(self.rect_tab)
-        self.tab_widget.addTab(self.rect_tab, "Measure Rectangle")
-
-        self.main_layout.addWidget(self.tab_widget)
-
-        # Connect tab changes
-        self.tab_widget.currentChanged.connect(self.on_tab_changed)
-
-    def setup_line_tab(self, tab_widget):
-        """Setup the Measure Line tab"""
+    def setup_rugosity_tab(self, tab_widget):
+        """Setup the Rugosity measurement tab"""
         layout = QVBoxLayout(tab_widget)
         
         # Instructions
-        instructions = QLabel("Draw a line to measure 2D/3D distances")
+        instructions = QLabel("Draw lines to measure rugosity and surface complexity")
         instructions.setStyleSheet("font-style: italic;")
         layout.addWidget(instructions)
         
@@ -225,20 +212,8 @@ class SpatialToolDialog(QDialog):
         form_2d = QFormLayout()
         
         self.line_length_2d_label = QLabel("---")
-        self.line_total_2d_label = QLabel("---")
         
         form_2d.addRow("Distance:", self.line_length_2d_label)
-        form_2d.addRow("Total:", self.line_total_2d_label)
-        
-        # Buttons for total management
-        btn_layout = QVBoxLayout()
-        self.line_add_button = QPushButton("Add to Total")
-        self.line_add_button.clicked.connect(self.tool.add_line_to_total)
-        self.line_clear_button = QPushButton("Clear Total")
-        self.line_clear_button.clicked.connect(self.tool.clear_line_total)
-        btn_layout.addWidget(self.line_add_button)
-        btn_layout.addWidget(self.line_clear_button)
-        form_2d.addRow("", btn_layout)
         
         # Units dropdown
         self.line_units_combo = QComboBox()
@@ -274,72 +249,14 @@ class SpatialToolDialog(QDialog):
         self.line_3d_group.setLayout(form_3d)
         layout.addWidget(self.line_3d_group)
         
-        layout.addStretch()
-
-    def setup_rect_tab(self, tab_widget):
-        """Setup the Measure Rectangle tab"""
-        layout = QVBoxLayout(tab_widget)
-        
-        # Instructions
-        instructions = QLabel("Draw a rectangle to measure 2D/3D areas")
-        instructions.setStyleSheet("font-style: italic;")
-        layout.addWidget(instructions)
-        
-        # --- 2D Measurements Group ---
-        group_2d = QGroupBox("2D Measurements")
-        form_2d = QFormLayout()
-        
-        self.rect_perimeter_label = QLabel("---")
-        self.rect_area_2d_label = QLabel("---")
-        self.rect_total_area_label = QLabel("---")
-        
-        form_2d.addRow("Perimeter:", self.rect_perimeter_label)
-        form_2d.addRow("Area:", self.rect_area_2d_label)
-        form_2d.addRow("Total:", self.rect_total_area_label)
-        
-        # Buttons for total management
-        btn_layout = QVBoxLayout()
-        self.rect_add_button = QPushButton("Add to Total")
-        self.rect_add_button.clicked.connect(self.tool.add_rect_to_total)
-        self.rect_clear_button = QPushButton("Clear Total")
-        self.rect_clear_button.clicked.connect(self.tool.clear_rect_total)
-        btn_layout.addWidget(self.rect_add_button)
-        btn_layout.addWidget(self.rect_clear_button)
-        form_2d.addRow("", btn_layout)
-        
-        # Units dropdown
-        self.rect_units_combo = QComboBox()
-        self.rect_units_combo.addItems(['m', 'cm', 'mm', 'km', 'ft', 'in', 'yd', 'mi'])
-        self.rect_units_combo.setCurrentText('m')
-        form_2d.addRow("Units:", self.rect_units_combo)
-        
-        group_2d.setLayout(form_2d)
-        layout.addWidget(group_2d)
-        
-        # --- 3D Z-Metrics Group ---
-        self.rect_3d_group = QGroupBox("3D Z-Metrics")
-        self.rect_3d_group.setEnabled(False)  # Disabled until Z-data available
-        
-        form_3d = QFormLayout()
-        
-        self.rect_z_stats_label = QLabel("---")
-        self.rect_area_3d_label = QLabel("---")
-        self.rect_volume_label = QLabel("---")
-        self.rect_rugosity_label = QLabel("---")
-        
-        form_3d.addRow("Z (min/max/mean):", self.rect_z_stats_label)
-        form_3d.addRow("3D Surface Area:", self.rect_area_3d_label)
-        form_3d.addRow("Volume:", self.rect_volume_label)
-        form_3d.addRow("Rugosity:", self.rect_rugosity_label)
-        
-        self.rect_3d_group.setLayout(form_3d)
-        layout.addWidget(self.rect_3d_group)
+        # Clear button
+        self.clear_button = QPushButton("Clear All Measurements")
+        self.clear_button.clicked.connect(self.tool.clear_all_measurements)
+        layout.addWidget(self.clear_button)
         
         layout.addStretch()
 
-    def on_tab_changed(self, index):
-        """Handle tab change"""
-        self.tool.on_tab_changed(index)
+
 
     def closeEvent(self, event):
         """Handle dialog close"""
@@ -362,24 +279,17 @@ class SpatialTool(Tool):
         self.cursor = Qt.CrossCursor  # Show crosshair cursor like scale tool
         
         # Drawing state
-        self.current_mode = None  # 'line' or 'rect'
         self.is_drawing = False
         self.start_point = None
         self.end_point = None
         
         # Graphics items
         self.line_graphic = None
-        self.rect_graphic = None
         self.wireframe_graphic = None  # For 3D visualization
         self.endpoint_dots = []  # Store endpoint circles (white and black dots)
         
-        # Recorded measurements (persistent across tab switches) with color info
+        # Recorded measurements with color info
         self.recorded_line_measurements = []  # List of dicts with line data and color
-        self.recorded_rect_measurements = []  # List of dicts with rect data and color
-        
-        # Measurement accumulators
-        self.line_total_distance = 0.0
-        self.rect_total_area = 0.0
         
         # Profile data for plotting
         self.current_profiles = []
@@ -520,10 +430,6 @@ class SpatialTool(Tool):
         
         # Update UI based on available data
         self.update_z_controls()
-        
-        # Set initial mode based on current tab
-        current_tab = self.dialog.tab_widget.currentIndex()
-        self.on_tab_changed(current_tab)
 
     def deactivate(self):
         """Deactivate the spatial measurement tool"""
@@ -536,24 +442,7 @@ class SpatialTool(Tool):
         self.is_drawing = False
         self.main_window.untoggle_all_tools()
 
-    def on_tab_changed(self, index):
-        """Handle tab changes - save current measurements and restore previous ones"""
-        # Save current mode's measurements before switching
-        if self.current_mode == 'line':
-            self._save_line_measurements()
-        elif self.current_mode == 'rect':
-            self._save_rect_measurements()
-        
-        # Stop current drawing
-        self.stop_current_drawing()
-        
-        # Set new mode
-        if index == 0:  # Measure Line
-            self.current_mode = 'line'
-            self._restore_line_measurements()
-        elif index == 1:  # Measure Rectangle
-            self.current_mode = 'rect'
-            self._restore_rect_measurements()
+
 
     def stop_current_drawing(self):
         """Stop any active drawing and clear graphics"""
@@ -566,9 +455,6 @@ class SpatialTool(Tool):
         if self.line_graphic and self.line_graphic.scene():
             scene.removeItem(self.line_graphic)
             self.line_graphic = None
-        if self.rect_graphic and self.rect_graphic.scene():
-            scene.removeItem(self.rect_graphic)
-            self.rect_graphic = None
         if self.wireframe_graphic and self.wireframe_graphic.scene():
             scene.removeItem(self.wireframe_graphic)
             self.wireframe_graphic = None
@@ -588,14 +474,6 @@ class SpatialTool(Tool):
                         scene.removeItem(measurement[key])
         self.recorded_line_measurements.clear()
         
-        # Clear all recorded rect measurements
-        for measurement in self.recorded_rect_measurements:
-            for key in ['rect', 'tl_dot', 'br_dot']:
-                if key in measurement and measurement[key]:
-                    if measurement[key].scene() == scene:
-                        scene.removeItem(measurement[key])
-        self.recorded_rect_measurements.clear()
-        
         # Close profile dialog if open
         if self.profile_dialog:
             self.profile_dialog.close()
@@ -603,10 +481,14 @@ class SpatialTool(Tool):
         
         # Clear profile data
         self.current_profiles.clear()
-        
-        # Reset totals
-        self.line_total_distance = 0.0
-        self.rect_total_area = 0.0
+
+    def clear_all_measurements(self):
+        """Clear all measurements and reset UI"""
+        self.clear_all_graphics()
+        if self.dialog:
+            self.dialog.line_length_2d_label.setText("---")
+            self._reset_line_3d_labels()
+            self.dialog.line_profile_button.setEnabled(False)
 
     def update_z_controls(self):
         """Enable/disable Z-controls based on data availability"""
@@ -615,7 +497,6 @@ class SpatialTool(Tool):
         
         if self.dialog:
             self.dialog.line_3d_group.setEnabled(has_z)
-            self.dialog.rect_3d_group.setEnabled(has_z)
             self.dialog.line_profile_button.setEnabled(False)  # Enable after line drawn
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -641,35 +522,23 @@ class SpatialTool(Tool):
                 color = self._generate_random_color()
                 
                 # Record the measurement with color
-                if self.current_mode == 'line':
-                    measurement = self._create_colored_line(self.start_point, self.end_point, color)
-                    self.recorded_line_measurements.append(measurement)
-                    
-                    # Final calculation
-                    self.calculate_line_measurement(final_calc=True, color=color)
-                    self._update_wireframe_graphic()  # Add 3D wireframe if available
-                    self.update_profile_button_state()
-                elif self.current_mode == 'rect':
-                    rect = QRectF(self.start_point, self.end_point)
-                    measurement = self._create_colored_rect(rect, color)
-                    self.recorded_rect_measurements.append(measurement)
-                    
-                    # Final calculation
-                    self.calculate_rect_measurement(final_calc=True)
+                measurement = self._create_colored_line(self.start_point, self.end_point, color)
+                self.recorded_line_measurements.append(measurement)
+                
+                # Final calculation
+                self.calculate_line_measurement(final_calc=True, color=color)
+                self._update_wireframe_graphic()  # Add 3D wireframe if available
+                self.update_profile_button_state()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move for drawing measurements"""
-        if self.is_drawing and self.start_point and self.current_mode:
+        if self.is_drawing and self.start_point:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             self.end_point = scene_pos
             
-            # Update graphics and measurements based on mode
-            if self.current_mode == 'line':
-                self._update_line_graphic()
-                self.calculate_line_measurement(final_calc=False)
-            elif self.current_mode == 'rect':
-                self._update_rect_graphic()
-                self.calculate_rect_measurement(final_calc=False)
+            # Update graphics and measurements
+            self._update_line_graphic()
+            self.calculate_line_measurement(final_calc=False)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release - measurement is finalized on second click"""
@@ -690,20 +559,7 @@ class SpatialTool(Tool):
                     if measurement[key].scene() != scene:
                         scene.addItem(measurement[key])
     
-    def _save_rect_measurements(self):
-        """Save current rect graphics to recorded list - already done in mousePressEvent"""
-        # Measurements are now recorded immediately when finalized
-        pass
-    
-    def _restore_rect_measurements(self):
-        """Restore previously recorded rect graphics"""
-        scene = self.annotation_window.scene
-        for measurement in self.recorded_rect_measurements:
-            # Re-add all graphics if they're not in the scene
-            for key in ['rect', 'tl_dot', 'br_dot']:
-                if key in measurement and measurement[key]:
-                    if measurement[key].scene() != scene:
-                        scene.addItem(measurement[key])
+
 
     def _update_line_graphic(self):
         """Update or create line graphic with cosmetic pen (visible at all zoom levels)"""
@@ -723,24 +579,7 @@ class SpatialTool(Tool):
         self.line_graphic = scene.addLine(line, pen)
         self.line_graphic.setZValue(1000)  # Draw on top
 
-    def _update_rect_graphic(self):
-        """Update or create rectangle graphic with cosmetic pen (visible at all zoom levels)"""
-        if not self.start_point or not self.end_point:
-            return
-            
-        scene = self.annotation_window.scene
-        
-        # Remove old graphic
-        if self.rect_graphic and self.rect_graphic.scene():
-            scene.removeItem(self.rect_graphic)
-        
-        # Create rectangle with cosmetic pen (doesn't scale with zoom)
-        rect = QRectF(self.start_point, self.end_point).normalized()
-        pen = QPen(QColor(255, 0, 0), 2, Qt.SolidLine)
-        pen.setCosmetic(True)  # Make pen width independent of zoom level
-        brush = QBrush(QColor(255, 0, 0, 30))  # Semi-transparent fill
-        self.rect_graphic = scene.addRect(rect, pen, brush)
-        self.rect_graphic.setZValue(1000)
+
 
     def _update_wireframe_graphic(self):
         """Create 3D wireframe visualization for line measurement"""
@@ -949,150 +788,6 @@ class SpatialTool(Tool):
             if self.dialog:
                 self._reset_line_3d_labels()
 
-    def calculate_rect_measurement(self, final_calc=False):
-        """Calculate rectangle measurements (2D and 3D) using transform pipeline"""
-        if not self.start_point or not self.end_point:
-            return
-            
-        # --- 1. Get Data ---
-        scale_x, scale_y, scale_units = self.get_current_scale()
-
-        # Check for invalid scale
-        if scale_x is None or scale_y is None:
-            if self.dialog:
-                self.dialog.rect_perimeter_label.setText("Scale Not Set")
-                self.dialog.rect_area_2d_label.setText("Scale Not Set")
-                self._reset_rect_3d_labels()
-            return
-            
-        display_units = self.dialog.rect_units_combo.currentText() if self.dialog else 'm'
-        area_units = f"{display_units}²" if display_units != "px" else "px²"
-
-        rect = QRectF(self.start_point, self.end_point).normalized()
-        pixel_width = rect.width()
-        pixel_height = rect.height()
-        
-        # Only reject tiny rectangles on final calculation
-        if final_calc and (pixel_width < 1 or pixel_height < 1):
-            if self.dialog:
-                self.dialog.rect_perimeter_label.setText("Too Small")
-                self.dialog.rect_area_2d_label.setText("Too Small")
-                self._reset_rect_3d_labels()
-            return
-        elif not final_calc and (pixel_width < 1 or pixel_height < 1):
-            return
-
-        # --- 2. 2D Calculations ---
-        real_width_m = pixel_width * scale_x
-        real_height_m = pixel_height * scale_y
-        area_2d_meters = real_width_m * real_height_m
-        
-        # Convert to display units
-        if display_units != "m":
-            real_width_display = convert_scale_units(real_width_m, 'metre', display_units)
-            real_height_display = convert_scale_units(real_height_m, 'metre', display_units)
-        else:
-            real_width_display = real_width_m
-            real_height_display = real_height_m
-        
-        perimeter_display = 2 * (real_width_display + real_height_display)
-        area_2d_display = real_width_display * real_height_display
-        
-        if self.dialog:
-            self.dialog.rect_perimeter_label.setText(f"{perimeter_display:.3f} {display_units}")
-            self.dialog.rect_area_2d_label.setText(f"{area_2d_display:.3f} {area_units}")
-
-        # --- 3. 3D Calculations (if Z-data available) ---
-        z_data, z_unit, scalar, offset, direction = self.get_current_z_data()
-        
-        if z_data is None:
-            if self.dialog:
-                self._reset_rect_3d_labels()
-            return
-
-        try:
-            h, w = z_data.shape
-            z_unit_str = z_unit if z_unit else 'px'
-            
-            # Convert z_unit to meters for 3D calculations
-            z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
-            
-            # Get integer bounds for slicing, clamped to raster dims
-            x1 = max(0, int(math.floor(rect.left())))
-            y1 = max(0, int(math.floor(rect.top())))
-            x2 = min(w, int(math.ceil(rect.right())))
-            y2 = min(h, int(math.ceil(rect.bottom())))
-            
-            if x1 >= x2 or y1 >= y2:
-                if self.dialog:
-                    self._reset_rect_3d_labels()
-                return
-
-            # Get RAW Z-Slice
-            raw_z_slice = z_data[y1:y2, x1:x2]
-            if raw_z_slice.size == 0:
-                if self.dialog:
-                    self._reset_rect_3d_labels()
-                return
-
-            # Apply transform vectorially: Z_transformed = direction * (Raw * scalar) + offset
-            z_slice_transformed = (raw_z_slice * scalar * direction) + offset
-
-            # Calculate Z-Stats (using transformed values)
-            z_min = np.min(z_slice_transformed)
-            z_max = np.max(z_slice_transformed)
-            z_mean = np.mean(z_slice_transformed)
-            
-            if self.dialog:
-                self.dialog.rect_z_stats_label.setText(
-                    f"Min: {z_min:.2f} | Max: {z_max:.2f} | Mean: {z_mean:.2f} ({z_unit_str})"
-                )
-
-            # Calculate Prismatic Volume (using transformed Z-values)
-            pixel_area_2d = scale_x * scale_y
-            volume = np.sum(z_slice_transformed) * pixel_area_2d
-            vol_units = f"{display_units}² · {z_unit_str}"
-            
-            if self.dialog:
-                self.dialog.rect_volume_label.setText(f"{volume:.3f} {vol_units}")
-
-            # Calculate 3D Surface Area
-            # Convert transformed z_slice to meters
-            z_slice_meters = z_slice_transformed * z_to_meters_factor
-            
-            # Calculate gradients with proper spacing (all in meters)
-            dz_dy, dz_dx = np.gradient(z_slice_meters, scale_y, scale_x)
-            multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
-            pixel_areas_3d = pixel_area_2d * multiplier
-            surface_area_3d_meters = np.sum(pixel_areas_3d)
-
-            # Convert to display units
-            if display_units != "m":
-                conv_factor = convert_scale_units(1.0, 'metre', display_units)
-                area_conv_factor = conv_factor * conv_factor
-                surface_area_3d_display = surface_area_3d_meters * area_conv_factor
-            else:
-                surface_area_3d_display = surface_area_3d_meters
-            
-            if self.dialog:
-                self.dialog.rect_area_3d_label.setText(f"{surface_area_3d_display:.3f} {area_units}")
-
-            # Calculate Areal Rugosity
-            if area_2d_meters > 0:
-                areal_rugosity = surface_area_3d_meters / area_2d_meters
-                if self.dialog:
-                    self.dialog.rect_rugosity_label.setText(f"{areal_rugosity:.3f}")
-            else:
-                if self.dialog:
-                    self.dialog.rect_rugosity_label.setText("N/A")
-                
-        except Exception as e:
-            print(f"Error in 3D rect calculation: {e}")
-            import traceback
-            traceback.print_exc()
-            if self.dialog:
-                self._reset_rect_3d_labels()
-
     def _reset_line_3d_labels(self):
         """Reset all 3D line labels"""
         if self.dialog:
@@ -1100,106 +795,3 @@ class SpatialTool(Tool):
             self.dialog.line_delta_z_label.setText("---")
             self.dialog.line_slope_label.setText("---")
             self.dialog.line_rugosity_label.setText("---")
-
-    def _reset_rect_3d_labels(self):
-        """Reset all 3D rectangle labels"""
-        if self.dialog:
-            self.dialog.rect_z_stats_label.setText("---")
-            self.dialog.rect_area_3d_label.setText("---")
-            self.dialog.rect_volume_label.setText("---")
-            self.dialog.rect_rugosity_label.setText("---")
-
-    def add_line_to_total(self):
-        """Add current line measurement to total"""
-        if not self.start_point or not self.end_point:
-            QMessageBox.warning(self.dialog, "Warning", "No line measurement to add")
-            return
-            
-        # Recalculate current measurement in meters
-        scale_x, scale_y, scale_units = self.get_current_scale()
-        if scale_x is None or scale_y is None:
-            QMessageBox.warning(self.dialog, "Warning", "Scale not set - cannot add to total")
-            return
-            
-        line = QLineF(self.start_point, self.end_point)
-        pixel_length = line.length()
-        length_meters = pixel_length * scale_x  # Assume square pixels
-        
-        # Add to total
-        self.line_total_distance += length_meters
-        
-        # Update display
-        self._update_line_total_display()
-        
-    def clear_line_total(self):
-        """Clear line total"""
-        self.line_total_distance = 0.0
-        self._update_line_total_display()
-        
-    def add_rect_to_total(self):
-        """Add current rect measurement to total"""
-        if not self.start_point or not self.end_point:
-            QMessageBox.warning(self.dialog, "Warning", "No rectangle measurement to add")
-            return
-            
-        # Recalculate current measurement in meters
-        scale_x, scale_y, scale_units = self.get_current_scale()
-        if scale_x is None or scale_y is None:
-            QMessageBox.warning(self.dialog, "Warning", "Scale not set - cannot add to total")
-            return
-            
-        rect = QRectF(self.start_point, self.end_point).normalized()
-        pixel_width = rect.width()
-        pixel_height = rect.height()
-        
-        if pixel_width < 1 or pixel_height < 1:
-            QMessageBox.warning(self.dialog, "Warning", "Rectangle too small to add to total")
-            return
-            
-        real_width_m = pixel_width * scale_x
-        real_height_m = pixel_height * scale_y
-        area_meters = real_width_m * real_height_m
-        
-        # Add to total
-        self.rect_total_area += area_meters
-        
-        # Update display
-        self._update_rect_total_display()
-        
-    def clear_rect_total(self):
-        """Clear rect total"""
-        self.rect_total_area = 0.0
-        self._update_rect_total_display()
-        
-    def _update_line_total_display(self):
-        """Update the line total display label"""
-        if not self.dialog:
-            return
-            
-        display_units = self.dialog.line_units_combo.currentText()
-        
-        # Convert total from meters to display units
-        if display_units != "m":
-            total_display = convert_scale_units(self.line_total_distance, 'metre', display_units)
-        else:
-            total_display = self.line_total_distance
-            
-        self.dialog.line_total_2d_label.setText(f"{total_display:.3f} {display_units}")
-        
-    def _update_rect_total_display(self):
-        """Update the rect total display label"""
-        if not self.dialog:
-            return
-            
-        display_units = self.dialog.rect_units_combo.currentText()
-        area_units = f"{display_units}²" if display_units != "px" else "px²"
-        
-        # Convert total area from square meters to display units
-        if display_units != "m":
-            # Convert linear dimension first, then square
-            linear_total = convert_scale_units(self.rect_total_area ** 0.5, 'metre', display_units)
-            total_display = linear_total ** 2
-        else:
-            total_display = self.rect_total_area
-            
-        self.dialog.rect_total_area_label.setText(f"{total_display:.3f} {area_units}")
