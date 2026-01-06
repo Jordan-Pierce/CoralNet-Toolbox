@@ -603,13 +603,11 @@ class SpatialTool(Tool):
             scene.removeItem(self.line_graphic)
         
         # Create new line with cosmetic pen (doesn't scale with zoom)
-        pen = QPen(QColor(255, 0, 0), 2, Qt.SolidLine)
+        pen = QPen(QColor(230, 62, 0), 3, Qt.SolidLine)
         pen.setCosmetic(True)  # Make pen width independent of zoom level
         line = QLineF(self.start_point, self.end_point)
         self.line_graphic = scene.addLine(line, pen)
         self.line_graphic.setZValue(1000)  # Draw on top
-
-
 
     def _update_wireframe_graphic(self):
         """Create 3D wireframe visualization for line measurement"""
@@ -772,11 +770,9 @@ class SpatialTool(Tool):
                 # Also convert plot x-axis
                 conv_factor = convert_scale_units(1.0, 'metre', display_units)
                 plot_x_data = [x * conv_factor for x in profile_data_x]
-                plot_x_label = f"Distance ({display_units})"
             else:
                 length_3d_display = total_3d_length
                 plot_x_data = profile_data_x
-                plot_x_label = "Distance (m)"
             
             if self.dialog:
                 self.dialog.line_length_3d_label.setText(f"{length_3d_display:.3f} {display_units}")
