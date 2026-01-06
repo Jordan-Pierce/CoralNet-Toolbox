@@ -86,9 +86,9 @@ class ProfilePlotDialog(QDialog):
         # 2. --- Plot 1: Combined (Non-Normalized) ---
         if len(profiles_list) > 0:
             combined_plot_widget = pg.PlotWidget(title="All Profiles (Combined)")
+            combined_plot_widget.setMinimumHeight(300)
             combined_plot = combined_plot_widget.getPlotItem()
             combined_plot.setLabel('left', 'Z')
-            combined_plot.setLabel('bottom', 'Distance')
             combined_plot.addLegend()
             combined_plot.showGrid(x=True, y=True, alpha=0.3)
 
@@ -102,6 +102,21 @@ class ProfilePlotDialog(QDialog):
                 combined_plot.plot(
                     x_data, y_data, pen=pen, name=name
                 )
+                
+                # Add start point marker (white dot)
+                if x_data and y_data:
+                    start_scatter = pg.ScatterPlotItem(
+                        [x_data[0]], [y_data[0]],
+                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
+                    )
+                    combined_plot.addItem(start_scatter)
+                    
+                    # Add end point marker (black dot)
+                    end_scatter = pg.ScatterPlotItem(
+                        [x_data[-1]], [y_data[-1]],
+                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
+                    )
+                    combined_plot.addItem(end_scatter)
             
             self.plot_layout.addWidget(combined_plot_widget)
             self.plot_widgets.append(combined_plot_widget)
@@ -129,14 +144,29 @@ class ProfilePlotDialog(QDialog):
 
             # Create a plot widget for this profile
             plot_widget = pg.PlotWidget(title=name)
+            plot_widget.setMinimumHeight(250)
             plot = plot_widget.getPlotItem()
             plot.setLabel('left', 'Z')
-            plot.setLabel('bottom', 'Distance')
             plot.showGrid(x=True, y=True, alpha=0.3)
 
             # Plot the data
             pen = pg.mkPen(color=color, width=2)
             plot.plot(x_data, y_data, pen=pen)
+            
+            # Add start point marker (white dot)
+            if x_data and y_data:
+                start_scatter = pg.ScatterPlotItem(
+                    [x_data[0]], [y_data[0]],
+                    size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
+                )
+                plot.addItem(start_scatter)
+                
+                # Add end point marker (black dot)
+                end_scatter = pg.ScatterPlotItem(
+                    [x_data[-1]], [y_data[-1]],
+                    size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
+                )
+                plot.addItem(end_scatter)
 
             # Add statistics as text if available
             if stats:
@@ -762,10 +792,9 @@ class SpatialTool(Tool):
                     
             # Store profile data
             if final_calc:
-                plot_y_label = f"Z ({z_unit_str})" if direction == 1 else f"Elevation ({z_unit_str})"
                 
                 profile_data = {
-                    'name': 'Current Line',
+                    'name': f'Line {len(self.current_profiles) + 1}',
                     'color': color if color else (255, 128, 0),  # Use measurement color or default orange
                     'x_data': plot_x_data,
                     'y_data': profile_data_y,
@@ -778,8 +807,13 @@ class SpatialTool(Tool):
                     }
                 }
                 
-                self.current_profiles = [profile_data]
+                # Append to list of all profiles
+                self.current_profiles.append(profile_data)
                 self.update_profile_button_state()
+                
+                # Update profile dialog if it's already open
+                if self.profile_dialog and self.profile_dialog.isVisible():
+                    self.profile_dialog.update_plot(self.current_profiles)
                 
         except Exception as e:
             print(f"Error in 3D line calculation: {e}")
