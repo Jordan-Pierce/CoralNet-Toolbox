@@ -662,6 +662,12 @@ class ImageWindow(QWidget):
         # (this handles the case where a z-channel is newly imported for the current image)
         if path == self.annotation_window.current_image_path:
             self.annotation_window.refresh_z_channel_visualization()
+            
+            # Force status bar Z-value refresh at current mouse position
+            # This ensures changes to z_nodata, z_settings, etc. are immediately reflected
+            if hasattr(self.main_window, 'update_z_value_at_mouse_position'):
+                raster = self.raster_manager.get_raster(path)
+                self.main_window.update_z_value_at_mouse_position(raster)
         
     def on_filtering_started(self):
         """Handler for when filtering starts."""
@@ -961,6 +967,10 @@ class ImageWindow(QWidget):
         count = len(highlighted_paths)
         self.highlighted_count_label.setText(f"Highlighted: {count}")
         
+        # Update Z-Deploy dialog with current highlighted images
+        if hasattr(self.main_window, 'z_deploy_model_dialog') and self.main_window.z_deploy_model_dialog:
+            self.main_window.z_deploy_model_dialog.update_highlighted_images(highlighted_paths)
+        
     def show_image_preview(self):
         """Show image preview tooltip for the current hover row."""
         if self.hover_row < 0 or self.hover_row >= len(self.table_model.filtered_paths):
@@ -1152,6 +1162,14 @@ class ImageWindow(QWidget):
             lambda: self.open_batch_inference_dialog(highlighted_paths)
         )
         
+        # Add deploy z-model action
+        deploy_z_model_action = context_menu.addAction(
+            f"Deploy Z-Model on {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        deploy_z_model_action.triggered.connect(
+            lambda: self.deploy_z_model_on_highlighted_images(highlighted_paths)
+        )
+        
         context_menu.addSeparator()
 
         # Add import z-channel action
@@ -1169,8 +1187,6 @@ class ImageWindow(QWidget):
         export_z_channel_action.triggered.connect(
             lambda: self.export_z_channel_highlighted_images()
         )
-
-        context_menu.addSeparator()
 
         # Add remove z-channel action
         remove_z_channel_action = context_menu.addAction(
@@ -1226,6 +1242,40 @@ class ImageWindow(QWidget):
         # Show the dialog
         batch_dialog.exec_()
         
+    def deploy_z_model_on_highlighted_images(self, highlighted_image_paths):
+        """
+        Deploy the Z-model on all highlighted images.
+        
+        Args:
+            highlighted_image_paths (list): List of image paths to process
+        """
+        # Ensure images are highlighted
+        if not highlighted_image_paths:
+            QMessageBox.warning(
+                self,
+                "No Images Selected",
+                "Please highlight one or more images before deploying Z-model."
+            )
+            return
+        
+        # Get the Z-deploy dialog
+        z_dialog = self.main_window.z_deploy_model_dialog
+        
+        # Check if model is loaded
+        if z_dialog.loaded_model is None:
+            QMessageBox.warning(
+                self,
+                "No Model Loaded",
+                "Please load a Z-model first using the Z-Inference dialog."
+            )
+            return
+        
+        # Update highlighted images and button state
+        z_dialog.update_highlighted_images(highlighted_image_paths)
+        
+        # Deploy on the highlighted images
+        z_dialog.deploy_on_highlighted_images()
+        
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
         # Get all highlighted paths
@@ -1274,7 +1324,7 @@ class ImageWindow(QWidget):
         self.pairing_widget.mapping_confirmed.connect(self.on_z_channel_mapping_confirmed)
         
         # Show the widget
-        self.pairing_widget.show()
+        self.pairing_widget.exec_()
     
     def on_z_channel_mapping_confirmed(self, mapping):
         """Handle confirmed z-channel mapping from ZImportDialog.
@@ -1303,6 +1353,7 @@ class ImageWindow(QWidget):
                     z_channel_path = z_info.get("z_path")
                     z_unit = z_info.get("units")
                     z_data_type = z_info.get("z_data_type")
+                    z_inversion_reference = z_info.get("z_inversion_reference")
                 else:
                     # Fallback for old-style mappings (just paths)
                     z_channel_path = z_info
@@ -1325,6 +1376,9 @@ class ImageWindow(QWidget):
                                     raster.z_settings['direction'] = 1
                                 else:
                                     raster.z_settings['direction'] = 1
+                            # Set z_inversion_reference if provided
+                            if z_inversion_reference is not None:
+                                raster.z_inversion_reference = z_inversion_reference
                             successful_count += 1
                             # Emit signal to update UI
                             self.raster_manager.rasterUpdated.emit(image_path)
@@ -1445,7 +1499,7 @@ class ImageWindow(QWidget):
         
         # Create and show ZExportDialog
         self.export_dialog = ZExportDialog(highlighted_rasters, parent=self)
-        self.export_dialog.show()
+        self.export_dialog.exec_()
         
     def delete_highlighted_images(self):
         """Delete the highlighted images."""

@@ -288,7 +288,7 @@ class ScaleToolDialog(QDialog):
     def create_z_calibration_tab(self):
         """
         Create the unified 'Z-Calibration' tab.
-        Handles Vertical Scaling, View Mode (Depth/Elevation), and Anchoring.
+        Handles NaN Setting, Vertical Scaling, View Mode (Depth/Elevation), and Anchoring.
         """
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -311,36 +311,75 @@ class ScaleToolDialog(QDialog):
         view_group.setLayout(view_layout)
         layout.addWidget(view_group)
         
+        # --- Elevation Reference (only shown when elevation is selected) ---
+        self.elevation_ref_group = QGroupBox("Elevation Reference")
+        ref_layout = QFormLayout()
+        
+        self.z_inversion_ref_input = QDoubleSpinBox()
+        self.z_inversion_ref_input.setRange(-10000.0, 10000.0)
+        self.z_inversion_ref_input.setValue(0.0)
+        self.z_inversion_ref_input.setDecimals(2)
+        self.z_inversion_ref_input.setSuffix(" m")
+        self.z_inversion_ref_input.setToolTip(
+            "Reference elevation for converting depth to elevation (e.g., 0 for sea level)"
+        )
+        ref_layout.addRow("Reference Value:", self.z_inversion_ref_input)
+        
+        self.elevation_ref_group.setLayout(ref_layout)
+        layout.addWidget(self.elevation_ref_group)
+        self.elevation_ref_group.setVisible(False)  # Hidden by default
+        
         # --- 2. Interaction Mode Selector ---
         interaction_group = QGroupBox("2. Calibration Tool")
         interaction_layout = QVBoxLayout()
         
-        # Radio buttons to switch between Scaling (Line) and Anchoring (Point)
+        # Radio buttons to switch between NaN, Scaling (Line) and Anchoring (Point)
         from PyQt5.QtWidgets import QRadioButton, QButtonGroup
         self.interaction_bg = QButtonGroup(self)
         
-        self.radio_scale = QRadioButton("Step A: Vertical Scale (Draw Line)")
-        self.radio_scale.setChecked(True) # Default
+        self.radio_nan = QRadioButton("Step A: Set NaN Value (Click Point)")
+        self.radio_nan.setChecked(True)  # Default
+        self.radio_nan.setToolTip("Click a pixel to set the NaN/NoData value for the Z-channel.")
+        self.interaction_bg.addButton(self.radio_nan)
+        
+        self.radio_scale = QRadioButton("Step B: Vertical Scale (Draw Line)")
         self.radio_scale.setToolTip("Draw a line to define the vertical scale (magnitude).")
         self.interaction_bg.addButton(self.radio_scale)
         
-        self.radio_anchor = QRadioButton("Step B: Reference Anchor (Click Point)")
+        self.radio_anchor = QRadioButton("Step C: Reference Anchor (Click Point)")
         self.radio_anchor.setToolTip("Click a point to set the absolute reference value (offset).")
         self.interaction_bg.addButton(self.radio_anchor)
         
         self.interaction_bg.buttonClicked.connect(self.on_interaction_mode_changed)
         
+        interaction_layout.addWidget(self.radio_nan)
         interaction_layout.addWidget(self.radio_scale)
         interaction_layout.addWidget(self.radio_anchor)
         interaction_group.setLayout(interaction_layout)
         layout.addWidget(interaction_group)
 
         # --- 3. Dynamic Controls (Stack) ---
-        # We stack the Scale controls and Anchor controls and show only one set
+        # We stack the NaN, Scale, and Anchor controls and show only one set
         from PyQt5.QtWidgets import QStackedWidget
         self.controls_stack = QStackedWidget()
         
-        # [Page 0] Vertical Scaling Controls
+        # [Page 0] NaN Setting Controls
+        nan_widget = QWidget()
+        nan_form = QFormLayout(nan_widget)
+        nan_form.setContentsMargins(0, 5, 0, 5)
+        
+        self.z_nan_current_label = QLabel("Not Set")
+        nan_form.addRow("Current NaN Value:", self.z_nan_current_label)
+        
+        self.z_nan_hover_label = QLabel("Hover over image...")
+        nan_form.addRow("Hover Value:", self.z_nan_hover_label)
+        
+        self.z_nan_clicked_label = QLabel("Click to select...")
+        nan_form.addRow("Clicked Value:", self.z_nan_clicked_label)
+        
+        self.controls_stack.addWidget(nan_widget)
+        
+        # [Page 1] Vertical Scaling Controls
         scale_widget = QWidget()
         scale_form = QFormLayout(scale_widget)
         scale_form.setContentsMargins(0, 5, 0, 5)
@@ -364,7 +403,7 @@ class ScaleToolDialog(QDialog):
         
         self.controls_stack.addWidget(scale_widget)
         
-        # [Page 1] Anchor Controls
+        # [Page 2] Anchor Controls
         anchor_widget = QWidget()
         anchor_form = QFormLayout(anchor_widget)
         anchor_form.setContentsMargins(0, 5, 0, 5)
@@ -456,7 +495,7 @@ class ScaleToolDialog(QDialog):
         if index == 0:
             # XY Scale Tab
             self.current_mode = 'xy_scale'
-            self.apply_button.setText("Apply Scale")
+            self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Apply pixel calibration to highlighted images")
         else:
             # Z-Calibration Tab
@@ -466,21 +505,28 @@ class ScaleToolDialog(QDialog):
         self.update_z_tab_states()
 
     def on_interaction_mode_changed(self):
-        """Switch between Z-Scaling and Z-Anchoring modes."""
+        """Switch between NaN, Z-Scaling and Z-Anchoring modes."""
         if self.tab_widget.currentIndex() != 1:
             return
 
         self.tool.stop_current_drawing()
         
-        if self.radio_scale.isChecked():
-            self.current_mode = 'z_scale'
+        if self.radio_nan.isChecked():
+            self.current_mode = 'z_nan'
             self.controls_stack.setCurrentIndex(0)
-            self.apply_button.setText("Apply Z-Scale")
+            self.apply_button.setText("Apply")
+            self.apply_button.setToolTip("Set NaN/NoData value for highlighted images")
+            # Load and display current NaN value
+            self.tool.load_current_nan_value()
+        elif self.radio_scale.isChecked():
+            self.current_mode = 'z_scale'
+            self.controls_stack.setCurrentIndex(1)
+            self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the vertical multiplier (scalar) for highlighted images")
         else:
             self.current_mode = 'z_anchor'
-            self.controls_stack.setCurrentIndex(1)
-            self.apply_button.setText("Apply Anchor")
+            self.controls_stack.setCurrentIndex(2)
+            self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the reference zero-point (offset) for highlighted images")
 
     def on_view_mode_changed(self, index):
@@ -490,6 +536,15 @@ class ScaleToolDialog(QDialog):
         """
         mode = self.view_mode_combo.currentData() # 'depth' or 'elevation'
         self.tool.set_z_view_mode(mode)
+        
+        # Show/hide elevation reference input
+        self.elevation_ref_group.setVisible(mode == 'elevation')
+        
+        # Load current inversion reference if available
+        if mode == 'elevation':
+            current_raster = self.main_window.image_window.current_raster
+            if current_raster and current_raster.z_inversion_reference is not None:
+                self.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)
 
     def update_z_tab_states(self):
         """Enable/disable Z tab based on whether current image has Z-channel."""
@@ -518,6 +573,9 @@ class ScaleToolDialog(QDialog):
         # XY Scale
         self.pixel_length_label.setText("Draw a line on the image")
         # Don't reset scale label - keep showing current scale
+        # Z NaN
+        self.z_nan_hover_label.setText("Hover over image...")
+        self.z_nan_clicked_label.setText("Click to select...")
         # Z Scale
         self.z_raw_diff_label.setText("Draw a line...")
         self.z_scalar_label.setText("N/A")
@@ -658,14 +716,24 @@ class ScaleTool(Tool):
                     else:
                         self.calculate_z_scale()
                         
-            # Point Click Mode (Z-Anchor)
+            # Point Click Mode (Z-NaN or Z-Anchor)
+            elif self.dialog.current_mode == 'z_nan':
+                self.set_z_nan_point(scene_pos)
             elif self.dialog.current_mode == 'z_anchor':
                 self.set_z_anchor_point(scene_pos)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move for drawing."""
+        # Call parent to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        
+        # Update current z-value display when in NaN mode
+        if self.dialog.current_mode == 'z_nan':
+            self.update_z_value_display(scene_pos)
+        
         if self.is_drawing and self.start_point:
-            scene_pos = self.annotation_window.mapToScene(event.pos())
             self.end_point = scene_pos
             
             # Update Line
@@ -782,6 +850,156 @@ class ScaleTool(Tool):
 
     # --- Z-Calibration Logic (New) ---
 
+    def load_current_nan_value(self):
+        """Load and display current NaN value from the current raster."""
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel is None:
+            self.dialog.z_nan_current_label.setText("Not Set")
+            return
+        
+        if hasattr(current_raster, 'z_nodata') and current_raster.z_nodata is not None:
+            self.dialog.z_nan_current_label.setText(f"{current_raster.z_nodata:.4f}")
+        else:
+            self.dialog.z_nan_current_label.setText("Not Set")
+
+    def update_z_value_display(self, scene_pos):
+        """Update the z-value display based on current mouse position."""
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel_lazy is None:
+            self.dialog.z_nan_hover_label.setText("No Z-channel")
+            return
+        
+        # Get pixel coordinates
+        x, y = int(scene_pos.x()), int(scene_pos.y())
+        
+        # Ensure coordinates are within bounds
+        if (x < 0 or y < 0 or 
+            y >= current_raster.z_channel_lazy.shape[0] or 
+            x >= current_raster.z_channel_lazy.shape[1]):
+            self.dialog.z_nan_hover_label.setText("Out of bounds")
+            return
+        
+        try:
+            # Sample raw z-channel value at current position
+            z_value = float(current_raster.z_channel_lazy[y, x])
+            self.dialog.z_nan_hover_label.setText(f"{z_value:.4f}")
+        except Exception:
+            self.dialog.z_nan_hover_label.setText("Invalid")
+
+    def set_z_nan_point(self, pos):
+        """Handle NaN point click to sample pixel value."""
+        current_raster = self.main_window.image_window.current_raster
+        if not current_raster or current_raster.z_channel_lazy is None:
+            return
+        
+        # Sample raw z-channel value at clicked position
+        x, y = int(pos.x()), int(pos.y())
+        
+        # Ensure coordinates are within bounds
+        if (x < 0 or y < 0 or 
+            y >= current_raster.z_channel_lazy.shape[0] or 
+            x >= current_raster.z_channel_lazy.shape[1]):
+            return
+        
+        try:
+            sampled_value = float(current_raster.z_channel_lazy[y, x])
+            self.dialog.z_nan_clicked_label.setText(f"{sampled_value:.4f}")
+            
+            # Store sampled value for apply operation
+            self.sampled_nan_value = sampled_value
+            
+        except Exception as e:
+            QMessageBox.warning(self.dialog, "Error", f"Could not sample pixel value: {str(e)}")
+
+    def apply_z_nan(self):
+        """Apply NaN value to highlighted images with confirmation dialog."""
+        highlighted = self.dialog.get_selected_image_paths()
+        if not highlighted:
+            return
+        
+        # Check if we have a sampled value
+        if not hasattr(self, 'sampled_nan_value'):
+            QMessageBox.warning(
+                self.dialog, 
+                "No Value Selected", 
+                "Please click on a pixel to sample a NaN value first."
+            )
+            return
+        
+        new_nan = self.sampled_nan_value
+        
+        # Collect existing NaN values from highlighted images
+        raster_manager = self.main_window.image_window.raster_manager
+        existing_nans = []
+        images_with_nan = 0
+        images_without_nan = 0
+        
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                if hasattr(raster, 'z_nodata') and raster.z_nodata is not None:
+                    existing_nans.append(raster.z_nodata)
+                    images_with_nan += 1
+                else:
+                    images_without_nan += 1
+        
+        # Build confirmation message
+        if existing_nans:
+            # Show unique existing values
+            unique_nans = set(existing_nans)
+            if len(unique_nans) == 1:
+                prev_text = f"{list(unique_nans)[0]:.4f}"
+            else:
+                prev_text = f"Multiple values ({len(unique_nans)} unique)"
+        else:
+            prev_text = "Not Set"
+        
+        confirm_msg = (
+            f"<b>Set NaN/NoData value for {len(highlighted)} image(s)?</b><br><br>"
+            f"<b>Previous NaN Value:</b> {prev_text}<br>"
+            f"<b>New NaN Value:</b> {new_nan:.4f}<br><br>"
+            f"Images with existing NaN: {images_with_nan}<br>"
+            f"Images without NaN: {images_without_nan}"
+        )
+        
+        reply = QMessageBox.question(
+            self.dialog,
+            "Confirm NaN Value",
+            confirm_msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        # Apply to all highlighted images
+        current_path = self.annotation_window.current_image_path
+        
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                raster.z_nodata = new_nan
+                raster_manager.rasterUpdated.emit(path)
+        
+        # Refresh visualization if current image was updated
+        if current_path in highlighted:
+            self.annotation_window.refresh_z_channel_visualization()
+            self.load_current_nan_value()
+        
+        # Success message
+        success_msg = (
+            f"<b>Successfully set NaN value for {len(highlighted)} image(s)</b><br><br>"
+            f"<b>NaN Value:</b> {new_nan:.4f}<br>"
+        )
+        QMessageBox.information(self.dialog, "Success", success_msg)
+        
+        # Reset hover and clicked value displays
+        self.dialog.z_nan_hover_label.setText("Hover over image...")
+        self.dialog.z_nan_clicked_label.setText("Click to select...")
+        if hasattr(self, 'sampled_nan_value'):
+            delattr(self, 'sampled_nan_value')
+
     def calculate_z_scale(self):
         """Calculate Z scalar from line."""
         from coralnet_toolbox.utilities import calculate_z_scalar, validate_line_angle
@@ -840,15 +1058,22 @@ class ScaleTool(Tool):
             if raster and raster.z_channel is not None:
                 # Update scalar, preserve offset/direction
                 raster.z_settings['scalar'] = scalar
-                # Recalculate auto-offset if in Elevation mode? 
-                # Ideally yes, but for now let's just update scalar. 
-                # User can re-toggle view mode to refresh auto-offset if needed.
+                # Save z_inversion_reference if in elevation mode
+                if self.dialog.view_mode_combo.currentData() == 'elevation':
+                    raster.z_inversion_reference = self.dialog.z_inversion_ref_input.value()
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted:
             self.annotation_window.refresh_z_channel_visualization()
-            
-        QMessageBox.information(self.dialog, "Applied", f"Z-Scale applied to {len(highlighted)} images.")
+        
+        # Success dialog with details
+        view_mode = self.dialog.view_mode_combo.currentText()
+        success_msg = (
+            f"<b>Successfully applied calibration to {len(highlighted)} image(s)</b><br><br>"
+            f"<b>Display Mode:</b> {view_mode}<br>"
+            f"<b>Vertical Scalar:</b> {scalar:.6f}<br>"
+        )
+        QMessageBox.information(self.dialog, "Success", success_msg)
         self.stop_current_drawing()
         self.dialog.reset_fields()
 
@@ -899,12 +1124,22 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_settings['offset'] = offset
+                # Save z_inversion_reference if in elevation mode
+                if self.dialog.view_mode_combo.currentData() == 'elevation':
+                    raster.z_inversion_reference = self.dialog.z_inversion_ref_input.value()
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted:
             self.annotation_window.refresh_z_channel_visualization()
-            
-        QMessageBox.information(self.dialog, "Applied", f"Z-Anchor applied to {len(highlighted)} images.")
+        
+        # Success dialog with details
+        view_mode = self.dialog.view_mode_combo.currentText()
+        success_msg = (
+            f"<b>Successfully applied calibration to {len(highlighted)} image(s)</b><br><br>"
+            f"<b>Display Mode:</b> {view_mode}<br>"
+            f"<b>Reference Offset:</b> {offset:.4f}<br>"
+        )
+        QMessageBox.information(self.dialog, "Success", success_msg)
         self.dialog.reset_fields()
 
     def set_z_view_mode(self, mode):
@@ -982,6 +1217,7 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_settings = {'scalar': 1.0, 'offset': 0.0, 'direction': 1}
+                raster.z_inversion_reference = None  # Reset inversion reference
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted:
@@ -994,6 +1230,8 @@ class ScaleTool(Tool):
         """Route 'Apply' button to correct function."""
         if self.dialog.current_mode == 'xy_scale':
             self.apply_scale()
+        elif self.dialog.current_mode == 'z_nan':
+            self.apply_z_nan()
         elif self.dialog.current_mode == 'z_scale':
             self.apply_z_scale()
         elif self.dialog.current_mode == 'z_anchor':
@@ -1004,3 +1242,7 @@ class ScaleTool(Tool):
         self.load_existing_scale()
         self.stop_current_drawing()
         self.sync_view_mode_ui()
+        # Load z_inversion_reference for current image
+        current_raster = self.main_window.image_window.current_raster
+        if current_raster and current_raster.z_inversion_reference is not None:
+            self.dialog.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)

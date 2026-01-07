@@ -748,8 +748,9 @@ class BatchInferenceDialog(QDialog):
                 model_dialog.predict(self.image_paths, progress_bar)
             
             # Z-Inference: predict on image paths with prompt mode for overwrite handling
+            # show_dialog=True ensures user gets the overwrite/smart_fill/cancel dialog for batch processing
             elif selected_model == "Z-Inference":
-                model_dialog.predict(self.image_paths, progress_bar, overwrite_mode="prompt")
+                model_dialog.predict(self.image_paths, progress_bar, overwrite_mode="prompt", show_dialog=True)
 
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")

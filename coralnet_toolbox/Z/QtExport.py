@@ -6,7 +6,7 @@ import rasterio
 from rasterio.transform import from_bounds
 
 from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QFileDialog, QMessageBox, QGroupBox, QFormLayout, 
                              QLineEdit)
 
@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ZExportDialog(QWidget):
+class ZExportDialog(QDialog):
     """
     Z-Channel Export Dialog.
     
@@ -42,6 +42,7 @@ class ZExportDialog(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
+        self.setModal(True)
         
         self.rasters = rasters
         
@@ -65,7 +66,7 @@ class ZExportDialog(QWidget):
         
         self.setWindowTitle("Export Z-Channels")
         self.setWindowIcon(get_icon("z.png"))
-        self.resize(600, 350)
+        self.resize(600, 300)
         
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -83,8 +84,8 @@ class ZExportDialog(QWidget):
         
         info_text = (
             f"<b>Ready to export {len(self.exportable_rasters)} z-channel file(s)</b><br><br>"
-            "Z-channels will be exported as compressed TIFF files (DEFLATE compression) "
-            "preserving float32 data type and all metadata including:<br>"
+            "Z-channels will be exported as compressed TIFF files "
+            "preserving float32 data type and metadata including:<br>"
             "• Z-channel data type (depth/elevation)<br>"
             "• Z-channel units (m, cm, ft, etc.)<br>"
             "• Nodata values<br>"

@@ -2109,6 +2109,10 @@ class MainWindow(QMainWindow):
                 self.z_dynamic_button.setEnabled(True)
             else:
                 self.z_dynamic_button.setEnabled(False)
+            
+            # Force status bar Z-value refresh at current mouse position
+            # This ensures z_nodata and z_settings are properly reflected when switching images
+            self.update_z_value_at_mouse_position(raster)
 
     def on_z_channel_removed(self, image_path):
         """

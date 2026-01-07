@@ -1,6 +1,7 @@
 import warnings
-import gc
+
 import os
+import gc
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QFormLayout, QHBoxLayout, 
@@ -8,6 +9,9 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QFormLayout, QHBoxLayout,
 
 from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import smart_fill_z_channel
+
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -25,13 +29,14 @@ class DeployModelDialog(CollapsibleSection):
     Inherits from CollapsibleSection to provide a collapsible UI in the status bar.
     """
     
-    def __init__(self, main_window, parent=None):
+    def __init__(self, main_window, parent=None, highlighted_images=None):
         """
         Initialize the Z-Inference deployment dialog.
         
         Args:
             main_window: Reference to the main window
             parent: Parent widget
+            highlighted_images: Optional list of image paths to process in batch
         """
         super().__init__("Z-Inference", "z.png", parent)
         
@@ -42,6 +47,9 @@ class DeployModelDialog(CollapsibleSection):
         self.loaded_model = None
         self.imgsz = 512
         self.model_path = None
+        
+        self.highlighted_images = highlighted_images if highlighted_images else []
+        self.last_overwrite_mode = None  # Cache the overwrite choice for batch processing
         
         # Setup UI components
         self.setup_model_layout()
@@ -118,10 +126,11 @@ class DeployModelDialog(CollapsibleSection):
         """Setup the Deploy Model button layout."""
         layout = QVBoxLayout()
         
-        # Deploy button
+        # Deploy button (works on current/highlighted images)
         self.deploy_button = QPushButton("Deploy Model")
         self.deploy_button.clicked.connect(self.deploy_model)
         self.deploy_button.setEnabled(False)
+        self.deploy_button.setToolTip("Deploy model on the current/highlighted images")
         layout.addWidget(self.deploy_button)
         
         # Create widget and add to popup
@@ -155,8 +164,8 @@ class DeployModelDialog(CollapsibleSection):
             self.status_label.setText(f"Model loaded: {model_name}")
             self.load_button.setEnabled(False)
             self.deactivate_button.setEnabled(True)
-            # Only enable deploy button if an image is currently loaded
-            self.deploy_button.setEnabled(self.main_window.image_window.current_raster is not None)
+            # Update button state and text
+            self.update_deploy_button_state()
             
             progress_bar.finish_progress()
             QMessageBox.information(self.annotation_window, 
@@ -188,7 +197,8 @@ class DeployModelDialog(CollapsibleSection):
                 self.status_label.setText("Model deactivated")
                 self.load_button.setEnabled(True)
                 self.deactivate_button.setEnabled(False)
-                self.deploy_button.setEnabled(False)
+                # Update button state and text
+                self.update_deploy_button_state()
                 
                 QMessageBox.information(self.annotation_window, 
                                         "Model Deactivated", 
@@ -199,47 +209,83 @@ class DeployModelDialog(CollapsibleSection):
                                      "Error", 
                                      f"Error deactivating model: {e}")
                 
+    def update_deploy_button_text(self):
+        """
+        Update deploy button text to show the count of images that will be processed.
+        Format: "Deploy Model (N Highlighted Images)" or "Deploy Model (1 Current Image)" or "Deploy Model"
+        """
+        if len(self.highlighted_images) > 0:
+            # Multiple or single highlighted images
+            count_text = f"Deploy ({len(self.highlighted_images)} Highlighted)"
+        elif self.main_window.image_window.current_raster is not None:
+            # Fall back to current image count
+            count_text = "Deploy (1 Highlighted)"
+        else:
+            # No images
+            count_text = "Deploy"
+        
+        self.deploy_button.setText(count_text)
+    
     def update_deploy_button_state(self):
-        """Update deploy button enabled state based on model and image availability."""
-        # Enable only if model is loaded AND image is loaded
+        """Update deploy button enabled state and text based on model and image availability."""
+        # Enable only if model is loaded AND (current image loaded OR images are highlighted)
         has_model = self.loaded_model is not None
         has_image = self.main_window.image_window.current_raster is not None
-        self.deploy_button.setEnabled(has_model and has_image)
+        has_highlighted = len(self.highlighted_images) > 0
+        self.deploy_button.setEnabled(has_model and (has_image or has_highlighted))
+        # Update button text
+        self.update_deploy_button_text()
                 
     def deploy_model(self):
-        """Deploy the model on the current image to generate Z-channel."""
+        """Deploy the model on highlighted images, or current image if none are highlighted."""
         if self.loaded_model is None:
             QMessageBox.warning(self.annotation_window, 
                                 "No Model", 
                                 "Please load a model first")
             return
-            
-        # Get current raster
-        current_raster = self.main_window.image_window.current_raster
-        if current_raster is None:
-            QMessageBox.warning(self.annotation_window, 
-                                "No Image", 
-                                "Please load an image first")
-            return
-            
-        # Check if raster already has z-channel
-        if current_raster.z_channel is not None:
-            reply = self._show_overwrite_dialog()
-            
-            if reply == "cancel":
-                return
-            # Pass the mode directly to predict
-            overwrite_mode = reply
+        
+        # Determine which images to process
+        # If highlighted images exist, use them; otherwise use current image
+        if self.highlighted_images:
+            image_paths = self.highlighted_images
+            # Reset the cached overwrite mode for this batch
+            self.last_overwrite_mode = None
+            show_dialog = True
         else:
-            overwrite_mode = "overwrite"
+            # Use current raster
+            current_raster = self.main_window.image_window.current_raster
+            if current_raster is None:
+                QMessageBox.warning(self.annotation_window, 
+                                    "No Image", 
+                                    "Please load an image first")
+                return
+            
+            image_paths = [current_raster.image_path]
+            show_dialog = False
+            
+            # Check if raster already has z-channel (single image case)
+            if current_raster.z_channel is not None:
+                reply = self._show_overwrite_dialog()
+                
+                if reply == "cancel":
+                    return
+                # Pass the mode directly to predict
+                overwrite_mode = reply
+            else:
+                overwrite_mode = "overwrite"
             
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Deploying Model")
         progress_bar.show()
         
         try:
-            # Use the predict method with the selected overwrite mode
-            self.predict([current_raster.image_path], progress_bar, overwrite_mode=overwrite_mode)
+            # Use the predict method
+            if self.highlighted_images:
+                # Batch mode - use prompt to show dialog if needed
+                self.predict(image_paths, progress_bar, overwrite_mode="prompt", show_dialog=show_dialog)
+            else:
+                # Single image mode - use the selected overwrite mode
+                self.predict(image_paths, progress_bar, overwrite_mode=overwrite_mode, show_dialog=show_dialog)
             progress_bar.finish_progress()
 
         except Exception as e:
@@ -253,8 +299,20 @@ class DeployModelDialog(CollapsibleSection):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+    
+    
+    def update_highlighted_images(self, highlighted_paths):
+        """
+        Update the list of highlighted images and button state.
+        
+        Args:
+            highlighted_paths: List of image paths that are currently highlighted
+        """
+        self.highlighted_images = highlighted_paths if highlighted_paths else []
+        # Update button state and text
+        self.update_deploy_button_state()
             
-    def predict(self, image_paths, progress_bar, overwrite_mode="prompt"):
+    def predict(self, image_paths, progress_bar, overwrite_mode="prompt", show_dialog=True):
         """
         Run Z-Inference prediction on multiple images.
         
@@ -266,25 +324,36 @@ class DeployModelDialog(CollapsibleSection):
                            "overwrite" - overwrite without asking
                            "skip" - skip images with existing z-channels
                            "smart_fill" - fill NaN values with scaled predictions
+            show_dialog: Whether to show the overwrite dialog (False for single image from deploy_model)
         """
         if self.loaded_model is None:
             raise ValueError("No model loaded")
             
         # For batch processing with prompt mode, check if any images have z-channels
-        if overwrite_mode == "prompt" and len(image_paths) > 1:
-            has_z_channel = False
-            for image_path in image_paths:
-                raster = self.main_window.image_window.raster_manager.get_raster(image_path)
-                if raster and raster.z_channel is not None:
-                    has_z_channel = True
-                    break
-                    
-            if has_z_channel:
-                reply = self._show_overwrite_dialog()
-                if reply == "cancel":
-                    return
-                # Update overwrite mode based on user choice
-                overwrite_mode = reply
+        # Only show dialog if show_dialog=True and overwrite_mode is "prompt"
+        if show_dialog and overwrite_mode == "prompt" and len(image_paths) > 1:
+            # Check if we already have a cached choice from a previous dialog
+            if self.last_overwrite_mode is None:
+                has_z_channel = False
+                for image_path in image_paths:
+                    raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                    if raster and raster.z_channel is not None:
+                        has_z_channel = True
+                        break
+                        
+                if has_z_channel:
+                    reply = self._show_overwrite_dialog()
+                    if reply == "cancel":
+                        return
+                    # Cache the choice for all remaining images in this batch
+                    self.last_overwrite_mode = reply
+                    overwrite_mode = reply
+                else:
+                    # No images have z-channels, so we can overwrite without asking
+                    overwrite_mode = "overwrite"
+            else:
+                # Use the cached choice
+                overwrite_mode = self.last_overwrite_mode
         
         # Process each image
         num_images = len(image_paths)
@@ -314,6 +383,9 @@ class DeployModelDialog(CollapsibleSection):
                         # Apply Smart Fill
                         self._handle_smart_fill(raster, z_predicted)
                         
+                        # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
+                        self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
+                        
                         # Refresh visualization if this is the current raster
                         if raster == self.main_window.image_window.current_raster:
                             self.annotation_window.refresh_z_channel_visualization()
@@ -332,7 +404,11 @@ class DeployModelDialog(CollapsibleSection):
                 
                 # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
                 # Set direction=1 explicitly (high values = far, which is depth semantics)
+                # Note: 0 values are automatically treated as nodata for depth maps
                 raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
+                
+                # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
+                self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
                 
                 # If this is the current raster, refresh visualization and enable controls
                 if raster == self.main_window.image_window.current_raster:
@@ -407,10 +483,7 @@ class DeployModelDialog(CollapsibleSection):
         Args:
             raster: The raster object with existing z_channel
             z_predicted: New z-channel predictions from the model (numpy array, depth in meters)
-        """
-        import numpy as np
-        from coralnet_toolbox.utilities import smart_fill_z_channel
-        
+        """        
         if raster.z_channel is None:
             print("No existing z-channel to fill")
             return
@@ -431,12 +504,12 @@ class DeployModelDialog(CollapsibleSection):
             # z_data_type and z_inversion_reference are preserved
             
             # Print statistics
-            print(f"Smart Fill complete:")
-            print(f"  - Preserved {stats['num_valid']} pixels ({stats['valid_percentage']:.1f}%)")
+            print("Smart Fill complete:")
             print(f"  - Filled {stats['num_filled']} pixels")
             print(f"  - Scale: {stats['scale']:.4f}, Offset: {stats['offset']:.4f}")
-            print(f"  - Existing range: [{stats['existing_range'][0]:.3f}, {stats['existing_range'][1]:.3f}] meters")
-            print(f"  - Predicted range: [{stats['predicted_range'][0]:.3f}, {stats['predicted_range'][1]:.3f}] meters")
+            if 'existing_range' in stats:
+                print(f"  - Existing: [{stats['existing_range'][0]:.3f}, {stats['existing_range'][1]:.3f}] meters")
+                print(f"  - Predicted: [{stats['predicted_range'][0]:.3f}, {stats['predicted_range'][1]:.3f}] meters")
             print(f"  - Result type: {raster.z_data_type}, unit: {raster.z_unit}")
             
         except ValueError as e:

@@ -1,7 +1,5 @@
 import warnings
 
-import traceback
-
 import math
 import numpy as np
 from random import randint
@@ -18,10 +16,13 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWi
                              QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout)
 
 from coralnet_toolbox.Tools.QtTool import Tool
-from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.QtWorkArea import WorkArea
+
+from coralnet_toolbox.Common.QtMarginInput import MarginInput
+
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import convert_scale_units
-from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -380,7 +381,7 @@ class SpatialTool(Tool):
         
         # Grid settings
         self.roi_bounds = None  # QRectF for region of interest
-        self.roi_graphic = None  # Visual representation of ROI
+        self.roi_workarea = None  # Visual representation of ROI
         self.grid_lines = []  # List of grid line measurements
         self.grid_enabled = False
         
@@ -442,7 +443,7 @@ class SpatialTool(Tool):
         scene = self.annotation_window.scene
         
         # Create solid line in the random color
-        pen = QPen(QColor(*color_rgb), 2, Qt.SolidLine)
+        pen = QPen(QColor(*color_rgb), 3, Qt.SolidLine)
         pen.setCosmetic(True)
         line = QLineF(start, end)
         line_graphic = scene.addLine(line, pen)
@@ -451,7 +452,7 @@ class SpatialTool(Tool):
         # Create white dot at start point
         start_dot = scene.addEllipse(
             start.x() - 3, start.y() - 3, 6, 6,
-            QPen(QColor(255, 255, 255), 1),
+            QPen(QColor(255, 255, 255), 3),
             QBrush(QColor(255, 255, 255))
         )
         start_dot.setZValue(1001)
@@ -459,7 +460,7 @@ class SpatialTool(Tool):
         # Create black dot at end point
         end_dot = scene.addEllipse(
             end.x() - 3, end.y() - 3, 6, 6,
-            QPen(QColor(0, 0, 0), 1),
+            QPen(QColor(0, 0, 0), 3),
             QBrush(QColor(0, 0, 0))
         )
         end_dot.setZValue(1001)
@@ -470,42 +471,6 @@ class SpatialTool(Tool):
             'end_dot': end_dot,
             'start_point': QPointF(start),
             'end_point': QPointF(end),
-            'color': color_rgb
-        }
-    
-    def _create_colored_rect(self, rect, color_rgb):
-        """Create a solid colored rectangle with endpoint dots"""
-        scene = self.annotation_window.scene
-        normalized_rect = rect.normalized()
-        
-        # Create solid rectangle outline in the random color
-        pen = QPen(QColor(*color_rgb), 2, Qt.SolidLine)
-        pen.setCosmetic(True)
-        brush = QBrush(QColor(*color_rgb, 30))  # Semi-transparent fill
-        rect_graphic = scene.addRect(normalized_rect, pen, brush)
-        rect_graphic.setZValue(1000)
-        
-        # Create white dot at top-left
-        tl_dot = scene.addEllipse(
-            normalized_rect.left() - 3, normalized_rect.top() - 3, 6, 6,
-            QPen(QColor(255, 255, 255), 1),
-            QBrush(QColor(255, 255, 255))
-        )
-        tl_dot.setZValue(1001)
-        
-        # Create black dot at bottom-right
-        br_dot = scene.addEllipse(
-            normalized_rect.right() - 3, normalized_rect.bottom() - 3, 6, 6,
-            QPen(QColor(0, 0, 0), 1),
-            QBrush(QColor(0, 0, 0))
-        )
-        br_dot.setZValue(1001)
-        
-        return {
-            'rect': rect_graphic,
-            'tl_dot': tl_dot,
-            'br_dot': br_dot,
-            'bounds': normalized_rect,
             'color': color_rgb
         }
 
@@ -698,10 +663,10 @@ class SpatialTool(Tool):
                         scene.removeItem(measurement[key])
         self.grid_lines.clear()
         
-        # Remove ROI graphic
-        if self.roi_graphic and self.roi_graphic.scene():
-            scene.removeItem(self.roi_graphic)
-            self.roi_graphic = None
+        # Remove ROI workarea
+        if self.roi_workarea:
+            self.roi_workarea.remove_from_scene()
+            self.roi_workarea = None
             
         self.roi_bounds = None
         self.grid_enabled = False
@@ -717,21 +682,37 @@ class SpatialTool(Tool):
             self.profile_dialog.update_plot(self.current_profiles)
 
     def _draw_roi_graphic(self):
-        """Draw ROI rectangle on the scene"""
+        """Create ROI WorkArea on the scene with shadow"""
         if not self.roi_bounds:
             return
             
-        scene = self.annotation_window.scene
-        
-        # Remove old ROI graphic if exists
-        if self.roi_graphic and self.roi_graphic.scene():
-            scene.removeItem(self.roi_graphic)
+        # Remove old ROI workarea if exists
+        if self.roi_workarea:
+            self.roi_workarea.remove_from_scene()
+            self.roi_workarea = None
             
-        # Create ROI rectangle
-        pen = QPen(QColor(255, 255, 0), 2, Qt.DashLine)  # Yellow dashed line
-        pen.setCosmetic(True)
-        self.roi_graphic = scene.addRect(self.roi_bounds, pen)
-        self.roi_graphic.setZValue(999)  # Below measurements but above image
+        # Create WorkArea for ROI
+        image_path = self.annotation_window.current_image_path
+        self.roi_workarea = WorkArea(
+            self.roi_bounds.x(), 
+            self.roi_bounds.y(), 
+            self.roi_bounds.width(), 
+            self.roi_bounds.height(), 
+            image_path
+        )
+        
+        # Create graphics with shadow, no animation
+        self.roi_workarea.create_graphics(
+            self.annotation_window.scene, 
+            include_shadow=True, 
+            animate=False
+        )
+        
+        # Set ZValues to match original (below measurements but above image)
+        if self.roi_workarea.graphics_item:
+            self.roi_workarea.graphics_item.setZValue(999)
+        if self.roi_workarea.shadow_area:
+            self.roi_workarea.shadow_area.setZValue(998)
 
     def _is_point_in_roi(self, point):
         """Check if a point is within the ROI"""
