@@ -669,7 +669,8 @@ class SpatialTool(Tool):
             # Reset chain length and unit
             self.dialog.chain_length_spin.setValue(1.0)
             self.dialog.chain_unit_combo.setCurrentText('cm')
-            # Reset margin input to defaults
+            # Reset margin input to defaults (block signals to prevent triggering generate_grid)
+            self.dialog.margin_input.blockSignals(True)
             self.dialog.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
             self.dialog.margin_input.value_type.setCurrentIndex(0)  # Pixels
             for spin in self.dialog.margin_input.margin_spins:
@@ -677,12 +678,8 @@ class SpatialTool(Tool):
             self.dialog.margin_input.single_spin.setValue(0)
             self.dialog.margin_input.single_double.setValue(0.0)
             self.dialog.margin_input.update_input_mode(0)
-            # Reset grid settings
-            self.dialog.rows_spin.setValue(5)
-            self.dialog.cols_spin.setValue(5)
-            self.dialog.row_spacing_spin.setValue(50)
-            self.dialog.col_spacing_spin.setValue(50)
-            # Recalculate grid based on current image
+            self.dialog.margin_input.blockSignals(False)
+            # Recalculate grid spinbox values to auto-calculated defaults
             self.calculate_grid()
 
     def calculate_grid(self):
