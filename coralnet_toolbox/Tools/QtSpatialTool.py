@@ -560,7 +560,7 @@ class SpatialTool(Tool):
             # Blue Range (Low complexity)
             local_t = norm / 0.25
             r = int(0 * (1 - local_t) + 0 * local_t)
-            g = int(0 * (1 - local_t) + 255 * local_t) # Ramping up green? No, Blue to Cyan usually.
+            g = int(0 * (1 - local_t) + 255 * local_t)  # Ramping up green? No, Blue to Cyan usually.
             # Let's stick to standard Jet-like ramp:
             # 0.0: Blue (0,0,255) -> 0.25: Cyan (0,255,255)
             r = 0
@@ -678,6 +678,11 @@ class SpatialTool(Tool):
             self.dialog.margin_input.single_double.setValue(0.0)
             self.dialog.margin_input.update_input_mode(0)
             # Reset grid settings
+            self.dialog.rows_spin.setValue(5)
+            self.dialog.cols_spin.setValue(5)
+            self.dialog.row_spacing_spin.setValue(50)
+            self.dialog.col_spacing_spin.setValue(50)
+            # Recalculate grid based on current image
             self.calculate_grid()
 
     def calculate_grid(self):
@@ -694,19 +699,26 @@ class SpatialTool(Tool):
         # Cap to reasonable maximum
         estimated_rows = min(estimated_rows, 20)
         estimated_cols = min(estimated_cols, 20)
-        # Set the spinboxes
+        # Set the spinboxes (block signals to prevent recursive calls to generate_grid)
+        self.dialog.rows_spin.blockSignals(True)
+        self.dialog.cols_spin.blockSignals(True)
+        self.dialog.row_spacing_spin.blockSignals(True)
+        self.dialog.col_spacing_spin.blockSignals(True)
+        
         self.dialog.rows_spin.setValue(estimated_rows)
         self.dialog.cols_spin.setValue(estimated_cols)
         self.dialog.row_spacing_spin.setValue(default_spacing)
         self.dialog.col_spacing_spin.setValue(default_spacing)
+        
+        self.dialog.rows_spin.blockSignals(False)
+        self.dialog.cols_spin.blockSignals(False)
+        self.dialog.row_spacing_spin.blockSignals(False)
+        self.dialog.col_spacing_spin.blockSignals(False)
 
     def generate_grid(self):
         """Generate grid lines based on margin and spacing settings with Rugosity Coloring"""
         if not self.dialog:
             return
-            
-        # Calculate grid values based on image
-        self.calculate_grid()
             
         # Get image dimensions
         if not self.annotation_window.current_image_path:
