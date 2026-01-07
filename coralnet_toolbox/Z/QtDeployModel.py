@@ -300,7 +300,6 @@ class DeployModelDialog(CollapsibleSection):
             progress_bar.stop_progress()
             progress_bar.close()
     
-    
     def update_highlighted_images(self, highlighted_paths):
         """
         Update the list of highlighted images and button state.
@@ -336,7 +335,9 @@ class DeployModelDialog(CollapsibleSection):
             overwrite_mode = reply
         
         # Process each image
+        progress_bar.start_progress(len(image_paths))
         num_images = len(image_paths)
+        
         for idx, image_path in enumerate(image_paths):
             try:
                 progress_bar.set_title(f"Z-Inference: {idx + 1}/{num_images} - {os.path.basename(image_path)}")
@@ -345,6 +346,7 @@ class DeployModelDialog(CollapsibleSection):
                 raster = self.main_window.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
                     print(f"Failed to get raster for {image_path}")
+                    progress_bar.update_progress()
                     continue
                 
                 # Load z_channel if it exists but not loaded
@@ -354,12 +356,15 @@ class DeployModelDialog(CollapsibleSection):
                 # Check if raster already has z-channel
                 if raster.z_channel is not None:
                     if overwrite_mode == "skip":
+                        progress_bar.update_progress()
                         continue
+                    
                     elif overwrite_mode == "smart_fill":
                         # Run prediction first
                         image_array = raster.get_numpy()
                         if image_array is None:
                             print(f"Failed to get image array from raster for {image_path}")
+                            progress_bar.update_progress()
                             continue
                         
                         z_predicted = self.loaded_model.predict(image_array)
@@ -373,10 +378,13 @@ class DeployModelDialog(CollapsibleSection):
                         # Refresh visualization if this is the current raster
                         if raster == self.main_window.image_window.current_raster:
                             self.annotation_window.refresh_z_channel_visualization()
+                            
+                        progress_bar.update_progress()
                         continue
                     # If overwrite_mode == "overwrite", continue with prediction below
                 else:
                     if overwrite_mode == "skip":
+                        progress_bar.update_progress()
                         continue
                 
                 # Get numpy array from raster
@@ -384,6 +392,7 @@ class DeployModelDialog(CollapsibleSection):
                 
                 if image_array is None:
                     print(f"Failed to get image array from raster for {image_path}")
+                    progress_bar.update_progress()
                     continue
                     
                 # Run prediction
@@ -412,12 +421,13 @@ class DeployModelDialog(CollapsibleSection):
                     turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
                     if turbo_index >= 0:
                         self.main_window.z_colormap_dropdown.setCurrentIndex(turbo_index)
-                        
+                                                
             except Exception as e:
                 print(f"Failed to process {image_path}: {e}")
                 import traceback
                 traceback.print_exc()
-                continue
+            finally:
+                progress_bar.update_progress()
             
     def _show_overwrite_dialog(self, is_batch=False):
         """

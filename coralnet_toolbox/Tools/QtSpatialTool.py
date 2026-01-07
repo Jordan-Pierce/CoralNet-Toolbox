@@ -215,7 +215,7 @@ class SpatialToolDialog(QDialog):
         self.tool = tool
         self.annotation_window = self.tool.annotation_window
         self.main_window = self.annotation_window.main_window
-
+        
         self.setWindowTitle("Spatial Measurement Tool")
         self.setWindowIcon(get_icon("spatial.png"))
         self.setMinimumWidth(400)
@@ -239,19 +239,52 @@ class SpatialToolDialog(QDialog):
         instructions.setStyleSheet("font-style: italic;")
         layout.addWidget(instructions)
         
+        # --- NEW: Rugosity Parameters Group ---
+        group_params = QGroupBox("Rugosity Parameters")
+        form_params = QFormLayout()
+        
+        # Chain Length Input (Standardizes the measurement step)
+        chain_layout = QHBoxLayout()
+        self.chain_length_spin = QDoubleSpinBox()
+        self.chain_length_spin.setRange(0.001, 10000.0)
+        self.chain_length_spin.setValue(1.0)  # Default
+        self.chain_length_spin.setSingleStep(0.1)
+        self.chain_length_spin.setToolTip(
+            "The step size used to sample the 3D surface (simulates a physical chain link)."
+        )
+        
+        self.chain_unit_combo = QComboBox()
+        self.chain_unit_combo.addItems(['cm', 'mm', 'm', 'ft', 'in'])
+        self.chain_unit_combo.setCurrentText('cm')
+        
+        chain_layout.addWidget(self.chain_length_spin)
+        chain_layout.addWidget(self.chain_unit_combo)
+        
+        form_params.addRow("Chain Length:", chain_layout)
+        
+        # Max Rugosity for Color Mapping (Scales the heatmap)
+        self.max_rugosity_spin = QDoubleSpinBox()
+        self.max_rugosity_spin.setRange(1.01, 50.0)
+        self.max_rugosity_spin.setValue(1.5)
+        self.max_rugosity_spin.setSingleStep(0.1)
+        self.max_rugosity_spin.setToolTip("Rugosity values above this threshold will appear bright Red.")
+        form_params.addRow("Color Max Scale:", self.max_rugosity_spin)
+        
+        group_params.setLayout(form_params)
+        layout.addWidget(group_params)
+        
         # --- 2D Measurements Group ---
         group_2d = QGroupBox("2D Measurements")
         form_2d = QFormLayout()
         
         self.line_length_2d_label = QLabel("---")
-        
         form_2d.addRow("Distance:", self.line_length_2d_label)
         
         # Units dropdown
         self.line_units_combo = QComboBox()
         self.line_units_combo.addItems(['m', 'cm', 'mm', 'km', 'ft', 'in', 'yd', 'mi'])
         self.line_units_combo.setCurrentText('m')
-        form_2d.addRow("Units:", self.line_units_combo)
+        form_2d.addRow("Display Units:", self.line_units_combo)
         
         group_2d.setLayout(form_2d)
         layout.addWidget(group_2d)
@@ -301,7 +334,7 @@ class SpatialToolDialog(QDialog):
         
         # Grid buttons
         grid_btn_layout = QHBoxLayout()
-        self.generate_grid_button = QPushButton("Generate Grid")
+        self.generate_grid_button = QPushButton("Preview Grid")
         self.generate_grid_button.clicked.connect(self.tool.generate_grid)
         self.clear_grid_button = QPushButton("Clear Grid")
         self.clear_grid_button.clicked.connect(self.tool.clear_grid)
@@ -321,7 +354,10 @@ class SpatialToolDialog(QDialog):
         self.line_length_3d_label = QLabel("---")
         self.line_delta_z_label = QLabel("---")
         self.line_slope_label = QLabel("---")
+        
+        # Rugosity label with some styling to indicate it's the main metric
         self.line_rugosity_label = QLabel("---")
+        self.line_rugosity_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         
         form_3d.addRow("3D Length:", self.line_length_3d_label)
         form_3d.addRow("ΔZ:", self.line_delta_z_label)
@@ -344,8 +380,6 @@ class SpatialToolDialog(QDialog):
         
         layout.addStretch()
 
-
-
     def closeEvent(self, event):
         """Handle dialog close"""
         self.tool.stop_current_drawing()
@@ -357,6 +391,7 @@ class SpatialToolDialog(QDialog):
 # SpatialTool Class  
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class SpatialTool(Tool):
     """
     Tool for measuring distances, areas, perimeters, and performing spatial analysis.
@@ -365,6 +400,10 @@ class SpatialTool(Tool):
         super().__init__(annotation_window)
         self.name = "spatial"
         self.cursor = Qt.CrossCursor  # Show crosshair cursor like scale tool
+        
+        self.annotation_window = annotation_window
+        
+        self.animation_manager = self.annotation_window.animation_manager
         
         # Drawing state
         self.is_drawing = False
@@ -380,14 +419,16 @@ class SpatialTool(Tool):
         self.recorded_line_measurements = []  # List of dicts with line data and color
         
         # Grid settings
-        self.roi_bounds = None  # QRectF for region of interest
-        self.roi_workarea = None  # Visual representation of ROI
+        self.working_area = None  # Visual representation of working area
         self.grid_lines = []  # List of grid line measurements
         self.grid_enabled = False
         
         # Profile data for plotting
         self.current_profiles = []
         self.profile_dialog = None
+        
+        # Last calculated color for measurements
+        self.last_calculated_color = (128, 128, 128)  # Default to gray for grid lines
         
         # Dialog
         self.dialog = None
@@ -473,6 +514,70 @@ class SpatialTool(Tool):
             'end_point': QPointF(end),
             'color': color_rgb
         }
+        
+    def _get_rugosity_color(self, rugosity):
+        """
+        Map a rugosity value to an RGB color based on dialog settings.
+        1.0 -> Grey (Flat)
+        Higher values map through Blue -> Green -> Orange -> Red
+        """
+        # Physical floor is 1.0, but handle float errors
+        if rugosity < 1.0: 
+            return (128, 128, 128)
+        
+        # If UI not ready, return default red
+        if not self.dialog:
+            return (255, 0, 0)
+            
+        # Get user-defined max scale
+        max_val = self.dialog.max_rugosity_spin.value()
+        
+        # Normalize: 0.0 at R=1, 1.0 at R=max_val
+        if max_val <= 1.0: 
+            max_val = 1.01
+        norm = (rugosity - 1.0) / (max_val - 1.0)
+        norm = max(0.0, min(1.0, norm))
+        
+        if norm == 0:
+            return (128, 128, 128)  # Grey for perfectly flat
+        
+        # Heatmap Gradient Logic
+        # 0.00 - 0.25: Grey to Blue
+        # 0.25 - 0.50: Blue to Green
+        # 0.50 - 0.75: Green to Orange
+        # 0.75 - 1.00: Orange to Red
+        
+        if norm < 0.25:
+            # Grey to Blue
+            local_t = norm / 0.25
+            r = int(128 * (1 - local_t) + 0 * local_t)
+            g = int(128 * (1 - local_t) + 0 * local_t)
+            b = int(128 * (1 - local_t) + 255 * local_t)
+            return (r, g, b)
+        
+        elif norm < 0.5:
+            # Blue to Green
+            local_t = (norm - 0.25) / 0.25
+            r = 0
+            g = int(0 * (1 - local_t) + 255 * local_t)
+            b = int(255 * (1 - local_t) + 0 * local_t)
+            return (r, g, b)
+        
+        elif norm < 0.75:
+            # Green to Orange
+            local_t = (norm - 0.5) / 0.25
+            r = int(0 * (1 - local_t) + 255 * local_t)
+            g = int(255 * (1 - local_t) + 165 * local_t)
+            b = 0
+            return (r, g, b)
+        
+        else:
+            # Orange to Red
+            local_t = (norm - 0.75) / 0.25
+            r = 255
+            g = int(165 * (1 - local_t) + 0 * local_t)
+            b = 0
+            return (r, g, b)
 
     def activate(self):
         """Activate the spatial measurement tool"""
@@ -499,8 +604,6 @@ class SpatialTool(Tool):
         self.clear_all_graphics()
         self.is_drawing = False
         self.main_window.untoggle_all_tools()
-
-
 
     def stop_current_drawing(self):
         """Stop any active drawing and clear graphics"""
@@ -579,14 +682,14 @@ class SpatialTool(Tool):
         roi_bottom = image_height - bottom
         
         if roi_right <= roi_left or roi_bottom <= roi_top:
-            QMessageBox.warning(self.dialog, "Invalid ROI", "Margins result in invalid region of interest.")
+            QMessageBox.warning(self.dialog, "Invalid Working Area", "Margins result in invalid working area.")
             return
             
-        self.roi_bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
+        bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
         self.grid_enabled = True
         
-        # Draw ROI rectangle
-        self._draw_roi_graphic()
+        # Draw working area rectangle
+        self._draw_working_area_graphic(bounds)
         
         # Clear existing grid lines
         self.clear_grid()
@@ -597,8 +700,19 @@ class SpatialTool(Tool):
         row_spacing = self.dialog.row_spacing_spin.value()
         col_spacing = self.dialog.col_spacing_spin.value()
         
+        # Precalculate spacing for even distribution if count > 1
+        roi_height = roi_bottom - roi_top
+        roi_width = roi_right - roi_left
+        if num_rows > 1:
+            calculated_row_spacing = roi_height / (num_rows - 1)
+            self.dialog.row_spacing_spin.setValue(int(calculated_row_spacing))
+            row_spacing = calculated_row_spacing
+        if num_cols > 1:
+            calculated_col_spacing = roi_width / (num_cols - 1)
+            self.dialog.col_spacing_spin.setValue(int(calculated_col_spacing))
+            col_spacing = calculated_col_spacing
+        
         # Generate horizontal lines (rows)
-        grid_color = (128, 128, 128)  # Gray color for grid lines
         current_y = roi_top
         row_count = 0
         
@@ -607,14 +721,17 @@ class SpatialTool(Tool):
                 start = QPointF(roi_left, current_y)
                 end = QPointF(roi_right, current_y)
                 
+                # Use gray color for grid lines
+                color = (128, 128, 128)
+                
                 # Create the line graphic
-                measurement = self._create_colored_line(start, end, grid_color)
+                measurement = self._create_colored_line(start, end, color)
                 self.grid_lines.append(measurement)
                 
-                # Calculate profile for this line
+                # Calculate measurement
                 self.start_point = start
                 self.end_point = end
-                self.calculate_line_measurement(final_calc=True, color=grid_color)
+                self.calculate_line_measurement(final_calc=True, color=color)
                 self.start_point = None
                 self.end_point = None
                 
@@ -630,14 +747,17 @@ class SpatialTool(Tool):
                 start = QPointF(current_x, roi_top)
                 end = QPointF(current_x, roi_bottom)
                 
-                # Create the line graphic
-                measurement = self._create_colored_line(start, end, grid_color)
+                # Use gray color for grid lines
+                color = (128, 128, 128)
+                
+                # Create graphic
+                measurement = self._create_colored_line(start, end, color)
                 self.grid_lines.append(measurement)
                 
-                # Calculate profile for this line
+                # Calculate measurement
                 self.start_point = start
                 self.end_point = end
-                self.calculate_line_measurement(final_calc=True, color=grid_color)
+                self.calculate_line_measurement(final_calc=True, color=color)
                 self.start_point = None
                 self.end_point = None
                 
@@ -663,12 +783,11 @@ class SpatialTool(Tool):
                         scene.removeItem(measurement[key])
         self.grid_lines.clear()
         
-        # Remove ROI workarea
-        if self.roi_workarea:
-            self.roi_workarea.remove_from_scene()
-            self.roi_workarea = None
+        # Remove working area
+        if self.working_area:
+            self.working_area.remove_from_scene()
+            self.working_area = None
             
-        self.roi_bounds = None
         self.grid_enabled = False
         
         # Clear grid profiles from current_profiles
@@ -681,52 +800,66 @@ class SpatialTool(Tool):
         if self.profile_dialog and self.profile_dialog.isVisible():
             self.profile_dialog.update_plot(self.current_profiles)
 
-    def _draw_roi_graphic(self):
-        """Create ROI WorkArea on the scene with shadow"""
-        if not self.roi_bounds:
+    def _draw_working_area_graphic(self, bounds):
+        """Create working area on the scene with shadow"""
+        if not bounds:
             return
             
-        # Remove old ROI workarea if exists
-        if self.roi_workarea:
-            self.roi_workarea.remove_from_scene()
-            self.roi_workarea = None
+        # Remove old working area if exists
+        if self.working_area:
+            self.working_area.remove_from_scene()
+            self.working_area = None
             
-        # Create WorkArea for ROI
+        # Create WorkArea for working area
         image_path = self.annotation_window.current_image_path
-        self.roi_workarea = WorkArea(
-            self.roi_bounds.x(), 
-            self.roi_bounds.y(), 
-            self.roi_bounds.width(), 
-            self.roi_bounds.height(), 
+        self.working_area = WorkArea(
+            bounds.x(), 
+            bounds.y(), 
+            bounds.width(), 
+            bounds.height(), 
             image_path
         )
         
-        # Create graphics with shadow, no animation
-        self.roi_workarea.create_graphics(
+        # Set the animation manager
+        self.working_area.set_animation_manager(self.animation_manager)
+        
+        # Create graphics with shadow and animation
+        self.working_area.create_graphics(
             self.annotation_window.scene, 
             include_shadow=True, 
-            animate=False
+            animate=True
         )
         
         # Set ZValues to match original (below measurements but above image)
-        if self.roi_workarea.graphics_item:
-            self.roi_workarea.graphics_item.setZValue(999)
-        if self.roi_workarea.shadow_area:
-            self.roi_workarea.shadow_area.setZValue(998)
+        if self.working_area.graphics_item:
+            self.working_area.graphics_item.setZValue(999)
+        if self.working_area.shadow_area:
+            self.working_area.shadow_area.setZValue(998)
+    
+        # **ADD THIS LINE - Force scene to update and render the new graphics**
+        self.annotation_window.scene.update()
 
-    def _is_point_in_roi(self, point):
-        """Check if a point is within the ROI"""
-        if not self.grid_enabled or not self.roi_bounds:
+    def _is_point_in_working_area(self, point):
+        """Check if a point is within the working area"""
+        if not self.grid_enabled or not self.working_area:
             return True
-        return self.roi_bounds.contains(point)
+        rect = QRectF(self.working_area.x(), 
+                      self.working_area.y(), 
+                      self.working_area.width(), 
+                      self.working_area.height())
+        return rect.contains(point)
 
-    def _clamp_point_to_roi(self, point):
-        """Clamp a point to ROI bounds"""
-        if not self.grid_enabled or not self.roi_bounds:
+    def _clamp_point_to_working_area(self, point):
+        """Clamp a point to working area bounds"""
+        if not self.grid_enabled or not self.working_area:
             return point
             
-        x = max(self.roi_bounds.left(), min(point.x(), self.roi_bounds.right()))
-        y = max(self.roi_bounds.top(), min(point.y(), self.roi_bounds.bottom()))
+        rect = QRectF(self.working_area.x(), 
+                      self.working_area.y(),
+                      self.working_area.width(), 
+                      self.working_area.height())
+        x = max(rect.left(), min(point.x(), rect.right()))
+        y = max(rect.top(), min(point.y(), rect.bottom()))
         return QPointF(x, y)
 
     def update_z_controls(self):
@@ -743,8 +876,8 @@ class SpatialTool(Tool):
         if event.button() == Qt.LeftButton:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             
-            # Check if point is within ROI when grid is enabled
-            if self.grid_enabled and not self._is_point_in_roi(scene_pos):
+            # Check if point is within working area when grid is enabled
+            if self.grid_enabled and not self._is_point_in_working_area(scene_pos):
                 return
             
             # Only start new drawing if not already drawing
@@ -758,7 +891,7 @@ class SpatialTool(Tool):
                 self.is_drawing = True
             else:
                 # Second click finishes the measurement
-                self.end_point = self._clamp_point_to_roi(scene_pos)
+                self.end_point = self._clamp_point_to_working_area(scene_pos)
                 self.is_drawing = False
                 
                 # Generate random color for this measurement
@@ -777,7 +910,7 @@ class SpatialTool(Tool):
         """Handle mouse move for drawing measurements"""
         if self.is_drawing and self.start_point:
             scene_pos = self.annotation_window.mapToScene(event.pos())
-            self.end_point = self._clamp_point_to_roi(scene_pos)
+            self.end_point = self._clamp_point_to_working_area(scene_pos)
             
             # Update graphics and measurements
             self._update_line_graphic()
@@ -802,8 +935,6 @@ class SpatialTool(Tool):
                     if measurement[key].scene() != scene:
                         scene.addItem(measurement[key])
     
-
-
     def _update_line_graphic(self):
         """Update or create line graphic with cosmetic pen (visible at all zoom levels)"""
         if not self.start_point or not self.end_point:
@@ -855,6 +986,9 @@ class SpatialTool(Tool):
         if not self.start_point or not self.end_point:
             return
             
+        # Initialize default color (Grey) in case of early exit
+        self.last_calculated_color = (128, 128, 128)
+            
         # --- 1. Get Data ---
         scale_x, scale_y, scale_units = self.get_current_scale()
         
@@ -900,7 +1034,7 @@ class SpatialTool(Tool):
             # Convert z_unit to meters for 3D calculations
             z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
 
-            # Get transformed Z values at start/end using get_z_value
+            # Get transformed Z values at start/end
             p1_x = int(max(0, min(self.start_point.x(), w - 1)))
             p1_y = int(max(0, min(self.start_point.y(), h - 1)))
             p2_x = int(max(0, min(self.end_point.x(), w - 1)))
@@ -928,9 +1062,29 @@ class SpatialTool(Tool):
                 if self.dialog:
                     self.dialog.line_slope_label.setText("N/A")
 
-            # --- Calculate 3D Length & Linear Rugosity ---
-            # Sample points along the line
-            num_samples = max(2, int(pixel_length / 2))  # Sample every 2 pixels
+            # --- Calculate 3D Length with Chain Resolution ---
+            
+            # 1. Determine Sampling Step (Chain Length)
+            if self.dialog:
+                chain_len_val = self.dialog.chain_length_spin.value()
+                chain_len_unit = self.dialog.chain_unit_combo.currentText()
+                # Convert chain length to meters, then to pixels
+                chain_len_meters = convert_scale_units(chain_len_val, chain_len_unit, 'metre')
+                
+                # Convert physical chain length to pixel steps
+                if scale_x > 0:
+                    step_pixels = chain_len_meters / scale_x
+                else:
+                    step_pixels = 1.0
+                    
+                # Ensure we don't go smaller than 1 pixel (Aliasing check)
+                step_pixels = max(1.0, step_pixels)
+            else:
+                step_pixels = 2.0  # Default fallback
+            
+            num_steps = int(pixel_length / step_pixels)
+            num_samples = max(2, num_steps + 1)  # Ensure at least start and end
+
             x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
             y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
             
@@ -942,13 +1096,11 @@ class SpatialTool(Tool):
                 raw_z_samples.append(z_data[y_idx, x_idx])
             
             raw_z_array = np.array(raw_z_samples)
-            
-            # Apply transform vectorially: Z_transformed = direction * (Raw * scalar) + offset
             z_transformed_array = (raw_z_array * scalar * direction) + offset
             
-            # Calculate 3D length using transformed Z-values
-            profile_data_x = []  # For plot
-            profile_data_y = []  # For plot
+            # Calculate 3D length
+            profile_data_x = []
+            profile_data_y = []
             total_3d_length = 0.0
             dist_2d_so_far = 0.0
             
@@ -956,23 +1108,17 @@ class SpatialTool(Tool):
             profile_data_y.append(z_transformed_array[0])
             
             for i in range(num_samples - 1):
-                # Get segment start/end points (pixel coords)
                 x_a, y_a = x_samples[i], y_samples[i]
                 x_b, y_b = x_samples[i + 1], y_samples[i + 1]
-                
-                # Get transformed Z values
                 z_a = z_transformed_array[i]
                 z_b = z_transformed_array[i + 1]
                 
-                # Get segment components in meters
                 dx_m = (x_b - x_a) * scale_x
                 dy_m = (y_b - y_a) * scale_y
                 dz_meters = (z_b - z_a) * z_to_meters_factor
                 
-                # Add 3D segment length
                 total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz_meters**2)
                 
-                # Add data for plot
                 dist_2d_so_far += math.sqrt(dx_m**2 + dy_m**2)
                 profile_data_x.append(dist_2d_so_far)
                 profile_data_y.append(z_b)
@@ -980,7 +1126,6 @@ class SpatialTool(Tool):
             # Convert 3D length to display units
             if display_units != "m":
                 length_3d_display = convert_scale_units(total_3d_length, 'metre', display_units)
-                # Also convert plot x-axis
                 conv_factor = convert_scale_units(1.0, 'metre', display_units)
                 plot_x_data = [x * conv_factor for x in profile_data_x]
             else:
@@ -990,7 +1135,8 @@ class SpatialTool(Tool):
             if self.dialog:
                 self.dialog.line_length_3d_label.setText(f"{length_3d_display:.3f} {display_units}")
 
-            # Calculate Linear Rugosity
+            # --- Calculate Linear Rugosity & Color ---
+            linear_rugosity = 1.0  # Default
             if length_2d_meters > 0:
                 linear_rugosity = total_3d_length / length_2d_meters
                 if self.dialog:
@@ -998,13 +1144,20 @@ class SpatialTool(Tool):
             else:
                 if self.dialog:
                     self.dialog.line_rugosity_label.setText("N/A")
-                    
+            
+            # Determine Color based on Rugosity
+            rugosity_color = self._get_rugosity_color(linear_rugosity)
+            self.last_calculated_color = rugosity_color  # Store for graphics update
+            
+            # If final_calc is true, use the provided color (if override exists) 
+            # OR use the calculated color if none provided.
+            final_color_to_save = color if color else rugosity_color
+
             # Store profile data
             if final_calc:
-                
                 profile_data = {
                     'name': f'Line {len(self.current_profiles) + 1}',
-                    'color': color if color else (255, 128, 0),  # Use measurement color or default orange
+                    'color': final_color_to_save, 
                     'x_data': plot_x_data,
                     'y_data': profile_data_y,
                     'start_point': self.start_point,
@@ -1016,11 +1169,9 @@ class SpatialTool(Tool):
                     }
                 }
                 
-                # Append to list of all profiles
                 self.current_profiles.append(profile_data)
                 self.update_profile_button_state()
                 
-                # Update profile dialog if it's already open
                 if self.profile_dialog and self.profile_dialog.isVisible():
                     self.profile_dialog.update_plot(self.current_profiles)
                 
