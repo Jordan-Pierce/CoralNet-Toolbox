@@ -709,6 +709,8 @@ class BatchInferenceDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
 
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         try:
             # Classify: predict on grouped annotation patches
             if selected_model == "Classify":
@@ -747,10 +749,19 @@ class BatchInferenceDialog(QDialog):
             elif selected_model == "Transformers":
                 model_dialog.predict(self.image_paths, progress_bar)
             
-            # Z-Inference: predict on image paths with prompt mode for overwrite handling
-            # show_dialog=True ensures user gets the overwrite/smart_fill/cancel dialog for batch processing
+            # Z-Inference: predict on image paths with user-selected overwrite mode
             elif selected_model == "Z-Inference":
-                model_dialog.predict(self.image_paths, progress_bar, overwrite_mode="prompt", show_dialog=True)
+                # Show the overwrite dialog to get user choice
+                overwrite_mode = self.z_dialog._show_overwrite_dialog(is_batch=True)
+                if overwrite_mode is None:
+                    # User cancelled
+                    QApplication.restoreOverrideCursor()
+                    progress_bar.finish_progress()
+                    progress_bar.stop_progress()
+                    progress_bar.close()
+                    return
+                # Predict with the selected overwrite mode
+                model_dialog.predict(self.image_paths, progress_bar, overwrite_mode=overwrite_mode, show_dialog=False)
 
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")
@@ -758,6 +769,7 @@ class BatchInferenceDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
+            QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()

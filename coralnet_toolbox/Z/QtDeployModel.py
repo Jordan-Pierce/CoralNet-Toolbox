@@ -320,7 +320,6 @@ class DeployModelDialog(CollapsibleSection):
             image_paths: List of image paths to process
             progress_bar: ProgressBar instance for tracking progress
             overwrite_mode: How to handle existing z-channels:
-                           "prompt" - ask user once (for batch)
                            "overwrite" - overwrite without asking
                            "skip" - skip images with existing z-channels
                            "smart_fill" - fill NaN values with scaled predictions
@@ -329,31 +328,12 @@ class DeployModelDialog(CollapsibleSection):
         if self.loaded_model is None:
             raise ValueError("No model loaded")
             
-        # For batch processing with prompt mode, check if any images have z-channels
-        # Only show dialog if show_dialog=True and overwrite_mode is "prompt"
-        if show_dialog and overwrite_mode == "prompt" and len(image_paths) > 1:
-            # Check if we already have a cached choice from a previous dialog
-            if self.last_overwrite_mode is None:
-                has_z_channel = False
-                for image_path in image_paths:
-                    raster = self.main_window.image_window.raster_manager.get_raster(image_path)
-                    if raster and raster.z_channel is not None:
-                        has_z_channel = True
-                        break
-                        
-                if has_z_channel:
-                    reply = self._show_overwrite_dialog()
-                    if reply == "cancel":
-                        return
-                    # Cache the choice for all remaining images in this batch
-                    self.last_overwrite_mode = reply
-                    overwrite_mode = reply
-                else:
-                    # No images have z-channels, so we can overwrite without asking
-                    overwrite_mode = "overwrite"
-            else:
-                # Use the cached choice
-                overwrite_mode = self.last_overwrite_mode
+        # For batch processing, always show dialog if show_dialog=True
+        if len(image_paths) > 1 and show_dialog:
+            reply = self._show_overwrite_dialog(is_batch=True)
+            if reply is None:
+                return
+            overwrite_mode = reply
         
         # Process each image
         num_images = len(image_paths)
@@ -366,6 +346,10 @@ class DeployModelDialog(CollapsibleSection):
                 if raster is None:
                     print(f"Failed to get raster for {image_path}")
                     continue
+                
+                # Load z_channel if it exists but not loaded
+                if raster.z_channel is None and raster.z_channel_path:
+                    raster.load_z_channel_from_file(raster.z_channel_path)
                 
                 # Check if raster already has z-channel
                 if raster.z_channel is not None:
@@ -391,6 +375,9 @@ class DeployModelDialog(CollapsibleSection):
                             self.annotation_window.refresh_z_channel_visualization()
                         continue
                     # If overwrite_mode == "overwrite", continue with prediction below
+                else:
+                    if overwrite_mode == "skip":
+                        continue
                 
                 # Get numpy array from raster
                 image_array = raster.get_numpy()
@@ -432,46 +419,83 @@ class DeployModelDialog(CollapsibleSection):
                 traceback.print_exc()
                 continue
             
-    def _show_overwrite_dialog(self):
+    def _show_overwrite_dialog(self, is_batch=False):
         """
-        Show dialog when Z-channel already exists.
+        Show dialog for Z-channel handling.
+        
+        Args:
+            is_batch (bool): Whether this is for batch processing multiple images.
         
         Returns:
-            str: "cancel", "overwrite", or "smart_fill"
+            str or None: "overwrite", "skip", "smart_fill", or None for cancel
         """
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowIcon(get_icon("z.png"))
-        msg.setWindowTitle("Z-Channel Exists")
-        msg.setText("This image already has a Z-channel.")
-        msg.setInformativeText("What would you like to do?")
         
         # Set minimum width for the dialog
         msg.setStyleSheet("QMessageBox { min-width: 500px; }")
         
-        cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
-        overwrite_btn = msg.addButton("Overwrite", QMessageBox.AcceptRole)
-        smart_fill_btn = msg.addButton("Smart Fill", QMessageBox.ActionRole)
-        
-        # Add tooltips to each button
-        cancel_btn.setToolTip("Do nothing and return to the main window")
-        overwrite_btn.setToolTip("Replace the entire existing Z-channel with new predictions")
-        smart_fill_btn.setToolTip(
-            "Preserve valid depth/elevation values and fill only NaN/missing areas "
-            "with scaled predictions matched to existing data. \nAutomatically handles "
-            "depth/elevation conversion and unit conversion to meters."
-        )
-        
-        msg.exec_()
-        
-        if msg.clickedButton() == cancel_btn:
-            return "cancel"
-        elif msg.clickedButton() == overwrite_btn:
-            return "overwrite"
-        elif msg.clickedButton() == smart_fill_btn:
-            return "smart_fill"
+        if is_batch:
+            msg.setWindowTitle("Z-Inference Options")
+            msg.setText("How would you like to proceed with Z-Inference on these images?")
+            msg.setInformativeText("")
+            
+            overwrite_btn = msg.addButton("Overwrite All", QMessageBox.AcceptRole)
+            skip_btn = msg.addButton("Skip All", QMessageBox.RejectRole)
+            smart_fill_btn = msg.addButton("Smart Fill All", QMessageBox.ActionRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+            
+            # Add tooltips
+            overwrite_btn.setToolTip("Replace existing Z-channels or add to images without Z-channels")
+            skip_btn.setToolTip("Skip all images without processing")
+            smart_fill_btn.setToolTip(
+                "Preserve valid depth/elevation values and fill only NaN/missing areas "
+                "with scaled predictions matched to existing data. \nAutomatically handles "
+                "depth/elevation conversion and unit conversion to meters. Skips images without existing Z-channels."
+            )
+            cancel_btn.setToolTip("Cancel the operation")
+            
+            msg.exec_()
+            
+            if msg.clickedButton() == cancel_btn:
+                return None
+            elif msg.clickedButton() == overwrite_btn:
+                return "overwrite"
+            elif msg.clickedButton() == skip_btn:
+                return "skip"
+            elif msg.clickedButton() == smart_fill_btn:
+                return "smart_fill"
+            else:
+                return None
         else:
-            return "cancel"
+            msg.setWindowTitle("Z-Channel Exists")
+            msg.setText("This image already has a Z-channel.")
+            msg.setInformativeText("What would you like to do?")
+            
+            cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+            overwrite_btn = msg.addButton("Overwrite", QMessageBox.AcceptRole)
+            smart_fill_btn = msg.addButton("Smart Fill", QMessageBox.ActionRole)
+            
+            # Add tooltips to each button
+            cancel_btn.setToolTip("Do nothing and return to the main window")
+            overwrite_btn.setToolTip("Replace the entire existing Z-channel with new predictions")
+            smart_fill_btn.setToolTip(
+                "Preserve valid depth/elevation values and fill only NaN/missing areas "
+                "with scaled predictions matched to existing data. \nAutomatically handles "
+                "depth/elevation conversion and unit conversion to meters."
+            )
+            
+            msg.exec_()
+            
+            if msg.clickedButton() == cancel_btn:
+                return "cancel"
+            elif msg.clickedButton() == overwrite_btn:
+                return "overwrite"
+            elif msg.clickedButton() == smart_fill_btn:
+                return "smart_fill"
+            else:
+                return "cancel"
             
     def _handle_smart_fill(self, raster, z_predicted):
         """
@@ -502,16 +526,7 @@ class DeployModelDialog(CollapsibleSection):
             raster.z_channel = z_result
             raster.z_unit = 'meters'
             # z_data_type and z_inversion_reference are preserved
-            
-            # Print statistics
-            print("Smart Fill complete:")
-            print(f"  - Filled {stats['num_filled']} pixels")
-            print(f"  - Scale: {stats['scale']:.4f}, Offset: {stats['offset']:.4f}")
-            if 'existing_range' in stats:
-                print(f"  - Existing: [{stats['existing_range'][0]:.3f}, {stats['existing_range'][1]:.3f}] meters")
-                print(f"  - Predicted: [{stats['predicted_range'][0]:.3f}, {stats['predicted_range'][1]:.3f}] meters")
-            print(f"  - Result type: {raster.z_data_type}, unit: {raster.z_unit}")
-            
+
         except ValueError as e:
             # Handle errors from smart_fill_z_channel
             error_msg = str(e)
