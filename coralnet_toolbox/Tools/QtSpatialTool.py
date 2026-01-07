@@ -15,12 +15,13 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWi
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
                              QGroupBox, QCheckBox, QButtonGroup, QPushButton,
                              QGraphicsRectItem, QGraphicsItemGroup, QGraphicsEllipseItem, QSpacerItem,
-                             QSizePolicy, QScrollArea, QFrame)
+                             QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -254,6 +255,62 @@ class SpatialToolDialog(QDialog):
         group_2d.setLayout(form_2d)
         layout.addWidget(group_2d)
         
+        # --- Grid Settings Group ---
+        grid_group = QGroupBox("Grid Settings")
+        grid_layout = QVBoxLayout()
+        
+        # Margin input
+        self.margin_input = MarginInput()
+        grid_layout.addWidget(self.margin_input)
+        
+        # Grid parameters
+        grid_params_layout = QFormLayout()
+        
+        # Row settings
+        row_layout = QHBoxLayout()
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(0, 100)
+        self.rows_spin.setValue(5)
+        row_layout.addWidget(QLabel("Count:"))
+        row_layout.addWidget(self.rows_spin)
+        self.row_spacing_spin = QSpinBox()
+        self.row_spacing_spin.setRange(1, 10000)
+        self.row_spacing_spin.setValue(50)
+        self.row_spacing_spin.setSuffix(" px")
+        row_layout.addWidget(QLabel("Spacing:"))
+        row_layout.addWidget(self.row_spacing_spin)
+        grid_params_layout.addRow("Rows:", row_layout)
+        
+        # Column settings
+        col_layout = QHBoxLayout()
+        self.cols_spin = QSpinBox()
+        self.cols_spin.setRange(0, 100)
+        self.cols_spin.setValue(5)
+        col_layout.addWidget(QLabel("Count:"))
+        col_layout.addWidget(self.cols_spin)
+        self.col_spacing_spin = QSpinBox()
+        self.col_spacing_spin.setRange(1, 10000)
+        self.col_spacing_spin.setValue(50)
+        self.col_spacing_spin.setSuffix(" px")
+        col_layout.addWidget(QLabel("Spacing:"))
+        col_layout.addWidget(self.col_spacing_spin)
+        grid_params_layout.addRow("Columns:", col_layout)
+        
+        grid_layout.addLayout(grid_params_layout)
+        
+        # Grid buttons
+        grid_btn_layout = QHBoxLayout()
+        self.generate_grid_button = QPushButton("Generate Grid")
+        self.generate_grid_button.clicked.connect(self.tool.generate_grid)
+        self.clear_grid_button = QPushButton("Clear Grid")
+        self.clear_grid_button.clicked.connect(self.tool.clear_grid)
+        grid_btn_layout.addWidget(self.generate_grid_button)
+        grid_btn_layout.addWidget(self.clear_grid_button)
+        grid_layout.addLayout(grid_btn_layout)
+        
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+        
         # --- 3D Z-Metrics Group ---
         self.line_3d_group = QGroupBox("3D Z-Metrics")
         self.line_3d_group.setEnabled(False)  # Disabled until Z-data available
@@ -320,6 +377,12 @@ class SpatialTool(Tool):
         
         # Recorded measurements with color info
         self.recorded_line_measurements = []  # List of dicts with line data and color
+        
+        # Grid settings
+        self.roi_bounds = None  # QRectF for region of interest
+        self.roi_graphic = None  # Visual representation of ROI
+        self.grid_lines = []  # List of grid line measurements
+        self.grid_enabled = False
         
         # Profile data for plotting
         self.current_profiles = []
@@ -504,6 +567,9 @@ class SpatialTool(Tool):
                         scene.removeItem(measurement[key])
         self.recorded_line_measurements.clear()
         
+        # Clear grid
+        self.clear_grid()
+        
         # Close profile dialog if open
         if self.profile_dialog:
             self.profile_dialog.close()
@@ -520,6 +586,168 @@ class SpatialTool(Tool):
             self._reset_line_3d_labels()
             self.dialog.line_profile_button.setEnabled(False)
 
+    def generate_grid(self):
+        """Generate grid lines based on margin and spacing settings"""
+        if not self.dialog:
+            return
+            
+        # Get image dimensions
+        if not self.annotation_window.current_image_path:
+            QMessageBox.warning(self.dialog, "No Image", "Please load an image first.")
+            return
+            
+        image_width, image_height = self.annotation_window.get_image_dimensions()
+        if not image_width or not image_height:
+            return
+            
+        # Get margins in pixels
+        margins = self.dialog.margin_input.get_margins(image_width, image_height, validate=True)
+        if margins is None:
+            return
+            
+        left, top, right, bottom = margins
+        
+        # Calculate ROI bounds
+        roi_left = left
+        roi_top = top
+        roi_right = image_width - right
+        roi_bottom = image_height - bottom
+        
+        if roi_right <= roi_left or roi_bottom <= roi_top:
+            QMessageBox.warning(self.dialog, "Invalid ROI", "Margins result in invalid region of interest.")
+            return
+            
+        self.roi_bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
+        self.grid_enabled = True
+        
+        # Draw ROI rectangle
+        self._draw_roi_graphic()
+        
+        # Clear existing grid lines
+        self.clear_grid()
+        
+        # Get grid parameters
+        num_rows = self.dialog.rows_spin.value()
+        num_cols = self.dialog.cols_spin.value()
+        row_spacing = self.dialog.row_spacing_spin.value()
+        col_spacing = self.dialog.col_spacing_spin.value()
+        
+        # Generate horizontal lines (rows)
+        grid_color = (128, 128, 128)  # Gray color for grid lines
+        current_y = roi_top
+        row_count = 0
+        
+        while current_y <= roi_bottom and (num_rows == 0 or row_count < num_rows):
+            if current_y >= roi_top:  # Only draw if within ROI
+                start = QPointF(roi_left, current_y)
+                end = QPointF(roi_right, current_y)
+                
+                # Create the line graphic
+                measurement = self._create_colored_line(start, end, grid_color)
+                self.grid_lines.append(measurement)
+                
+                # Calculate profile for this line
+                self.start_point = start
+                self.end_point = end
+                self.calculate_line_measurement(final_calc=True, color=grid_color)
+                self.start_point = None
+                self.end_point = None
+                
+            current_y += row_spacing
+            row_count += 1
+            
+        # Generate vertical lines (columns)
+        current_x = roi_left
+        col_count = 0
+        
+        while current_x <= roi_right and (num_cols == 0 or col_count < num_cols):
+            if current_x >= roi_left:  # Only draw if within ROI
+                start = QPointF(current_x, roi_top)
+                end = QPointF(current_x, roi_bottom)
+                
+                # Create the line graphic
+                measurement = self._create_colored_line(start, end, grid_color)
+                self.grid_lines.append(measurement)
+                
+                # Calculate profile for this line
+                self.start_point = start
+                self.end_point = end
+                self.calculate_line_measurement(final_calc=True, color=grid_color)
+                self.start_point = None
+                self.end_point = None
+                
+            current_x += col_spacing
+            col_count += 1
+            
+        # Update profile button state
+        self.update_profile_button_state()
+        
+        # Update profile dialog if it's already open
+        if self.profile_dialog and self.profile_dialog.isVisible():
+            self.profile_dialog.update_plot(self.current_profiles)
+
+    def clear_grid(self):
+        """Clear all grid lines and ROI"""
+        scene = self.annotation_window.scene
+        
+        # Remove all grid line graphics
+        for measurement in self.grid_lines:
+            for key in ['line', 'start_dot', 'end_dot']:
+                if key in measurement and measurement[key]:
+                    if measurement[key].scene() == scene:
+                        scene.removeItem(measurement[key])
+        self.grid_lines.clear()
+        
+        # Remove ROI graphic
+        if self.roi_graphic and self.roi_graphic.scene():
+            scene.removeItem(self.roi_graphic)
+            self.roi_graphic = None
+            
+        self.roi_bounds = None
+        self.grid_enabled = False
+        
+        # Clear grid profiles from current_profiles
+        # Keep only non-grid profiles (those with color != gray)
+        grid_color_tuple = (128, 128, 128)
+        self.current_profiles = [p for p in self.current_profiles if p.get('color') != grid_color_tuple]
+        
+        # Update profile button and dialog
+        self.update_profile_button_state()
+        if self.profile_dialog and self.profile_dialog.isVisible():
+            self.profile_dialog.update_plot(self.current_profiles)
+
+    def _draw_roi_graphic(self):
+        """Draw ROI rectangle on the scene"""
+        if not self.roi_bounds:
+            return
+            
+        scene = self.annotation_window.scene
+        
+        # Remove old ROI graphic if exists
+        if self.roi_graphic and self.roi_graphic.scene():
+            scene.removeItem(self.roi_graphic)
+            
+        # Create ROI rectangle
+        pen = QPen(QColor(255, 255, 0), 2, Qt.DashLine)  # Yellow dashed line
+        pen.setCosmetic(True)
+        self.roi_graphic = scene.addRect(self.roi_bounds, pen)
+        self.roi_graphic.setZValue(999)  # Below measurements but above image
+
+    def _is_point_in_roi(self, point):
+        """Check if a point is within the ROI"""
+        if not self.grid_enabled or not self.roi_bounds:
+            return True
+        return self.roi_bounds.contains(point)
+
+    def _clamp_point_to_roi(self, point):
+        """Clamp a point to ROI bounds"""
+        if not self.grid_enabled or not self.roi_bounds:
+            return point
+            
+        x = max(self.roi_bounds.left(), min(point.x(), self.roi_bounds.right()))
+        y = max(self.roi_bounds.top(), min(point.y(), self.roi_bounds.bottom()))
+        return QPointF(x, y)
+
     def update_z_controls(self):
         """Enable/disable Z-controls based on data availability"""
         z_data, z_unit, scalar, offset, direction = self.get_current_z_data()
@@ -534,6 +762,10 @@ class SpatialTool(Tool):
         if event.button() == Qt.LeftButton:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             
+            # Check if point is within ROI when grid is enabled
+            if self.grid_enabled and not self._is_point_in_roi(scene_pos):
+                return
+            
             # Only start new drawing if not already drawing
             if not self.is_drawing:
                 # Clear previous graphics
@@ -545,7 +777,7 @@ class SpatialTool(Tool):
                 self.is_drawing = True
             else:
                 # Second click finishes the measurement
-                self.end_point = scene_pos
+                self.end_point = self._clamp_point_to_roi(scene_pos)
                 self.is_drawing = False
                 
                 # Generate random color for this measurement
@@ -564,7 +796,7 @@ class SpatialTool(Tool):
         """Handle mouse move for drawing measurements"""
         if self.is_drawing and self.start_point:
             scene_pos = self.annotation_window.mapToScene(event.pos())
-            self.end_point = scene_pos
+            self.end_point = self._clamp_point_to_roi(scene_pos)
             
             # Update graphics and measurements
             self._update_line_graphic()
