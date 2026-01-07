@@ -1162,14 +1162,6 @@ class ImageWindow(QWidget):
             lambda: self.open_batch_inference_dialog(highlighted_paths)
         )
         
-        # Add deploy z-model action
-        deploy_z_model_action = context_menu.addAction(
-            f"Deploy Z-Model on {count} Highlighted Image{'s' if count > 1 else ''}"
-        )
-        deploy_z_model_action.triggered.connect(
-            lambda: self.deploy_z_model_on_highlighted_images(highlighted_paths)
-        )
-        
         context_menu.addSeparator()
 
         # Add import z-channel action
@@ -1241,40 +1233,7 @@ class ImageWindow(QWidget):
         batch_dialog.highlighted_images = highlighted_image_paths
         # Show the dialog
         batch_dialog.exec_()
-        
-    def deploy_z_model_on_highlighted_images(self, highlighted_image_paths):
-        """
-        Deploy the Z-model on all highlighted images.
-        
-        Args:
-            highlighted_image_paths (list): List of image paths to process
-        """
-        # Ensure images are highlighted
-        if not highlighted_image_paths:
-            QMessageBox.warning(
-                self,
-                "No Images Selected",
-                "Please highlight one or more images before deploying Z-model."
-            )
-            return
-        
-        # Get the Z-deploy dialog
-        z_dialog = self.main_window.z_deploy_model_dialog
-        
-        # Check if model is loaded
-        if z_dialog.loaded_model is None:
-            QMessageBox.warning(
-                self,
-                "No Model Loaded",
-                "Please load a Z-model first using the Z-Inference dialog."
-            )
-            return
-        
-        # Update highlighted images and button state
-        z_dialog.update_highlighted_images(highlighted_image_paths)
-        
-        # Deploy on the highlighted images
-        z_dialog.deploy_on_highlighted_images()
+    
         
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
