@@ -225,21 +225,26 @@ class SpatialToolDialog(QDialog):
 
         self.main_layout = QVBoxLayout(self)
 
-        # --- Main Content ---
+        # --- Tab Widget ---
+        self.tab_widget = QTabWidget()
         self.rugosity_tab = QWidget()
         self.setup_rugosity_tab(self.rugosity_tab)
-        self.main_layout.addWidget(self.rugosity_tab)
+        self.tab_widget.addTab(self.rugosity_tab, "Rugosity")
+        self.main_layout.addWidget(self.tab_widget)
 
     def setup_rugosity_tab(self, tab_widget):
         """Setup the Rugosity measurement tab"""
         layout = QVBoxLayout(tab_widget)
         
-        # Instructions
+        # --- Information GroupBox ---
+        info_group = QGroupBox("Information")
+        info_layout = QVBoxLayout(info_group)
         instructions = QLabel("Draw lines to measure rugosity and surface complexity")
         instructions.setStyleSheet("font-style: italic;")
-        layout.addWidget(instructions)
+        info_layout.addWidget(instructions)
+        layout.addWidget(info_group)
         
-        # --- NEW: Rugosity Parameters Group ---
+        # --- Rugosity Parameters Group ---
         group_params = QGroupBox("Rugosity Parameters")
         form_params = QFormLayout()
         
@@ -254,7 +259,7 @@ class SpatialToolDialog(QDialog):
         )
         
         self.chain_unit_combo = QComboBox()
-        self.chain_unit_combo.addItems(['cm', 'mm', 'm', 'ft', 'in'])
+        self.chain_unit_combo.addItems(['mm', 'cm', 'm', 'in', 'ft', 'yd'])
         self.chain_unit_combo.setCurrentText('cm')
         
         chain_layout.addWidget(self.chain_length_spin)
@@ -262,13 +267,7 @@ class SpatialToolDialog(QDialog):
         
         form_params.addRow("Chain Length:", chain_layout)
         
-        # Max Rugosity for Color Mapping (Scales the heatmap)
-        self.max_rugosity_spin = QDoubleSpinBox()
-        self.max_rugosity_spin.setRange(1.01, 50.0)
-        self.max_rugosity_spin.setValue(1.5)
-        self.max_rugosity_spin.setSingleStep(0.1)
-        self.max_rugosity_spin.setToolTip("Rugosity values above this threshold will appear bright Red.")
-        form_params.addRow("Color Max Scale:", self.max_rugosity_spin)
+        # REMOVED: Max Rugosity Spinner (Auto-scaling is now used)
         
         group_params.setLayout(form_params)
         layout.addWidget(group_params)
@@ -282,7 +281,7 @@ class SpatialToolDialog(QDialog):
         
         # Units dropdown
         self.line_units_combo = QComboBox()
-        self.line_units_combo.addItems(['m', 'cm', 'mm', 'km', 'ft', 'in', 'yd', 'mi'])
+        self.line_units_combo.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.line_units_combo.setCurrentText('m')
         form_2d.addRow("Display Units:", self.line_units_combo)
         
@@ -379,6 +378,18 @@ class SpatialToolDialog(QDialog):
         layout.addWidget(self.clear_button)
         
         layout.addStretch()
+
+        # --- REALTIME UPDATES: Connect spinboxes to generate_grid ---
+        self.rows_spin.valueChanged.connect(self.tool.generate_grid)
+        self.cols_spin.valueChanged.connect(self.tool.generate_grid)
+        self.row_spacing_spin.valueChanged.connect(self.tool.generate_grid)
+        self.col_spacing_spin.valueChanged.connect(self.tool.generate_grid)
+        
+        # Connect margin input if supported
+        if hasattr(self.margin_input, 'valueChanged'):
+            self.margin_input.valueChanged.connect(self.tool.generate_grid)
+        elif hasattr(self.margin_input, 'margins_changed'):
+            self.margin_input.margins_changed.connect(self.tool.generate_grid)
 
     def closeEvent(self, event):
         """Handle dialog close"""
@@ -517,65 +528,67 @@ class SpatialTool(Tool):
         
     def _get_rugosity_color(self, rugosity):
         """
-        Map a rugosity value to an RGB color based on dialog settings.
+        Map a rugosity value to an RGB color based on SESSION MAXIMUM.
         1.0 -> Grey (Flat)
-        Higher values map through Blue -> Green -> Orange -> Red
+        Higher values map through Blue -> Green -> Orange -> Red (Scaled to session max)
         """
-        # Physical floor is 1.0, but handle float errors
-        if rugosity < 1.0: 
+        # Strictly Grey for flat surfaces (allowing for tiny floating point noise)
+        if rugosity <= 1.001: 
             return (128, 128, 128)
-        
-        # If UI not ready, return default red
-        if not self.dialog:
-            return (255, 0, 0)
             
-        # Get user-defined max scale
-        max_val = self.dialog.max_rugosity_spin.value()
+        # 1. Determine the Max Rugosity for Scaling (Auto-Scaling)
+        # Start with a sensible default ceiling (e.g. 1.2) so slight bumps don't turn bright red immediately
+        current_max = 1.2 
         
-        # Normalize: 0.0 at R=1, 1.0 at R=max_val
-        if max_val <= 1.0: 
-            max_val = 1.01
-        norm = (rugosity - 1.0) / (max_val - 1.0)
+        # Check all existing profiles to find the true session max
+        for profile in self.current_profiles:
+            stats = profile.get('stats', {})
+            r = stats.get('rugosity', 1.0)
+            if r > current_max:
+                current_max = r
+        
+        # Also check the current value being calculated
+        if rugosity > current_max:
+            current_max = rugosity
+            
+        # 2. Normalize: 0.0 at R=1, 1.0 at R=current_max
+        norm = (rugosity - 1.0) / (current_max - 1.0)
         norm = max(0.0, min(1.0, norm))
         
-        if norm == 0:
-            return (128, 128, 128)  # Grey for perfectly flat
-        
-        # Heatmap Gradient Logic
-        # 0.00 - 0.25: Grey to Blue
-        # 0.25 - 0.50: Blue to Green
-        # 0.50 - 0.75: Green to Orange
-        # 0.75 - 1.00: Orange to Red
-        
+        # 3. Heatmap Gradient Logic (Jet-like: Blue -> Green -> Orange -> Red)
         if norm < 0.25:
-            # Grey to Blue
+            # Blue Range (Low complexity)
             local_t = norm / 0.25
-            r = int(128 * (1 - local_t) + 0 * local_t)
-            g = int(128 * (1 - local_t) + 0 * local_t)
-            b = int(128 * (1 - local_t) + 255 * local_t)
+            r = int(0 * (1 - local_t) + 0 * local_t)
+            g = int(0 * (1 - local_t) + 255 * local_t) # Ramping up green? No, Blue to Cyan usually.
+            # Let's stick to standard Jet-like ramp:
+            # 0.0: Blue (0,0,255) -> 0.25: Cyan (0,255,255)
+            r = 0
+            g = int(0 * (1 - local_t) + 255 * local_t)
+            b = 255
             return (r, g, b)
         
         elif norm < 0.5:
-            # Blue to Green
+            # Cyan -> Green
             local_t = (norm - 0.25) / 0.25
             r = 0
-            g = int(0 * (1 - local_t) + 255 * local_t)
+            g = 255
             b = int(255 * (1 - local_t) + 0 * local_t)
             return (r, g, b)
         
         elif norm < 0.75:
-            # Green to Orange
+            # Green -> Yellow/Orange
             local_t = (norm - 0.5) / 0.25
             r = int(0 * (1 - local_t) + 255 * local_t)
-            g = int(255 * (1 - local_t) + 165 * local_t)
+            g = 255
             b = 0
             return (r, g, b)
         
         else:
-            # Orange to Red
+            # Yellow -> Red
             local_t = (norm - 0.75) / 0.25
             r = 255
-            g = int(165 * (1 - local_t) + 0 * local_t)
+            g = int(255 * (1 - local_t) + 0 * local_t)
             b = 0
             return (r, g, b)
 
@@ -653,11 +666,47 @@ class SpatialTool(Tool):
             self.dialog.line_length_2d_label.setText("---")
             self._reset_line_3d_labels()
             self.dialog.line_profile_button.setEnabled(False)
+            # Reset chain length and unit
+            self.dialog.chain_length_spin.setValue(1.0)
+            self.dialog.chain_unit_combo.setCurrentText('cm')
+            # Reset margin input to defaults
+            self.dialog.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
+            self.dialog.margin_input.value_type.setCurrentIndex(0)  # Pixels
+            for spin in self.dialog.margin_input.margin_spins:
+                spin.setValue(0)
+            self.dialog.margin_input.single_spin.setValue(0)
+            self.dialog.margin_input.single_double.setValue(0.0)
+            self.dialog.margin_input.update_input_mode(0)
+            # Reset grid settings
+            self.calculate_grid()
+
+    def calculate_grid(self):
+        """Estimate grid spinbox values based on current image dimensions"""
+        if not self.annotation_window.current_image_path:
+            return
+        image_width, image_height = self.annotation_window.get_image_dimensions()
+        if not image_width or not image_height:
+            return
+        # Estimate rows and cols based on default spacing
+        default_spacing = 50  # pixels
+        estimated_rows = max(1, int(image_height / default_spacing))
+        estimated_cols = max(1, int(image_width / default_spacing))
+        # Cap to reasonable maximum
+        estimated_rows = min(estimated_rows, 20)
+        estimated_cols = min(estimated_cols, 20)
+        # Set the spinboxes
+        self.dialog.rows_spin.setValue(estimated_rows)
+        self.dialog.cols_spin.setValue(estimated_cols)
+        self.dialog.row_spacing_spin.setValue(default_spacing)
+        self.dialog.col_spacing_spin.setValue(default_spacing)
 
     def generate_grid(self):
-        """Generate grid lines based on margin and spacing settings"""
+        """Generate grid lines based on margin and spacing settings with Rugosity Coloring"""
         if not self.dialog:
             return
+            
+        # Calculate grid values based on image
+        self.calculate_grid()
             
         # Get image dimensions
         if not self.annotation_window.current_image_path:
@@ -691,7 +740,7 @@ class SpatialTool(Tool):
         # Draw working area rectangle
         self._draw_working_area_graphic(bounds)
         
-        # Clear existing grid lines
+        # Clear existing grid lines first
         self.clear_grid()
         
         # Get grid parameters
@@ -712,55 +761,52 @@ class SpatialTool(Tool):
             self.dialog.col_spacing_spin.setValue(int(calculated_col_spacing))
             col_spacing = calculated_col_spacing
         
-        # Generate horizontal lines (rows)
+        # --- Helper to process a grid line ---
+        def process_grid_line(p1, p2):
+            # 1. Set points for calculation
+            self.start_point = p1
+            self.end_point = p2
+            
+            # 2. Calculate measurement (color=None enables auto-coloring)
+            # This adds the profile to self.current_profiles and updates self.last_calculated_color
+            self.calculate_line_measurement(final_calc=True, color=None)
+            
+            # 3. Tag the last added profile as a "grid" line so we can clear it later
+            if self.current_profiles:
+                self.current_profiles[-1]['is_grid'] = True
+                # Rename it to be distinct in the legend
+                self.current_profiles[-1]['name'] = f"Grid Line {len(self.current_profiles)}"
+
+            # 4. Retrieve the calculated color (Jet/Grey based on rugosity)
+            final_color = self.last_calculated_color
+            
+            # 5. Create the graphic with this specific color
+            measurement = self._create_colored_line(p1, p2, final_color)
+            self.grid_lines.append(measurement)
+            
+            # Reset points
+            self.start_point = None
+            self.end_point = None
+
+        # --- Generate Rows ---
         current_y = roi_top
         row_count = 0
-        
         while current_y <= roi_bottom and (num_rows == 0 or row_count < num_rows):
-            if current_y >= roi_top:  # Only draw if within ROI
+            if current_y >= roi_top:
                 start = QPointF(roi_left, current_y)
                 end = QPointF(roi_right, current_y)
-                
-                # Use gray color for grid lines
-                color = (128, 128, 128)
-                
-                # Create the line graphic
-                measurement = self._create_colored_line(start, end, color)
-                self.grid_lines.append(measurement)
-                
-                # Calculate measurement
-                self.start_point = start
-                self.end_point = end
-                self.calculate_line_measurement(final_calc=True, color=color)
-                self.start_point = None
-                self.end_point = None
-                
+                process_grid_line(start, end)
             current_y += row_spacing
             row_count += 1
             
-        # Generate vertical lines (columns)
+        # --- Generate Columns ---
         current_x = roi_left
         col_count = 0
-        
         while current_x <= roi_right and (num_cols == 0 or col_count < num_cols):
-            if current_x >= roi_left:  # Only draw if within ROI
+            if current_x >= roi_left:
                 start = QPointF(current_x, roi_top)
                 end = QPointF(current_x, roi_bottom)
-                
-                # Use gray color for grid lines
-                color = (128, 128, 128)
-                
-                # Create graphic
-                measurement = self._create_colored_line(start, end, color)
-                self.grid_lines.append(measurement)
-                
-                # Calculate measurement
-                self.start_point = start
-                self.end_point = end
-                self.calculate_line_measurement(final_calc=True, color=color)
-                self.start_point = None
-                self.end_point = None
-                
+                process_grid_line(start, end)
             current_x += col_spacing
             col_count += 1
             
@@ -772,7 +818,7 @@ class SpatialTool(Tool):
             self.profile_dialog.update_plot(self.current_profiles)
 
     def clear_grid(self):
-        """Clear all grid lines and ROI"""
+        """Clear all grid lines, ROI, and remove grid profiles from plot"""
         scene = self.annotation_window.scene
         
         # Remove all grid line graphics
@@ -791,9 +837,8 @@ class SpatialTool(Tool):
         self.grid_enabled = False
         
         # Clear grid profiles from current_profiles
-        # Keep only non-grid profiles (those with color != gray)
-        grid_color_tuple = (128, 128, 128)
-        self.current_profiles = [p for p in self.current_profiles if p.get('color') != grid_color_tuple]
+        # We now filter based on the 'is_grid' tag we added in generate_grid
+        self.current_profiles = [p for p in self.current_profiles if not p.get('is_grid', False)]
         
         # Update profile button and dialog
         self.update_profile_button_state()
@@ -894,15 +939,18 @@ class SpatialTool(Tool):
                 self.end_point = self._clamp_point_to_working_area(scene_pos)
                 self.is_drawing = False
                 
-                # Generate random color for this measurement
-                color = self._generate_random_color()
+                # 1. Final Calculation 
+                # Pass color=None so it calculates rugosity color automatically based on session max
+                self.calculate_line_measurement(final_calc=True, color=None)
                 
-                # Record the measurement with color
-                measurement = self._create_colored_line(self.start_point, self.end_point, color)
+                # 2. Get the calculated color (Grey for flat, Jet for rugose)
+                final_color = self.last_calculated_color
+                
+                # 3. Create and record the permanent graphic with this color
+                measurement = self._create_colored_line(self.start_point, self.end_point, final_color)
                 self.recorded_line_measurements.append(measurement)
                 
-                # Final calculation
-                self.calculate_line_measurement(final_calc=True, color=color)
+                # 4. Updates
                 self._update_wireframe_graphic()  # Add 3D wireframe if available
                 self.update_profile_button_state()
 
@@ -947,7 +995,7 @@ class SpatialTool(Tool):
             scene.removeItem(self.line_graphic)
         
         # Create new line with cosmetic pen (doesn't scale with zoom)
-        pen = QPen(QColor(230, 62, 0), 3, Qt.SolidLine)
+        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)
         pen.setCosmetic(True)  # Make pen width independent of zoom level
         line = QLineF(self.start_point, self.end_point)
         self.line_graphic = scene.addLine(line, pen)
@@ -1145,13 +1193,14 @@ class SpatialTool(Tool):
                 if self.dialog:
                     self.dialog.line_rugosity_label.setText("N/A")
             
-            # Determine Color based on Rugosity
+            # Determine Color based on Rugosity and Session Max
+            # If a specific color is forced (like Grey for grid lines), use it.
+            # Otherwise, calculate color based on rugosity.
             rugosity_color = self._get_rugosity_color(linear_rugosity)
-            self.last_calculated_color = rugosity_color  # Store for graphics update
-            
-            # If final_calc is true, use the provided color (if override exists) 
-            # OR use the calculated color if none provided.
             final_color_to_save = color if color else rugosity_color
+            
+            # Store calculated color for use in mousePressEvent (visual feedback)
+            self.last_calculated_color = final_color_to_save
 
             # Store profile data
             if final_calc:
