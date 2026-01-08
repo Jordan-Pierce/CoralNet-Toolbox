@@ -1232,7 +1232,7 @@ class ScaleTool(Tool):
     def set_z_view_mode(self, mode):
         """
         Toggle between Depth and Elevation view modes non-destructively.
-        Updates 'direction' and 'offset' in z_settings.
+        Updates 'direction' and 'offset' in z_settings, and updates z_data_type metadata.
         """
         current_raster = self.main_window.image_window.current_raster
         if not current_raster or current_raster.z_channel_lazy is None: return
@@ -1244,6 +1244,7 @@ class ScaleTool(Tool):
             # Standard Depth Mode
             settings['direction'] = 1  # Positive = farther
             settings['offset'] = 0.0   # Zero at camera
+            current_raster.z_data_type = 'depth'  # Update metadata
             
         elif mode == 'elevation':
             # Relative Elevation Mode
@@ -1265,6 +1266,7 @@ class ScaleTool(Tool):
             # We want Elevation=0 at Depth=10.
             # Elev = -1 * (10*1) + Offset = 0  =>  Offset = 10
             settings['offset'] = max_raw * scalar
+            current_raster.z_data_type = 'elevation'  # Update metadata
             
         # Refresh visuals
         self.annotation_window.refresh_z_channel_visualization()
