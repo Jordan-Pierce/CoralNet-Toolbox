@@ -742,88 +742,92 @@ class SpatialTool(Tool):
             QMessageBox.warning(self.dialog, "Invalid Working Area", "Margins result in invalid working area.")
             return
             
-        bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
-        self.grid_enabled = True
-        
-        # Draw working area rectangle
-        self._draw_working_area_graphic(bounds)
-        
-        # Clear existing grid lines first
-        self.clear_grid()
-        
-        # Get grid parameters
-        num_rows = self.dialog.rows_spin.value()
-        num_cols = self.dialog.cols_spin.value()
-        row_spacing = self.dialog.row_spacing_spin.value()
-        col_spacing = self.dialog.col_spacing_spin.value()
-        
-        # Precalculate spacing for even distribution if count > 1
-        roi_height = roi_bottom - roi_top
-        roi_width = roi_right - roi_left
-        if num_rows > 1:
-            calculated_row_spacing = roi_height / (num_rows - 1)
-            self.dialog.row_spacing_spin.setValue(int(calculated_row_spacing))
-            row_spacing = calculated_row_spacing
-        if num_cols > 1:
-            calculated_col_spacing = roi_width / (num_cols - 1)
-            self.dialog.col_spacing_spin.setValue(int(calculated_col_spacing))
-            col_spacing = calculated_col_spacing
-        
-        # --- Helper to process a grid line ---
-        def process_grid_line(p1, p2):
-            # 1. Set points for calculation
-            self.start_point = p1
-            self.end_point = p2
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
+            self.grid_enabled = True
             
-            # 2. Calculate measurement (color=None enables auto-coloring)
-            # This adds the profile to self.current_profiles and updates self.last_calculated_color
-            self.calculate_line_measurement(final_calc=True, color=None)
+            # Draw working area rectangle
+            self._draw_working_area_graphic(bounds)
             
-            # 3. Tag the last added profile as a "grid" line so we can clear it later
-            if self.current_profiles:
-                self.current_profiles[-1]['is_grid'] = True
-                # Rename it to be distinct in the legend
-                self.current_profiles[-1]['name'] = f"Grid Line {len(self.current_profiles)}"
-
-            # 4. Retrieve the calculated color (Jet/Grey based on rugosity)
-            final_color = self.last_calculated_color
+            # Clear existing grid lines first
+            self.clear_grid()
             
-            # 5. Create the graphic with this specific color
-            measurement = self._create_colored_line(p1, p2, final_color)
-            self.grid_lines.append(measurement)
+            # Get grid parameters
+            num_rows = self.dialog.rows_spin.value()
+            num_cols = self.dialog.cols_spin.value()
+            row_spacing = self.dialog.row_spacing_spin.value()
+            col_spacing = self.dialog.col_spacing_spin.value()
             
-            # Reset points
-            self.start_point = None
-            self.end_point = None
-
-        # --- Generate Rows ---
-        current_y = roi_top
-        row_count = 0
-        while current_y <= roi_bottom and (num_rows == 0 or row_count < num_rows):
-            if current_y >= roi_top:
-                start = QPointF(roi_left, current_y)
-                end = QPointF(roi_right, current_y)
-                process_grid_line(start, end)
-            current_y += row_spacing
-            row_count += 1
+            # Precalculate spacing for even distribution if count > 1
+            roi_height = roi_bottom - roi_top
+            roi_width = roi_right - roi_left
+            if num_rows > 1:
+                calculated_row_spacing = roi_height / (num_rows - 1)
+                self.dialog.row_spacing_spin.setValue(int(calculated_row_spacing))
+                row_spacing = calculated_row_spacing
+            if num_cols > 1:
+                calculated_col_spacing = roi_width / (num_cols - 1)
+                self.dialog.col_spacing_spin.setValue(int(calculated_col_spacing))
+                col_spacing = calculated_col_spacing
             
-        # --- Generate Columns ---
-        current_x = roi_left
-        col_count = 0
-        while current_x <= roi_right and (num_cols == 0 or col_count < num_cols):
-            if current_x >= roi_left:
-                start = QPointF(current_x, roi_top)
-                end = QPointF(current_x, roi_bottom)
-                process_grid_line(start, end)
-            current_x += col_spacing
-            col_count += 1
+            # --- Helper to process a grid line ---
+            def process_grid_line(p1, p2):
+                # 1. Set points for calculation
+                self.start_point = p1
+                self.end_point = p2
+                
+                # 2. Calculate measurement (color=None enables auto-coloring)
+                # This adds the profile to self.current_profiles and updates self.last_calculated_color
+                self.calculate_line_measurement(final_calc=True, color=None)
+                
+                # 3. Tag the last added profile as a "grid" line so we can clear it later
+                if self.current_profiles:
+                    self.current_profiles[-1]['is_grid'] = True
+                    # Rename it to be distinct in the legend
+                    self.current_profiles[-1]['name'] = f"Grid Line {len(self.current_profiles)}"
+                
+                # 4. Retrieve the calculated color (Jet/Grey based on rugosity)
+                final_color = self.last_calculated_color
+                
+                # 5. Create the graphic with this specific color
+                measurement = self._create_colored_line(p1, p2, final_color)
+                self.grid_lines.append(measurement)
+                
+                # Reset points
+                self.start_point = None
+                self.end_point = None
             
-        # Update profile button state
-        self.update_profile_button_state()
-        
-        # Update profile dialog if it's already open
-        if self.profile_dialog and self.profile_dialog.isVisible():
-            self.profile_dialog.update_plot(self.current_profiles)
+            # --- Generate Rows ---
+            current_y = roi_top
+            row_count = 0
+            while current_y <= roi_bottom and (num_rows == 0 or row_count < num_rows):
+                if current_y >= roi_top:
+                    start = QPointF(roi_left, current_y)
+                    end = QPointF(roi_right, current_y)
+                    process_grid_line(start, end)
+                current_y += row_spacing
+                row_count += 1
+                
+            # --- Generate Columns ---
+            current_x = roi_left
+            col_count = 0
+            while current_x <= roi_right and (num_cols == 0 or col_count < num_cols):
+                if current_x >= roi_left:
+                    start = QPointF(current_x, roi_top)
+                    end = QPointF(current_x, roi_bottom)
+                    process_grid_line(start, end)
+                current_x += col_spacing
+                col_count += 1
+                
+            # Update profile button state
+            self.update_profile_button_state()
+            
+            # Update profile dialog if it's already open
+            if self.profile_dialog and self.profile_dialog.isVisible():
+                self.profile_dialog.update_plot(self.current_profiles)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def clear_grid(self):
         """Clear all grid lines, ROI, and remove grid profiles from plot"""
