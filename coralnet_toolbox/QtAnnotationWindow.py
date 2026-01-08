@@ -172,6 +172,7 @@ class AnnotationWindow(QGraphicsView):
         self.z_data_min = None  # Minimum value of raw Z-data
         self.z_data_max = None  # Maximum value of raw Z-data
         self.z_data_shape = None  # Shape of Z-data array
+        self.z_nodata_mask = None  # Boolean mask for NaN/nodata pixels
         
         # Debounce timer for dynamic range updates (prevents lag during zoom)
         self.dynamic_range_timer = QTimer()
@@ -813,6 +814,13 @@ class AnnotationWindow(QGraphicsView):
             self.z_data_transformed = z_transformed.copy()  # Store transformed for calculations
             self.z_data_shape = z_data.shape
             
+            # Create mask for NaN and nodata values
+            # This mask identifies pixels that should be transparent/invalid
+            nodata_mask = np.isnan(z_transformed)
+            if raster.z_nodata is not None:
+                # Also mask the nodata value from the original raw data
+                nodata_mask |= (z_data == raster.z_nodata)
+            
             # Normalize the TRANSFORMED Z-channel data to 0-255 range for colormap
             # This ensures colormap reflects semantic meaning (direction flip = visual flip)
             if z_data.dtype == np.float32:
@@ -823,9 +831,14 @@ class AnnotationWindow(QGraphicsView):
                     z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
                 else:
                     z_diff = self.z_data_max - self.z_data_min
+                    # Normalize, keeping NaN as NaN temporarily
                     z_norm = (
                         (z_transformed - self.z_data_min) / z_diff * 255
-                    ).astype(np.uint8)
+                    )
+                    # Convert to uint8, NaN will become 0
+                    z_norm = z_norm.astype(np.uint8)
+                    # Set nodata pixels to 0 (will be made transparent in colormap)
+                    z_norm[nodata_mask] = 0
             else:
                 # For uint8, apply transform and normalize
                 self.z_data_min = np.nanmin(z_transformed)
@@ -837,6 +850,11 @@ class AnnotationWindow(QGraphicsView):
                     z_norm = (
                         (z_transformed - self.z_data_min) / z_diff * 255
                     ).astype(np.uint8)
+                    # Set nodata pixels to 0 (will be made transparent in colormap)
+                    z_norm[nodata_mask] = 0
+            
+            # Store the nodata mask for use in colormap application
+            self.z_nodata_mask = nodata_mask
             
             # Store normalized data for colormap application
             self.z_data_normalized = z_norm
@@ -844,8 +862,7 @@ class AnnotationWindow(QGraphicsView):
             # Create QImage from uint8 grayscale data
             h, w = z_norm.shape
             z_copy = np.ascontiguousarray(z_norm)
-            q_img = QImage(z_copy.data, w, h, w,
-                           QImage.Format_Grayscale8)
+            q_img = QImage(z_copy.data, w, h, w, QImage.Format_Grayscale8)
             
             # Convert QImage to QPixmap
             pixmap = QPixmap.fromImage(q_img)
@@ -888,6 +905,7 @@ class AnnotationWindow(QGraphicsView):
     def update_z_colormap(self, colormap_name):
         """
         Update the Z-channel visualization colormap.
+        Properly handles NaN and nodata values by making them transparent.
         
         Args:
             colormap_name (str): Name of the colormap
@@ -904,16 +922,20 @@ class AnnotationWindow(QGraphicsView):
                 # Get the colormap from pyqtgraph
                 colormap = pg.colormap.get(colormap_name)
                 
-                # Get the lookup table (0-255 -> RGB)
-                lut = colormap.getLookupTable(nPts=256)
+                # Get the lookup table (0-255 -> RGBA)
+                lut = colormap.getLookupTable(nPts=256, alpha=True)
                 
-                # Apply LUT to normalized data
+                # Apply LUT to normalized data to get RGBA
                 z_colored = lut[self.z_data_normalized]
                 
-                # Create QImage from RGB data
+                # Apply nodata mask if available - set alpha to 0 (transparent)
+                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
+                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
+                
+                # Create QImage from RGBA data
                 h, w = z_colored.shape[:2]
                 z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 3, QImage.Format_RGB888)
+                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
                 
                 # Convert to QPixmap and set in scene item
                 pixmap = QPixmap.fromImage(q_img)
@@ -964,16 +986,20 @@ class AnnotationWindow(QGraphicsView):
             if colormap_name != 'None':
                 # Apply the colormap to the normalized data (full range)
                 colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256)
+                lut = colormap.getLookupTable(nPts=256, alpha=True)
                 
-                # Apply LUT directly to normalized data without rescaling
+                # Apply LUT directly to normalized data without rescaling to get RGBA
                 z_colored = lut[self.z_data_normalized]
                 
-                # Create QImage from RGB data
+                # Apply nodata mask if available - set alpha to 0 (transparent)
+                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
+                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
+                
+                # Create QImage from RGBA data
                 h, w = z_colored.shape[:2]
                 z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 3,
-                               QImage.Format_RGB888)
+                q_img = QImage(z_copy.data, w, h, w * 4,
+                               QImage.Format_RGBA8888)
                 
                 # Convert to QPixmap and update scene item
                 pixmap = QPixmap.fromImage(q_img)
@@ -1007,6 +1033,7 @@ class AnnotationWindow(QGraphicsView):
         self.z_data_min = None
         self.z_data_max = None
         self.z_data_shape = None
+        self.z_nodata_mask = None  # Clear nodata mask
 
     def schedule_dynamic_range_update(self):
         """
@@ -1068,7 +1095,7 @@ class AnnotationWindow(QGraphicsView):
             if colormap_name != 'None':
                 # Get the colormap and apply with adjusted range
                 colormap = pg.colormap.get(colormap_name)
-                lut = colormap.getLookupTable(nPts=256)
+                lut = colormap.getLookupTable(nPts=256, alpha=True)
                 
                 # Create a rescaled version of the transformed data
                 # to span the full 0-255 range based on visible min/max
@@ -1076,14 +1103,18 @@ class AnnotationWindow(QGraphicsView):
                     (z_data - z_vis_min) / (z_vis_max - z_vis_min) * 255
                 ).astype(np.uint8)
                 
-                # Apply LUT to rescaled data
+                # Apply LUT to rescaled data to get RGBA
                 z_colored = lut[z_rescaled]
                 
-                # Create QImage from RGB data
+                # Apply nodata mask if available - set alpha to 0 (transparent)
+                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None:
+                    z_colored[self.z_nodata_mask, 3] = 0  # Set alpha channel to 0 for nodata
+                
+                # Create QImage from RGBA data
                 h, w = z_colored.shape[:2]
                 z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 3,
-                               QImage.Format_RGB888)
+                q_img = QImage(z_copy.data, w, h, w * 4,
+                               QImage.Format_RGBA8888)
                 
                 # Convert to QPixmap and update scene item
                 pixmap = QPixmap.fromImage(q_img)
