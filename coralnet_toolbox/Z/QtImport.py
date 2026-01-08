@@ -682,10 +682,9 @@ class ZImportDialog(QDialog):
         Args:
             row (int): Table row index
         """
-        from PyQt5.QtWidgets import QInputDialog, QDialog, QVBoxLayout, QLabel, QDoubleSpinBox, QDialogButtonBox
+        from PyQt5.QtWidgets import QInputDialog
         
         img_path = self.image_files[row]
-        # SIMPLIFICATION: Removed 'dem', kept only directional types
         data_types = ["depth", "elevation"]
         
         selected, ok = QInputDialog.getItem(
@@ -697,41 +696,8 @@ class ZImportDialog(QDialog):
         )
         
         if ok:
-            z_inversion_reference = None
-            if selected == "elevation":
-                # Prompt for inversion reference
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Set Elevation Reference")
-                dialog.setModal(True)
-                
-                layout = QVBoxLayout(dialog)
-                label = QLabel(
-                    f"Reference elevation for {os.path.basename(img_path)}:\n(0 for sea level, or custom datum)"
-                )
-                layout.addWidget(label)
-                
-                spinbox = QDoubleSpinBox()
-                spinbox.setRange(-10000.0, 10000.0)
-                spinbox.setValue(0.0)
-                spinbox.setDecimals(2)
-                spinbox.setSuffix(" m")
-                spinbox.setToolTip("Reference elevation (e.g., 0 for sea level)")
-                layout.addWidget(spinbox)
-                
-                buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                buttons.accepted.connect(dialog.accept)
-                buttons.rejected.connect(dialog.reject)
-                layout.addWidget(buttons)
-                
-                if dialog.exec_() == QDialog.Accepted:
-                    z_inversion_reference = spinbox.value()
-                else:
-                    return  # User cancelled
-            
             # Update mapping and table
             self.mapping[img_path]["z_data_type"] = selected
-            if z_inversion_reference is not None:
-                self.mapping[img_path]["z_inversion_reference"] = z_inversion_reference
             item_data_type = self.table.item(row, 3)
             item_data_type.setText(selected if selected else "(Set)")
     
@@ -862,8 +828,7 @@ class ZImportDialog(QDialog):
                 final_dict[img] = {
                     "z_path": data["z_path"],
                     "units": data.get("units", None),
-                    "z_data_type": data.get("z_data_type", None),
-                    "z_inversion_reference": data.get("z_inversion_reference", None)
+                    "z_data_type": data.get("z_data_type", None)
                 }
                 # Count how many have z_path but missing z_data_type
                 if not data.get("z_data_type"):

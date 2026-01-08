@@ -1312,7 +1312,6 @@ class ImageWindow(QWidget):
                     z_channel_path = z_info.get("z_path")
                     z_unit = z_info.get("units")
                     z_data_type = z_info.get("z_data_type")
-                    z_inversion_reference = z_info.get("z_inversion_reference")
                 else:
                     # Fallback for old-style mappings (just paths)
                     z_channel_path = z_info
@@ -1325,19 +1324,13 @@ class ImageWindow(QWidget):
                         # Load z-channel from file with units
                         success = raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
                         if success:
-                            # Set z_data_type if provided
+                            # Set z_data_type if provided (trust the imported data is already correct)
                             if z_data_type:
                                 raster.z_data_type = z_data_type
-                                # Set direction based on z_data_type
-                                if z_data_type == 'elevation':
-                                    raster.z_settings['direction'] = -1
-                                elif z_data_type == 'depth':
-                                    raster.z_settings['direction'] = 1
-                                else:
-                                    raster.z_settings['direction'] = 1
-                            # Set z_inversion_reference if provided
-                            if z_inversion_reference is not None:
-                                raster.z_inversion_reference = z_inversion_reference
+                                # No automatic transformations - user specified the data type,
+                                # so we trust the values are already in the correct format.
+                                # Transformations and calibrations are done in ScaleTool.
+                                    
                             successful_count += 1
                             # Emit signal to update UI
                             self.raster_manager.rasterUpdated.emit(image_path)

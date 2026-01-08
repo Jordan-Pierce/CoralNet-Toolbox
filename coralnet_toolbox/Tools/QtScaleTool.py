@@ -1273,20 +1273,31 @@ class ScaleTool(Tool):
         self.main_window.image_window.raster_manager.rasterUpdated.emit(current_raster.image_path)
 
     def sync_view_mode_ui(self):
-        """Update dropdown selection to match current raster settings."""
+        """Update dropdown selection to match current raster's z_data_type."""
         current_raster = self.main_window.image_window.current_raster
-        if not current_raster or not current_raster.z_channel is None: 
+        if not current_raster or current_raster.z_channel is None: 
             return
         
-        direction = current_raster.z_settings.get('direction', 1)
+        # Use z_data_type to determine which mode to display
+        # z_data_type can be 'depth' or 'elevation'
+        data_type = getattr(current_raster, 'z_data_type', 'depth')
         
-        # If direction is 1, we assume Depth mode
-        # If direction is -1, we assume Elevation mode
-        index = 0 if direction == 1 else 1
+        # Set combobox to match the data type
+        # Index 0 = Depth, Index 1 = Elevation
+        if data_type == 'elevation':
+            index = 1
+        else:
+            index = 0  # Default to depth
         
         self.dialog.view_mode_combo.blockSignals(True)
         self.dialog.view_mode_combo.setCurrentIndex(index)
         self.dialog.view_mode_combo.blockSignals(False)
+        
+        # Also load the elevation reference if available
+        if hasattr(current_raster, 'z_inversion_reference') and current_raster.z_inversion_reference is not None:
+            self.dialog.z_inversion_ref_input.blockSignals(True)
+            self.dialog.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)
+            self.dialog.z_inversion_ref_input.blockSignals(False)
 
     def reset_z_settings(self):
         """Reset Z-settings to defaults."""
@@ -1327,11 +1338,8 @@ class ScaleTool(Tool):
             self.apply_z_anchor()
 
     def on_image_changed(self):
+        """Handle image change events to update UI state."""
         self.dialog.update_z_tab_states()
         self.load_existing_scale()
         self.stop_current_drawing()
-        self.sync_view_mode_ui()
-        # Load z_inversion_reference for current image
-        current_raster = self.main_window.image_window.current_raster
-        if current_raster and current_raster.z_inversion_reference is not None:
-            self.dialog.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)
+        self.sync_view_mode_ui()  # This now handles z_inversion_reference loading

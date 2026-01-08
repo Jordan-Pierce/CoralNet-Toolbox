@@ -83,7 +83,6 @@ class ZExportDialog(QDialog):
         info_layout.setContentsMargins(10, 5, 10, 5)
         
         info_text = (
-            f"<b>Ready to export {len(self.exportable_rasters)} z-channel file(s)</b><br><br>"
             "Z-channels will be exported as compressed TIFF files "
             "preserving float32 data type and metadata including:<br>"
             "• Z-channel data type (depth/elevation)<br>"
@@ -145,13 +144,27 @@ class ZExportDialog(QDialog):
     def setup_buttons_layout(self):
         """Set up the bottom buttons section."""
         btn_layout = QHBoxLayout()
+
+        # Add status label on the left
+        self.status_label = QLabel()
+        
+        count = len(self.exportable_rasters)
+        if count == 0:
+            self.status_label.setText("No images highlighted")
+        elif count == 1:
+            self.status_label.setText("1 image highlighted")
+        else:
+            self.status_label.setText(f"{count} images highlighted")
+        
+        btn_layout.addWidget(self.status_label)
+        
         btn_layout.addStretch()
         
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.close)
         btn_layout.addWidget(cancel_btn)
         
-        export_btn = QPushButton("Export Z-Channels")
+        export_btn = QPushButton("Export")
         export_btn.clicked.connect(self.start_export)
         btn_layout.addWidget(export_btn)
         
