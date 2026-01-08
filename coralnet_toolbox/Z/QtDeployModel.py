@@ -14,6 +14,8 @@ from coralnet_toolbox.utilities import smart_fill_z_channel
 
 from coralnet_toolbox.Icons import get_icon
 
+import torch
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -50,6 +52,7 @@ class DeployModelDialog(CollapsibleSection):
         
         self.highlighted_images = highlighted_images if highlighted_images else []
         self.last_overwrite_mode = None  # Cache the overwrite choice for batch processing
+        self.cuda_warning_shown = False  # Track if CUDA warning has been shown
         
         # Setup UI components
         self.setup_model_layout()
@@ -140,6 +143,20 @@ class DeployModelDialog(CollapsibleSection):
         
     def load_model(self):
         """Load the selected depth estimation model."""
+        # Check for CUDA availability before proceeding
+        if not self.cuda_warning_shown and not torch.cuda.is_available():
+            reply = QMessageBox.question(
+                self.annotation_window,
+                "No CUDA Detected",
+                "Depth estimation models will run very slowly without CUDA support. "
+                "Consider using a GPU-enabled device.\n\nDo you want to continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+            self.cuda_warning_shown = True
+        
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
