@@ -660,7 +660,7 @@ def convert_scale_units(value, from_unit, to_unit):
     return value_in_meters * from_meters[to_unit]
 
 
-def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None):
+def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None, z_data_type=None):
     """
     Load a depth map / elevation map from file using rasterio.
     
@@ -672,6 +672,7 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
         z_channel_path (str): Path to the depth/elevation file
         target_width (int, optional): Target width to match raster dimensions
         target_height (int, optional): Target height to match raster dimensions
+        z_data_type (str, optional): Type of z-channel data ('depth' or 'elevation')
         
     Returns:
         tuple: (z_data, z_path, z_nodata) where z_data is a 2D numpy array (float32 or uint8),
@@ -695,6 +696,11 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
             z_nodata = src.nodata
             if z_nodata is not None:
                 print(f"Z-channel has nodata value: {z_nodata}")
+            elif z_data_type == 'depth':
+                # For depth data, default to 0 as nodata if not specified in file
+                # 0 often represents "no depth" or invalid data in depth maps
+                z_nodata = 0
+                print("Z-channel is depth data with no nodata specified, defaulting to 0")
             
             # Read the single band
             z_data = src.read(1)

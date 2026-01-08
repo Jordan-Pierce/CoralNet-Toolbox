@@ -483,7 +483,8 @@ class Raster(QObject):
         z_data, z_path, z_nodata = load_z_channel_from_file(
             z_channel_path, 
             target_width=self.width, 
-            target_height=self.height
+            target_height=self.height,
+            z_data_type=z_data_type
         )
         
         if z_data is not None:
