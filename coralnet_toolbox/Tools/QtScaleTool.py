@@ -168,8 +168,8 @@ class ScaleToolDialog(QDialog):
 
         self.setWindowTitle("Scale Tool")
         self.setWindowIcon(get_icon("scale.png"))
-        self.setMinimumWidth(450)
-        
+        self.resize(450, 600)
+
         # This dialog is modeless
         self.setModal(False) 
 
@@ -226,7 +226,6 @@ class ScaleToolDialog(QDialog):
             "3. Click 'Apply' to calibrate highlighted images."
         )
         instruction_label.setWordWrap(True)
-        instruction_label.setStyleSheet("color: #333; font-size: 10pt;")
         info_layout.addWidget(instruction_label)
         info_groupbox.setLayout(info_layout)
         layout.addWidget(info_groupbox)
@@ -293,10 +292,60 @@ class ScaleToolDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # --- 1. View Mode (The Toggle) ---
-        view_group = QGroupBox("1. View Mode")
-        view_layout = QHBoxLayout()
+        # --- Information Groupbox (at top) ---
+        info_groupbox = QGroupBox("Information")
+        info_layout = QVBoxLayout()
+        self.z_info_label = QLabel("Select a calibration step below.")
+        self.z_info_label.setWordWrap(True)
+        info_layout.addWidget(self.z_info_label)
+        info_groupbox.setLayout(info_layout)
+        layout.addWidget(info_groupbox)
         
+        # --- Calibration Tool (Radio Buttons) ---
+        interaction_group = QGroupBox("Calibration Tool")
+        interaction_layout = QVBoxLayout()
+        
+        # Radio buttons to switch between View Mode, NaN, Scaling and Anchoring
+        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
+        self.interaction_bg = QButtonGroup(self)
+        
+        self.radio_view = QRadioButton("Step A: View Mode")
+        self.radio_view.setChecked(True)  # Default
+        self.radio_view.setToolTip("Configure how Z-channel data is displayed (Depth vs Elevation).")
+        self.interaction_bg.addButton(self.radio_view)
+        
+        self.radio_nan = QRadioButton("Step B: Set NaN Value (Click Point)")
+        self.radio_nan.setToolTip("Click a pixel to set the NaN/NoData value for the Z-channel.")
+        self.interaction_bg.addButton(self.radio_nan)
+        
+        self.radio_scale = QRadioButton("Step C: Vertical Scale (Draw Line)")
+        self.radio_scale.setToolTip("Draw a line to define the vertical scale (magnitude).")
+        self.interaction_bg.addButton(self.radio_scale)
+        
+        self.radio_anchor = QRadioButton("Step D: Reference Anchor (Click Point)")
+        self.radio_anchor.setToolTip("Click a point to set the absolute reference value (offset).")
+        self.interaction_bg.addButton(self.radio_anchor)
+        
+        self.interaction_bg.buttonClicked.connect(self.on_interaction_mode_changed)
+        
+        interaction_layout.addWidget(self.radio_view)
+        interaction_layout.addWidget(self.radio_nan)
+        interaction_layout.addWidget(self.radio_scale)
+        interaction_layout.addWidget(self.radio_anchor)
+        interaction_group.setLayout(interaction_layout)
+        layout.addWidget(interaction_group)
+
+        # --- Dynamic Controls (Stack) ---
+        # We stack the View Mode, NaN, Scale, and Anchor controls and show only one set
+        from PyQt5.QtWidgets import QStackedWidget
+        self.controls_stack = QStackedWidget()
+        
+        # [Page 0] View Mode Controls
+        view_widget = QWidget()
+        view_form = QFormLayout(view_widget)
+        view_form.setContentsMargins(0, 5, 0, 5)
+        
+        # Define view_mode_combo
         self.view_mode_combo = QComboBox()
         self.view_mode_combo.addItem("Depth (from Camera)", "depth")
         self.view_mode_combo.addItem("Relative Elevation (from Bottom)", "elevation")
@@ -305,16 +354,9 @@ class ScaleToolDialog(QDialog):
             "Elevation: Elevation map. Positive values = elevation above lowest point."
         )
         self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
+        view_form.addRow("Display As:", self.view_mode_combo)
         
-        view_layout.addWidget(QLabel("Display As:"))
-        view_layout.addWidget(self.view_mode_combo)
-        view_group.setLayout(view_layout)
-        layout.addWidget(view_group)
-        
-        # --- Elevation Reference (only shown when elevation is selected) ---
-        self.elevation_ref_group = QGroupBox("Elevation Reference")
-        ref_layout = QFormLayout()
-        
+        # Elevation Reference
         self.z_inversion_ref_input = QDoubleSpinBox()
         self.z_inversion_ref_input.setRange(-10000.0, 10000.0)
         self.z_inversion_ref_input.setValue(0.0)
@@ -323,47 +365,11 @@ class ScaleToolDialog(QDialog):
         self.z_inversion_ref_input.setToolTip(
             "Reference elevation for converting depth to elevation (e.g., 0 for sea level)"
         )
-        ref_layout.addRow("Reference Value:", self.z_inversion_ref_input)
+        view_form.addRow("Elevation Reference:", self.z_inversion_ref_input)
         
-        self.elevation_ref_group.setLayout(ref_layout)
-        layout.addWidget(self.elevation_ref_group)
-        self.elevation_ref_group.setVisible(False)  # Hidden by default
+        self.controls_stack.addWidget(view_widget)
         
-        # --- 2. Interaction Mode Selector ---
-        interaction_group = QGroupBox("2. Calibration Tool")
-        interaction_layout = QVBoxLayout()
-        
-        # Radio buttons to switch between NaN, Scaling (Line) and Anchoring (Point)
-        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
-        self.interaction_bg = QButtonGroup(self)
-        
-        self.radio_nan = QRadioButton("Step A: Set NaN Value (Click Point)")
-        self.radio_nan.setChecked(True)  # Default
-        self.radio_nan.setToolTip("Click a pixel to set the NaN/NoData value for the Z-channel.")
-        self.interaction_bg.addButton(self.radio_nan)
-        
-        self.radio_scale = QRadioButton("Step B: Vertical Scale (Draw Line)")
-        self.radio_scale.setToolTip("Draw a line to define the vertical scale (magnitude).")
-        self.interaction_bg.addButton(self.radio_scale)
-        
-        self.radio_anchor = QRadioButton("Step C: Reference Anchor (Click Point)")
-        self.radio_anchor.setToolTip("Click a point to set the absolute reference value (offset).")
-        self.interaction_bg.addButton(self.radio_anchor)
-        
-        self.interaction_bg.buttonClicked.connect(self.on_interaction_mode_changed)
-        
-        interaction_layout.addWidget(self.radio_nan)
-        interaction_layout.addWidget(self.radio_scale)
-        interaction_layout.addWidget(self.radio_anchor)
-        interaction_group.setLayout(interaction_layout)
-        layout.addWidget(interaction_group)
-
-        # --- 3. Dynamic Controls (Stack) ---
-        # We stack the NaN, Scale, and Anchor controls and show only one set
-        from PyQt5.QtWidgets import QStackedWidget
-        self.controls_stack = QStackedWidget()
-        
-        # [Page 0] NaN Setting Controls
+        # [Page 1] NaN Setting Controls
         nan_widget = QWidget()
         nan_form = QFormLayout(nan_widget)
         nan_form.setContentsMargins(0, 5, 0, 5)
@@ -379,7 +385,7 @@ class ScaleToolDialog(QDialog):
         
         self.controls_stack.addWidget(nan_widget)
         
-        # [Page 1] Vertical Scaling Controls
+        # [Page 2] Vertical Scaling Controls
         scale_widget = QWidget()
         scale_form = QFormLayout(scale_widget)
         scale_form.setContentsMargins(0, 5, 0, 5)
@@ -403,7 +409,7 @@ class ScaleToolDialog(QDialog):
         
         self.controls_stack.addWidget(scale_widget)
         
-        # [Page 2] Anchor Controls
+        # [Page 3] Anchor Controls
         anchor_widget = QWidget()
         anchor_form = QFormLayout(anchor_widget)
         anchor_form.setContentsMargins(0, 5, 0, 5)
@@ -505,40 +511,69 @@ class ScaleToolDialog(QDialog):
         self.update_z_tab_states()
 
     def on_interaction_mode_changed(self):
-        """Switch between NaN, Z-Scaling and Z-Anchoring modes."""
+        """Switch between View Mode, NaN, Z-Scaling and Z-Anchoring modes."""
         if self.tab_widget.currentIndex() != 1:
             return
 
         self.tool.stop_current_drawing()
         
-        if self.radio_nan.isChecked():
-            self.current_mode = 'z_nan'
+        if self.radio_view.isChecked():
+            self.current_mode = 'z_view'
             self.controls_stack.setCurrentIndex(0)
+            self.controls_stack.show()
+            self.apply_button.setText("Apply")
+            self.apply_button.setToolTip("Apply view mode settings to highlighted images")
+            self.z_info_label.setText(
+                "Choose how to display the Z-channel data. 'Depth' shows standard depth from the camera "
+                "(positive values = farther away). 'Elevation' shows relative elevation from the bottom "
+                "(positive values = elevation above the lowest point). When using Elevation mode, "
+                "set the Elevation Reference to define what value represents the reference elevation "
+                "(e.g., 0 for sea level)."
+            )
+        elif self.radio_nan.isChecked():
+            self.current_mode = 'z_nan'
+            self.controls_stack.setCurrentIndex(1)
+            self.controls_stack.show()
             self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Set NaN/NoData value for highlighted images")
             # Load and display current NaN value
             self.tool.load_current_nan_value()
+            self.z_info_label.setText(
+                "Click on a pixel in the image to sample the value that represents 'No Data' or invalid depth values. "
+                "This value will be treated as NaN (Not a Number) in all Z-channel calculations and visualizations."
+            )
         elif self.radio_scale.isChecked():
             self.current_mode = 'z_scale'
-            self.controls_stack.setCurrentIndex(1)
+            self.controls_stack.setCurrentIndex(2)
+            self.controls_stack.show()
             self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the vertical multiplier (scalar) for highlighted images")
+            self.z_info_label.setText(
+                "Draw a line across a known vertical distance in the image to calibrate the Z-scale. "
+                "Enter the real-world distance between the start and end points of your line, "
+                "then draw the line on the image. This will calculate the appropriate scaling factor "
+                "to convert raw Z-values to real units."
+            )
         else:
             self.current_mode = 'z_anchor'
-            self.controls_stack.setCurrentIndex(2)
+            self.controls_stack.setCurrentIndex(3)
+            self.controls_stack.show()
             self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the reference zero-point (offset) for highlighted images")
+            self.z_info_label.setText(
+                "Click on a point in the image to set the absolute reference value "
+                "(e.g., sea level or ground level). Enter the desired Z-value for that point, "
+                "and the system will adjust the offset so that the clicked point has that value. "
+                "This sets the zero-point for your depth or elevation measurements."
+            )
 
     def on_view_mode_changed(self, index):
         """
         Handle switching between Depth and Relative Elevation view modes.
         Triggers immediate non-destructive update on the current image.
         """
-        mode = self.view_mode_combo.currentData() # 'depth' or 'elevation'
+        mode = self.view_mode_combo.currentData()  # 'depth' or 'elevation'
         self.tool.set_z_view_mode(mode)
-        
-        # Show/hide elevation reference input
-        self.elevation_ref_group.setVisible(mode == 'elevation')
         
         # Load current inversion reference if available
         if mode == 'elevation':
@@ -592,6 +627,7 @@ class ScaleToolDialog(QDialog):
         self.tool.stop_current_drawing()
         self.tool.deactivate()
         event.accept()
+
 
 class ScaleTool(Tool):
     """
@@ -829,7 +865,8 @@ class ScaleTool(Tool):
     def remove_scale_highlighted(self):
         """Remove scale from highlighted."""
         highlighted_paths = self.dialog.get_selected_image_paths()
-        if not highlighted_paths: return
+        if not highlighted_paths: 
+            return
         
         if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: return
         
@@ -1077,14 +1114,64 @@ class ScaleTool(Tool):
         self.stop_current_drawing()
         self.dialog.reset_fields()
 
+    def apply_z_view(self):
+        """Apply view mode and elevation reference to highlighted images."""
+        highlighted = self.dialog.get_selected_image_paths()
+        if not highlighted:
+            return
+        
+        view_mode = self.dialog.view_mode_combo.currentData()
+        elevation_ref = self.dialog.z_inversion_ref_input.value()
+        
+        raster_manager = self.main_window.image_window.raster_manager
+        current_path = self.annotation_window.current_image_path
+        
+        for path in highlighted:
+            raster = raster_manager.get_raster(path)
+            if raster and raster.z_channel is not None:
+                # Apply view mode
+                settings = raster.z_settings
+                scalar = settings.get('scalar', 1.0)
+                
+                if view_mode == 'depth':
+                    settings['direction'] = 1
+                    settings['offset'] = 0.0
+                elif view_mode == 'elevation':
+                    settings['direction'] = -1
+                    # Auto-tare to max raw value
+                    try:
+                        max_raw = float(np.nanmax(raster.z_channel_lazy))
+                    except Exception:
+                        max_raw = 0.0
+                    settings['offset'] = max_raw * scalar
+                    raster.z_inversion_reference = elevation_ref
+                
+                raster_manager.rasterUpdated.emit(path)
+        
+        if current_path in highlighted:
+            self.annotation_window.refresh_z_channel_visualization()
+        
+        # Success message
+        view_mode_text = self.dialog.view_mode_combo.currentText()
+        success_msg = (
+            f"<b>Successfully applied view mode to {len(highlighted)} image(s)</b><br><br>"
+            f"<b>Display Mode:</b> {view_mode_text}<br>"
+        )
+        if view_mode == 'elevation':
+            success_msg += f"<b>Elevation Reference:</b> {elevation_ref:.2f} m<br>"
+        
+        QMessageBox.information(self.dialog, "Success", success_msg)
+
     def set_z_anchor_point(self, pos):
         """Handle anchor point click."""
         current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None: return
+        if not current_raster or current_raster.z_channel is None:
+            return
         
         # Get current semantic value (includes current offset/direction)
         current_z = current_raster.get_z_value(int(pos.x()), int(pos.y()))
-        if current_z is None: return
+        if current_z is None:
+            return
         
         self.dialog.z_current_val_label.setText(f"{current_z:.3f}")
         
@@ -1230,6 +1317,8 @@ class ScaleTool(Tool):
         """Route 'Apply' button to correct function."""
         if self.dialog.current_mode == 'xy_scale':
             self.apply_scale()
+        elif self.dialog.current_mode == 'z_view':
+            self.apply_z_view()
         elif self.dialog.current_mode == 'z_nan':
             self.apply_z_nan()
         elif self.dialog.current_mode == 'z_scale':

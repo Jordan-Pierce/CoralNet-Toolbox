@@ -218,7 +218,7 @@ class SpatialToolDialog(QDialog):
         
         self.setWindowTitle("Spatial Measurement Tool")
         self.setWindowIcon(get_icon("spatial.png"))
-        self.setMinimumWidth(400)
+        self.resize(450, 300)
         
         # This dialog is modeless
         self.setModal(False) 
@@ -240,7 +240,6 @@ class SpatialToolDialog(QDialog):
         info_group = QGroupBox("Information")
         info_layout = QVBoxLayout(info_group)
         instructions = QLabel("Draw lines to measure rugosity and surface complexity")
-        instructions.setStyleSheet("font-style: italic;")
         info_layout.addWidget(instructions)
         layout.addWidget(info_group)
         
