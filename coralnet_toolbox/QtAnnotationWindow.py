@@ -825,8 +825,15 @@ class AnnotationWindow(QGraphicsView):
             # This ensures colormap reflects semantic meaning (direction flip = visual flip)
             if z_data.dtype == np.float32:
                 # For float32, normalize transformed values to 0-255 range
-                self.z_data_min = np.nanmin(z_transformed)
-                self.z_data_max = np.nanmax(z_transformed)
+                # Exclude nodata values from min/max calculation to prevent range squishing
+                valid_data = z_transformed[~nodata_mask]
+                if len(valid_data) > 0:
+                    self.z_data_min = np.min(valid_data)
+                    self.z_data_max = np.max(valid_data)
+                else:
+                    self.z_data_min = 0.0
+                    self.z_data_max = 1.0
+                
                 if self.z_data_min == self.z_data_max:
                     z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
                 else:
@@ -841,8 +848,15 @@ class AnnotationWindow(QGraphicsView):
                     z_norm[nodata_mask] = 0
             else:
                 # For uint8, apply transform and normalize
-                self.z_data_min = np.nanmin(z_transformed)
-                self.z_data_max = np.nanmax(z_transformed)
+                # Exclude nodata values from min/max calculation
+                valid_data = z_transformed[~nodata_mask]
+                if len(valid_data) > 0:
+                    self.z_data_min = np.min(valid_data)
+                    self.z_data_max = np.max(valid_data)
+                else:
+                    self.z_data_min = 0.0
+                    self.z_data_max = 1.0
+                    
                 if self.z_data_min == self.z_data_max:
                     z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
                 else:
@@ -1080,9 +1094,28 @@ class AnnotationWindow(QGraphicsView):
                 return
             
             # Extract visible region and calculate min/max on TRANSFORMED data
+            # Exclude nodata values from the calculation to prevent range squishing
             visible_region = z_data[y1:y2, x1:x2]
-            z_vis_min = np.nanmin(visible_region)
-            z_vis_max = np.nanmax(visible_region)
+            visible_nodata_mask = (
+                self.z_nodata_mask[y1:y2, x1:x2] 
+                if hasattr(self, 'z_nodata_mask') and self.z_nodata_mask is not None 
+                else None
+            )
+            
+            if visible_nodata_mask is not None:
+                # Only consider valid (non-nodata) pixels in the visible region
+                valid_visible_data = visible_region[~visible_nodata_mask]
+                if len(valid_visible_data) > 0:
+                    z_vis_min = np.min(valid_visible_data)
+                    z_vis_max = np.max(valid_visible_data)
+                else:
+                    # Fallback to full range if no valid data in visible region
+                    z_vis_min = self.z_data_min
+                    z_vis_max = self.z_data_max
+            else:
+                # Fallback to old behavior if no nodata mask available
+                z_vis_min = np.nanmin(visible_region)
+                z_vis_max = np.nanmax(visible_region)
             
             # Avoid division by zero if all values are the same
             if z_vis_min == z_vis_max:
