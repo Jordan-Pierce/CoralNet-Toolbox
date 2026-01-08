@@ -344,12 +344,21 @@ class DeployModelDialog(CollapsibleSection):
         if self.loaded_model is None:
             raise ValueError("No model loaded")
             
-        # For batch processing, always show dialog if show_dialog=True
-        if len(image_paths) > 1 and show_dialog:
+        # Check if any images already have z-channels
+        any_have_z = any(
+            (raster := self.main_window.image_window.raster_manager.get_raster(path)) and (
+                raster.z_channel is not None or raster.z_channel_path)
+            for path in image_paths
+        )
+        
+        # For batch processing, show dialog only if any images have existing z-channels
+        if len(image_paths) > 1 and show_dialog and any_have_z:
             reply = self._show_overwrite_dialog(is_batch=True)
             if reply is None:
                 return
             overwrite_mode = reply
+        elif len(image_paths) > 1 and show_dialog and not any_have_z:
+            overwrite_mode = "overwrite"
         
         # Process each image
         progress_bar.start_progress(len(image_paths))
