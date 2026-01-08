@@ -73,37 +73,89 @@ class ProfilePlotDialog(QDialog):
     def rebuild_plots(self, profiles_list):
         """Clears and rebuilds all plots in the scroll area."""
         
-        # 1. Clear all old plot widgets
-        for widget in self.plot_widgets:
-            widget.deleteLater()
-        self.plot_widgets = []
-        
-        if not profiles_list:
-            no_data_label = QLabel("No profile data available.")
-            no_data_label.setAlignment(Qt.AlignCenter)
-            self.plot_layout.addWidget(no_data_label)
-            self.plot_widgets.append(no_data_label)
-            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # 1. Clear all old plot widgets
+            for widget in self.plot_widgets:
+                widget.deleteLater()
+            self.plot_widgets = []
+            
+            if not profiles_list:
+                no_data_label = QLabel("No profile data available.")
+                no_data_label.setAlignment(Qt.AlignCenter)
+                self.plot_layout.addWidget(no_data_label)
+                self.plot_widgets.append(no_data_label)
+                return
 
-        # 2. --- Plot 1: Combined (Non-Normalized) ---
-        if len(profiles_list) > 0:
-            combined_plot_widget = pg.PlotWidget(title="All Profiles (Combined)")
-            combined_plot_widget.setMinimumHeight(300)
-            combined_plot = combined_plot_widget.getPlotItem()
-            combined_plot.setLabel('left', 'Z')
-            combined_plot.addLegend()
-            combined_plot.showGrid(x=True, y=True, alpha=0.3)
+            # 2. --- Plot 1: Combined (Non-Normalized) ---
+            if len(profiles_list) > 0:
+                combined_plot_widget = pg.PlotWidget(title="All Profiles (Combined)")
+                combined_plot_widget.setMinimumHeight(300)
+                combined_plot = combined_plot_widget.getPlotItem()
+                combined_plot.setLabel('left', 'Z')
+                combined_plot.addLegend()
+                combined_plot.showGrid(x=True, y=True, alpha=0.3)
 
+                for profile in profiles_list:
+                    x_data = profile.get('x_data', [])
+                    y_data = profile.get('y_data', [])
+                    name = profile.get('name', 'Profile')
+                    color = profile.get('color', (0, 0, 255))  # Default blue
+
+                    pen = pg.mkPen(color=color, width=2)
+                    combined_plot.plot(
+                        x_data, y_data, pen=pen, name=name
+                    )
+                    
+                    # Add start point marker (white dot)
+                    if x_data and y_data:
+                        start_scatter = pg.ScatterPlotItem(
+                            [x_data[0]], [y_data[0]],
+                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
+                        )
+                        combined_plot.addItem(start_scatter)
+                        
+                        # Add end point marker (black dot)
+                        end_scatter = pg.ScatterPlotItem(
+                            [x_data[-1]], [y_data[-1]],
+                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
+                        )
+                        combined_plot.addItem(end_scatter)
+                
+                self.plot_layout.addWidget(combined_plot_widget)
+                self.plot_widgets.append(combined_plot_widget)
+
+            # 3. --- Separator ---
+            separator_label = QLabel("Individual Profiles")
+            separator_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+            separator_label.setAlignment(Qt.AlignCenter)
+            self.plot_layout.addWidget(separator_label)
+            self.plot_widgets.append(separator_label)
+            
+            separator_line = QFrame()
+            separator_line.setFrameShape(QFrame.HLine)
+            separator_line.setFrameShadow(QFrame.Sunken)
+            self.plot_layout.addWidget(separator_line)
+            self.plot_widgets.append(separator_line)
+
+            # 4. --- Plots 2...N: Individual Plots ---
             for profile in profiles_list:
                 x_data = profile.get('x_data', [])
                 y_data = profile.get('y_data', [])
                 name = profile.get('name', 'Profile')
-                color = profile.get('color', (0, 0, 255))  # Default blue
+                color = profile.get('color', (0, 0, 255))
+                stats = profile.get('stats', {})
 
+                # Create a plot widget for this profile
+                plot_widget = pg.PlotWidget(title=name)
+                plot_widget.setMinimumHeight(250)
+                plot = plot_widget.getPlotItem()
+                plot.setLabel('left', 'Z')
+                plot.showGrid(x=True, y=True, alpha=0.3)
+
+                # Plot the data
                 pen = pg.mkPen(color=color, width=2)
-                combined_plot.plot(
-                    x_data, y_data, pen=pen, name=name
-                )
+                plot.plot(x_data, y_data, pen=pen)
                 
                 # Add start point marker (white dot)
                 if x_data and y_data:
@@ -111,86 +163,38 @@ class ProfilePlotDialog(QDialog):
                         [x_data[0]], [y_data[0]],
                         size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
                     )
-                    combined_plot.addItem(start_scatter)
+                    plot.addItem(start_scatter)
                     
                     # Add end point marker (black dot)
                     end_scatter = pg.ScatterPlotItem(
                         [x_data[-1]], [y_data[-1]],
                         size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
                     )
-                    combined_plot.addItem(end_scatter)
-            
-            self.plot_layout.addWidget(combined_plot_widget)
-            self.plot_widgets.append(combined_plot_widget)
+                    plot.addItem(end_scatter)
 
-        # 3. --- Separator ---
-        separator_label = QLabel("Individual Profiles")
-        separator_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        separator_label.setAlignment(Qt.AlignCenter)
-        self.plot_layout.addWidget(separator_label)
-        self.plot_widgets.append(separator_label)
-        
-        separator_line = QFrame()
-        separator_line.setFrameShape(QFrame.HLine)
-        separator_line.setFrameShadow(QFrame.Sunken)
-        self.plot_layout.addWidget(separator_line)
-        self.plot_widgets.append(separator_line)
+                # Add statistics as text if available
+                if stats:
+                    length_3d = stats.get('length_3d', 0)
+                    delta_z = stats.get('delta_z', 0)
+                    rugosity = stats.get('rugosity', 0)
+                    
+                    stats_text = (
+                        f"3D-Length: {length_3d:.3f}\n"
+                        f"ΔZ: {delta_z:.3f}\n"
+                        f"Rugosity: {rugosity:.3f}"
+                    )
+                    text_item = pg.TextItem(text=stats_text, anchor=(1, 0), color=(0, 0, 0))
+                    text_item.setPos(max(x_data) if x_data else 0, max(y_data) if y_data else 0)
+                    plot.addItem(text_item)
 
-        # 4. --- Plots 2...N: Individual Plots ---
-        for profile in profiles_list:
-            x_data = profile.get('x_data', [])
-            y_data = profile.get('y_data', [])
-            name = profile.get('name', 'Profile')
-            color = profile.get('color', (0, 0, 255))
-            stats = profile.get('stats', {})
-
-            # Create a plot widget for this profile
-            plot_widget = pg.PlotWidget(title=name)
-            plot_widget.setMinimumHeight(250)
-            plot = plot_widget.getPlotItem()
-            plot.setLabel('left', 'Z')
-            plot.showGrid(x=True, y=True, alpha=0.3)
-
-            # Plot the data
-            pen = pg.mkPen(color=color, width=2)
-            plot.plot(x_data, y_data, pen=pen)
-            
-            # Add start point marker (white dot)
-            if x_data and y_data:
-                start_scatter = pg.ScatterPlotItem(
-                    [x_data[0]], [y_data[0]],
-                    size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
-                )
-                plot.addItem(start_scatter)
-                
-                # Add end point marker (black dot)
-                end_scatter = pg.ScatterPlotItem(
-                    [x_data[-1]], [y_data[-1]],
-                    size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
-                )
-                plot.addItem(end_scatter)
-
-            # Add statistics as text if available
-            if stats:
-                length_3d = stats.get('length_3d', 0)
-                delta_z = stats.get('delta_z', 0)
-                rugosity = stats.get('rugosity', 0)
-                
-                stats_text = (
-                    f"3D-Length: {length_3d:.3f}\n"
-                    f"ΔZ: {delta_z:.3f}\n"
-                    f"Rugosity: {rugosity:.3f}"
-                )
-                text_item = pg.TextItem(text=stats_text, anchor=(1, 0), color=(0, 0, 0))
-                text_item.setPos(max(x_data) if x_data else 0, max(y_data) if y_data else 0)
-                plot.addItem(text_item)
-
-            self.plot_layout.addWidget(plot_widget)
-            self.plot_widgets.append(plot_widget)
-                
-        # Add a spacer at the bottom
-        spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
-        self.plot_layout.addSpacerItem(spacer)
+                self.plot_layout.addWidget(plot_widget)
+                self.plot_widgets.append(plot_widget)
+                    
+            # Add a spacer at the bottom
+            spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+            self.plot_layout.addSpacerItem(spacer)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def update_plot(self, profiles_list):
         """Clears and rebuilds all plots with new data."""
