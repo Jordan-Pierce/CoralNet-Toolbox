@@ -1108,18 +1108,23 @@ class AnnotationWindow(QGraphicsView):
     def refresh_z_channel_visualization(self):
         """
         Refresh the Z-channel visualization if it's available for the current image.
-        This is called when a z-channel is newly imported for the currently displayed image.
+        This is called when a z-channel is newly imported for the currently displayed image
+        or when z_settings are changed (e.g., switching between depth/elevation).
         """
         if self.current_image_path:
             raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
             if raster and raster.z_channel is not None:
-                # Reload the z-channel visualization
+                # Reload the z-channel visualization (this recalculates with updated z_settings)
                 self._load_z_channel_visualization(raster)
                 
                 # Apply the current colormap selection to the newly loaded z_item
                 current_colormap = self.main_window.z_colormap_dropdown.currentText()
-                if current_colormap != "None":
-                    self.update_z_colormap(current_colormap)
+                # Always call update_z_colormap to handle visibility correctly
+                self.update_z_colormap(current_colormap)
+                
+                # Force scene update to ensure visual changes are immediately reflected
+                self.scene.update()
+                self.viewport().update()
     
     @property
     def current_mask_annotation(self) -> Optional[MaskAnnotation]:

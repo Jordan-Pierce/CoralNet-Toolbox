@@ -1321,15 +1321,17 @@ class ImageWindow(QWidget):
                 raster = self.raster_manager.get_raster(image_path)
                 if raster:
                     try:
-                        # Load z-channel from file with units
-                        success = raster.load_z_channel_from_file(z_channel_path, z_unit=z_unit)
+                        # Load z-channel from file with units and data type
+                        success = raster.load_z_channel_from_file(
+                            z_channel_path, 
+                            z_unit=z_unit,
+                            z_data_type=z_data_type
+                        )
                         if success:
-                            # Set z_data_type if provided (trust the imported data is already correct)
-                            if z_data_type:
-                                raster.z_data_type = z_data_type
-                                # No automatic transformations - user specified the data type,
-                                # so we trust the values are already in the correct format.
-                                # Transformations and calibrations are done in ScaleTool.
+                            # Data type is now set during load_z_channel_from_file
+                            # No automatic transformations - user specified the data type,
+                            # so we trust the values are already in the correct format.
+                            # Transformations and calibrations are done in ScaleTool.
                                     
                             successful_count += 1
                             # Emit signal to update UI

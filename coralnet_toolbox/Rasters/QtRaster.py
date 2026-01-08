@@ -354,19 +354,13 @@ class Raster(QObject):
             self.z_nodata = z_nodata
         
         # Reset transform settings to defaults when adding new z-channel
+        # Direction always starts at 1 (raw data, no inversion)
+        # z_data_type is metadata only - ScaleTool handles view mode conversions
         self.z_settings = {
             'scalar': 1.0,
             'offset': 0.0,
-            'direction': 1  # Default to depth (high values = far)
+            'direction': 1  # Always start with direction=1 (raw data)
         }
-        
-        # Set direction based on explicit parameter or infer from z_data_type
-        if z_direction is not None:
-            self.z_settings['direction'] = z_direction
-        elif z_data_type == 'elevation':
-            # Elevation: high values = close/up
-            self.z_settings['direction'] = -1
-        # else: keep default direction = 1 for depth
         
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None,
                          z_data_type: Optional[str] = None, z_direction: Optional[int] = None,
@@ -463,7 +457,7 @@ class Raster(QObject):
         except (IndexError, ValueError, TypeError):
             return None
         
-    def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None):
+    def load_z_channel_from_file(self, z_channel_path: str, z_unit: str = None, z_data_type: str = None):
         """
         Load z_channel data from a file path using rasterio.
         
@@ -475,6 +469,8 @@ class Raster(QObject):
             z_channel_path (str): Path to the depth/height file
             z_unit (str, optional): Unit of measurement for z-channel data
                                    If not provided, will attempt to detect from file
+            z_data_type (str, optional): Type of z-channel data ('depth' or 'elevation')
+                                        If provided, sets the initial direction accordingly
             
         Returns:
             bool: True if loading was successful, False otherwise
@@ -507,9 +503,9 @@ class Raster(QObject):
             else:
                 final_z_nodata = z_nodata
             
-            # Add z_channel with the nodata value
+            # Add z_channel with the nodata value and data type
             self.z_unit = z_unit
-            self.add_z_channel(z_data, z_path, z_nodata=final_z_nodata)
+            self.add_z_channel(z_data, z_path, z_data_type=z_data_type, z_nodata=final_z_nodata)
             return True
         else:
             print(f"Failed to load z-channel from: {z_channel_path}")
