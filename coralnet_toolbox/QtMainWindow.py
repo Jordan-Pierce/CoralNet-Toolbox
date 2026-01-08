@@ -2638,7 +2638,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 
                                 "Missing Package", 
                                 "The 'depth-anything-3' package is required for Z-Inference.\n\n"
-                                "Please install it using: pip install depth-anything-3")
+                                "Please install it before proceeding.")
             return
         
         # Check if HF_TOKEN environment variable is set
