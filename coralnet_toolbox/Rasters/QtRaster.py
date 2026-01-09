@@ -334,7 +334,7 @@ class Raster(QObject):
             z_data = cv2.resize(
                 z_data,
                 (self.width, self.height),
-                interpolation=cv2.INTER_LINEAR
+                interpolation=cv2.INTER_NEAREST
             )
         
         if z_data_type is not None and z_data_type not in ['depth', 'elevation']:

@@ -713,7 +713,7 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
                     z_data = src.read(1,
                                       window=window,
                                       out_shape=(target_height, target_width),
-                                      resampling=rasterio.enums.Resampling.bilinear)
+                                      resampling=rasterio.enums.Resampling.nearest)
                     print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
             
             # Handle data type conversion
@@ -929,8 +929,8 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     2. Residual Blending: Inpaints local errors at the boundaries to remove seams.
     
     Args:
-        existing_z (numpy.ndarray): Existing Z-channel with NaN values to fill
-        predicted_z (numpy.ndarray): New Z-channel predictions
+        existing_z (numpy.ndarray): Existing Z-channel with NaN values to fill (2D array)
+        predicted_z (numpy.ndarray): New Z-channel predictions (2D array)
         existing_unit (str): Unit of existing data (default 'meters')
         existing_type (str): Type of existing data ('depth' or 'elevation')
         inversion_reference (float): Reference value for depth/elevation conversion
@@ -941,10 +941,28 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     import numpy as np
     import cv2
     
+    # Validate input dimensions
+    if (not isinstance(existing_z, np.ndarray) or existing_z.ndim != 2):
+        raise ValueError(
+            f"existing_z must be a 2D numpy array, got shape "
+            f"{existing_z.shape if isinstance(existing_z, np.ndarray) else type(existing_z)}"
+        )
+    
+    if (not isinstance(predicted_z, np.ndarray) or predicted_z.ndim != 2):
+        raise ValueError(
+            f"predicted_z must be a 2D numpy array, got shape "
+            f"{predicted_z.shape if isinstance(predicted_z, np.ndarray) else type(predicted_z)}"
+        )
+    
+    if existing_z.shape != predicted_z.shape:
+        raise ValueError(
+            f"Shape mismatch: existing_z {existing_z.shape} vs predicted_z {predicted_z.shape}. "
+            f"Arrays must have the same dimensions."
+        )
+    
     if existing_z.dtype != np.float32:
         raise ValueError("Smart Fill only works with float32 z-channels")
     
-    # --- PREPARATION ---
     z_existing = existing_z.copy()
     
     # Identify valid vs invalid pixels
@@ -975,7 +993,6 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     if num_valid < 100:
         raise ValueError("Insufficient valid data for non-linear modeling (need >100 pixels).")
 
-    # --- STAGE 1: NON-LINEAR QUANTILE MAPPING ---
     # Create a transfer function based on percentiles to handle non-linear compression
     valid_gt = z_existing[valid_mask]
     valid_pred = z_predicted_adjusted[valid_mask]
@@ -990,7 +1007,6 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     # np.interp acts as our non-linear lookup table (LUT)
     z_non_linear = np.interp(z_predicted_adjusted, pred_percentiles, gt_percentiles)
     
-    # --- STAGE 2: RESIDUAL BLENDING (SEAM REMOVAL) ---
     # Even with non-linear mapping, local mismatches exist at the seams.
     
     # 1. Calculate Error (Residual) map
@@ -1022,7 +1038,6 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     else:
         z_final = z_non_linear
 
-    # --- FINALIZE ---
     z_result = z_existing.copy()
     z_result[nan_mask] = z_final[nan_mask]
     

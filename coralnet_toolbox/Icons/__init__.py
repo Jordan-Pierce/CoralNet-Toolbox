@@ -5,10 +5,9 @@ from importlib.resources import files
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QImage, QPixmap, QPen, QColor, QPainter
+from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtGui import QIcon, QImage, QPixmap, QPen, QColor, QPainter, QPainterPath
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionComboBox, QComboBox, QStyleOptionViewItem
-from PyQt5.QtGui import QPainterPath
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -89,7 +88,7 @@ class ColormapDelegate(QStyledItemDelegate):
         else:
             # Draw Gradient with Rounded Corners
             path = QPainterPath()
-            path.addRoundedRect(rect, 5, 5)
+            path.addRoundedRect(QRectF(rect), 5, 5)
             painter.setClipPath(path)
             
             cache_key = f"{text}_{rect.width()}_{rect.height()}"

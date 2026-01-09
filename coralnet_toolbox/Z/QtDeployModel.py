@@ -2,6 +2,8 @@ import warnings
 
 import os
 import gc
+import cv2
+import numpy as np
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QFormLayout, QHBoxLayout, 
@@ -252,7 +254,90 @@ class DeployModelDialog(CollapsibleSection):
         self.deploy_button.setEnabled(has_model and (has_image or has_highlighted))
         # Update button text
         self.update_deploy_button_text()
-                
+    
+    def _validate_prediction_result(self, result, image_path=None):
+        """
+        Validate prediction result contains depth_maps.
+        
+        Args:
+            result: Prediction result dictionary
+            image_path: Optional path for error messages
+            
+        Returns:
+            list or None: depth_maps array if valid, None otherwise
+        """
+        if not result or 'depth_maps' not in result or result['depth_maps'] is None:
+            print(f"No depth maps returned{' for ' + image_path if image_path else ''}")
+            return None
+        
+        depth_maps = result['depth_maps']
+        if len(depth_maps) == 0:
+            print(f"Empty depth maps returned{' for ' + image_path if image_path else ''}")
+            return None
+        
+        return depth_maps
+    
+    def _extract_depth_map(self, depth_map, image_path=None):
+        """
+        Extract and validate a single depth map, ensuring it's 2D.
+        
+        Args:
+            depth_map: Depth map array (possibly 3D)
+            image_path: Optional path for error messages
+            
+        Returns:
+            numpy.ndarray or None: 2D depth map if valid, None otherwise
+        """
+        # Extract depth map and ensure it's 2D
+        if isinstance(depth_map, np.ndarray) and depth_map.ndim == 3:
+            # Squeeze batch dimension if present
+            if depth_map.shape[0] == 1:
+                depth_map = depth_map[0]
+            else:
+                print(f"Unexpected 3D depth map shape{' for ' + image_path if image_path else ''}: {depth_map.shape}")
+                return None
+        
+        # Validate it's 2D
+        if not isinstance(depth_map, np.ndarray) or depth_map.ndim != 2:
+            shape_info = depth_map.shape if isinstance(depth_map, np.ndarray) else type(depth_map)
+            print(f"Expected 2D depth map{' for ' + image_path if image_path else ''}, got shape {shape_info}")
+            return None
+        
+        return depth_map
+    
+    def _resize_depth_map(self, depth_map, raster):
+        """
+        Resize depth map to match original raster dimensions if needed.
+        
+        Args:
+            depth_map: 2D depth map array
+            raster: Raster object with target dimensions
+            
+        Returns:
+            numpy.ndarray: Resized depth map
+        """
+        if depth_map.shape != (raster.height, raster.width):
+            # Use INTER_NEAREST to preserve depth values without interpolation artifacts
+            depth_map = cv2.resize(depth_map, (raster.width, raster.height), interpolation=cv2.INTER_NEAREST)
+        return depth_map
+    
+    def _update_camera_parameters(self, raster, result, index=0):
+        """
+        Update raster with camera intrinsics and extrinsics from prediction result.
+        
+        Args:
+            raster: Raster object to update
+            result: Prediction result dictionary
+            index: Index in result arrays (default 0 for single image)
+        """
+        intrinsics = result.get('intrinsics')
+        if intrinsics is not None and len(intrinsics) > index and intrinsics[index] is not None:
+            raster.add_intrinsics(intrinsics[index])
+        
+        extrinsics = result.get('extrinsics')
+        if extrinsics is not None and len(extrinsics) > index and extrinsics[index] is not None:
+            raster.add_extrinsics(extrinsics[index])
+    
     def deploy_model(self):
         """Deploy the model on highlighted images, or current image if none are highlighted."""
         if self.loaded_model is None:
@@ -391,13 +476,24 @@ class DeployModelDialog(CollapsibleSection):
                     elif overwrite_mode == "smart_fill":
                         # Run prediction first
                         result = self.loaded_model.predict([image_path])
-                        z_predicted = result['depth_maps'][0]
                         
-                        # Update intrinsics/extrinsics if available
-                        if result['intrinsics'] and result['intrinsics'][0] is not None:
-                            raster.add_intrinsics(result['intrinsics'][0])
-                        if result['extrinsics'] and result['extrinsics'][0] is not None:
-                            raster.add_extrinsics(result['extrinsics'][0])
+                        # Validate and extract depth maps
+                        depth_maps = self._validate_prediction_result(result, image_path)
+                        if depth_maps is None:
+                            progress_bar.update_progress()
+                            continue
+                        
+                        # Extract 2D depth map
+                        z_predicted = self._extract_depth_map(depth_maps[0], image_path)
+                        if z_predicted is None:
+                            progress_bar.update_progress()
+                            continue
+                        
+                        # Resize to match original raster dimensions
+                        z_predicted = self._resize_depth_map(z_predicted, raster)
+                        
+                        # Update camera parameters
+                        self._update_camera_parameters(raster, result, index=0)
                         
                         # Apply Smart Fill
                         self._handle_smart_fill(raster, z_predicted)
@@ -434,18 +530,40 @@ class DeployModelDialog(CollapsibleSection):
             try:
                 result = self.loaded_model.predict(collected_overwrite)
                 
+                # Validate and extract depth maps
+                depth_maps = self._validate_prediction_result(result)
+                if depth_maps is None:
+                    for _ in collected_overwrite:
+                        progress_bar.update_progress()
+                    return
+                
+                # Validate we have enough depth maps
+                if len(depth_maps) != len(collected_overwrite):
+                    print(f"Warning: Expected {len(collected_overwrite)} depth maps, got {len(depth_maps)}")
+                
                 for i, image_path in enumerate(collected_overwrite):
                     raster = self.main_window.image_window.raster_manager.get_raster(image_path)
                     if raster is None:
+                        progress_bar.update_progress()
                         continue
                     
-                    z_channel = result['depth_maps'][i]
+                    # Check if we have a depth map for this image
+                    if i >= len(depth_maps):
+                        print(f"No depth map for image {i}: {image_path}")
+                        progress_bar.update_progress()
+                        continue
                     
-                    # Update intrinsics/extrinsics if available
-                    if result['intrinsics'] and result['intrinsics'][i] is not None:
-                        raster.add_intrinsics(result['intrinsics'][i])
-                    if result['extrinsics'] and result['extrinsics'][i] is not None:
-                        raster.add_extrinsics(result['extrinsics'][i])
+                    # Extract 2D depth map
+                    z_channel = self._extract_depth_map(depth_maps[i], image_path)
+                    if z_channel is None:
+                        progress_bar.update_progress()
+                        continue
+                    
+                    # Resize to match original raster dimensions
+                    z_channel = self._resize_depth_map(z_channel, raster)
+                    
+                    # Update camera parameters
+                    self._update_camera_parameters(raster, result, index=i)
                     
                     # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
                     # Set direction=1 explicitly (high values = far, which is depth semantics)
@@ -460,7 +578,7 @@ class DeployModelDialog(CollapsibleSection):
                         # Refresh visualization
                         self.annotation_window.refresh_z_channel_visualization()
                         
-                        # Enable Z-controls in status bar
+                        # Enable Z-controls in status bar now that z-channel exists
                         self.main_window.z_unit_dropdown.setEnabled(True)
                         self.main_window.z_label.setEnabled(True)
                         self.main_window.z_colormap_dropdown.setEnabled(True)

@@ -133,7 +133,6 @@ from coralnet_toolbox.BreakTime import (
 from coralnet_toolbox.utilities import convert_scale_units
 
 from coralnet_toolbox.Icons import (get_icon,
-                                    create_colormap_icon,
                                     ColorComboBox,
                                     ColormapDelegate)
 

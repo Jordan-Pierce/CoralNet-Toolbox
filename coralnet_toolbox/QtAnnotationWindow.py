@@ -881,20 +881,11 @@ class AnnotationWindow(QGraphicsView):
             # Convert QImage to QPixmap
             pixmap = QPixmap.fromImage(q_img)
             
-            # Get base image dimensions for proper scaling
-            pixmap_width = self.pixmap_image.width()
-            pixmap_height = self.pixmap_image.height()
-            
-            # Scale pixmap to match base image if needed
-            width_mismatch = pixmap.width() != pixmap_width
-            height_mismatch = pixmap.height() != pixmap_height
-            if width_mismatch or height_mismatch:
-                pixmap = pixmap.scaled(
-                    pixmap_width, pixmap_height,
-                    Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            
             # Create graphics item (native Qt, compatible)
             self.z_item = QGraphicsPixmapItem(pixmap)
+            
+            # Force Nearest Neighbor scaling to prevent color bleeding at transparent edges
+            self.z_item.setTransformationMode(Qt.FastTransformation)
             
             # Position at origin to align with base image
             self.z_item.setPos(0, 0)

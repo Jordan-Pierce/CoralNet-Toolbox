@@ -1234,7 +1234,6 @@ class ImageWindow(QWidget):
         # Show the dialog
         batch_dialog.exec_()
     
-        
     def import_z_channel_highlighted_images(self):
         """Open file dialog and ZImportDialog to import z-channel files for highlighted images."""
         # Get all highlighted paths

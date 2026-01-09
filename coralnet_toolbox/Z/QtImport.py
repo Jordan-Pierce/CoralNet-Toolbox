@@ -483,14 +483,14 @@ class ZImportDialog(QDialog):
             self.table.setItem(r, 1, item_z)
             
             # Column 2: Z Units (with dropdown for user selection)
-            units_display = units if units else "(Set)"
+            units_display = units if units else "(None)"
             item_units = QTableWidgetItem(units_display)
             item_units.setTextAlignment(Qt.AlignCenter)
             item_units.setToolTip("Double-click to edit units")
             self.table.setItem(r, 2, item_units)
             
             # Column 3: Z Data Type (requires explicit user selection)
-            data_type_display = z_data_type if z_data_type else "(Set)"
+            data_type_display = z_data_type if z_data_type else "(None)"
             item_data_type = QTableWidgetItem(data_type_display)
             item_data_type.setTextAlignment(Qt.AlignCenter)
             item_data_type.setToolTip("Double-click to set data type (depth/elevation)")
@@ -575,7 +575,7 @@ class ZImportDialog(QDialog):
         item_z.setToolTip(z_path)
         
         item_units = self.table.item(row, 2)
-        units_display = detected_units if detected_units else "(Set)"
+        units_display = detected_units if detected_units else "(None)"
         item_units.setText(units_display)
         item_units.setTextAlignment(Qt.AlignCenter)
         
@@ -612,12 +612,12 @@ class ZImportDialog(QDialog):
             item_z.setToolTip("")
             
             item_units = self.table.item(row, 2)
-            item_units.setText("(Set)")
+            item_units.setText("(None)")
             item_units.setTextAlignment(Qt.AlignCenter)
             item_units.setToolTip("Double-click to edit units")
             
             item_data_type = self.table.item(row, 3)
-            item_data_type.setText("(Set)")
+            item_data_type.setText("(None)")
             item_data_type.setTextAlignment(Qt.AlignCenter)
             item_data_type.setToolTip("Double-click to set data type")
             
@@ -673,7 +673,7 @@ class ZImportDialog(QDialog):
             # Update mapping and table
             self.mapping[img_path]["units"] = selected
             item_units = self.table.item(row, 2)
-            item_units.setText(selected if selected else "(Set)")
+            item_units.setText(selected if selected else "(None)")
     
     def show_data_type_dialog(self, row):
         """
@@ -699,7 +699,7 @@ class ZImportDialog(QDialog):
             # Update mapping and table
             self.mapping[img_path]["z_data_type"] = selected
             item_data_type = self.table.item(row, 3)
-            item_data_type.setText(selected if selected else "(Set)")
+            item_data_type.setText(selected if selected else "(None)")
     
     def show_bulk_units_dialog(self, rows):
         """
@@ -726,7 +726,7 @@ class ZImportDialog(QDialog):
                 img_path = self.image_files[row]
                 self.mapping[img_path]["units"] = selected
                 item_units = self.table.item(row, 2)
-                item_units.setText(selected if selected else "(Set)")
+                item_units.setText(selected if selected else "(None)")
     
     def show_bulk_data_type_dialog(self, rows):
         """
@@ -754,7 +754,7 @@ class ZImportDialog(QDialog):
                 img_path = self.image_files[row]
                 self.mapping[img_path]["z_data_type"] = selected
                 item_data_type = self.table.item(row, 3)
-                item_data_type.setText(selected if selected else "(Set)")
+                item_data_type.setText(selected if selected else "(None)")
 
     def clear_all_mappings(self):
         """Clear all z-channel mappings for all rows."""
@@ -788,7 +788,7 @@ class ZImportDialog(QDialog):
                 self.mapping[img_path]["units"] = None
                 
                 item_units = self.table.item(row, 2)
-                item_units.setText("(Set)")
+                item_units.setText("(None)")
                 item_units.setTextAlignment(Qt.AlignCenter)
     
     def clear_all_data_types(self):
@@ -808,7 +808,7 @@ class ZImportDialog(QDialog):
                 self.mapping[img_path]["z_data_type"] = None
                 
                 item_data_type = self.table.item(row, 3)
-                item_data_type.setText("(Set)")
+                item_data_type.setText("(None)")
                 item_data_type.setTextAlignment(Qt.AlignCenter)
 
     def finalize_mapping(self):
