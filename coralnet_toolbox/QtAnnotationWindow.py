@@ -971,6 +971,20 @@ class AnnotationWindow(QGraphicsView):
         elif not enabled and self.z_item is not None:
             # Reset to full range visualization when disabled
             self._reset_z_channel_to_full_range()
+    
+    def set_z_opacity(self, opacity):
+        """
+        Set the opacity of the Z-channel visualization.
+        
+        Args:
+            opacity (float): Opacity value from 0.0 (transparent) to 1.0 (opaque)
+        """
+        # Validate opacity range
+        opacity = max(0.0, min(1.0, opacity))
+        
+        # Only update if z_item exists and is visible
+        if self.z_item is not None:
+            self.z_item.setOpacity(opacity)
 
     def _reset_z_channel_to_full_range(self):
         """

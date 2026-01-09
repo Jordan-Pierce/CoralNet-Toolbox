@@ -1047,17 +1047,14 @@ class MainWindow(QMainWindow):
         self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setFixedWidth(150)
         
-        self.scaled_view_prefix_label = QLabel("Scale:")
-        self.scaled_view_prefix_label.setEnabled(False)  # Disabled by default
-
-        self.scaled_view_dims_label = QLabel("0 x 0")
-        self.scaled_view_dims_label.setFixedWidth(120)  # For "height x width"
-        self.scaled_view_dims_label.setEnabled(False)   # Disabled by default
+        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
+        self.scaled_dimensions_label.setFixedWidth(200)
+        self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
         
         self.scale_unit_dropdown = QComboBox()
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.scale_unit_dropdown.setFixedWidth(60)
+        self.scale_unit_dropdown.setFixedWidth(50)
         self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Slider
@@ -1092,11 +1089,12 @@ class MainWindow(QMainWindow):
         self.z_unit_dropdown = QComboBox()
         self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.z_unit_dropdown.setFixedWidth(60)
+        self.z_unit_dropdown.setFixedWidth(50)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
         
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
+        self.z_label.setFixedWidth(50)  # Fixed width to prevent shifting
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Use the Custom ComboBox Class
@@ -1123,6 +1121,16 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
+        
+        # Z-channel transparency slider (compact version without icons)
+        self.z_transparency_widget = QSlider(Qt.Horizontal)
+        self.z_transparency_widget.setRange(0, 255)
+        self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
+        self.z_transparency_widget.setFixedWidth(100)  # Compact width
+        self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
+        self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
+        self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
+        self.z_transparency_widget.setToolTip("Z-channel visualization opacity")
         
         # ----------------------------------------
         # Z Inference section
@@ -1232,6 +1240,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
+        self.status_bar_layout.addWidget(self.z_transparency_widget)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
         self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
@@ -1301,6 +1310,7 @@ class MainWindow(QMainWindow):
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
         self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
@@ -2091,6 +2101,24 @@ class MainWindow(QMainWindow):
             self.image_layout.setStretch(0, 54)
             self.image_layout.setStretch(1, 66)
             
+    def enable_z_visualization_controls(self, enabled):
+        """
+        Centralized method to enable or disable all Z-channel visualization controls.
+        
+        Args:
+            enabled (bool): True to enable controls, False to disable them
+        """
+        self.z_label.setEnabled(enabled)
+        self.z_unit_dropdown.setEnabled(enabled)
+        self.z_colormap_dropdown.setEnabled(enabled)
+        self.z_transparency_widget.setEnabled(enabled)
+        
+        # Dynamic button is only enabled when a colormap is active (not "None")
+        if enabled and self.z_colormap_dropdown.currentText() != "None":
+            self.z_dynamic_button.setEnabled(True)
+        else:
+            self.z_dynamic_button.setEnabled(False)
+    
     def on_image_loaded_check_z_channel(self, image_path):
         """
         Check if the newly loaded image has a z-channel.
@@ -2103,21 +2131,11 @@ class MainWindow(QMainWindow):
         if raster and raster.z_channel is None:
             # Image has no z-channel, disable UI elements
             self.z_label.setText("Z: -----")
-            self.z_label.setEnabled(False)
-            self.z_unit_dropdown.setEnabled(False)
-            self.z_colormap_dropdown.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
         elif raster and raster.z_channel is not None:
             # Image has z-channel, enable UI elements
-            self.z_label.setEnabled(True)
-            self.z_unit_dropdown.setEnabled(True)
-            self.z_colormap_dropdown.setEnabled(True)
-            # Only enable dynamic button if colormap is not set to "None"
-            if self.z_colormap_dropdown.currentText() != "None":
-                self.z_dynamic_button.setEnabled(True)
-            else:
-                self.z_dynamic_button.setEnabled(False)
+            self.enable_z_visualization_controls(True)
             
             # Force status bar Z-value refresh at current mouse position
             # This ensures z_nodata and z_settings are properly reflected when switching images
@@ -2134,11 +2152,8 @@ class MainWindow(QMainWindow):
         # clear the z-label in the status bar and disable the dropdown
         if image_path == self.annotation_window.current_image_path:
             self.z_label.setText("Z: -----")
-            self.z_label.setEnabled(False)
-            self.z_unit_dropdown.setEnabled(False)
-            self.z_colormap_dropdown.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2362,14 +2377,29 @@ class MainWindow(QMainWindow):
         """Handle z-colormap dropdown changes by updating the annotation window."""
         self.annotation_window.update_z_colormap(colormap_name)
         
-        # Disable the dynamic range button if colormap is set to "None"
+        # Enable/disable z_transparency_widget based on colormap selection
         if colormap_name == "None":
+            self.z_transparency_widget.setEnabled(False)
             self.z_dynamic_button.setEnabled(False)
             self.z_dynamic_button.setChecked(False)
         else:
-            # Enable the dynamic range button if a valid colormap is selected and Z data is available
+            # Enable the transparency slider and dynamic range button if Z data is available
             if self.annotation_window.z_data_raw is not None:
+                self.z_transparency_widget.setEnabled(True)
                 self.z_dynamic_button.setEnabled(True)
+    
+    def update_z_transparency(self, value):
+        """
+        Update the Z-channel visualization opacity.
+        
+        Args:
+            value (int): Slider value from 0-255
+        """
+        # Convert slider value (0-255) to opacity (0.0-1.0)
+        opacity = value / 255.0
+        
+        # Update the annotation window's z-channel opacity
+        self.annotation_window.set_z_opacity(opacity)
     
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""

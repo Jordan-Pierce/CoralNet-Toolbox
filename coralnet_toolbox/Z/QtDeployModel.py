@@ -579,10 +579,7 @@ class DeployModelDialog(CollapsibleSection):
                         self.annotation_window.refresh_z_channel_visualization()
                         
                         # Enable Z-controls in status bar now that z-channel exists
-                        self.main_window.z_unit_dropdown.setEnabled(True)
-                        self.main_window.z_label.setEnabled(True)
-                        self.main_window.z_colormap_dropdown.setEnabled(True)
-                        self.main_window.z_dynamic_button.setEnabled(True)
+                        self.main_window.enable_z_visualization_controls(True)
                         
                         # Set colormap to Turbo
                         turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
