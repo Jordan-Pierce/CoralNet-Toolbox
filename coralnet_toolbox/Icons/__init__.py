@@ -64,7 +64,8 @@ class ColormapDelegate(QStyledItemDelegate):
             
             qimg = QImage(img_data.data, width, height, width * 4, QImage.Format_RGBA8888)
             return QPixmap.fromImage(qimg)
-        except Exception:
+        except Exception as e:
+            print(f"Error creating colormap pixmap: {e}")
             return None
 
     def paint(self, painter, option, index):

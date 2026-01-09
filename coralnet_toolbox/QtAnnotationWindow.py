@@ -1080,13 +1080,15 @@ class AnnotationWindow(QGraphicsView):
         try:
             # Use transformed Z-channel data (not raw) for dynamic range
             # This ensures contrast enhancement respects the semantic meaning
-            z_data = self.z_data_transformed if hasattr(self, 'z_data_transformed') else self.z_data_normalized
+            if not hasattr(self, 'z_data_transformed'):
+                return
+            
+            z_data = self.z_data_transformed
             if z_data is None:
                 return
             
             # Get visible viewport area in scene coordinates
-            visible_rect = (
-                self.mapToScene(self.viewport().rect()).boundingRect())
+            visible_rect = (self.mapToScene(self.viewport().rect()).boundingRect())
             
             # Convert scene rect to image coordinates
             x1 = max(0, int(visible_rect.left()))
