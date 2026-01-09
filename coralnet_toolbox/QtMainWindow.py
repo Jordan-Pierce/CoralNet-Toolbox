@@ -1037,7 +1037,7 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Labels for project, image dimensions and mouse position
+        # Image and view dimensions and mouse position
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
         self.mouse_position_label.setFixedWidth(150)
         
@@ -1046,16 +1046,6 @@ class MainWindow(QMainWindow):
 
         self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setFixedWidth(150)
-        
-        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        self.scaled_dimensions_label.setFixedWidth(200)
-        self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
-        
-        self.scale_unit_dropdown = QComboBox()
-        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
-        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.scale_unit_dropdown.setFixedWidth(50)
-        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -1084,6 +1074,17 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+        
+        # Scale labels and dropdowns
+        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
+        self.scaled_dimensions_label.setFixedWidth(200)
+        self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
+        
+        self.scale_unit_dropdown = QComboBox()
+        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
+        self.scale_unit_dropdown.setFixedWidth(50)
+        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
@@ -1094,7 +1095,7 @@ class MainWindow(QMainWindow):
         
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
-        self.z_label.setFixedWidth(50)  # Fixed width to prevent shifting
+        self.z_label.setFixedWidth(75)  # Fixed width to prevent shifting
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Use the Custom ComboBox Class
@@ -1113,6 +1114,16 @@ class MainWindow(QMainWindow):
         self.z_colormap_dropdown.setFixedWidth(100)
         self.z_colormap_dropdown.setEnabled(False)
         self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
+        
+        # Z-channel transparency slider (compact version without icons)
+        self.z_transparency_widget = QSlider(Qt.Horizontal)
+        self.z_transparency_widget.setRange(0, 255)
+        self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
+        self.z_transparency_widget.setFixedWidth(150)  # Compact width
+        self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
+        self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
+        self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
+        self.z_transparency_widget.setToolTip("Z-channel visualization opacity")
 
         # Z dynamic scaling button
         self.z_dynamic_button = QToolButton()
@@ -1121,16 +1132,6 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
-        
-        # Z-channel transparency slider (compact version without icons)
-        self.z_transparency_widget = QSlider(Qt.Horizontal)
-        self.z_transparency_widget.setRange(0, 255)
-        self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
-        self.z_transparency_widget.setFixedWidth(100)  # Compact width
-        self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
-        self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
-        self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
-        self.z_transparency_widget.setToolTip("Z-channel visualization opacity")
         
         # ----------------------------------------
         # Z Inference section
@@ -1235,8 +1236,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addWidget(self.scale_unit_dropdown)
-        self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
-        self.status_bar_layout.addWidget(self.scaled_view_dims_label)
+        self.status_bar_layout.addWidget(self.scaled_dimensions_label)
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
@@ -2230,8 +2230,7 @@ class MainWindow(QMainWindow):
             was_disabled = not self.scale_unit_dropdown.isEnabled()
 
             # Enable the scale widgets
-            self.scaled_view_prefix_label.setEnabled(True)
-            self.scaled_view_dims_label.setEnabled(True)
+            self.scaled_dimensions_label.setEnabled(True)
             self.scale_unit_dropdown.setEnabled(True)
             
             # If it was disabled before, set to the last selected unit by default
@@ -2248,9 +2247,8 @@ class MainWindow(QMainWindow):
             self.scaled_view_width_m = 0.0
             self.scaled_view_height_m = 0.0
             
-            self.scaled_view_prefix_label.setEnabled(False)
-            self.scaled_view_dims_label.setText("0 x 0")
-            self.scaled_view_dims_label.setEnabled(False)
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
+            self.scaled_dimensions_label.setEnabled(False)
             self.scale_unit_dropdown.setEnabled(False)
             
         # Update z_label with z-channel value at current mouse position
@@ -2321,7 +2319,7 @@ class MainWindow(QMainWindow):
         Converts stored meter values to the selected unit and updates the label.
         """
         if not self.scale_unit_dropdown.isEnabled():
-            self.scaled_view_dims_label.setText("0 x 0")
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
             return
 
         # Convert the stored meter values
@@ -2329,7 +2327,7 @@ class MainWindow(QMainWindow):
         converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
 
         # Update the dimensions label
-        self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
+        self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
 
         # Remember the selected unit
         self.current_unit_scale = to_unit
