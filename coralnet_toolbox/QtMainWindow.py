@@ -132,7 +132,10 @@ from coralnet_toolbox.BreakTime import (
 
 from coralnet_toolbox.utilities import convert_scale_units
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import (get_icon,
+                                    create_colormap_icon,
+                                    ColorComboBox,
+                                    ColormapDelegate)
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -1097,14 +1100,21 @@ class MainWindow(QMainWindow):
         self.z_label = QLabel("Z: -----")
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
-        # Z colormap dropdown for visualization
-        self.z_colormap_dropdown = QComboBox()
+        # Use the Custom ComboBox Class
+        self.z_colormap_dropdown = ColorComboBox()
+        
+        # Apply the Delegate (Handles the actual painting logic for both list and button)
+        delegate = ColormapDelegate(self.z_colormap_dropdown)
+        self.z_colormap_dropdown.setItemDelegate(delegate)
+        
+        # Add items normally (Logic will still see "Viridis", but user sees swatches)
         self.z_colormap_dropdown.addItems([
             'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo',
         ])
-        self.z_colormap_dropdown.setCurrentText('None')
+        
+        self.z_colormap_dropdown.setCurrentIndex(0)
         self.z_colormap_dropdown.setFixedWidth(100)
-        self.z_colormap_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        self.z_colormap_dropdown.setEnabled(False)
         self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
 
         # Z dynamic scaling button
@@ -2637,8 +2647,8 @@ class MainWindow(QMainWindow):
         except ImportError:
             QMessageBox.warning(self, 
                                 "Missing Package", 
-                                "The 'depth-anything-3' package is required for Z-Inference.\n\n"
-                                "Please install it before proceeding.")
+                                "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
+                                "Please install it via pip:\npip install awesome-depth-anything-3")
             return
         
         # Check if HF_TOKEN environment variable is set

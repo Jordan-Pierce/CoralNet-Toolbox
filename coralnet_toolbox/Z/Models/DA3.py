@@ -1,7 +1,8 @@
 import warnings
 
-import numpy as np
-import cv2
+import torch
+from torch.cuda import empty_cache
+
 
 from coralnet_toolbox.Z.Models.QtBase import Base
 
@@ -37,8 +38,8 @@ class DA3(Base):
             model_path (str): Model identifier (e.g., "depth-anything/DA3NESTED-GIANT-LARGE-1.1")
             imgsz (int): Image size for inference
         """
+        # Import DA3 model here in case the package is not installed
         from depth_anything_3.api import DepthAnything3
-        import torch
         
         self.imgsz = imgsz
         
@@ -66,47 +67,34 @@ class DA3(Base):
             
             # Clean up GPU memory if using CUDA
             if self.device.startswith('cuda'):
-                import torch
-                from torch.cuda import empty_cache
                 empty_cache()
                 
-    def predict(self, image_array):
+    def predict(self, images):
         """
-        Run depth prediction on an image using DA3.
+        Run depth prediction on a list of images using DA3, returning depth maps (meters) and camera parameters.
         
         Args:
-            image_array (numpy.ndarray): Input image as numpy array (H, W, C)
+            images (list[str | numpy.ndarray]): List of input images as file paths or numpy arrays (H, W, C)
             
         Returns:
-            numpy.ndarray: Depth map as numpy array (H, W) with depth values in meters
+            dict: Dictionary containing:
+                - 'depth_maps' (list[numpy.ndarray]): List of depth maps as numpy arrays (H, W) with depth values
+                - 'intrinsics' (list[numpy.ndarray]): List of camera intrinsic matrices
+                - 'extrinsics' (list[numpy.ndarray]): List of camera extrinsic matrices
         """
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
             
-        # Store original dimensions
-        original_height, original_width = image_array.shape[:2]
-        
         # Run inference
-        # DA3 expects a list of images
         prediction = self.model.inference(
-            image=[image_array],
+            image=images,
             process_res=self.imgsz,
             process_res_method="upper_bound_resize",
         )
         
-        # Extract depth map (first image in batch)
-        depth_map = prediction.depth[0]
-        
-        # Convert to numpy array if not already
-        if not isinstance(depth_map, np.ndarray):
-            depth_map = np.array(depth_map)
-        
-        # Post-process: resize depth map to match original input dimensions if needed
-        if depth_map.shape[0] != original_height or depth_map.shape[1] != original_width:
-            depth_map = cv2.resize(
-                depth_map,
-                (original_width, original_height),
-                interpolation=cv2.INTER_LINEAR
-            )
-            
-        return depth_map
+        # Return the results
+        return {
+            'depth_maps': prediction.depth,
+            'intrinsics': prediction.intrinsics,
+            'extrinsics': prediction.extrinsics
+        }

@@ -25,6 +25,7 @@ from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import load_z_channel_from_file
+from coralnet_toolbox.utilities import normalize_z_unit
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -327,9 +328,15 @@ class Raster(QObject):
             raise ValueError("Z channel data must be a 2D array")
         if z_data.dtype not in [np.float32, np.uint8]:
             raise ValueError("Z channel data must be float32 or uint8 dtype")
+        
+        # Resize z_data if dimensions don't match
         if z_data.shape != (self.height, self.width):
-            raise ValueError(f"Z channel dimensions {z_data.shape} must match image dimensions "
-                             f"({self.height}, {self.width})")
+            z_data = cv2.resize(
+                z_data,
+                (self.width, self.height),
+                interpolation=cv2.INTER_LINEAR
+            )
+        
         if z_data_type is not None and z_data_type not in ['depth', 'elevation']:
             raise ValueError(f"z_data_type must be 'depth' or 'elevation', got '{z_data_type}'")
             
@@ -338,7 +345,6 @@ class Raster(QObject):
         
         # Set z_unit if provided, normalizing to standard format
         if z_unit is not None:
-            from coralnet_toolbox.utilities import normalize_z_unit
             self.z_unit = normalize_z_unit(z_unit)
             
         # Set z_data_type if provided

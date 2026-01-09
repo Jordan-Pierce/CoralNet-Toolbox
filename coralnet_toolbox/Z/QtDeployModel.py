@@ -47,7 +47,7 @@ class DeployModelDialog(CollapsibleSection):
         
         # Initialize instance variables
         self.loaded_model = None
-        self.imgsz = 512
+        self.imgsz = 504
         self.model_path = None
         
         self.highlighted_images = highlighted_images if highlighted_images else []
@@ -82,8 +82,8 @@ class DeployModelDialog(CollapsibleSection):
         
         # Image size spinbox
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(256, 4096)
-        self.imgsz_spinbox.setSingleStep(128)
+        self.imgsz_spinbox.setRange(256, 504)
+        self.imgsz_spinbox.setSingleStep(64)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
@@ -364,6 +364,9 @@ class DeployModelDialog(CollapsibleSection):
         progress_bar.start_progress(len(image_paths))
         num_images = len(image_paths)
         
+        # Collect paths that need prediction (overwrite or no existing z-channel)
+        collected_overwrite = []
+        
         for idx, image_path in enumerate(image_paths):
             try:
                 progress_bar.set_title(f"Z-Inference: {idx + 1}/{num_images} - {os.path.basename(image_path)}")
@@ -387,13 +390,14 @@ class DeployModelDialog(CollapsibleSection):
                     
                     elif overwrite_mode == "smart_fill":
                         # Run prediction first
-                        image_array = raster.get_numpy()
-                        if image_array is None:
-                            print(f"Failed to get image array from raster for {image_path}")
-                            progress_bar.update_progress()
-                            continue
+                        result = self.loaded_model.predict([image_path])
+                        z_predicted = result['depth_maps'][0]
                         
-                        z_predicted = self.loaded_model.predict(image_array)
+                        # Update intrinsics/extrinsics if available
+                        if result['intrinsics'] and result['intrinsics'][0] is not None:
+                            raster.add_intrinsics(result['intrinsics'][0])
+                        if result['extrinsics'] and result['extrinsics'][0] is not None:
+                            raster.add_extrinsics(result['extrinsics'][0])
                         
                         # Apply Smart Fill
                         self._handle_smart_fill(raster, z_predicted)
@@ -407,53 +411,75 @@ class DeployModelDialog(CollapsibleSection):
                             
                         progress_bar.update_progress()
                         continue
-                    # If overwrite_mode == "overwrite", continue with prediction below
+                    # If overwrite_mode == "overwrite", fall through to collect for batch prediction
                 else:
                     if overwrite_mode == "skip":
                         progress_bar.update_progress()
                         continue
                 
-                # Get numpy array from raster
-                image_array = raster.get_numpy()
+                # Collect for batch prediction
+                collected_overwrite.append(image_path)
                 
-                if image_array is None:
-                    print(f"Failed to get image array from raster for {image_path}")
-                    progress_bar.update_progress()
-                    continue
-                    
-                # Run prediction
-                z_channel = self.loaded_model.predict(image_array)
-                
-                # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
-                # Set direction=1 explicitly (high values = far, which is depth semantics)
-                # Note: 0 values are automatically treated as nodata for depth maps
-                raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
-                
-                # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
-                self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
-                
-                # If this is the current raster, refresh visualization and enable controls
-                if raster == self.main_window.image_window.current_raster:
-                    # Refresh visualization
-                    self.annotation_window.refresh_z_channel_visualization()
-                    
-                    # Enable Z-controls in status bar
-                    self.main_window.z_unit_dropdown.setEnabled(True)
-                    self.main_window.z_label.setEnabled(True)
-                    self.main_window.z_colormap_dropdown.setEnabled(True)
-                    self.main_window.z_dynamic_button.setEnabled(True)
-                    
-                    # Set colormap to Turbo
-                    turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
-                    if turbo_index >= 0:
-                        self.main_window.z_colormap_dropdown.setCurrentIndex(turbo_index)
-                                                
             except Exception as e:
                 print(f"Failed to process {image_path}: {e}")
                 import traceback
                 traceback.print_exc()
             finally:
-                progress_bar.update_progress()
+                # For collected, progress will be updated after batch
+                if image_path not in collected_overwrite:
+                    progress_bar.update_progress()
+        
+        # Batch predict for collected images
+        if collected_overwrite:
+            try:
+                result = self.loaded_model.predict(collected_overwrite)
+                
+                for i, image_path in enumerate(collected_overwrite):
+                    raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                    if raster is None:
+                        continue
+                    
+                    z_channel = result['depth_maps'][i]
+                    
+                    # Update intrinsics/extrinsics if available
+                    if result['intrinsics'] and result['intrinsics'][i] is not None:
+                        raster.add_intrinsics(result['intrinsics'][i])
+                    if result['extrinsics'] and result['extrinsics'][i] is not None:
+                        raster.add_extrinsics(result['extrinsics'][i])
+                    
+                    # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
+                    # Set direction=1 explicitly (high values = far, which is depth semantics)
+                    # Note: 0 values are automatically treated as nodata for depth maps
+                    raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
+                    
+                    # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
+                    self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
+                    
+                    # If this is the current raster, refresh visualization and enable controls
+                    if raster == self.main_window.image_window.current_raster:
+                        # Refresh visualization
+                        self.annotation_window.refresh_z_channel_visualization()
+                        
+                        # Enable Z-controls in status bar
+                        self.main_window.z_unit_dropdown.setEnabled(True)
+                        self.main_window.z_label.setEnabled(True)
+                        self.main_window.z_colormap_dropdown.setEnabled(True)
+                        self.main_window.z_dynamic_button.setEnabled(True)
+                        
+                        # Set colormap to Turbo
+                        turbo_index = self.main_window.z_colormap_dropdown.findText("Turbo")
+                        if turbo_index >= 0:
+                            self.main_window.z_colormap_dropdown.setCurrentIndex(turbo_index)
+                            
+                    progress_bar.update_progress()
+                    
+            except Exception as e:
+                print(f"Failed batch prediction: {e}")
+                import traceback
+                traceback.print_exc()
+                # Update progress for remaining
+                for _ in collected_overwrite:
+                    progress_bar.update_progress()
             
     def _show_overwrite_dialog(self, is_batch=False):
         """

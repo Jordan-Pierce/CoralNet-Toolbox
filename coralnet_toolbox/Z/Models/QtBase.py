@@ -25,7 +25,7 @@ class Base(ABC):
         """
         self.device = device
         self.model = None
-        self.imgsz = 512  # Default image size
+        self.imgsz = 504  # Default image size
         
     @abstractmethod
     def load_model(self, model_path, imgsz):
@@ -52,15 +52,18 @@ class Base(ABC):
         raise NotImplementedError("Subclasses must implement deactivate()")
         
     @abstractmethod
-    def predict(self, image_array):
+    def predict(self, images):
         """
-        Run depth prediction on an image.
+        Run depth prediction on a list of images, returning depth maps and camera parameters.
         
         Args:
-            image_array (numpy.ndarray): Input image as numpy array (H, W, C)
+            images (list[str | numpy.ndarray]): List of input images as file paths or numpy arrays (H, W, C)
             
         Returns:
-            numpy.ndarray: Depth map as numpy array (H, W) with depth values in meters
+            dict: Dictionary containing:
+                - 'depth_maps' (list[numpy.ndarray]): List of depth maps as numpy arrays (H, W) with depth values
+                - 'intrinsics' (list[numpy.ndarray]): List of camera intrinsic matrices
+                - 'extrinsics' (list[numpy.ndarray]): List of camera extrinsic matrices
             
         Raises:
             NotImplementedError: Must be implemented by child classes
