@@ -4,7 +4,7 @@ import difflib
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QSize
 from PyQt5.QtGui import QColor, QIcon, QDrag, QPixmap, QPainter
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QLabel, QPushButton, QListWidget, 
                              QAbstractItemView, QFileDialog, QSplitter, QMessageBox,
                              QGroupBox, QFormLayout, QScrollArea, QMenu, QComboBox)
@@ -39,11 +39,12 @@ COLOR_CONFLICT = QColor(255, 200, 150)  # Orange
 class ZDropTable(QTableWidget):
     """
     A specialized TableWidget that accepts drops from the sidebar list.
-    Renamed to generic 'Z' to handle Depth, Height, DEM, etc.
+    Renamed to generic 'Z' to handle Depth and Elevation data.
     """
     fileDropped = pyqtSignal(int, str)  # row, filepath
     clearMapping = pyqtSignal(list)  # list of rows
     setBulkUnits = pyqtSignal(list)  # list of rows (for bulk units operation)
+    setBulkDataType = pyqtSignal(list)  # list of rows (for bulk data type operation)
 
     def __init__(self):
         super().__init__()
@@ -51,15 +52,16 @@ class ZDropTable(QTableWidget):
         self.setDragDropMode(QAbstractItemView.DropOnly)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.setColumnCount(4)
+        self.setColumnCount(5)  # Changed from 4 to 5 columns
         
-        # Updated Headers to include Units column
-        self.setHorizontalHeaderLabels(["Image Source", "Z Channel", "Z Units", "Status"])
+        # Updated Headers to include Units and Data Type columns
+        self.setHorizontalHeaderLabels(["Image Source", "Z Channel", "Z Units", "Z Data Type", "Status"])
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.setColumnWidth(3, 100)
+        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.setColumnWidth(4, 100)
         
         # Enable context menu
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -102,6 +104,12 @@ class ZDropTable(QTableWidget):
             else:
                 units_action = menu.addAction(f"Set Z-Channel Units for {len(selected_rows)} rows")
             
+            # Set data type action
+            if len(selected_rows) == 1:
+                data_type_action = menu.addAction("Set Z-Channel Data Type")
+            else:
+                data_type_action = menu.addAction(f"Set Z-Channel Data Type for {len(selected_rows)} rows")
+            
             menu.addSeparator()
             
             # Clear mapping action
@@ -115,6 +123,8 @@ class ZDropTable(QTableWidget):
                 self.clearMapping.emit(selected_rows)
             elif action == units_action:
                 self.setBulkUnits.emit(selected_rows)
+            elif action == data_type_action:
+                self.setBulkDataType.emit(selected_rows)
 
 
 class DraggableList(QListWidget):
@@ -153,24 +163,25 @@ class DraggableList(QListWidget):
         drag.exec_(Qt.CopyAction)
 
 
-class ZPairingWidget(QWidget):
+class ZImportDialog(QDialog):
     """
     Z-Channel Import Widget.
     
-    Allows users to pair image files with z-channel files (depth, height, DEM, etc).
+    Allows users to pair image files with z-channel files (depth and elevation).
     Supports automatic matching with manual override via drag-and-drop.
     
-    Input: list of image paths, list of z_files (depth/height/dem)
-    Output: signal 'mapping_confirmed' carrying dict {img_path: z_path}
+    Input: list of image paths, list of z_files (depth/elevation)
+    Output: signal 'mapping_confirmed' carrying dict {img_path: {"z_path": path, "units": unit, "z_data_type": type}}
     """
     mapping_confirmed = pyqtSignal(dict)
 
     def __init__(self, image_files, z_files):
         super().__init__()
+        self.setModal(True)
         
         self.setWindowTitle("Z-Channel Import")
         self.setWindowIcon(get_icon("z.png"))
-        self.resize(1050, 600)
+        self.resize(1150, 600)
         
         # Set busy cursor while loading and matching
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -179,10 +190,12 @@ class ZPairingWidget(QWidget):
             self.image_files = sorted(image_files)
             # Smart sort z_files to align with image order
             self.z_files = self._smart_sort_z_files(sorted(z_files), self.image_files)
-            self.mapping = {}  # {image_path: {"z_path": path_or_none, "units": unit_str, "status": status_string}}
+            # Extended mapping to include z_data_type
+            # {image_path: {"z_path": path, "units": unit_str, "z_data_type": type_str, "status": status}}
+            self.mapping = {}  
             
-            # Broadened suffixes to cover DEMs, Height maps, etc.
-            self.suffixes = ['_depth', '_z', '_dem', '_height', '_d', 'depth', 'z', 'dem']
+            # Broadened suffixes to cover Elevation maps, etc.
+            self.suffixes = ['_depth', '_z', '_d', 'depth', 'z']
             
             # Main layout
             self.main_layout = QVBoxLayout(self)
@@ -267,14 +280,15 @@ class ZPairingWidget(QWidget):
         layout.setContentsMargins(10, 5, 10, 5)
         
         info_text = (
-            "Import Z-channel files (Depth, Height, DEM) and pair them with your images.<br><br>"
+            "Import Z-channel files (Depth and Elevation) and pair them with your images.<br><br>"
             "<b>Automatic Matching:</b> The system will attempt to match files using exact names, "
             "suffixes, or fuzzy matching.<br><br>"
             "<b>Manual Correction:</b> Drag Z-channel files from the right panel onto table rows "
             "to override automatic matches or fill missing ones. Select multiple files with Ctrl/Shift "
             "click to batch-map in order.<br><br>"
-            "<b>Units:</b> Double-click on a Z Units cell to change units, or select multiple rows and "
-            "right-click to set units for all selected rows at once."
+            "<b>Units & Data Type:</b> Double-click on Z Units or Z Data Type cells to set values, "
+            "or select multiple rows and right-click to set for all selected rows at once. "
+            "<b>Data Type must be explicitly set for each import.</b>"
         )
         
         info_label = QLabel(info_text)
@@ -282,7 +296,7 @@ class ZPairingWidget(QWidget):
         layout.addWidget(info_label)
         
         group_box.setLayout(layout)
-        group_box.setMaximumHeight(150)
+        group_box.setMaximumHeight(170)
         self.main_layout.addWidget(group_box)
 
     def setup_pairing_layout(self):
@@ -299,13 +313,14 @@ class ZPairingWidget(QWidget):
         pairing_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         pairing_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         pairing_scroll.setMinimumHeight(400)
-        pairing_scroll.setMinimumWidth(400)
+        pairing_scroll.setMinimumWidth(450)
         
         self.table = ZDropTable()
         self.table.fileDropped.connect(self.handle_manual_drop)
         self.table.cellDoubleClicked.connect(self.handle_cell_click)
         self.table.clearMapping.connect(self.handle_clear_mapping)
         self.table.setBulkUnits.connect(self.show_bulk_units_dialog)
+        self.table.setBulkDataType.connect(self.show_bulk_data_type_dialog)
         pairing_scroll.setWidget(self.table)
         
         pairing_layout.addWidget(pairing_scroll)
@@ -335,7 +350,7 @@ class ZPairingWidget(QWidget):
         files_group.setLayout(files_layout)
         splitter.addWidget(files_group)
         
-        splitter.setSizes([650, 300])
+        splitter.setSizes([750, 300])
         self.main_layout.addWidget(splitter)
 
     def setup_buttons_layout(self):
@@ -350,6 +365,10 @@ class ZPairingWidget(QWidget):
         btn_clear_units = QPushButton("Clear All Units")
         btn_clear_units.clicked.connect(self.clear_all_units)
         btn_layout.addWidget(btn_clear_units)
+        
+        btn_clear_data_types = QPushButton("Clear All Data Types")
+        btn_clear_data_types.clicked.connect(self.clear_all_data_types)
+        btn_layout.addWidget(btn_clear_data_types)
         
         # Add stretch to push right-side buttons to the right
         btn_layout.addStretch()
@@ -369,6 +388,7 @@ class ZPairingWidget(QWidget):
         """
         Automatically pair images with z-channel files using heuristic matching.
         Also attempts to detect units from matched z-channel files.
+        z_data_type is NOT auto-detected and must be set explicitly by user.
         
         Matching priority:
         1. Exact name match (same filename without extension)
@@ -429,10 +449,11 @@ class ZPairingWidget(QWidget):
                     if confidence == 'high':
                         match_type += " ✓"
 
-            # Store the mapping with units
+            # Store the mapping with units and z_data_type (not auto-detected)
             self.mapping[img] = {
                 "z_path": best_match,
                 "units": detected_units,
+                "z_data_type": None,  # Requires explicit user selection
                 "status": match_type
             }
 
@@ -444,6 +465,7 @@ class ZPairingWidget(QWidget):
             match_data = self.mapping[img_path]
             z_path = match_data["z_path"]
             units = match_data.get("units", None)
+            z_data_type = match_data.get("z_data_type", None)
             status = match_data["status"]
 
             # Column 0: Image Name
@@ -461,16 +483,23 @@ class ZPairingWidget(QWidget):
             self.table.setItem(r, 1, item_z)
             
             # Column 2: Z Units (with dropdown for user selection)
-            units_display = units if units else "(Set)"
+            units_display = units if units else "(None)"
             item_units = QTableWidgetItem(units_display)
             item_units.setTextAlignment(Qt.AlignCenter)
-            item_units.setToolTip("Click to edit units")
+            item_units.setToolTip("Double-click to edit units")
             self.table.setItem(r, 2, item_units)
             
-            # Column 3: Status
+            # Column 3: Z Data Type (requires explicit user selection)
+            data_type_display = z_data_type if z_data_type else "(None)"
+            item_data_type = QTableWidgetItem(data_type_display)
+            item_data_type.setTextAlignment(Qt.AlignCenter)
+            item_data_type.setToolTip("Double-click to set data type (depth/elevation)")
+            self.table.setItem(r, 3, item_data_type)
+            
+            # Column 4: Status
             item_status = QTableWidgetItem(status)
             item_status.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(r, 3, item_status)
+            self.table.setItem(r, 4, item_status)
             
             # Color code the row based on match status
             self.update_row_color(r, status)
@@ -493,7 +522,7 @@ class ZPairingWidget(QWidget):
         elif "Conflict" in status:
             color = COLOR_CONFLICT
             
-        for c in range(3):
+        for c in range(4):  # Color first 4 columns, not status
             self.table.item(row, c).setBackground(color)
     
     def update_z_file_colors(self):
@@ -534,7 +563,7 @@ class ZPairingWidget(QWidget):
         if detected_units:
             detected_units = normalize_z_unit(detected_units)
         
-        # Update mapping data
+        # Update mapping data (z_data_type still requires explicit setting)
         self.mapping[img_path]["z_path"] = z_path
         self.mapping[img_path]["units"] = detected_units
         self.mapping[img_path]["status"] = "Manual Fix"
@@ -546,11 +575,11 @@ class ZPairingWidget(QWidget):
         item_z.setToolTip(z_path)
         
         item_units = self.table.item(row, 2)
-        units_display = detected_units if detected_units else "(Set)"
+        units_display = detected_units if detected_units else "(None)"
         item_units.setText(units_display)
         item_units.setTextAlignment(Qt.AlignCenter)
         
-        item_status = self.table.item(row, 3)
+        item_status = self.table.item(row, 4)
         item_status.setText("Manual Fix")
         item_status.setTextAlignment(Qt.AlignCenter)
         
@@ -573,6 +602,7 @@ class ZPairingWidget(QWidget):
             # Clear mapping data
             self.mapping[img_path]["z_path"] = None
             self.mapping[img_path]["units"] = None
+            self.mapping[img_path]["z_data_type"] = None
             self.mapping[img_path]["status"] = "Missing"
             
             # Update table display
@@ -582,11 +612,16 @@ class ZPairingWidget(QWidget):
             item_z.setToolTip("")
             
             item_units = self.table.item(row, 2)
-            item_units.setText("(Set)")
+            item_units.setText("(None)")
             item_units.setTextAlignment(Qt.AlignCenter)
-            item_units.setToolTip("Click to edit units")
+            item_units.setToolTip("Double-click to edit units")
             
-            item_status = self.table.item(row, 3)
+            item_data_type = self.table.item(row, 3)
+            item_data_type.setText("(None)")
+            item_data_type.setTextAlignment(Qt.AlignCenter)
+            item_data_type.setToolTip("Double-click to set data type")
+            
+            item_status = self.table.item(row, 4)
             item_status.setText("Missing")
             item_status.setTextAlignment(Qt.AlignCenter)
             
@@ -598,7 +633,7 @@ class ZPairingWidget(QWidget):
 
     def handle_cell_click(self, row, col):
         """
-        Handle double-click on z-path cell to browse for file or units cell to edit.
+        Handle double-click on cells: z-path to browse, units to edit, data type to select.
         
         Args:
             row (int): Table row index
@@ -610,6 +645,8 @@ class ZPairingWidget(QWidget):
                 self.handle_manual_drop(row, fname)
         elif col == 2:  # Z Units Column
             self.show_units_dialog(row)
+        elif col == 3:  # Z Data Type Column
+            self.show_data_type_dialog(row)
 
     def show_units_dialog(self, row):
         """
@@ -636,7 +673,33 @@ class ZPairingWidget(QWidget):
             # Update mapping and table
             self.mapping[img_path]["units"] = selected
             item_units = self.table.item(row, 2)
-            item_units.setText(selected if selected else "(Set)")
+            item_units.setText(selected if selected else "(None)")
+    
+    def show_data_type_dialog(self, row):
+        """
+        Show a dialog to allow user to select z-channel data type for a single row.
+        
+        Args:
+            row (int): Table row index
+        """
+        from PyQt5.QtWidgets import QInputDialog
+        
+        img_path = self.image_files[row]
+        data_types = ["depth", "elevation"]
+        
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Select Z-Channel Data Type",
+            f"Data type for {os.path.basename(img_path)}:\n(Select 'Elevation' for DEMs or Height Maps)",
+            data_types,
+            editable=False
+        )
+        
+        if ok:
+            # Update mapping and table
+            self.mapping[img_path]["z_data_type"] = selected
+            item_data_type = self.table.item(row, 3)
+            item_data_type.setText(selected if selected else "(None)")
     
     def show_bulk_units_dialog(self, rows):
         """
@@ -663,7 +726,35 @@ class ZPairingWidget(QWidget):
                 img_path = self.image_files[row]
                 self.mapping[img_path]["units"] = selected
                 item_units = self.table.item(row, 2)
-                item_units.setText(selected if selected else "(Set)")
+                item_units.setText(selected if selected else "(None)")
+    
+    def show_bulk_data_type_dialog(self, rows):
+        """
+        Show a dialog to set z-channel data type for multiple rows at once.
+        
+        Args:
+            rows (list): List of table row indices
+        """
+        from PyQt5.QtWidgets import QInputDialog
+        
+        # SIMPLIFICATION: Removed 'dem'
+        data_types = ["depth", "elevation"]
+        
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Set Z-Channel Data Type for Multiple Rows",
+            f"Set data type for {len(rows)} selected row{'s' if len(rows) > 1 else ''}:\n(Select 'Elevation' for DEMs)",
+            data_types,
+            editable=False
+        )
+        
+        if ok:
+            # Apply to all selected rows
+            for row in rows:
+                img_path = self.image_files[row]
+                self.mapping[img_path]["z_data_type"] = selected
+                item_data_type = self.table.item(row, 3)
+                item_data_type.setText(selected if selected else "(None)")
 
     def clear_all_mappings(self):
         """Clear all z-channel mappings for all rows."""
@@ -697,26 +788,51 @@ class ZPairingWidget(QWidget):
                 self.mapping[img_path]["units"] = None
                 
                 item_units = self.table.item(row, 2)
-                item_units.setText("(Set)")
+                item_units.setText("(None)")
                 item_units.setTextAlignment(Qt.AlignCenter)
+    
+    def clear_all_data_types(self):
+        """Clear all z-channel data types for all rows."""
+        reply = QMessageBox.question(
+            self,
+            "Clear All Data Types",
+            "Are you sure you want to clear all z-channel data types?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear data types for all rows
+            for row in range(len(self.image_files)):
+                img_path = self.image_files[row]
+                self.mapping[img_path]["z_data_type"] = None
+                
+                item_data_type = self.table.item(row, 3)
+                item_data_type.setText("(None)")
+                item_data_type.setTextAlignment(Qt.AlignCenter)
 
     def finalize_mapping(self):
         """
         Finalize the mapping and emit confirmation signal.
         
-        Warns user if there are unmatched images.
-        Emits full mapping dict with z_path and units.
+        Warns user if there are unmatched images or missing data types.
+        Emits full mapping dict with z_path, units, and z_data_type.
         """
         final_dict = {}
         missing_count = 0
+        missing_data_type_count = 0
         
-        # Build final mapping with only paired images, preserving units
+        # Build final mapping with only paired images, preserving units and z_data_type
         for img, data in self.mapping.items():
             if data["z_path"]:
                 final_dict[img] = {
                     "z_path": data["z_path"],
-                    "units": data.get("units", None)
+                    "units": data.get("units", None),
+                    "z_data_type": data.get("z_data_type", None)
                 }
+                # Count how many have z_path but missing z_data_type
+                if not data.get("z_data_type"):
+                    missing_data_type_count += 1
             else:
                 missing_count += 1
         
@@ -732,6 +848,17 @@ class ZPairingWidget(QWidget):
             )
             if reply == QMessageBox.No:
                 return
+        
+        # Warn if there are images with missing data types
+        if missing_data_type_count > 0:
+            reply = QMessageBox.warning(
+                self,
+                "Missing Z-Channel Data Types",
+                f"{missing_data_type_count} paired image(s) have no data type set (depth/elevation).\n\n"
+                f"Data type is required for proper z-channel handling. Please set data types before confirming.",
+                QMessageBox.Ok
+            )
+            return
 
         # Emit the final mapping and close
         self.mapping_confirmed.emit(final_dict)

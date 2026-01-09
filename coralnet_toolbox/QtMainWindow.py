@@ -116,6 +116,14 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
+from coralnet_toolbox.Z import (
+    DeployModelDialog as ZDeployModelDialog,
+)
+
+from coralnet_toolbox.Common import (
+    CollapsibleSection,
+)
+
 from coralnet_toolbox.BreakTime import (
     SnakeGame,
     BreakoutGame,
@@ -124,7 +132,9 @@ from coralnet_toolbox.BreakTime import (
 
 from coralnet_toolbox.utilities import convert_scale_units
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import (get_icon,
+                                    ColorComboBox,
+                                    ColormapDelegate)
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -168,6 +178,7 @@ class MainWindow(QMainWindow):
         self.tile_icon = get_icon("tile.png")
         self.workarea_icon = get_icon("workarea.png")
         self.scale_icon = get_icon("scale.png")
+        self.spatial_icon = get_icon("spatial.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -306,6 +317,9 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Transformers)
         self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
+        
+        # Create dialogs (Z-Inference)
+        self.z_deploy_model_dialog = ZDeployModelDialog(self)
 
         # Create dialogs (Batch Inference - Consolidated)
         # This is accessed via ImageWindow right-click context menu
@@ -356,7 +370,11 @@ class MainWindow(QMainWindow):
         # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
         # Connect the imageLoaded signal from ImageWindow to check z-channel status
-        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
+        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)        
+        # Connect image signals to update Z-Inference deploy button state
+        self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
+        # Connect imageChanged signal to update Z-Inference deploy button state
+        self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
 
         # ----------------------------------------
         # Create the menu bar
@@ -772,13 +790,26 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Delete to remove selected annotations."),
             
             "scale": ("Scale Tool\n\n"
-                      "Provide scale to the image(s), and measure distances on the current image.\n"
-                      "• Left-click to set the starting point.\n"
-                      "• Drag to draw a line, then left-click again to set the endpoint.\n"
-                      "• Press Backspace to cancel drawing the scale line."
-                      "• The scale will be calculated based on the known provided length and pixel length.\n"
-                      "• Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.\n"
-                      "• Preferred units can be set in the Status Bar."),
+                      "Calibrate spatial and depth/elevation measurements across two tabs:\n\n"
+                      "XY Scale Tab (Pixel Size):\n"
+                      "• Calibrate XY scale (meters/pixel) for area and distance measurements.\n"
+                      "• Draw a line across a known distance and enter the measurement.\n"
+                      "• Applies to all highlighted images in the batch operation.\n\n"
+                      "Z-Calibration Tab (Depth/Elevation):\n"
+                      "• Unified tool for vertical measurements and visualization.\n"
+                      "• Step A (Scale): Draw a line to calibrate vertical magnitude (scalar).\n"
+                      "• Step B (Anchor): Click a reference point to set absolute depth/elevation (offset).\n"
+                      "• View Mode: Non-destructively toggle between 'Depth' (from camera) and \n"
+                      "  'Relative Elevation' (height above bottom).\n"
+                      "• Z-Fence: Real-time 3D cross-section visualization appears while drawing."),
+
+            "spatial": ("Spatial Measurement Tool\n\n"
+                        "Measure 2D/3D distances and areas with rugosity calculations.\n"
+                        "Requires scale to be set on the current image.\n"
+                        "• Measure Line: Draw a line to measure linear distances and rugosity.\n"
+                        "• Measure Rectangle: Draw a rectangle to measure area and areal rugosity.\n"
+                        "• If Z-channel data is available, 3D metrics will be calculated.\n"
+                        "• Press Escape to cancel the current measurement."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
@@ -893,6 +924,12 @@ class MainWindow(QMainWindow):
         self.scale_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.scale_tool_action)
 
+        self.spatial_tool_action = QAction(self.spatial_icon, "Spatial", self)
+        self.spatial_tool_action.setCheckable(True)
+        self.spatial_tool_action.setToolTip(self.tool_descriptions["spatial"])
+        self.spatial_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.spatial_tool_action)
+
         self.toolbar.addSeparator()
         
         self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
@@ -1000,7 +1037,7 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Labels for project, image dimensions and mouse position
+        # Image and view dimensions and mouse position
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
         self.mouse_position_label.setFixedWidth(150)
         
@@ -1009,19 +1046,6 @@ class MainWindow(QMainWindow):
 
         self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setFixedWidth(150)
-        
-        self.scaled_view_prefix_label = QLabel("Scale:")
-        self.scaled_view_prefix_label.setEnabled(False)  # Disabled by default
-
-        self.scaled_view_dims_label = QLabel("0 x 0")
-        self.scaled_view_dims_label.setFixedWidth(120)  # For "height x width"
-        self.scaled_view_dims_label.setEnabled(False)   # Disabled by default
-        
-        self.scale_unit_dropdown = QComboBox()
-        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
-        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.scale_unit_dropdown.setFixedWidth(60)
-        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -1050,27 +1074,56 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+        
+        # Scale labels and dropdowns
+        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
+        self.scaled_dimensions_label.setFixedWidth(200)
+        self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
+        
+        self.scale_unit_dropdown = QComboBox()
+        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
+        self.scale_unit_dropdown.setFixedWidth(50)
+        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
         self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.z_unit_dropdown.setFixedWidth(60)
+        self.z_unit_dropdown.setFixedWidth(50)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
         
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
+        self.z_label.setFixedWidth(75)  # Fixed width to prevent shifting
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
-        # Z colormap dropdown for visualization
-        self.z_colormap_dropdown = QComboBox()
+        # Use the Custom ComboBox Class
+        self.z_colormap_dropdown = ColorComboBox()
+        
+        # Apply the Delegate (Handles the actual painting logic for both list and button)
+        delegate = ColormapDelegate(self.z_colormap_dropdown)
+        self.z_colormap_dropdown.setItemDelegate(delegate)
+        
+        # Add items normally (Logic will still see "Viridis", but user sees swatches)
         self.z_colormap_dropdown.addItems([
-            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'
+            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo',
         ])
-        self.z_colormap_dropdown.setCurrentText('None')
+        
+        self.z_colormap_dropdown.setCurrentIndex(0)
         self.z_colormap_dropdown.setFixedWidth(100)
-        self.z_colormap_dropdown.setEnabled(False)  # Disabled by default until Z data is available
+        self.z_colormap_dropdown.setEnabled(False)
         self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
+        
+        # Z-channel transparency slider (compact version without icons)
+        self.z_transparency_widget = QSlider(Qt.Horizontal)
+        self.z_transparency_widget.setRange(0, 255)
+        self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
+        self.z_transparency_widget.setFixedWidth(150)  # Compact width
+        self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
+        self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
+        self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
+        self.z_transparency_widget.setToolTip("Z-channel visualization opacity")
 
         # Z dynamic scaling button
         self.z_dynamic_button = QToolButton()
@@ -1080,16 +1133,10 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
         
-        # Z button and Z label
-        self.z_action = QAction(self.z_icon, "", self)
-        self.z_action.setCheckable(False)  # TODO
-        self.z_action.setChecked(False)
-        self.z_action.setToolTip("Depth Estimation (In Progress)")
-        # self.z_action.triggered.connect(self.open_depth_dialog)  # TODO Disabled for now
-
-        # Create button to hold the Z action
-        self.z_button = QToolButton()
-        self.z_button.setDefaultAction(self.z_action)
+        # ----------------------------------------
+        # Z Inference section
+        # ----------------------------------------
+        # Created with Z Deploy Model Dialog
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1111,7 +1158,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
-        self.parameters_section = CollapsibleSection("Parameters")
+        self.parameters_section = CollapsibleSection("Parameters", "parameters.png")
 
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
@@ -1189,13 +1236,13 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addWidget(self.scale_unit_dropdown)
-        self.status_bar_layout.addWidget(self.scaled_view_prefix_label)
-        self.status_bar_layout.addWidget(self.scaled_view_dims_label)
+        self.status_bar_layout.addWidget(self.scaled_dimensions_label)
         self.status_bar_layout.addWidget(self.z_unit_dropdown)
         self.status_bar_layout.addWidget(self.z_label)
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
+        self.status_bar_layout.addWidget(self.z_transparency_widget)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addWidget(self.z_button)
+        self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
@@ -1263,6 +1310,7 @@ class MainWindow(QMainWindow):
         self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
         self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
         self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
         self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
@@ -1657,6 +1705,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
                 self.scale_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("see_anything")
             else:
@@ -1675,6 +1724,7 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.scale_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("work_area")
             else:
@@ -1693,8 +1743,46 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
+                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("scale")
+            else:
+                self.toolChanged.emit(None)
+
+        elif action == self.spatial_tool_action:
+            # Check if scale is set on current image
+            image_path = self.annotation_window.current_image_path
+            if not image_path:
+                self.spatial_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "No Image Loaded",
+                                    "Please load an image before using the Spatial Measurement Tool.")
+                return
+            
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if not raster or not raster.scale_x or not raster.scale_y:
+                self.spatial_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "Scale Not Set",
+                                    "The Spatial Measurement Tool requires scale to be set on the current image.\n\n"
+                                    "Please use the Scale Tool to set the scale first.")
+                return
+            
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.brush_tool_action.setChecked(False)
+                self.erase_tool_action.setChecked(False)
+                self.dropper_tool_action.setChecked(False)
+                self.fill_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
+                self.scale_tool_action.setChecked(False)
+
+                self.toolChanged.emit("spatial")
             else:
                 self.toolChanged.emit(None)
 
@@ -1708,6 +1796,7 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.spatial_tool_action.setChecked(False)
         self.brush_tool_action.setChecked(False)
         self.erase_tool_action.setChecked(False)
         self.dropper_tool_action.setChecked(False)
@@ -1738,6 +1827,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
@@ -1752,6 +1842,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -1767,6 +1858,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -1781,6 +1873,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "brush":
             self.select_tool_action.setChecked(False)
@@ -1795,6 +1888,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "erase":
             self.select_tool_action.setChecked(False)
@@ -1809,6 +1903,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "dropper":
             self.select_tool_action.setChecked(False)
@@ -1823,6 +1918,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "fill":
             self.select_tool_action.setChecked(False)
@@ -1837,6 +1933,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -1851,6 +1948,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
@@ -1865,6 +1963,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
 
         elif tool == "work_area":
             self.select_tool_action.setChecked(False)
@@ -1879,6 +1978,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
             
         elif tool == "scale":
             self.select_tool_action.setChecked(False)
@@ -1893,6 +1993,22 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(True)
+            self.spatial_tool_action.setChecked(False)
+        
+        elif tool == "spatial":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(True)
 
         else:
             self.select_tool_action.setChecked(False)
@@ -1907,6 +2023,7 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(False)
+            self.spatial_tool_action.setChecked(False)
     
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""
@@ -1984,6 +2101,24 @@ class MainWindow(QMainWindow):
             self.image_layout.setStretch(0, 54)
             self.image_layout.setStretch(1, 66)
             
+    def enable_z_visualization_controls(self, enabled):
+        """
+        Centralized method to enable or disable all Z-channel visualization controls.
+        
+        Args:
+            enabled (bool): True to enable controls, False to disable them
+        """
+        self.z_label.setEnabled(enabled)
+        self.z_unit_dropdown.setEnabled(enabled)
+        self.z_colormap_dropdown.setEnabled(enabled)
+        self.z_transparency_widget.setEnabled(enabled)
+        
+        # Dynamic button is only enabled when a colormap is active (not "None")
+        if enabled and self.z_colormap_dropdown.currentText() != "None":
+            self.z_dynamic_button.setEnabled(True)
+        else:
+            self.z_dynamic_button.setEnabled(False)
+    
     def on_image_loaded_check_z_channel(self, image_path):
         """
         Check if the newly loaded image has a z-channel.
@@ -1996,21 +2131,15 @@ class MainWindow(QMainWindow):
         if raster and raster.z_channel is None:
             # Image has no z-channel, disable UI elements
             self.z_label.setText("Z: -----")
-            self.z_label.setEnabled(False)
-            self.z_unit_dropdown.setEnabled(False)
-            self.z_colormap_dropdown.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
         elif raster and raster.z_channel is not None:
             # Image has z-channel, enable UI elements
-            self.z_label.setEnabled(True)
-            self.z_unit_dropdown.setEnabled(True)
-            self.z_colormap_dropdown.setEnabled(True)
-            # Only enable dynamic button if colormap is not set to "None"
-            if self.z_colormap_dropdown.currentText() != "None":
-                self.z_dynamic_button.setEnabled(True)
-            else:
-                self.z_dynamic_button.setEnabled(False)
+            self.enable_z_visualization_controls(True)
+            
+            # Force status bar Z-value refresh at current mouse position
+            # This ensures z_nodata and z_settings are properly reflected when switching images
+            self.update_z_value_at_mouse_position(raster)
 
     def on_z_channel_removed(self, image_path):
         """
@@ -2023,11 +2152,8 @@ class MainWindow(QMainWindow):
         # clear the z-label in the status bar and disable the dropdown
         if image_path == self.annotation_window.current_image_path:
             self.z_label.setText("Z: -----")
-            self.z_label.setEnabled(False)
-            self.z_unit_dropdown.setEnabled(False)
-            self.z_colormap_dropdown.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
             self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2104,8 +2230,7 @@ class MainWindow(QMainWindow):
             was_disabled = not self.scale_unit_dropdown.isEnabled()
 
             # Enable the scale widgets
-            self.scaled_view_prefix_label.setEnabled(True)
-            self.scaled_view_dims_label.setEnabled(True)
+            self.scaled_dimensions_label.setEnabled(True)
             self.scale_unit_dropdown.setEnabled(True)
             
             # If it was disabled before, set to the last selected unit by default
@@ -2122,15 +2247,14 @@ class MainWindow(QMainWindow):
             self.scaled_view_width_m = 0.0
             self.scaled_view_height_m = 0.0
             
-            self.scaled_view_prefix_label.setEnabled(False)
-            self.scaled_view_dims_label.setText("0 x 0")
-            self.scaled_view_dims_label.setEnabled(False)
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
+            self.scaled_dimensions_label.setEnabled(False)
             self.scale_unit_dropdown.setEnabled(False)
             
         # Update z_label with z-channel value at current mouse position
         self.update_z_value_at_mouse_position(raster)
     
-    def update_z_value_at_mouse_position(self, raster):
+    def update_z_value_at_mouse_position(self, raster):  
         """Update the z_label with z-channel value at current mouse position."""
         if raster and raster.z_channel_lazy is not None:
             # Check if mouse coordinates are within image bounds
@@ -2138,41 +2262,46 @@ class MainWindow(QMainWindow):
                 0 <= self.current_mouse_y < raster.height):
                 
                 try:
-                    # Get z-channel value at mouse position (stored as height, width array)
-                    z_channel = raster.z_channel_lazy
-                    z_value = z_channel[int(self.current_mouse_y), int(self.current_mouse_x)]
+                    # Get transformed z-value using non-destructive pipeline
+                    z_value_transformed = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
                     
-                    # Check if the value is NaN (only possible for float types)
-                    # Use try-except to handle both float and integer types safely
-                    is_nan = False
-                    try:
-                        is_nan = np.isnan(z_value)
-                    except (TypeError, ValueError):
-                        # isnan() fails on integer types, which is expected
-                        is_nan = False
-                    
-                    # Check if the value matches the nodata value
-                    is_nodata = (raster.z_nodata is not None and float(z_value) == float(raster.z_nodata))
-                    
-                    if is_nan or is_nodata:
+                    if z_value_transformed is None:
+                        # Value is NaN or nodata
                         self.z_label.setText("Z: ----")
+                        self.z_label.setToolTip("No valid Z-value at this location")
                     else:
-                        # Cache the raw z-value for re-conversion if unit dropdown changes
-                        self.current_z_value = z_value
+                        # Cache the transformed z-value for unit conversion
+                        self.current_z_value = z_value_transformed
                         
                         # Get the original unit from the raster
                         original_unit = raster.z_unit if raster.z_unit else 'm'
                         
                         # Convert to selected unit if different from original
-                        display_value = z_value
+                        display_value = z_value_transformed
                         if self.current_unit_z != original_unit:
-                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                            display_value = convert_scale_units(z_value_transformed, original_unit, self.current_unit_z)
                         
                         # Format the display based on data type
-                        if z_channel.dtype == np.float32:
+                        if raster.z_channel.dtype == np.float32:
                             self.z_label.setText(f"Z: {display_value:.3f}")
                         else:
                             self.z_label.setText(f"Z: {int(display_value)}")
+                        
+                        # Set tooltip showing Z-channel transformation settings
+                        z_settings = raster.z_settings
+                        scalar = z_settings.get('scalar', 1.0)
+                        offset = z_settings.get('offset', 0.0)
+                        direction = z_settings.get('direction', 1)
+                        direction_str = "Depth (positive down)" if direction == 1 else "Elevation (positive up)"
+                        
+                        tooltip_text = (
+                            f"Z-Channel Transformation:\n\n"
+                            f"  Scalar: {scalar:.6f}\n"
+                            f"  Offset: {offset:.6f}\n"
+                            f"  Direction: {direction_str}\n\n"
+                            f"Formula: Z_display = {direction} × (raw × {scalar:.6f}) + {offset:.6f}"
+                        )
+                        self.z_label.setToolTip(tooltip_text)
                     
                     # Enable the z_label and dropdown since we have valid data
                     self.z_label.setEnabled(True)
@@ -2190,7 +2319,7 @@ class MainWindow(QMainWindow):
         Converts stored meter values to the selected unit and updates the label.
         """
         if not self.scale_unit_dropdown.isEnabled():
-            self.scaled_view_dims_label.setText("0 x 0")
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
             return
 
         # Convert the stored meter values
@@ -2198,7 +2327,7 @@ class MainWindow(QMainWindow):
         converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
 
         # Update the dimensions label
-        self.scaled_view_dims_label.setText(f"{converted_height:.2f} x {converted_width:.2f}")
+        self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
 
         # Remember the selected unit
         self.current_unit_scale = to_unit
@@ -2246,14 +2375,29 @@ class MainWindow(QMainWindow):
         """Handle z-colormap dropdown changes by updating the annotation window."""
         self.annotation_window.update_z_colormap(colormap_name)
         
-        # Disable the dynamic range button if colormap is set to "None"
+        # Enable/disable z_transparency_widget based on colormap selection
         if colormap_name == "None":
+            self.z_transparency_widget.setEnabled(False)
             self.z_dynamic_button.setEnabled(False)
             self.z_dynamic_button.setChecked(False)
         else:
-            # Enable the dynamic range button if a valid colormap is selected and Z data is available
+            # Enable the transparency slider and dynamic range button if Z data is available
             if self.annotation_window.z_data_raw is not None:
+                self.z_transparency_widget.setEnabled(True)
                 self.z_dynamic_button.setEnabled(True)
+    
+    def update_z_transparency(self, value):
+        """
+        Update the Z-channel visualization opacity.
+        
+        Args:
+            value (int): Slider value from 0-255
+        """
+        # Convert slider value (0-255) to opacity (0.0-1.0)
+        opacity = value / 255.0
+        
+        # Update the annotation window's z-channel opacity
+        self.annotation_window.set_z_opacity(opacity)
     
     def on_z_dynamic_toggled(self, checked):
         """Handle z-dynamic scaling button toggle."""
@@ -2521,10 +2665,34 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_depth_dialog(self):
-        """Open the Depth Dialog"""
-        # TODO: Implement depth dialog functionality
-        pass
+    def open_z_deploy_model_dialog(self):
+        """Open the Z-Deploy Model Dialog"""
+        # Check if depth-anything-3 is installed
+        try:
+            from depth_anything_3.api import DepthAnything3
+            
+        except ImportError:
+            QMessageBox.warning(self, 
+                                "Missing Package", 
+                                "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
+                                "Please install it via pip:\npip install awesome-depth-anything-3")
+            return
+        
+        # Check if HF_TOKEN environment variable is set
+        import os
+        hf_token = os.getenv("HF_TOKEN")
+        
+        if not hf_token or not hf_token.strip():
+            QMessageBox.warning(self, 
+                                "HuggingFace Access Required", 
+                                "Access to Depth-Anything-3 model weights requires HuggingFace approval.\n\n"
+                                "Please:\n"
+                                "1. Request access to 'depth-anything/DA3NESTED-GIANT-LARGE-1.1' on HuggingFace\n"
+                                "2. Set your HF_TOKEN environment variable: export HF_TOKEN=your_token_here\n"
+                                "3. Restart the application")
+            return
+        
+        self.z_deploy_model_dialog.toggle_content()
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""
@@ -3246,59 +3414,6 @@ class MainWindow(QMainWindow):
             self.lightcycle_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-
-class CollapsibleSection(QWidget):
-    def __init__(self, title, parent=None):
-        super().__init__(parent)
-        self.setLayout(QVBoxLayout())
-        self.layout().setContentsMargins(0, 0, 0, 0)
-        self.layout().setSpacing(0)
-
-        # Create the action
-        self.toggle_action = QAction(QIcon(get_icon('parameters.png')), title, self)
-        self.toggle_action.setCheckable(False)
-        self.toggle_action.triggered.connect(self.toggle_content)
-
-        # Header button using the action
-        self.toggle_button = QToolButton()
-        self.toggle_button.setDefaultAction(self.toggle_action)
-        self.toggle_button.setCheckable(False)
-        self.toggle_button.setAutoRaise(True)  # Gives a flat appearance until clicked
-
-        # Popup frame
-        self.popup = QFrame(self.window())
-        self.popup.setWindowFlags(Qt.Popup)
-        self.popup.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.popup.setLayout(QVBoxLayout())
-        self.popup.layout().setContentsMargins(5, 5, 5, 5)
-        self.popup.hide()
-
-        # Add button to layout
-        self.layout().addWidget(self.toggle_button)
-
-    def toggle_content(self):
-        if self.popup.isVisible():
-            self.popup.hide()
-        else:
-            # Position popup below and to the left of the button
-            pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
-            popup_width = self.popup.sizeHint().width()
-            self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
-                            pos.y() + self.toggle_button.height())
-            self.popup.show()
-
-    def add_widget(self, widget, title=None):
-        group_box = QGroupBox()
-        group_box.setTitle(title)
-        group_box.setLayout(QVBoxLayout())
-        group_box.layout().addWidget(widget)
-        self.popup.layout().addWidget(group_box)
-
-    def hideEvent(self, event):
-        self.popup.hide()
-        self.toggle_action.setChecked(False)
-        super().hideEvent(event)
 
 
 class DeviceSelectionDialog(QDialog):

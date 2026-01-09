@@ -2,7 +2,7 @@ import warnings
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
-from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication
+from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication, QLabel
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -19,13 +19,14 @@ class ProgressBar(QDialog):
     """
     progress_updated = pyqtSignal(int)
 
-    def __init__(self, parent=None, title="Progress"):
+    def __init__(self, parent=None, title="Progress", text_label=None):
         """
         Initialize the progress bar dialog.
         
         Args:
             parent: The parent widget (default: None)
             title: The window title (default: "Progress")
+            text_label: Optional text to display above the progress bar
         """
         super().__init__(parent)
 
@@ -36,6 +37,11 @@ class ProgressBar(QDialog):
         
         # This tells Qt to delete the widget when it receives a close event.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        # Create text label if provided
+        if text_label:
+            self.text_label = QLabel(text_label, self)
+            self.layout.addWidget(self.text_label)
 
         # Create progress bar widget
         self.progress_bar = QProgressBar(self)
@@ -48,6 +54,8 @@ class ProgressBar(QDialog):
 
         # Setup layout
         self.layout = QVBoxLayout(self)
+        if text_label:
+            self.layout.addWidget(self.text_label)
         self.layout.addWidget(self.progress_bar)
         self.layout.addWidget(self.cancel_button)
 

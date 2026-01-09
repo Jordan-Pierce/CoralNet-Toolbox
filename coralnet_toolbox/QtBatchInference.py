@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class BatchInferenceDialog(QDialog):
     """
     Consolidated batch inference dialog for all models.
-    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Transformers.
+    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Transformers, Z-Inference.
     
     This dialog provides:
     - Model selection dropdown for all loaded models
@@ -55,6 +55,7 @@ class BatchInferenceDialog(QDialog):
         self.sam_dialog = getattr(main_window, 'sam_deploy_generator_dialog', None)
         self.see_anything_dialog = getattr(main_window, 'see_anything_deploy_generator_dialog', None)
         self.transformers_dialog = getattr(main_window, 'transformers_deploy_model_dialog', None)
+        self.z_dialog = getattr(main_window, 'z_deploy_model_dialog', None)
 
         # Dictionary to store available model dialogs
         self.model_dialogs = {}
@@ -289,6 +290,8 @@ class BatchInferenceDialog(QDialog):
             self.model_dialogs["See Anything"] = self.see_anything_dialog
         if self.transformers_dialog and getattr(self.transformers_dialog, "loaded_model", None):
             self.model_dialogs["Transformers"] = self.transformers_dialog
+        if self.z_dialog and getattr(self.z_dialog, "loaded_model", None):
+            self.model_dialogs["Z-Inference"] = self.z_dialog
 
         self.update_model_combo()
 
@@ -301,9 +304,26 @@ class BatchInferenceDialog(QDialog):
         self.model_combo.clear()
         self.model_keys = []
 
-        for key in sorted(self.model_dialogs.keys()):
+        # Separate Z-Inference from other models
+        z_inference_dialog = None
+        other_models = {}
+        
+        for key, dialog in self.model_dialogs.items():
+            if key == "Z-Inference":
+                z_inference_dialog = dialog
+            else:
+                other_models[key] = dialog
+        
+        # Add sorted models (excluding Z-Inference)
+        for key in sorted(other_models.keys()):
             self.model_combo.addItem(key)
             self.model_keys.append(key)
+        
+        # Add separator and Z-Inference at the bottom
+        if z_inference_dialog:
+            self.model_combo.insertSeparator(self.model_combo.count())
+            self.model_combo.addItem("Z-Inference")
+            self.model_keys.append("Z-Inference")
 
         # Try to restore the current selected model, otherwise default to index 0
         selected_index = 0
@@ -349,11 +369,18 @@ class BatchInferenceDialog(QDialog):
             
             # Enable annotation options only for Classify model
             if selected_model == "Classify":
+                self.task_specific_group.setVisible(True)
                 self.task_specific_group.setEnabled(True)
                 # Disable inference type dropdown for Classify model
                 self.inference_type_combo.setEnabled(False)
                 self.inference_type_combo.setCurrentText("Standard")
+            elif selected_model == "Z-Inference":
+                # Hide annotation options and disable tiled inference for Z-Inference
+                self.task_specific_group.setVisible(False)
+                self.inference_type_combo.setEnabled(False)
+                self.inference_type_combo.setCurrentText("Standard")
             else:
+                self.task_specific_group.setVisible(False)
                 self.task_specific_group.setEnabled(False)
                 # Enable inference type dropdown for other models
                 self.inference_type_combo.setEnabled(True)
@@ -422,6 +449,14 @@ class BatchInferenceDialog(QDialog):
                 enable_uncertainty=True,
                 enable_iou=True,
                 enable_area=True
+            )
+        # Z-Inference doesn't use any thresholds
+        elif model_name == "Z-Inference":
+            self.configure_thresholds(
+                enable_max_detections=False,
+                enable_uncertainty=False,
+                enable_iou=False,
+                enable_area=False
             )
     
     def configure_thresholds(self, enable_max_detections, enable_uncertainty,
@@ -674,6 +709,8 @@ class BatchInferenceDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
 
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         try:
             # Classify: predict on grouped annotation patches
             if selected_model == "Classify":
@@ -711,6 +748,20 @@ class BatchInferenceDialog(QDialog):
             # Transformers: predict on image paths
             elif selected_model == "Transformers":
                 model_dialog.predict(self.image_paths, progress_bar)
+            
+            # Z-Inference: predict on image paths with user-selected overwrite mode
+            elif selected_model == "Z-Inference":
+                # Show the overwrite dialog to get user choice
+                overwrite_mode = self.z_dialog._show_overwrite_dialog(is_batch=True)
+                if overwrite_mode is None:
+                    # User cancelled
+                    QApplication.restoreOverrideCursor()
+                    progress_bar.finish_progress()
+                    progress_bar.stop_progress()
+                    progress_bar.close()
+                    return
+                # Predict with the selected overwrite mode
+                model_dialog.predict(self.image_paths, progress_bar, overwrite_mode=overwrite_mode, show_dialog=False)
 
             else:
                 raise ValueError(f"Unknown model type: {selected_model}")
@@ -718,6 +769,7 @@ class BatchInferenceDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to complete batch inference: {str(e)}")
         finally:
+            QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
