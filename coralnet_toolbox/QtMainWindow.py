@@ -789,7 +789,6 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-
                 "scale": ("Scale Tool\n\n"
                           "Calibrate spatial and depth/elevation measurements.\n\n"
                           "XY Scale Tab:\n"
@@ -802,8 +801,8 @@ class MainWindow(QMainWindow):
                           "• Real-time Z-Fence visualization while drawing."),
 
                 "spatial": ("Spatial Measurement Tool\n\n"
-                            "Measure rugosity.\n"
                             "Requires scale to be set.\n\n"
+                            "Measure rugosity:\n"
                             "• Draw lines to measure 2D/3D distances and rugosity.\n"
                             "• Generate measurement grids for systematic sampling.\n"
                             "• View elevation profiles and 3D metrics when Z-data available."),
