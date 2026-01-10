@@ -413,9 +413,7 @@ class SpatialTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.name = "spatial"
-        self.cursor = Qt.CrossCursor  # Show crosshair cursor like scale tool
-        
-        self.annotation_window = annotation_window
+        self.cursor = Qt.CrossCursor  # Show crosshair cursor
         
         self.animation_manager = self.annotation_window.animation_manager
         

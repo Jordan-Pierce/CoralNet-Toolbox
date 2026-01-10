@@ -789,27 +789,24 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-            "scale": ("Scale Tool\n\n"
-                      "Calibrate spatial and depth/elevation measurements across two tabs:\n\n"
-                      "XY Scale Tab (Pixel Size):\n"
-                      "• Calibrate XY scale (meters/pixel) for area and distance measurements.\n"
-                      "• Draw a line across a known distance and enter the measurement.\n"
-                      "• Applies to all highlighted images in the batch operation.\n\n"
-                      "Z-Calibration Tab (Depth/Elevation):\n"
-                      "• Unified tool for vertical measurements and visualization.\n"
-                      "• Step A (Scale): Draw a line to calibrate vertical magnitude (scalar).\n"
-                      "• Step B (Anchor): Click a reference point to set absolute depth/elevation (offset).\n"
-                      "• View Mode: Non-destructively toggle between 'Depth' (from camera) and \n"
-                      "  'Relative Elevation' (height above bottom).\n"
-                      "• Z-Fence: Real-time 3D cross-section visualization appears while drawing."),
 
-            "spatial": ("Spatial Measurement Tool\n\n"
-                        "Measure 2D/3D distances and areas with rugosity calculations.\n"
-                        "Requires scale to be set on the current image.\n"
-                        "• Measure Line: Draw a line to measure linear distances and rugosity.\n"
-                        "• Measure Rectangle: Draw a rectangle to measure area and areal rugosity.\n"
-                        "• If Z-channel data is available, 3D metrics will be calculated.\n"
-                        "• Press Escape to cancel the current measurement."),
+                "scale": ("Scale Tool\n\n"
+                          "Calibrate spatial and depth/elevation measurements.\n\n"
+                          "XY Scale Tab:\n"
+                          "• Set pixel size by drawing a line across a known distance.\n"
+                          "• Applies to highlighted images.\n\n"
+                          "Z-Calibration Tab:\n"
+                          "• Toggle between Depth and Elevation views.\n"
+                          "• Set nodata/NaN data value.\n"
+                          "• Calibrate vertical scale and reference point.\n"
+                          "• Real-time Z-Fence visualization while drawing."),
+
+                "spatial": ("Spatial Measurement Tool\n\n"
+                            "Measure rugosity.\n"
+                            "Requires scale to be set.\n\n"
+                            "• Draw lines to measure 2D/3D distances and rugosity.\n"
+                            "• Generate measurement grids for systematic sampling.\n"
+                            "• View elevation profiles and 3D metrics when Z-data available."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
