@@ -145,7 +145,31 @@ class DeployModelDialog(CollapsibleSection):
         
     def load_model(self):
         """Load the selected depth estimation model."""
-        # Check for CUDA availability before proceeding
+        try:
+            # Check if depth-anything-3 is installed
+            from depth_anything_3.api import DepthAnything3
+        except ImportError:
+            QMessageBox.warning(self, 
+                                "Missing Package", 
+                                "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
+                                "Please install it via pip:\npip install awesome-depth-anything-3")
+            return
+        
+        # Check if HF_TOKEN environment variable is set
+        # (if not, user can definitely not access the model)
+        hf_token = os.getenv("HF_TOKEN")
+        
+        if not hf_token or not hf_token.strip():
+            QMessageBox.warning(self, 
+                                "HuggingFace Access Required", 
+                                "Access to Depth-Anything-3 model weights requires HuggingFace approval.\n\n"
+                                "Please:\n"
+                                "1. Request access to 'depth-anything/DA3NESTED-GIANT-LARGE-1.1' on HuggingFace\n"
+                                "2. Set your HF_TOKEN environment variable: export HF_TOKEN=your_token_here\n"
+                                "3. Restart the application")
+            return
+
+        # Finally, check for CUDA availability before proceeding
         if not self.cuda_warning_shown and not torch.cuda.is_available():
             reply = QMessageBox.question(
                 self.annotation_window,
