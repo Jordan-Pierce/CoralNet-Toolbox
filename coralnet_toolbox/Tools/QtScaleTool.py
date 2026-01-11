@@ -816,10 +816,13 @@ class ScaleTool(Tool):
 
     def calculate_scale(self):
         """Calculate pixel scale."""
-        if not self.start_point or not self.end_point: return
+        if not self.start_point or not self.end_point: 
+            return
+        
         line = QLineF(self.start_point, self.end_point)
         pixel_length = line.length()
-        if pixel_length == 0: return
+        if pixel_length == 0: 
+            return
         
         known_length = self.dialog.known_length_input.value()
         units = self.dialog.units_combo.currentText()
@@ -830,15 +833,18 @@ class ScaleTool(Tool):
     def apply_scale(self):
         """Apply XY scale to highlighted images."""
         highlighted_paths = self.dialog.get_selected_image_paths()
-        if not highlighted_paths: return
+        if not highlighted_paths: 
+            return
         
         scale_text = self.dialog.calculated_scale_label.text()
-        if "N/A" in scale_text: return
+        if "N/A" in scale_text: 
+            return
         
         try:
             scale_value = float(scale_text.split()[0])
             units = scale_text.split()[1].split('/')[0]
-        except: return
+        except: 
+            return
 
         # Standardize units
         unit_mapping = {'mm': 'millimetre', 'cm': 'centimetre', 'm': 'metre', 
@@ -868,7 +874,8 @@ class ScaleTool(Tool):
         if not highlighted_paths: 
             return
         
-        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: return
+        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: 
+            return
         
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
@@ -1042,7 +1049,8 @@ class ScaleTool(Tool):
         from coralnet_toolbox.utilities import calculate_z_scalar, validate_line_angle
         
         current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None: return
+        if not current_raster or current_raster.z_channel is None: 
+            return
 
         # Validate line
         is_valid, _, _, warning = validate_line_angle(self.start_point, self.end_point)
@@ -1063,7 +1071,8 @@ class ScaleTool(Tool):
         try:
             z1 = float(current_raster.z_channel_lazy[y1, x1])
             z2 = float(current_raster.z_channel_lazy[y2, x2])
-        except: return
+        except: 
+            return
         
         raw_diff = abs(z1 - z2)
         known_diff = self.dialog.z_known_diff_input.value()
@@ -1078,14 +1087,17 @@ class ScaleTool(Tool):
     def apply_z_scale(self):
         """Apply scalar to highlighted images."""
         highlighted = self.dialog.get_selected_image_paths()
-        if not highlighted: return
+        if not highlighted: 
+            return
         
         scalar_text = self.dialog.z_scalar_label.text()
-        if "N/A" in scalar_text: return
+        if "N/A" in scalar_text: 
+            return
         
         try:
             scalar = float(scalar_text)
-        except: return
+        except: 
+            return
         
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
@@ -1235,7 +1247,8 @@ class ScaleTool(Tool):
         Updates 'direction' and 'offset' in z_settings, and updates z_data_type metadata.
         """
         current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel_lazy is None: return
+        if not current_raster or current_raster.z_channel_lazy is None: 
+            return
         
         settings = current_raster.z_settings
         scalar = settings.get('scalar', 1.0)
