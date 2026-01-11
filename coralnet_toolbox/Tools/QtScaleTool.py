@@ -1058,11 +1058,6 @@ class ScaleTool(Tool):
             QMessageBox.warning(self.dialog, "Invalid Line", warning)
             self.stop_current_drawing()
             return
-            
-        # Get Z values (using semantic values which respect current scalar)
-        # Note: To calculate a NEW scalar, we ideally want raw difference.
-        # But get_z_value applies current scalar. We can reverse it or just use raw data.
-        # Let's use raw data for pure calibration.
         
         x1, y1 = int(self.start_point.x()), int(self.start_point.y())
         x2, y2 = int(self.end_point.x()), int(self.end_point.y())
