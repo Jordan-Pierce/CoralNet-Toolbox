@@ -488,9 +488,13 @@ class AnnotationWindow(QGraphicsView):
         """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:
             annotation = self.annotations_dict[annotation_id]
-            # Disconnect the confidence window from the annotation, so it won't update while moving
-            annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
-            annotation.annotationUpdated.disconnect(self.on_annotation_updated)
+            try:
+                # Disconnect the confidence window from the annotation, so it won't update while moving
+                annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+                annotation.annotationUpdated.disconnect(self.on_annotation_updated)
+            except Exception:
+                pass  # Ignore if not connected
+            
             annotation.update_location(new_center_xy)
             # Create and display the cropped image in the confidence window
             annotation.create_cropped_image(self.rasterio_image)

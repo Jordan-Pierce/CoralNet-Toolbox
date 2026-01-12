@@ -448,9 +448,6 @@ class ImageWindow(QWidget):
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
         
-        # Connect raster manager signals
-        self.raster_manager.zChannelUpdated.connect(self.on_z_channel_updated)
-        
         # Connect our own signals
         self.imageLoaded.connect(self.on_image_loaded)
         self.filterChanged.connect(self.update_image_count_label)
