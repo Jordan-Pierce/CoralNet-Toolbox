@@ -211,6 +211,7 @@ class ImageWindow(QWidget):
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
         self.raster_manager.rasterRemoved.connect(self.on_raster_removed)
         self.raster_manager.rasterUpdated.connect(self.on_raster_updated)
+        self.raster_manager.zChannelUpdated.connect(self.on_z_channel_updated)
         
         # Connect filter signals
         self.image_filter.filteringStarted.connect(self.on_filtering_started)
@@ -655,11 +656,12 @@ class ImageWindow(QWidget):
         self.filter_images()
         
     def on_raster_updated(self, path):
-        """Handler for when a raster is updated."""
+        """Handler for when a raster is updated (scale, annotations, etc.)."""
         self.update_current_image_index_label()
-        
+    
+    def on_z_channel_updated(self, path):
+        """Handler for when a raster's z-channel is updated."""
         # If this raster is currently being displayed, refresh the z-channel visualization
-        # (this handles the case where a z-channel is newly imported for the current image)
         if path == self.annotation_window.current_image_path:
             self.annotation_window.refresh_z_channel_visualization()
             
@@ -1333,8 +1335,7 @@ class ImageWindow(QWidget):
                             # Transformations and calibrations are done in ScaleTool.
                                     
                             successful_count += 1
-                            # Emit signal to update UI
-                            self.raster_manager.rasterUpdated.emit(image_path)
+                            # Note: load_z_channel_from_file -> add_z_channel automatically emits zChannelUpdated
                         else:
                             failed_count += 1
                             failed_images.append(os.path.basename(image_path))

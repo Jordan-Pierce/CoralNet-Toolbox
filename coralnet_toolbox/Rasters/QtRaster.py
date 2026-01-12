@@ -13,7 +13,7 @@ from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Annotations import MaskAnnotation
 
@@ -42,6 +42,9 @@ class Raster(QObject):
     Encapsulates both the rasterio representation and QImage representation
     along with UI state and annotation information.
     """
+    
+    # Signal emitted when z-channel data is added, updated, or removed
+    zChannelChanged = pyqtSignal()
     
     def __init__(self, image_path: str):
         """
@@ -231,14 +234,23 @@ class Raster(QObject):
         """
         Update the scale information for this raster.
         
+        All scales are stored internally in meters for consistency.
+        If units are provided in other units, they will be converted to meters.
+        
         Args:
             scale_x (float): The horizontal scale (e.g., meters per pixel)
             scale_y (float): The vertical scale (e.g., meters per pixel)
-            units (str): The name of the units (e.g., 'm', 'cm')
+            units (str): The name of the units (e.g., 'm', 'cm', 'ft')
         """
+        # Convert to meters if not already in meters
+        if units.lower() != 'm':
+            scale_x = convert_scale_units(scale_x, units, 'm')
+            scale_y = convert_scale_units(scale_y, units, 'm')
+        
+        # Always store in meters
         self.scale_x = scale_x
         self.scale_y = scale_y
-        self.scale_units = units
+        self.scale_units = 'm'
         
         # Update metadata to match
         self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"
@@ -368,6 +380,9 @@ class Raster(QObject):
             'direction': 1  # Always start with direction=1 (raw data)
         }
         
+        # Emit signal that z-channel was updated
+        self.zChannelChanged.emit()
+        
     def update_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None,
                          z_data_type: Optional[str] = None, z_direction: Optional[int] = None,
                          z_inversion_reference: Optional[float] = None, z_nodata: Optional[float] = None):
@@ -417,6 +432,9 @@ class Raster(QObject):
             'offset': 0.0,
             'direction': 1
         }
+        
+        # Emit signal that z-channel was removed
+        self.zChannelChanged.emit()
     
     def get_z_value(self, x: int, y: int) -> Optional[float]:
         """

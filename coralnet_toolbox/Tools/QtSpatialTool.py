@@ -93,7 +93,6 @@ class ProfilePlotDialog(QDialog):
                 combined_plot_widget.setMinimumHeight(300)
                 combined_plot = combined_plot_widget.getPlotItem()
                 combined_plot.setLabel('left', 'Z')
-                combined_plot.addLegend()
                 combined_plot.showGrid(x=True, y=True, alpha=0.3)
 
                 for profile in profiles_list:
@@ -269,9 +268,7 @@ class SpatialToolDialog(QDialog):
         chain_layout.addWidget(self.chain_unit_combo)
         
         form_params.addRow("Chain Length:", chain_layout)
-        
-        # REMOVED: Max Rugosity Spinner (Auto-scaling is now used)
-        
+                
         group_params.setLayout(form_params)
         layout.addWidget(group_params)
         
@@ -302,38 +299,23 @@ class SpatialToolDialog(QDialog):
         # Grid parameters
         grid_params_layout = QFormLayout()
         
-        # Row settings
-        row_layout = QHBoxLayout()
+        # Row and Column settings in a single horizontal layout
+        rowcol_layout = QHBoxLayout()
         self.rows_spin = QSpinBox()
         self.rows_spin.setRange(0, 100)
-        self.rows_spin.setValue(5)
-        row_layout.addWidget(QLabel("Count:"))
-        row_layout.addWidget(self.rows_spin)
-        self.row_spacing_spin = QSpinBox()
-        self.row_spacing_spin.setRange(1, 10000)
-        self.row_spacing_spin.setValue(50)
-        self.row_spacing_spin.setSuffix(" px")
-        row_layout.addWidget(QLabel("Spacing:"))
-        row_layout.addWidget(self.row_spacing_spin)
-        grid_params_layout.addRow("Rows:", row_layout)
-        
-        # Column settings
-        col_layout = QHBoxLayout()
+        self.rows_spin.setValue(10)
         self.cols_spin = QSpinBox()
         self.cols_spin.setRange(0, 100)
-        self.cols_spin.setValue(5)
-        col_layout.addWidget(QLabel("Count:"))
-        col_layout.addWidget(self.cols_spin)
-        self.col_spacing_spin = QSpinBox()
-        self.col_spacing_spin.setRange(1, 10000)
-        self.col_spacing_spin.setValue(50)
-        self.col_spacing_spin.setSuffix(" px")
-        col_layout.addWidget(QLabel("Spacing:"))
-        col_layout.addWidget(self.col_spacing_spin)
-        grid_params_layout.addRow("Columns:", col_layout)
-        
+        self.cols_spin.setValue(10)
+        rowcol_layout.addWidget(QLabel("Rows:"))
+        rowcol_layout.addWidget(self.rows_spin)
+        rowcol_layout.addSpacing(20)
+        rowcol_layout.addWidget(QLabel("Columns:"))
+        rowcol_layout.addWidget(self.cols_spin)
+        grid_params_layout.addRow(rowcol_layout)
+
         grid_layout.addLayout(grid_params_layout)
-        
+
         # Grid buttons
         grid_btn_layout = QHBoxLayout()
         self.generate_grid_button = QPushButton("Preview Grid")
@@ -343,56 +325,44 @@ class SpatialToolDialog(QDialog):
         grid_btn_layout.addWidget(self.generate_grid_button)
         grid_btn_layout.addWidget(self.clear_grid_button)
         grid_layout.addLayout(grid_btn_layout)
-        
+
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
-        
+
         # --- 3D Z-Metrics Group ---
         self.line_3d_group = QGroupBox("3D Z-Metrics")
         self.line_3d_group.setEnabled(False)  # Disabled until Z-data available
-        
+
         form_3d = QFormLayout()
-        
+
         self.line_length_3d_label = QLabel("---")
         self.line_delta_z_label = QLabel("---")
         self.line_slope_label = QLabel("---")
-        
+
         # Rugosity label with some styling to indicate it's the main metric
         self.line_rugosity_label = QLabel("---")
         self.line_rugosity_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        
+
         form_3d.addRow("3D Length:", self.line_length_3d_label)
         form_3d.addRow("ΔZ:", self.line_delta_z_label)
         form_3d.addRow("Slope/Grade:", self.line_slope_label)
         form_3d.addRow("Rugosity:", self.line_rugosity_label)
-        
+
         # Profile button
         self.line_profile_button = QPushButton("Show Elevation Profile")
         self.line_profile_button.clicked.connect(self.tool._show_elevation_profile)
         self.line_profile_button.setEnabled(False)
         form_3d.addRow("", self.line_profile_button)
-        
+
         self.line_3d_group.setLayout(form_3d)
         layout.addWidget(self.line_3d_group)
-        
+
         # Clear button
         self.clear_button = QPushButton("Clear All Measurements")
         self.clear_button.clicked.connect(self.tool.clear_all_measurements)
         layout.addWidget(self.clear_button)
-        
-        layout.addStretch()
 
-        # --- REALTIME UPDATES: Connect spinboxes to generate_grid ---
-        self.rows_spin.valueChanged.connect(self.tool.generate_grid)
-        self.cols_spin.valueChanged.connect(self.tool.generate_grid)
-        self.row_spacing_spin.valueChanged.connect(self.tool.generate_grid)
-        self.col_spacing_spin.valueChanged.connect(self.tool.generate_grid)
-        
-        # Connect margin input if supported
-        if hasattr(self.margin_input, 'valueChanged'):
-            self.margin_input.valueChanged.connect(self.tool.generate_grid)
-        elif hasattr(self.margin_input, 'margins_changed'):
-            self.margin_input.margins_changed.connect(self.tool.generate_grid)
+        layout.addStretch()
 
     def closeEvent(self, event):
         """Handle dialog close"""
@@ -413,9 +383,7 @@ class SpatialTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.name = "spatial"
-        self.cursor = Qt.CrossCursor  # Show crosshair cursor like scale tool
-        
-        self.annotation_window = annotation_window
+        self.cursor = Qt.CrossCursor  # Show crosshair cursor
         
         self.animation_manager = self.annotation_window.animation_manager
         
@@ -606,7 +574,7 @@ class SpatialTool(Tool):
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
-        
+
         # Update UI based on available data
         self.update_z_controls()
 
@@ -673,7 +641,6 @@ class SpatialTool(Tool):
             self.dialog.chain_length_spin.setValue(1.0)
             self.dialog.chain_unit_combo.setCurrentText('cm')
             # Reset margin input to defaults (block signals to prevent triggering generate_grid)
-            self.dialog.margin_input.blockSignals(True)
             self.dialog.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
             self.dialog.margin_input.value_type.setCurrentIndex(0)  # Pixels
             for spin in self.dialog.margin_input.margin_spins:
@@ -681,127 +648,102 @@ class SpatialTool(Tool):
             self.dialog.margin_input.single_spin.setValue(0)
             self.dialog.margin_input.single_double.setValue(0.0)
             self.dialog.margin_input.update_input_mode(0)
-            self.dialog.margin_input.blockSignals(False)
             # Recalculate grid spinbox values to auto-calculated defaults
-            self.calculate_grid()
+            self.calculate_spacing()
 
-    def calculate_grid(self):
-        """Estimate grid spinbox values based on current image dimensions"""
+    def calculate_spacing(self):
+        """Calculate and store row and column spacing as attributes based on image dimensions and current spinbox
+        values."""
         if not self.annotation_window.current_image_path:
+            self.row_spacing = None
+            self.col_spacing = None
             return
         image_width, image_height = self.annotation_window.get_image_dimensions()
         if not image_width or not image_height:
+            self.row_spacing = None
+            self.col_spacing = None
             return
-        # Estimate rows and cols based on default spacing
-        default_spacing = 50  # pixels
-        estimated_rows = max(1, int(image_height / default_spacing))
-        estimated_cols = max(1, int(image_width / default_spacing))
-        # Cap to reasonable maximum
-        estimated_rows = min(estimated_rows, 20)
-        estimated_cols = min(estimated_cols, 20)
-        # Set the spinboxes (block signals to prevent recursive calls to generate_grid)
-        self.dialog.rows_spin.blockSignals(True)
-        self.dialog.cols_spin.blockSignals(True)
-        self.dialog.row_spacing_spin.blockSignals(True)
-        self.dialog.col_spacing_spin.blockSignals(True)
-        
-        self.dialog.rows_spin.setValue(estimated_rows)
-        self.dialog.cols_spin.setValue(estimated_cols)
-        self.dialog.row_spacing_spin.setValue(default_spacing)
-        self.dialog.col_spacing_spin.setValue(default_spacing)
-        
-        self.dialog.rows_spin.blockSignals(False)
-        self.dialog.cols_spin.blockSignals(False)
-        self.dialog.row_spacing_spin.blockSignals(False)
-        self.dialog.col_spacing_spin.blockSignals(False)
+        num_rows = self.dialog.rows_spin.value()
+        num_cols = self.dialog.cols_spin.value()
+        self.row_spacing = image_height / (num_rows - 1) if num_rows > 1 else image_height
+        self.col_spacing = image_width / (num_cols - 1) if num_cols > 1 else image_width
 
     def generate_grid(self):
         """Generate grid lines based on margin and spacing settings with Rugosity Coloring"""
         if not self.dialog:
             return
-            
+
         # Get image dimensions
         if not self.annotation_window.current_image_path:
             QMessageBox.warning(self.dialog, "No Image", "Please load an image first.")
             return
-            
+
         image_width, image_height = self.annotation_window.get_image_dimensions()
         if not image_width or not image_height:
             return
-            
+
         # Get margins in pixels
         margins = self.dialog.margin_input.get_margins(image_width, image_height, validate=True)
         if margins is None:
             return
-            
+
         left, top, right, bottom = margins
-        
+
         # Calculate ROI bounds
         roi_left = left
         roi_top = top
         roi_right = image_width - right
         roi_bottom = image_height - bottom
-        
+
         if roi_right <= roi_left or roi_bottom <= roi_top:
             QMessageBox.warning(self.dialog, "Invalid Working Area", "Margins result in invalid working area.")
             return
-            
+
+        # Calculate and update spacing attributes
+        self.calculate_spacing()
+        row_spacing = self.row_spacing
+        col_spacing = self.col_spacing
+        num_rows = self.dialog.rows_spin.value()
+        num_cols = self.dialog.cols_spin.value()
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
             self.grid_enabled = True
-            
+
             # Draw working area rectangle
             self._draw_working_area_graphic(bounds)
-            
+
             # Clear existing grid lines first
             self.clear_grid()
-            
-            # Get grid parameters
-            num_rows = self.dialog.rows_spin.value()
-            num_cols = self.dialog.cols_spin.value()
-            row_spacing = self.dialog.row_spacing_spin.value()
-            col_spacing = self.dialog.col_spacing_spin.value()
-            
-            # Precalculate spacing for even distribution if count > 1
-            roi_height = roi_bottom - roi_top
-            roi_width = roi_right - roi_left
-            if num_rows > 1:
-                calculated_row_spacing = roi_height / (num_rows - 1)
-                self.dialog.row_spacing_spin.setValue(int(calculated_row_spacing))
-                row_spacing = calculated_row_spacing
-            if num_cols > 1:
-                calculated_col_spacing = roi_width / (num_cols - 1)
-                self.dialog.col_spacing_spin.setValue(int(calculated_col_spacing))
-                col_spacing = calculated_col_spacing
-            
+
             # --- Helper to process a grid line ---
             def process_grid_line(p1, p2):
                 # 1. Set points for calculation
                 self.start_point = p1
                 self.end_point = p2
-                
+
                 # 2. Calculate measurement (color=None enables auto-coloring)
                 # This adds the profile to self.current_profiles and updates self.last_calculated_color
                 self.calculate_line_measurement(final_calc=True, color=None)
-                
+
                 # 3. Tag the last added profile as a "grid" line so we can clear it later
                 if self.current_profiles:
                     self.current_profiles[-1]['is_grid'] = True
                     # Rename it to be distinct in the legend
                     self.current_profiles[-1]['name'] = f"Grid Line {len(self.current_profiles)}"
-                
+
                 # 4. Retrieve the calculated color (Jet/Grey based on rugosity)
                 final_color = self.last_calculated_color
-                
+
                 # 5. Create the graphic with this specific color
                 measurement = self._create_colored_line(p1, p2, final_color)
                 self.grid_lines.append(measurement)
-                
+
                 # Reset points
                 self.start_point = None
                 self.end_point = None
-            
+
             # --- Generate Rows ---
             current_y = roi_top
             row_count = 0
@@ -812,7 +754,7 @@ class SpatialTool(Tool):
                     process_grid_line(start, end)
                 current_y += row_spacing
                 row_count += 1
-                
+
             # --- Generate Columns ---
             current_x = roi_left
             col_count = 0
@@ -823,10 +765,10 @@ class SpatialTool(Tool):
                     process_grid_line(start, end)
                 current_x += col_spacing
                 col_count += 1
-                
+
             # Update profile button state
             self.update_profile_button_state()
-            
+
             # Update profile dialog if it's already open
             if self.profile_dialog and self.profile_dialog.isVisible():
                 self.profile_dialog.update_plot(self.current_profiles)

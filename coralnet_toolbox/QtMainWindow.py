@@ -789,27 +789,22 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-            "scale": ("Scale Tool\n\n"
-                      "Calibrate spatial and depth/elevation measurements across two tabs:\n\n"
-                      "XY Scale Tab (Pixel Size):\n"
-                      "• Calibrate XY scale (meters/pixel) for area and distance measurements.\n"
-                      "• Draw a line across a known distance and enter the measurement.\n"
-                      "• Applies to all highlighted images in the batch operation.\n\n"
-                      "Z-Calibration Tab (Depth/Elevation):\n"
-                      "• Unified tool for vertical measurements and visualization.\n"
-                      "• Step A (Scale): Draw a line to calibrate vertical magnitude (scalar).\n"
-                      "• Step B (Anchor): Click a reference point to set absolute depth/elevation (offset).\n"
-                      "• View Mode: Non-destructively toggle between 'Depth' (from camera) and \n"
-                      "  'Relative Elevation' (height above bottom).\n"
-                      "• Z-Fence: Real-time 3D cross-section visualization appears while drawing."),
+                "scale": ("Scale Tool\n\n"
+                          "Calibrate spatial and depth measurements.\n\n"
+                          "XY Scale Tab:\n"
+                          "• Set pixel size by drawing a line across a known distance.\n"
+                          "• Applies to highlighted images.\n\n"
+                          "Z-Calibration Tab:\n"
+                          "• Set nodata/NaN data value.\n"
+                          "• Calibrate vertical scale and reference point.\n"
+                          "• Real-time Z-Fence visualization while drawing."),
 
-            "spatial": ("Spatial Measurement Tool\n\n"
-                        "Measure 2D/3D distances and areas with rugosity calculations.\n"
-                        "Requires scale to be set on the current image.\n"
-                        "• Measure Line: Draw a line to measure linear distances and rugosity.\n"
-                        "• Measure Rectangle: Draw a rectangle to measure area and areal rugosity.\n"
-                        "• If Z-channel data is available, 3D metrics will be calculated.\n"
-                        "• Press Escape to cancel the current measurement."),
+                "spatial": ("Spatial Measurement Tool\n\n"
+                            "Requires scale to be set.\n\n"
+                            "Measure rugosity:\n"
+                            "• Draw lines to measure 2D/3D distances and rugosity.\n"
+                            "• Generate measurement grids for systematic sampling.\n"
+                            "• View elevation profiles and 3D metrics when Z-data available."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
@@ -2222,7 +2217,8 @@ class MainWindow(QMainWindow):
             )
 
         if raster and raster.scale_units:
-            # Scale exists, calculate base meter values
+            # Scale exists and is always in meters (standardized internally)
+            # Calculate dimensions in meters
             self.scaled_view_width_m = width * raster.scale_x
             self.scaled_view_height_m = height * raster.scale_y
             
@@ -2292,13 +2288,12 @@ class MainWindow(QMainWindow):
                         scalar = z_settings.get('scalar', 1.0)
                         offset = z_settings.get('offset', 0.0)
                         direction = z_settings.get('direction', 1)
-                        direction_str = "Depth (positive down)" if direction == 1 else "Elevation (positive up)"
                         
                         tooltip_text = (
                             f"Z-Channel Transformation:\n\n"
                             f"  Scalar: {scalar:.6f}\n"
                             f"  Offset: {offset:.6f}\n"
-                            f"  Direction: {direction_str}\n\n"
+                            f"  Direction: {direction}\n\n"
                             f"Formula: Z_display = {direction} × (raw × {scalar:.6f}) + {offset:.6f}"
                         )
                         self.z_label.setToolTip(tooltip_text)
@@ -2664,35 +2659,6 @@ class MainWindow(QMainWindow):
             self.export_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_z_deploy_model_dialog(self):
-        """Open the Z-Deploy Model Dialog"""
-        # Check if depth-anything-3 is installed
-        try:
-            from depth_anything_3.api import DepthAnything3
-            
-        except ImportError:
-            QMessageBox.warning(self, 
-                                "Missing Package", 
-                                "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
-                                "Please install it via pip:\npip install awesome-depth-anything-3")
-            return
-        
-        # Check if HF_TOKEN environment variable is set
-        import os
-        hf_token = os.getenv("HF_TOKEN")
-        
-        if not hf_token or not hf_token.strip():
-            QMessageBox.warning(self, 
-                                "HuggingFace Access Required", 
-                                "Access to Depth-Anything-3 model weights requires HuggingFace approval.\n\n"
-                                "Please:\n"
-                                "1. Request access to 'depth-anything/DA3NESTED-GIANT-LARGE-1.1' on HuggingFace\n"
-                                "2. Set your HF_TOKEN environment variable: export HF_TOKEN=your_token_here\n"
-                                "3. Restart the application")
-            return
-        
-        self.z_deploy_model_dialog.toggle_content()
 
     def open_explorer_window(self):
         """Open the Explorer window, moving the LabelWindow into it."""

@@ -24,6 +24,7 @@ class RasterManager(QObject):
     rasterAdded = pyqtSignal(str)  # Image path
     rasterRemoved = pyqtSignal(str)  # Image path
     rasterUpdated = pyqtSignal(str)  # Image path
+    zChannelUpdated = pyqtSignal(str)  # Image path - emitted when z-channel data changes
     
     def __init__(self):
         """Initialize the RasterManager."""
@@ -51,6 +52,9 @@ class RasterManager(QObject):
                 
             self.rasters[image_path] = raster
             self.image_paths.append(image_path)
+            
+            # Connect raster's z-channel signal to forward as zChannelUpdated
+            raster.zChannelChanged.connect(lambda: self.zChannelUpdated.emit(image_path))
             
             if emit_signal:
                 self.rasterAdded.emit(image_path)

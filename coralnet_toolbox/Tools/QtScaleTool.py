@@ -243,6 +243,7 @@ class ScaleToolDialog(QDialog):
         self.known_length_input.setRange(0.001, 1000000.0)
         self.known_length_input.setValue(1.0)
         self.known_length_input.setDecimals(3)
+        self.known_length_input.valueChanged.connect(self.tool.calculate_scale)
         scale_layout.addRow("Known Length:", self.known_length_input)
 
         # Pixel length
@@ -305,30 +306,25 @@ class ScaleToolDialog(QDialog):
         interaction_group = QGroupBox("Calibration Tool")
         interaction_layout = QVBoxLayout()
         
-        # Radio buttons to switch between View Mode, NaN, Scaling and Anchoring
+        # Radio buttons to switch between NaN, Scaling and Anchoring
         from PyQt5.QtWidgets import QRadioButton, QButtonGroup
         self.interaction_bg = QButtonGroup(self)
         
-        self.radio_view = QRadioButton("Step A: View Mode")
-        self.radio_view.setChecked(True)  # Default
-        self.radio_view.setToolTip("Configure how Z-channel data is displayed (Depth vs Elevation).")
-        self.interaction_bg.addButton(self.radio_view)
-        
-        self.radio_nan = QRadioButton("Step B: Set NaN Value (Click Point)")
-        self.radio_nan.setToolTip("Click a pixel to set the NaN/NoData value for the Z-channel.")
+        self.radio_nan = QRadioButton("Step A: Set NaN Value (Click or Type)")
+        self.radio_nan.setChecked(True)  # Default
+        self.radio_nan.setToolTip("Set the NaN/NoData value for the Z-channel by clicking a pixel or typing.")
         self.interaction_bg.addButton(self.radio_nan)
         
-        self.radio_scale = QRadioButton("Step C: Vertical Scale (Draw Line)")
+        self.radio_scale = QRadioButton("Step B: Vertical Scale (Draw Line)")
         self.radio_scale.setToolTip("Draw a line to define the vertical scale (magnitude).")
         self.interaction_bg.addButton(self.radio_scale)
         
-        self.radio_anchor = QRadioButton("Step D: Reference Anchor (Click Point)")
+        self.radio_anchor = QRadioButton("Step C: Reference Anchor (Click Point)")
         self.radio_anchor.setToolTip("Click a point to set the absolute reference value (offset).")
         self.interaction_bg.addButton(self.radio_anchor)
         
         self.interaction_bg.buttonClicked.connect(self.on_interaction_mode_changed)
         
-        interaction_layout.addWidget(self.radio_view)
         interaction_layout.addWidget(self.radio_nan)
         interaction_layout.addWidget(self.radio_scale)
         interaction_layout.addWidget(self.radio_anchor)
@@ -336,40 +332,11 @@ class ScaleToolDialog(QDialog):
         layout.addWidget(interaction_group)
 
         # --- Dynamic Controls (Stack) ---
-        # We stack the View Mode, NaN, Scale, and Anchor controls and show only one set
+        # We stack the NaN, Scale, and Anchor controls and show only one set
         from PyQt5.QtWidgets import QStackedWidget
         self.controls_stack = QStackedWidget()
         
-        # [Page 0] View Mode Controls
-        view_widget = QWidget()
-        view_form = QFormLayout(view_widget)
-        view_form.setContentsMargins(0, 5, 0, 5)
-        
-        # Define view_mode_combo
-        self.view_mode_combo = QComboBox()
-        self.view_mode_combo.addItem("Depth (from Camera)", "depth")
-        self.view_mode_combo.addItem("Relative Elevation (from Bottom)", "elevation")
-        self.view_mode_combo.setToolTip(
-            "Depth: Standard depth map. Positive values = farther away.\n"
-            "Elevation: Elevation map. Positive values = elevation above lowest point."
-        )
-        self.view_mode_combo.currentIndexChanged.connect(self.on_view_mode_changed)
-        view_form.addRow("Display As:", self.view_mode_combo)
-        
-        # Elevation Reference
-        self.z_inversion_ref_input = QDoubleSpinBox()
-        self.z_inversion_ref_input.setRange(-10000.0, 10000.0)
-        self.z_inversion_ref_input.setValue(0.0)
-        self.z_inversion_ref_input.setDecimals(2)
-        self.z_inversion_ref_input.setSuffix(" m")
-        self.z_inversion_ref_input.setToolTip(
-            "Reference elevation for converting depth to elevation (e.g., 0 for sea level)"
-        )
-        view_form.addRow("Elevation Reference:", self.z_inversion_ref_input)
-        
-        self.controls_stack.addWidget(view_widget)
-        
-        # [Page 1] NaN Setting Controls
+        # [Page 0] NaN Setting Controls
         nan_widget = QWidget()
         nan_form = QFormLayout(nan_widget)
         nan_form.setContentsMargins(0, 5, 0, 5)
@@ -380,12 +347,18 @@ class ScaleToolDialog(QDialog):
         self.z_nan_hover_label = QLabel("Hover over image...")
         nan_form.addRow("Hover Value:", self.z_nan_hover_label)
         
-        self.z_nan_clicked_label = QLabel("Click to select...")
-        nan_form.addRow("Clicked Value:", self.z_nan_clicked_label)
+        # Replace the label with a SpinBox for manual input + click feedback
+        self.z_nan_input = QDoubleSpinBox()
+        # Set a very large range to accommodate float32 extremes (e.g. -3.4e38 to 3.4e38)
+        # Using a safe large range that covers most practical NoData values
+        self.z_nan_input.setRange(-3.4e38, 3.4e38)
+        self.z_nan_input.setDecimals(6)
+        self.z_nan_input.setToolTip("Type the NoData value or click a pixel to populate this field.")
+        nan_form.addRow("New NaN Value:", self.z_nan_input)
         
         self.controls_stack.addWidget(nan_widget)
         
-        # [Page 2] Vertical Scaling Controls
+        # [Page 1] Vertical Scaling Controls
         scale_widget = QWidget()
         scale_form = QFormLayout(scale_widget)
         scale_form.setContentsMargins(0, 5, 0, 5)
@@ -396,9 +369,11 @@ class ScaleToolDialog(QDialog):
         scale_form.addRow("Vertical Units:", self.z_units_combo)
         
         self.z_known_diff_input = QDoubleSpinBox()
-        self.z_known_diff_input.setRange(0.001, 1000000.0)
+        self.z_known_diff_input.setRange(0.000, 1000000.0)
         self.z_known_diff_input.setValue(1.0)
         self.z_known_diff_input.setDecimals(3)
+        # Add connection for realtime updates
+        self.z_known_diff_input.valueChanged.connect(self.tool.calculate_z_scale)
         scale_form.addRow("Known Diff:", self.z_known_diff_input)
         
         self.z_raw_diff_label = QLabel("Draw a line...")
@@ -418,6 +393,8 @@ class ScaleToolDialog(QDialog):
         self.z_target_val_input.setRange(-10000.0, 10000.0)
         self.z_target_val_input.setValue(0.0)
         self.z_target_val_input.setDecimals(3)
+        # Add connection for realtime updates
+        self.z_target_val_input.valueChanged.connect(self.tool.recalculate_z_anchor)
         anchor_form.addRow("Target Value:", self.z_target_val_input)
         
         # Buttons
@@ -511,40 +488,27 @@ class ScaleToolDialog(QDialog):
         self.update_z_tab_states()
 
     def on_interaction_mode_changed(self):
-        """Switch between View Mode, NaN, Z-Scaling and Z-Anchoring modes."""
+        """Switch between NaN, Z-Scaling and Z-Anchoring modes."""
         if self.tab_widget.currentIndex() != 1:
             return
 
         self.tool.stop_current_drawing()
         
-        if self.radio_view.isChecked():
-            self.current_mode = 'z_view'
+        if self.radio_nan.isChecked():
+            self.current_mode = 'z_nan'
             self.controls_stack.setCurrentIndex(0)
             self.controls_stack.show()
             self.apply_button.setText("Apply")
-            self.apply_button.setToolTip("Apply view mode settings to highlighted images")
-            self.z_info_label.setText(
-                "Choose how to display the Z-channel data. 'Depth' shows standard depth from the camera "
-                "(positive values = farther away). 'Elevation' shows relative elevation from the bottom "
-                "(positive values = elevation above the lowest point). When using Elevation mode, "
-                "set the Elevation Reference to define what value represents the reference elevation "
-                "(e.g., 0 for sea level)."
-            )
-        elif self.radio_nan.isChecked():
-            self.current_mode = 'z_nan'
-            self.controls_stack.setCurrentIndex(1)
-            self.controls_stack.show()
-            self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Set NaN/NoData value for highlighted images")
-            # Load and display current NaN value
+            # Load and display current NaN value (updates both label and input box)
             self.tool.load_current_nan_value()
             self.z_info_label.setText(
-                "Click on a pixel in the image to sample the value that represents 'No Data' or invalid depth values. "
-                "This value will be treated as NaN (Not a Number) in all Z-channel calculations and visualizations."
+                "Set the value that represents 'No Data' or invalid depth. "
+                "Click on a pixel to sample its value, or type the value manually."
             )
         elif self.radio_scale.isChecked():
             self.current_mode = 'z_scale'
-            self.controls_stack.setCurrentIndex(2)
+            self.controls_stack.setCurrentIndex(1)
             self.controls_stack.show()
             self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the vertical multiplier (scalar) for highlighted images")
@@ -556,7 +520,7 @@ class ScaleToolDialog(QDialog):
             )
         else:
             self.current_mode = 'z_anchor'
-            self.controls_stack.setCurrentIndex(3)
+            self.controls_stack.setCurrentIndex(2)
             self.controls_stack.show()
             self.apply_button.setText("Apply")
             self.apply_button.setToolTip("Update the reference zero-point (offset) for highlighted images")
@@ -564,22 +528,8 @@ class ScaleToolDialog(QDialog):
                 "Click on a point in the image to set the absolute reference value "
                 "(e.g., sea level or ground level). Enter the desired Z-value for that point, "
                 "and the system will adjust the offset so that the clicked point has that value. "
-                "This sets the zero-point for your depth or elevation measurements."
+                "This sets the zero-point for your depth measurements."
             )
-
-    def on_view_mode_changed(self, index):
-        """
-        Handle switching between Depth and Relative Elevation view modes.
-        Triggers immediate non-destructive update on the current image.
-        """
-        mode = self.view_mode_combo.currentData()  # 'depth' or 'elevation'
-        self.tool.set_z_view_mode(mode)
-        
-        # Load current inversion reference if available
-        if mode == 'elevation':
-            current_raster = self.main_window.image_window.current_raster
-            if current_raster and current_raster.z_inversion_reference is not None:
-                self.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)
 
     def update_z_tab_states(self):
         """Enable/disable Z tab based on whether current image has Z-channel."""
@@ -610,7 +560,7 @@ class ScaleToolDialog(QDialog):
         # Don't reset scale label - keep showing current scale
         # Z NaN
         self.z_nan_hover_label.setText("Hover over image...")
-        self.z_nan_clicked_label.setText("Click to select...")
+        self.z_nan_input.setValue(0.0) # Reset to 0 default if no image loaded
         # Z Scale
         self.z_raw_diff_label.setText("Draw a line...")
         self.z_scalar_label.setText("N/A")
@@ -690,6 +640,8 @@ class ScaleTool(Tool):
         if not self.dialog._signal_connected:
             self.main_window.image_window.table_model.rowsChanged.connect(self.dialog.update_status_label)
             self.main_window.image_window.imageChanged.connect(self.on_image_changed)
+            # Connect rasterUpdated to ensure UI stays in sync with data changes
+            self.main_window.image_window.raster_manager.rasterUpdated.connect(self.on_image_changed)
             self.dialog._signal_connected = True
         
         # Automatically highlight the current image if one is loaded
@@ -702,9 +654,6 @@ class ScaleTool(Tool):
         self.dialog.update_status_label()
         self.load_existing_scale()
         self.dialog.update_z_tab_states()
-        
-        # Sync View Mode UI with current raster settings
-        self.sync_view_mode_ui()
 
         self.dialog.show()
         self.dialog.activateWindow()
@@ -816,10 +765,12 @@ class ScaleTool(Tool):
 
     def calculate_scale(self):
         """Calculate pixel scale."""
-        if not self.start_point or not self.end_point: return
+        if not self.start_point or not self.end_point: 
+            return
         line = QLineF(self.start_point, self.end_point)
         pixel_length = line.length()
-        if pixel_length == 0: return
+        if pixel_length == 0: 
+            return
         
         known_length = self.dialog.known_length_input.value()
         units = self.dialog.units_combo.currentText()
@@ -830,20 +781,22 @@ class ScaleTool(Tool):
     def apply_scale(self):
         """Apply XY scale to highlighted images."""
         highlighted_paths = self.dialog.get_selected_image_paths()
-        if not highlighted_paths: return
+        if not highlighted_paths: 
+            return
         
         scale_text = self.dialog.calculated_scale_label.text()
-        if "N/A" in scale_text: return
+        if "N/A" in scale_text: 
+            return
         
         try:
             scale_value = float(scale_text.split()[0])
             units = scale_text.split()[1].split('/')[0]
-        except: return
+        except: 
+            return
 
-        # Standardize units
-        unit_mapping = {'mm': 'millimetre', 'cm': 'centimetre', 'm': 'metre', 
-                       'km': 'kilometre', 'in': 'inch', 'ft': 'foot', 'yd': 'yard', 'mi': 'mile'}
-        scale_units = unit_mapping.get(units, 'metre')
+        # Convert the scale value to meters (standardized internal unit)
+        from coralnet_toolbox.utilities import convert_scale_units
+        scale_value_meters = convert_scale_units(scale_value, units, 'm')
         
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
@@ -851,7 +804,8 @@ class ScaleTool(Tool):
         for path in highlighted_paths:
             raster = raster_manager.get_raster(path)
             if raster:
-                raster.update_scale(scale_value, scale_value, scale_units)
+                # Always store in meters with 'm' as the unit
+                raster.update_scale(scale_value_meters, scale_value_meters, 'm')
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted_paths:
@@ -868,7 +822,8 @@ class ScaleTool(Tool):
         if not highlighted_paths: 
             return
         
-        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: return
+        if QMessageBox.question(self.dialog, "Confirm", "Remove scale?") != QMessageBox.Yes: 
+            return
         
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
@@ -896,6 +851,8 @@ class ScaleTool(Tool):
         
         if hasattr(current_raster, 'z_nodata') and current_raster.z_nodata is not None:
             self.dialog.z_nan_current_label.setText(f"{current_raster.z_nodata:.4f}")
+            # Also pre-fill the input box with the current value
+            self.dialog.z_nan_input.setValue(float(current_raster.z_nodata))
         else:
             self.dialog.z_nan_current_label.setText("Not Set")
 
@@ -940,10 +897,8 @@ class ScaleTool(Tool):
         
         try:
             sampled_value = float(current_raster.z_channel_lazy[y, x])
-            self.dialog.z_nan_clicked_label.setText(f"{sampled_value:.4f}")
-            
-            # Store sampled value for apply operation
-            self.sampled_nan_value = sampled_value
+            # Directly update the SpinBox with sampled value
+            self.dialog.z_nan_input.setValue(sampled_value)
             
         except Exception as e:
             QMessageBox.warning(self.dialog, "Error", f"Could not sample pixel value: {str(e)}")
@@ -954,16 +909,8 @@ class ScaleTool(Tool):
         if not highlighted:
             return
         
-        # Check if we have a sampled value
-        if not hasattr(self, 'sampled_nan_value'):
-            QMessageBox.warning(
-                self.dialog, 
-                "No Value Selected", 
-                "Please click on a pixel to sample a NaN value first."
-            )
-            return
-        
-        new_nan = self.sampled_nan_value
+        # Get value from the SpinBox
+        new_nan = self.dialog.z_nan_input.value()
         
         # Collect existing NaN values from highlighted images
         raster_manager = self.main_window.image_window.raster_manager
@@ -1017,11 +964,13 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_nodata = new_nan
-                raster_manager.rasterUpdated.emit(path)
+                # This signal triggers QtImageWindow.on_z_channel_updated,
+                # which in turn calls annotation_window.refresh_z_channel_visualization()
+                # for the current image. No need to call it manually.
+                raster.zChannelChanged.emit()
         
-        # Refresh visualization if current image was updated
+        # Refresh local dialog state if current image changed
         if current_path in highlighted:
-            self.annotation_window.refresh_z_channel_visualization()
             self.load_current_nan_value()
         
         # Success message
@@ -1031,24 +980,24 @@ class ScaleTool(Tool):
         )
         QMessageBox.information(self.dialog, "Success", success_msg)
         
-        # Reset hover and clicked value displays
+        # Reset hover label, input remains set to applied value
         self.dialog.z_nan_hover_label.setText("Hover over image...")
-        self.dialog.z_nan_clicked_label.setText("Click to select...")
-        if hasattr(self, 'sampled_nan_value'):
-            delattr(self, 'sampled_nan_value')
 
     def calculate_z_scale(self):
         """Calculate Z scalar from line."""
         from coralnet_toolbox.utilities import calculate_z_scalar, validate_line_angle
         
         current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None: return
+        if not current_raster or current_raster.z_channel is None: 
+            return
 
         # Validate line
         is_valid, _, _, warning = validate_line_angle(self.start_point, self.end_point)
         if not is_valid:
-            QMessageBox.warning(self.dialog, "Invalid Line", warning)
-            self.stop_current_drawing()
+            # We silently return if called by spinbox update to avoid spamming warnings
+            if self.is_drawing:
+                QMessageBox.warning(self.dialog, "Invalid Line", warning)
+                self.stop_current_drawing()
             return
             
         # Get Z values (using semantic values which respect current scalar)
@@ -1063,7 +1012,8 @@ class ScaleTool(Tool):
         try:
             z1 = float(current_raster.z_channel_lazy[y1, x1])
             z2 = float(current_raster.z_channel_lazy[y2, x2])
-        except: return
+        except: 
+            return
         
         raw_diff = abs(z1 - z2)
         known_diff = self.dialog.z_known_diff_input.value()
@@ -1073,38 +1023,40 @@ class ScaleTool(Tool):
             self.dialog.z_raw_diff_label.setText(f"{raw_diff:.4f} (raw units)")
             self.dialog.z_scalar_label.setText(f"{scalar:.6f}")
         except ValueError as e:
-            QMessageBox.warning(self.dialog, "Error", str(e))
+            # Again, silence during spinbox updates potentially
+            pass
 
     def apply_z_scale(self):
         """Apply scalar to highlighted images."""
         highlighted = self.dialog.get_selected_image_paths()
-        if not highlighted: return
+        if not highlighted: 
+            return
         
         scalar_text = self.dialog.z_scalar_label.text()
-        if "N/A" in scalar_text: return
+        if "N/A" in scalar_text: 
+            return
         
         try:
             scalar = float(scalar_text)
-        except: return
+        except: 
+            return
         
         raster_manager = self.main_window.image_window.raster_manager
-        current_path = self.annotation_window.current_image_path
         
         for path in highlighted:
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 # Update scalar, preserve offset/direction
                 raster.z_settings['scalar'] = scalar
-                # Save z_inversion_reference if in elevation mode
-                if self.dialog.view_mode_combo.currentData() == 'elevation':
-                    raster.z_inversion_reference = self.dialog.z_inversion_ref_input.value()
-                raster_manager.rasterUpdated.emit(path)
-                
-        if current_path in highlighted:
-            self.annotation_window.refresh_z_channel_visualization()
+                # This signal triggers QtImageWindow.on_z_channel_updated,
+                # which handles visualization refresh for the current image.
+                raster.zChannelChanged.emit()
         
         # Success dialog with details
-        view_mode = self.dialog.view_mode_combo.currentText()
+        # Get current mode from the current raster
+        current_raster = self.main_window.image_window.current_raster
+        current_mode = getattr(current_raster, 'z_data_type', 'depth') if current_raster else 'depth'
+        view_mode = "Elevation (from Bottom)" if current_mode == 'elevation' else "Depth (from Camera)"
         success_msg = (
             f"<b>Successfully applied calibration to {len(highlighted)} image(s)</b><br><br>"
             f"<b>Display Mode:</b> {view_mode}<br>"
@@ -1114,56 +1066,10 @@ class ScaleTool(Tool):
         self.stop_current_drawing()
         self.dialog.reset_fields()
 
-    def apply_z_view(self):
-        """Apply view mode and elevation reference to highlighted images."""
-        highlighted = self.dialog.get_selected_image_paths()
-        if not highlighted:
-            return
-        
-        view_mode = self.dialog.view_mode_combo.currentData()
-        elevation_ref = self.dialog.z_inversion_ref_input.value()
-        
-        raster_manager = self.main_window.image_window.raster_manager
-        current_path = self.annotation_window.current_image_path
-        
-        for path in highlighted:
-            raster = raster_manager.get_raster(path)
-            if raster and raster.z_channel is not None:
-                # Apply view mode
-                settings = raster.z_settings
-                scalar = settings.get('scalar', 1.0)
-                
-                if view_mode == 'depth':
-                    settings['direction'] = 1
-                    settings['offset'] = 0.0
-                elif view_mode == 'elevation':
-                    settings['direction'] = -1
-                    # Auto-tare to max raw value
-                    try:
-                        max_raw = float(np.nanmax(raster.z_channel_lazy))
-                    except Exception:
-                        max_raw = 0.0
-                    settings['offset'] = max_raw * scalar
-                    raster.z_inversion_reference = elevation_ref
-                
-                raster_manager.rasterUpdated.emit(path)
-        
-        if current_path in highlighted:
-            self.annotation_window.refresh_z_channel_visualization()
-        
-        # Success message
-        view_mode_text = self.dialog.view_mode_combo.currentText()
-        success_msg = (
-            f"<b>Successfully applied view mode to {len(highlighted)} image(s)</b><br><br>"
-            f"<b>Display Mode:</b> {view_mode_text}<br>"
-        )
-        if view_mode == 'elevation':
-            success_msg += f"<b>Elevation Reference:</b> {elevation_ref:.2f} m<br>"
-        
-        QMessageBox.information(self.dialog, "Success", success_msg)
-
     def set_z_anchor_point(self, pos):
         """Handle anchor point click."""
+        self.z_anchor_point = pos
+        
         current_raster = self.main_window.image_window.current_raster
         if not current_raster or current_raster.z_channel is None:
             return
@@ -1188,6 +1094,11 @@ class ScaleTool(Tool):
         new_offset = old_offset + delta
         
         self.dialog.z_offset_label.setText(f"{new_offset:.4f}")
+        
+    def recalculate_z_anchor(self):
+        """Recalculate anchor offset using cached point."""
+        if self.z_anchor_point:
+            self.set_z_anchor_point(self.z_anchor_point)
 
     def apply_z_anchor(self):
         """Apply new offset to highlighted images."""
@@ -1205,101 +1116,22 @@ class ScaleTool(Tool):
             return
         
         raster_manager = self.main_window.image_window.raster_manager
-        current_path = self.annotation_window.current_image_path
         
         for path in highlighted:
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_settings['offset'] = offset
-                # Save z_inversion_reference if in elevation mode
-                if self.dialog.view_mode_combo.currentData() == 'elevation':
-                    raster.z_inversion_reference = self.dialog.z_inversion_ref_input.value()
-                raster_manager.rasterUpdated.emit(path)
-                
-        if current_path in highlighted:
-            self.annotation_window.refresh_z_channel_visualization()
+                # This signal triggers QtImageWindow.on_z_channel_updated,
+                # which handles visualization refresh for the current image.
+                raster.zChannelChanged.emit()
         
         # Success dialog with details
-        view_mode = self.dialog.view_mode_combo.currentText()
         success_msg = (
             f"<b>Successfully applied calibration to {len(highlighted)} image(s)</b><br><br>"
-            f"<b>Display Mode:</b> {view_mode}<br>"
             f"<b>Reference Offset:</b> {offset:.4f}<br>"
         )
         QMessageBox.information(self.dialog, "Success", success_msg)
         self.dialog.reset_fields()
-
-    def set_z_view_mode(self, mode):
-        """
-        Toggle between Depth and Elevation view modes non-destructively.
-        Updates 'direction' and 'offset' in z_settings, and updates z_data_type metadata.
-        """
-        current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel_lazy is None: return
-        
-        settings = current_raster.z_settings
-        scalar = settings.get('scalar', 1.0)
-        
-        if mode == 'depth':
-            # Standard Depth Mode
-            settings['direction'] = 1  # Positive = farther
-            settings['offset'] = 0.0   # Zero at camera
-            current_raster.z_data_type = 'depth'  # Update metadata
-            
-        elif mode == 'elevation':
-            # Relative Elevation Mode
-            # 1. Set Direction to -1 (Positive = closer/up)
-            settings['direction'] = -1
-            
-            # 2. Auto-Tare: Find max raw value to set as zero-point (seafloor)
-            # We use the raw data directly for robustness
-            raw_data = current_raster.z_channel_lazy
-            
-            # Simple max ignoring NaNs
-            try:
-                max_raw = float(np.nanmax(raw_data))
-            except:
-                max_raw = 0.0
-                
-            # Offset = Max_Raw * Scalar
-            # Explanation: Raw=10, Scalar=1. Depth=10. 
-            # We want Elevation=0 at Depth=10.
-            # Elev = -1 * (10*1) + Offset = 0  =>  Offset = 10
-            settings['offset'] = max_raw * scalar
-            current_raster.z_data_type = 'elevation'  # Update metadata
-            
-        # Refresh visuals
-        self.annotation_window.refresh_z_channel_visualization()
-        
-        # Emit update so other UI components refresh
-        self.main_window.image_window.raster_manager.rasterUpdated.emit(current_raster.image_path)
-
-    def sync_view_mode_ui(self):
-        """Update dropdown selection to match current raster's z_data_type."""
-        current_raster = self.main_window.image_window.current_raster
-        if not current_raster or current_raster.z_channel is None: 
-            return
-        
-        # Use z_data_type to determine which mode to display
-        # z_data_type can be 'depth' or 'elevation'
-        data_type = getattr(current_raster, 'z_data_type', 'depth')
-        
-        # Set combobox to match the data type
-        # Index 0 = Depth, Index 1 = Elevation
-        if data_type == 'elevation':
-            index = 1
-        else:
-            index = 0  # Default to depth
-        
-        self.dialog.view_mode_combo.blockSignals(True)
-        self.dialog.view_mode_combo.setCurrentIndex(index)
-        self.dialog.view_mode_combo.blockSignals(False)
-        
-        # Also load the elevation reference if available
-        if hasattr(current_raster, 'z_inversion_reference') and current_raster.z_inversion_reference is not None:
-            self.dialog.z_inversion_ref_input.blockSignals(True)
-            self.dialog.z_inversion_ref_input.setValue(current_raster.z_inversion_reference)
-            self.dialog.z_inversion_ref_input.blockSignals(False)
 
     def reset_z_settings(self):
         """Reset Z-settings to defaults."""
@@ -1310,6 +1142,9 @@ class ScaleTool(Tool):
         if QMessageBox.question(self.dialog, "Confirm", "Reset Z-settings for highlighted?") != QMessageBox.Yes:
             return
             
+        # Stop any current drawing to clear visuals
+        self.stop_current_drawing()
+            
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
         
@@ -1318,20 +1153,25 @@ class ScaleTool(Tool):
             if raster and raster.z_channel is not None:
                 raster.z_settings = {'scalar': 1.0, 'offset': 0.0, 'direction': 1}
                 raster.z_inversion_reference = None  # Reset inversion reference
-                raster_manager.rasterUpdated.emit(path)
-                
-        if current_path in highlighted:
-            self.annotation_window.refresh_z_channel_visualization()
-            self.sync_view_mode_ui()
+                # This signal triggers QtImageWindow.on_z_channel_updated,
+                # which handles visualization refresh for the current image.
+                raster.zChannelChanged.emit()
         
+        # Update dialog labels to reflect reset values
+        self.dialog.z_scalar_label.setText("1.000000")
+        self.dialog.z_offset_label.setText("0.0000")
+        
+        # Refresh NaN display if current image was reset
+        if current_path in highlighted:
+            self.load_current_nan_value()
+        
+        QMessageBox.information(self.dialog, "Reset Complete", f"Z-settings reset for {len(highlighted)} images.")
         self.dialog.reset_fields()
 
     def handle_apply(self):
         """Route 'Apply' button to correct function."""
         if self.dialog.current_mode == 'xy_scale':
             self.apply_scale()
-        elif self.dialog.current_mode == 'z_view':
-            self.apply_z_view()
         elif self.dialog.current_mode == 'z_nan':
             self.apply_z_nan()
         elif self.dialog.current_mode == 'z_scale':
@@ -1344,4 +1184,3 @@ class ScaleTool(Tool):
         self.dialog.update_z_tab_states()
         self.load_existing_scale()
         self.stop_current_drawing()
-        self.sync_view_mode_ui()  # This now handles z_inversion_reference loading
