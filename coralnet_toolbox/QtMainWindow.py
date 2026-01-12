@@ -790,12 +790,11 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Delete to remove selected annotations."),
             
                 "scale": ("Scale Tool\n\n"
-                          "Calibrate spatial and depth/elevation measurements.\n\n"
+                          "Calibrate spatial and depth measurements.\n\n"
                           "XY Scale Tab:\n"
                           "• Set pixel size by drawing a line across a known distance.\n"
                           "• Applies to highlighted images.\n\n"
                           "Z-Calibration Tab:\n"
-                          "• Toggle between Depth and Elevation views.\n"
                           "• Set nodata/NaN data value.\n"
                           "• Calibrate vertical scale and reference point.\n"
                           "• Real-time Z-Fence visualization while drawing."),
@@ -2288,13 +2287,12 @@ class MainWindow(QMainWindow):
                         scalar = z_settings.get('scalar', 1.0)
                         offset = z_settings.get('offset', 0.0)
                         direction = z_settings.get('direction', 1)
-                        direction_str = "Depth (positive down)" if direction == 1 else "Elevation (positive up)"
                         
                         tooltip_text = (
                             f"Z-Channel Transformation:\n\n"
                             f"  Scalar: {scalar:.6f}\n"
                             f"  Offset: {offset:.6f}\n"
-                            f"  Direction: {direction_str}\n\n"
+                            f"  Direction: {direction}\n\n"
                             f"Formula: Z_display = {direction} × (raw × {scalar:.6f}) + {offset:.6f}"
                         )
                         self.z_label.setToolTip(tooltip_text)
