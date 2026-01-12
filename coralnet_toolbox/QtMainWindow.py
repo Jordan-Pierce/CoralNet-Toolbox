@@ -2217,7 +2217,8 @@ class MainWindow(QMainWindow):
             )
 
         if raster and raster.scale_units:
-            # Scale exists, calculate base meter values
+            # Scale exists and is always in meters (standardized internally)
+            # Calculate dimensions in meters
             self.scaled_view_width_m = width * raster.scale_x
             self.scaled_view_height_m = height * raster.scale_y
             

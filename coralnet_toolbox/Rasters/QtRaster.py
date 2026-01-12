@@ -231,14 +231,23 @@ class Raster(QObject):
         """
         Update the scale information for this raster.
         
+        All scales are stored internally in meters for consistency.
+        If units are provided in other units, they will be converted to meters.
+        
         Args:
             scale_x (float): The horizontal scale (e.g., meters per pixel)
             scale_y (float): The vertical scale (e.g., meters per pixel)
-            units (str): The name of the units (e.g., 'm', 'cm')
+            units (str): The name of the units (e.g., 'm', 'cm', 'ft')
         """
+        # Convert to meters if not already in meters
+        if units.lower() != 'm':
+            scale_x = convert_scale_units(scale_x, units, 'm')
+            scale_y = convert_scale_units(scale_y, units, 'm')
+        
+        # Always store in meters
         self.scale_x = scale_x
         self.scale_y = scale_y
-        self.scale_units = units
+        self.scale_units = 'm'
         
         # Update metadata to match
         self.metadata['scale_x'] = f"{self.scale_x:.6f} {self.scale_units}"

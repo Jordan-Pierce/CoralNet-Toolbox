@@ -783,10 +783,9 @@ class ScaleTool(Tool):
         except: 
             return
 
-        # Standardize units
-        unit_mapping = {'mm': 'millimetre', 'cm': 'centimetre', 'm': 'metre', 
-                        'km': 'kilometre', 'in': 'inch', 'ft': 'foot', 'yd': 'yard', 'mi': 'mile'}
-        scale_units = unit_mapping.get(units, 'metre')
+        # Convert the scale value to meters (standardized internal unit)
+        from coralnet_toolbox.utilities import convert_scale_units
+        scale_value_meters = convert_scale_units(scale_value, units, 'm')
         
         raster_manager = self.main_window.image_window.raster_manager
         current_path = self.annotation_window.current_image_path
@@ -794,7 +793,8 @@ class ScaleTool(Tool):
         for path in highlighted_paths:
             raster = raster_manager.get_raster(path)
             if raster:
-                raster.update_scale(scale_value, scale_value, scale_units)
+                # Always store in meters with 'm' as the unit
+                raster.update_scale(scale_value_meters, scale_value_meters, 'm')
                 raster_manager.rasterUpdated.emit(path)
                 
         if current_path in highlighted_paths:
