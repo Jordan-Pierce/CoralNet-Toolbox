@@ -961,7 +961,7 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_nodata = new_nan
-                raster_manager.rasterUpdated.emit(path)
+                raster.zChannelChanged.emit()
         
         # Refresh visualization if current image was updated
         if current_path in highlighted:
@@ -1044,7 +1044,7 @@ class ScaleTool(Tool):
             if raster and raster.z_channel is not None:
                 # Update scalar, preserve offset/direction
                 raster.z_settings['scalar'] = scalar
-                raster_manager.rasterUpdated.emit(path)
+                raster.zChannelChanged.emit()
                 
         if current_path in highlighted:
             self.annotation_window.refresh_z_channel_visualization()
@@ -1112,7 +1112,7 @@ class ScaleTool(Tool):
             raster = raster_manager.get_raster(path)
             if raster and raster.z_channel is not None:
                 raster.z_settings['offset'] = offset
-                raster_manager.rasterUpdated.emit(path)
+                raster.zChannelChanged.emit()
                 
         if current_path in highlighted:
             self.annotation_window.refresh_z_channel_visualization()
@@ -1142,7 +1142,7 @@ class ScaleTool(Tool):
             if raster and raster.z_channel is not None:
                 raster.z_settings = {'scalar': 1.0, 'offset': 0.0, 'direction': 1}
                 raster.z_inversion_reference = None  # Reset inversion reference
-                raster_manager.rasterUpdated.emit(path)
+                raster.zChannelChanged.emit()
                 
         if current_path in highlighted:
             self.annotation_window.refresh_z_channel_visualization()

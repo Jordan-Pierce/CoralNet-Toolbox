@@ -594,8 +594,7 @@ class DeployModelDialog(CollapsibleSection):
                     # Note: 0 values are automatically treated as nodata for depth maps
                     raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
                     
-                    # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
-                    self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
+                    # Note: add_z_channel now automatically emits zChannelUpdated signal
                     
                     # If this is the current raster, refresh visualization and enable controls
                     if raster == self.main_window.image_window.current_raster:

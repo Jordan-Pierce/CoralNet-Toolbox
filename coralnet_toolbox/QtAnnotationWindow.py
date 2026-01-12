@@ -1760,20 +1760,31 @@ class AnnotationWindow(QGraphicsView):
         and displaying it in the confidence window when the annotation is created
         on the current image.
         """
+        import time
+        start_time = time.time()
+        print(f"[DEBUG] Starting add_annotation_from_tool at {start_time}")
+        
         # First, add the annotation using the primary method
         self.add_annotation(annotation, record_action=record_action)
+        print(f"[DEBUG] After add_annotation call: {time.time() - start_time} seconds")
         
         # Then provide user feedback for tool-created annotations
         if annotation.image_path == self.current_image_path and annotation.label.is_visible:
+            print(f"[DEBUG] Condition met for user feedback: {time.time() - start_time} seconds")
+            
             # Crop the annotation for immediate display in confidence window
             if not annotation.cropped_image and self.rasterio_image:
                 annotation.create_cropped_image(self.rasterio_image)
+            print(f"[DEBUG] After cropping annotation: {time.time() - start_time} seconds")
             
             # Display in confidence window to give user immediate feedback
             if annotation.cropped_image:
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
+            print(f"[DEBUG] After displaying in confidence window: {time.time() - start_time} seconds")
+        
+        print(f"[DEBUG] End of add_annotation_from_tool: {time.time() - start_time} seconds")
         
     def add_annotation(self, annotation, record_action=True):
         """
@@ -1782,55 +1793,75 @@ class AnnotationWindow(QGraphicsView):
         It adds the annotation to data structures and connects signals. It will only create
         graphics and cropped images if the annotation's image is currently displayed AND its label is visible.
         """
+        import time
+        start_time = time.time()
+        print(f"[DEBUG] Starting add_annotation at {start_time}")
+        
         if annotation is None:
+            print(f"[DEBUG] Annotation is None, returning early: {time.time() - start_time} seconds")
             return
         
         # Set the animation manager
         annotation.set_animation_manager(self.animation_manager)
+        print(f"[DEBUG] After setting animation manager: {time.time() - start_time} seconds")
 
         # --- Core Logic (runs for every annotation) ---
         # Add to the main annotation dictionary
         self.annotations_dict[annotation.id] = annotation
+        print(f"[DEBUG] After adding to annotations_dict: {time.time() - start_time} seconds")
 
         # Add to the dictionary that groups annotations by image path
         if annotation.image_path not in self.image_annotations_dict:
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
+        print(f"[DEBUG] After adding to image_annotations_dict: {time.time() - start_time} seconds")
             
         # Inject / update scale
         self.set_annotation_scale(annotation)
+        print(f"[DEBUG] After setting annotation scale: {time.time() - start_time} seconds")
 
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
         annotation.annotationUpdated.connect(self.on_annotation_updated)
+        print(f"[DEBUG] After connecting signals: {time.time() - start_time} seconds")
         
         # If this is a MaskAnnotation, update the raster's reference to it
         if isinstance(annotation, MaskAnnotation):
             raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
             if raster:
                 raster.mask_annotation = annotation
+        print(f"[DEBUG] After handling MaskAnnotation: {time.time() - start_time} seconds")
 
         # --- Conditional UI Logic (runs only if the image is visible AND label is visible) ---
         if annotation.image_path == self.current_image_path and annotation.label.is_visible:
+            print(f"[DEBUG] Condition met for UI logic: {time.time() - start_time} seconds")
+            
             # Create graphics item for display in the scene
             if not annotation.graphics_item:
                 annotation.create_graphics_item(self.scene)
+            print(f"[DEBUG] After creating graphics item: {time.time() - start_time} seconds")
                 
             # Set the visibility based on the current UI state (will respect label checkbox)
             self.set_annotation_visibility(annotation)
+            print(f"[DEBUG] After setting visibility: {time.time() - start_time} seconds")
 
         # --- Finalization ---
         # Update the annotation count in the ImageWindow table (always, regardless of visibility)
         self.main_window.image_window.update_image_annotations(annotation.image_path)
+        print(f"[DEBUG] After updating image annotations: {time.time() - start_time} seconds")
 
         # If requested, record this single addition as an undo-able action
         if record_action:
             self.action_stack.push(AddAnnotationAction(self, annotation))
+        print(f"[DEBUG] After pushing action stack: {time.time() - start_time} seconds")
         
         # Emit the signal that an annotation was created
         self.annotationCreated.emit(annotation.id)
+        print(f"[DEBUG] After emitting annotationCreated signal: {time.time() - start_time} seconds")
+        
+        print(f"[DEBUG] End of add_annotation: {time.time() - start_time} seconds")
         
     def add_annotations(self, annotations_list: list):
         """
