@@ -220,6 +220,17 @@ class AnnotationWindow(QGraphicsView):
         """Check if the annotation window is currently in mask editing mode."""
         return self.selected_tool and self.selected_tool in self.mask_tools
     
+    def on_annotation_updated(self, updated_annotation):
+        """
+        Handle annotation update signal - refresh graphics if annotation is currently displayed.
+        This is called when an annotation's label or other properties change.
+        """
+        # Only update graphics if the annotation belongs to the currently displayed image
+        # and has a valid graphics item in the scene
+        if (updated_annotation.image_path == self.current_image_path and 
+            updated_annotation.is_graphics_item_valid()):
+            updated_annotation.update_graphics_item()
+    
     def resizeEvent(self, event):
         """Handle resize events to maintain proper view fitting."""
         super().resizeEvent(event)
@@ -479,11 +490,13 @@ class AnnotationWindow(QGraphicsView):
             annotation = self.annotations_dict[annotation_id]
             # Disconnect the confidence window from the annotation, so it won't update while moving
             annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+            annotation.annotationUpdated.disconnect(self.on_annotation_updated)
             annotation.update_location(new_center_xy)
             # Create and display the cropped image in the confidence window
             annotation.create_cropped_image(self.rasterio_image)
             # Connect the confidence window back to the annotation
             annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            annotation.annotationUpdated.connect(self.on_annotation_updated)
             # Display the cropped image in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
 
@@ -503,6 +516,7 @@ class AnnotationWindow(QGraphicsView):
 
             # Disconnect the confidence window from the annotation, so it won't update while resizing
             annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+            annotation.annotationUpdated.disconnect(self.on_annotation_updated)
 
             if isinstance(annotation, PatchAnnotation):
                 annotation.update_annotation_size(self.annotation_size)
@@ -523,6 +537,7 @@ class AnnotationWindow(QGraphicsView):
             annotation.create_cropped_image(self.rasterio_image)
             # Connect the confidence window back to the annotation
             annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            annotation.annotationUpdated.connect(self.on_annotation_updated)
             # Display the cropped image in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
 
@@ -1441,6 +1456,7 @@ class AnnotationWindow(QGraphicsView):
                 
                 # Display in confidence window
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+                annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
         
         # Special handling for multiple selected annotations
@@ -1493,6 +1509,11 @@ class AnnotationWindow(QGraphicsView):
                 except TypeError:
                     # Already disconnected
                     pass
+                try:
+                    annotation.annotationUpdated.disconnect(self.on_annotation_updated)
+                except TypeError:
+                    # Already disconnected
+                    pass
             
             # Update annotation's internal state
             annotation.deselect()
@@ -1522,6 +1543,11 @@ class AnnotationWindow(QGraphicsView):
             if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
                 try:
                     annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+                except TypeError:
+                    # Already disconnected
+                    pass
+                try:
+                    annotation.annotationUpdated.disconnect(self.on_annotation_updated)
                 except TypeError:
                     # Already disconnected
                     pass
@@ -1564,6 +1590,7 @@ class AnnotationWindow(QGraphicsView):
         # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.on_annotation_updated)
         
         # Update the view
         self.viewport().update()
@@ -1745,6 +1772,7 @@ class AnnotationWindow(QGraphicsView):
             # Display in confidence window to give user immediate feedback
             if annotation.cropped_image:
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+                annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
         
     def add_annotation(self, annotation, record_action=True):
@@ -1776,6 +1804,7 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals for future interaction
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.on_annotation_updated)
         
         # If this is a MaskAnnotation, update the raster's reference to it
         if isinstance(annotation, MaskAnnotation):

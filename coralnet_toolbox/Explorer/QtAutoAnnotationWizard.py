@@ -1371,6 +1371,9 @@ class AutoAnnotationWizard(QDialog):
                         if item.annotation.id in self.bulk_predictions:
                             del self.bulk_predictions[item.annotation.id]
                         
+                        # Emit annotation updated signal to refresh graphics in AnnotationWindow
+                        item.annotation.annotationUpdated.emit(item.annotation)
+                        
                         # Update tooltip and visuals
                         if hasattr(item, 'widget') and item.widget:
                             item.widget.update_tooltip()
@@ -1595,6 +1598,9 @@ class AutoAnnotationWizard(QDialog):
             if item.annotation.id in self.bulk_predictions:
                 del self.bulk_predictions[item.annotation.id]
             
+            # Emit annotation updated signal to refresh graphics in AnnotationWindow
+            item.annotation.annotationUpdated.emit(item.annotation)
+            
             # Emit update signal
             self.annotations_updated.emit([item])
             
@@ -1627,6 +1633,9 @@ class AutoAnnotationWizard(QDialog):
         
         # Update the data item's effective_label cache
         item._effective_label = label_widget
+        
+        # Emit annotation updated signal to refresh graphics in AnnotationWindow
+        item.annotation.annotationUpdated.emit(item.annotation)
         
         # Update tooltips
         if hasattr(item, 'widget') and item.widget:
