@@ -369,7 +369,7 @@ class ScaleToolDialog(QDialog):
         scale_form.addRow("Vertical Units:", self.z_units_combo)
         
         self.z_known_diff_input = QDoubleSpinBox()
-        self.z_known_diff_input.setRange(0.001, 1000000.0)
+        self.z_known_diff_input.setRange(0.000, 1000000.0)
         self.z_known_diff_input.setValue(1.0)
         self.z_known_diff_input.setDecimals(3)
         # Add connection for realtime updates
@@ -996,8 +996,8 @@ class ScaleTool(Tool):
         if not is_valid:
             # We silently return if called by spinbox update to avoid spamming warnings
             if self.is_drawing:
-                 QMessageBox.warning(self.dialog, "Invalid Line", warning)
-                 self.stop_current_drawing()
+                QMessageBox.warning(self.dialog, "Invalid Line", warning)
+                self.stop_current_drawing()
             return
             
         # Get Z values (using semantic values which respect current scalar)
@@ -1142,7 +1142,11 @@ class ScaleTool(Tool):
         if QMessageBox.question(self.dialog, "Confirm", "Reset Z-settings for highlighted?") != QMessageBox.Yes:
             return
             
+        # Stop any current drawing to clear visuals
+        self.stop_current_drawing()
+            
         raster_manager = self.main_window.image_window.raster_manager
+        current_path = self.annotation_window.current_image_path
         
         for path in highlighted:
             raster = raster_manager.get_raster(path)
@@ -1152,6 +1156,14 @@ class ScaleTool(Tool):
                 # This signal triggers QtImageWindow.on_z_channel_updated,
                 # which handles visualization refresh for the current image.
                 raster.zChannelChanged.emit()
+        
+        # Update dialog labels to reflect reset values
+        self.dialog.z_scalar_label.setText("1.000000")
+        self.dialog.z_offset_label.setText("0.0000")
+        
+        # Refresh NaN display if current image was reset
+        if current_path in highlighted:
+            self.load_current_nan_value()
         
         QMessageBox.information(self.dialog, "Reset Complete", f"Z-settings reset for {len(highlighted)} images.")
         self.dialog.reset_fields()
