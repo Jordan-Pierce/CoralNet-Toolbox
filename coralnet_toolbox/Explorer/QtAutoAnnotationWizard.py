@@ -1395,6 +1395,12 @@ class AutoAnnotationWizard(QDialog):
                 # Update viewer with remaining items
                 self.explorer_window.annotation_viewer.update_annotations(review_items)
                 
+                # Clear any annotation viewer selection
+                self.explorer_window.annotation_viewer.clear_selection()
+                
+                # Clear any AnnotationWindow selection to prevent label update issues
+                self.main_window.annotation_window.unselect_annotations()
+                
                 # Update statistics
                 self._update_bulk_statistics()
                 self.bulk_count_label.setText("Annotations to be auto-labeled: 0")
@@ -1598,6 +1604,12 @@ class AutoAnnotationWizard(QDialog):
             if item.annotation.id in self.bulk_predictions:
                 del self.bulk_predictions[item.annotation.id]
             
+            # Clear any annotation viewer selection
+            self.explorer_window.annotation_viewer.clear_selection()
+            
+            # Clear any AnnotationWindow selection to prevent label update issues
+            self.main_window.annotation_window.unselect_annotations()
+            
             # Emit annotation updated signal to refresh graphics in AnnotationWindow
             item.annotation.annotationUpdated.emit(item.annotation)
             
@@ -1633,6 +1645,12 @@ class AutoAnnotationWizard(QDialog):
         
         # Update the data item's effective_label cache
         item._effective_label = label_widget
+        
+        # Clear any annotation viewer selection
+        self.explorer_window.annotation_viewer.clear_selection()
+        
+        # Clear any AnnotationWindow selection to prevent label update issues
+        self.main_window.annotation_window.unselect_annotations()
         
         # Emit annotation updated signal to refresh graphics in AnnotationWindow
         item.annotation.annotationUpdated.emit(item.annotation)
@@ -1810,15 +1828,11 @@ class AutoAnnotationWizard(QDialog):
         return None
     
     def _exit(self):
-        """Exit wizard early (before completion)."""
-        # Count completed annotations
-        completed_count = len(self.completed_annotation_ids)
-        
+        """Exit wizard early (before completion)."""        
         reply = QMessageBox.question(
             self,
             "Exit Wizard",
-            f"Exit the Auto-Annotation Wizard?\n\n{completed_count} annotations were labeled in this session."
-            f"\nAll changes have been saved.",
+            f"Exit the Auto-Annotation Wizard? All existing changes have already been saved.",
             QMessageBox.Yes | QMessageBox.No
         )
         
