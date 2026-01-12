@@ -1153,6 +1153,7 @@ class ScaleTool(Tool):
                 # which handles visualization refresh for the current image.
                 raster.zChannelChanged.emit()
         
+        QMessageBox.information(self.dialog, "Reset Complete", f"Z-settings reset for {len(highlighted)} images.")
         self.dialog.reset_fields()
 
     def handle_apply(self):
