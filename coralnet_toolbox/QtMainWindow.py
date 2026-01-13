@@ -789,22 +789,22 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-                "scale": ("Scale Tool\n\n"
-                          "Calibrate spatial and depth measurements.\n\n"
-                          "XY Scale Tab:\n"
-                          "• Set pixel size by drawing a line across a known distance.\n"
-                          "• Applies to highlighted images.\n\n"
-                          "Z-Calibration Tab:\n"
-                          "• Set nodata/NaN data value.\n"
-                          "• Calibrate vertical scale and reference point.\n"
-                          "• Real-time Z-Fence visualization while drawing."),
+            "scale": ("Scale Tool\n\n"
+                      "Calibrate spatial and depth measurements.\n\n"
+                      "XY Scale Tab:\n"
+                      "• Set pixel size by drawing a line across a known distance.\n"
+                      "• Applies to highlighted images.\n\n"
+                      "Z-Calibration Tab:\n"
+                      "• Set nodata/NaN data value.\n"
+                      "• Calibrate vertical scale and reference point.\n"
+                      "• Real-time Z-Fence visualization while drawing."),
 
-                "spatial": ("Spatial Measurement Tool\n\n"
-                            "Requires scale to be set.\n\n"
-                            "Measure rugosity:\n"
-                            "• Draw lines to measure 2D/3D distances and rugosity.\n"
-                            "• Generate measurement grids for systematic sampling.\n"
-                            "• View elevation profiles and 3D metrics when Z-data available."),
+            "spatial": ("Spatial Tool\n\n"
+                        "Requires scale to be set.\n\n"
+                        "Measure rugosity:\n"
+                        "• Draw lines to measure 2D/3D distances and rugosity.\n"
+                        "• Generate measurement grids for systematic sampling.\n"
+                        "• View elevation profiles and 3D metrics when Z-data available."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
@@ -1751,7 +1751,7 @@ class MainWindow(QMainWindow):
                 self.spatial_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "No Image Loaded",
-                                    "Please load an image before using the Spatial Measurement Tool.")
+                                    "Please load an image before using the Spatial Tool.")
                 return
             
             raster = self.image_window.raster_manager.get_raster(image_path)
@@ -1759,7 +1759,7 @@ class MainWindow(QMainWindow):
                 self.spatial_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "Scale Not Set",
-                                    "The Spatial Measurement Tool requires scale to be set on the current image.\n\n"
+                                    "The Spatial Tool requires scale to be set on the current image.\n\n"
                                     "Please use the Scale Tool to set the scale first.")
                 return
             
