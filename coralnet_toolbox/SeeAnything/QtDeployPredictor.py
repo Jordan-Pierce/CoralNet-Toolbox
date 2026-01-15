@@ -130,6 +130,11 @@ class DeployPredictorDialog(QDialog):
             'yoloe-11s-seg.pt',
             'yoloe-11m-seg.pt',
             'yoloe-11l-seg.pt',
+            'yoloe-26n-seg.pt',
+            'yoloe-26s-seg.pt',
+            'yoloe-26m-seg.pt',
+            'yoloe-26l-seg.pt',
+            'yoloe-26x-seg.pt'
         ]
 
         # Add all models to combo box

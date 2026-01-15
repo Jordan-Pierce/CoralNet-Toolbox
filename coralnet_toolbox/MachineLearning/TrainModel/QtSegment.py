@@ -57,12 +57,7 @@ class Segment(Base):
         self.model_combo.clear()
         self.model_combo.setEditable(True)
 
-        standard_models = ['yolov5n-seg.pt',
-                           'yolov5s-seg.pt',
-                           'yolov5m-seg.pt',
-                           'yolov5l-seg.pt',
-                           'yolov5x-seg.pt',
-                           'yolov8n-seg.pt',
+        standard_models = ['yolov8n-seg.pt',
                            'yolov8s-seg.pt',
                            'yolov8m-seg.pt',
                            'yolov8l-seg.pt',
@@ -73,7 +68,13 @@ class Segment(Base):
                            'yolo11s-seg.pt',
                            'yolo11m-seg.pt',
                            'yolo11l-seg.pt',
-                           'yolo11x-seg.pt']
+                           'yolo11x-seg.pt',
+                           'yolo26n-seg.pt',
+                           'yolo26s-seg.pt',
+                           'yolo26m-seg.pt',
+                           'yolo26l-seg.pt',
+                           'yolo26x-seg.pt'
+        ]
         
         self.model_combo.addItems(standard_models)
                 
@@ -84,4 +85,4 @@ class Segment(Base):
             self.model_combo.addItems(list(community_configs.keys()))
             
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo11n-seg.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo26n-seg.pt'))
