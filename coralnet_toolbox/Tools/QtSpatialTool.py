@@ -219,7 +219,7 @@ class SpatialToolDialog(QDialog):
         self.annotation_window = self.tool.annotation_window
         self.main_window = self.annotation_window.main_window
         
-        self.setWindowTitle("Spatial Measurement Tool")
+        self.setWindowTitle("Spatial Tool")
         self.setWindowIcon(get_icon("spatial.png"))
         self.resize(450, 300)
         
