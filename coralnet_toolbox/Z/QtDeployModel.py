@@ -87,6 +87,17 @@ class DeployModelDialog(CollapsibleSection):
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
+        # Output type dropdown
+        self.output_type_combo = QComboBox()
+        self.output_type_combo.addItem("Depth")
+        self.output_type_combo.addItem("Relative Elevation")
+        self.output_type_combo.setCurrentIndex(0)  # Default to Depth
+        self.output_type_combo.setToolTip(
+            "Depth: High values = farther from camera (default)\n"
+            "Relative Elevation: Inverted depth map where high values = higher elevation"
+        )
+        layout.addRow("Output Type:", self.output_type_combo)
+        
         # Create widget and add to popup
         widget = QWidget()
         widget.setLayout(layout)
@@ -360,6 +371,35 @@ class DeployModelDialog(CollapsibleSection):
         if extrinsics is not None and len(extrinsics) > index and extrinsics[index] is not None:
             raster.add_extrinsics(extrinsics[index])
     
+    def _convert_depth_to_elevation(self, depth_map):
+        """
+        Convert a depth map to relative elevation by inverting depth values.
+        
+        For depth maps: high values = far from camera (deeper)
+        For elevation: high values = higher elevation (closer to camera)
+        Formula: elevation = max_depth - depth
+        
+        Args:
+            depth_map (numpy.ndarray): 2D depth map with depth values
+            
+        Returns:
+            numpy.ndarray: 2D elevation map (inverted depth)
+        """        
+        # Create a copy to avoid modifying the original
+        elevation_map = depth_map.copy()
+        
+        # For depth maps, 0 typically represents nodata/invalid
+        # Find the maximum valid depth value (excluding 0 and NaN)
+        valid_mask = (elevation_map > 0) & ~np.isnan(elevation_map)
+        
+        if np.any(valid_mask):
+            max_depth = np.max(elevation_map[valid_mask])
+            
+            # Invert only the valid values: elevation = max_depth - depth
+            elevation_map[valid_mask] = max_depth - elevation_map[valid_mask]
+        
+        return elevation_map
+    
     def deploy_model(self):
         """Deploy the model on highlighted images, or current image if none are highlighted."""
         if self.loaded_model is None:
@@ -551,9 +591,19 @@ class DeployModelDialog(CollapsibleSection):
                     # Update camera parameters
                     self._update_camera_parameters(raster, result, index=i)
                     
-                    # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
+                    # Apply output type conversion based on user selection
+                    output_type = self.output_type_combo.currentText()
+                    if output_type == "Relative Elevation":
+                        # Convert depth to relative elevation
+                        z_channel = self._convert_depth_to_elevation(z_channel)
+                        z_data_type = 'elevation'
+                    else:
+                        # Use depth as-is (default)
+                        z_data_type = 'depth'
+                    
+                    # Add z-channel to raster
                     # Note: 0 values are automatically treated as nodata for depth maps
-                    raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth')
+                    raster.add_z_channel(z_channel, z_unit='meters', z_data_type=z_data_type)
                     
                     # Note: add_z_channel now automatically emits zChannelUpdated signal
                     
