@@ -666,7 +666,7 @@ class ImageWindow(QWidget):
             self.annotation_window.refresh_z_channel_visualization()
             
             # Force status bar Z-value refresh at current mouse position
-            # This ensures changes to z_nodata, z_settings, etc. are immediately reflected
+            # This ensures changes to z_nodata are immediately reflected
             if hasattr(self.main_window, 'update_z_value_at_mouse_position'):
                 raster = self.raster_manager.get_raster(path)
                 self.main_window.update_z_value_at_mouse_position(raster)

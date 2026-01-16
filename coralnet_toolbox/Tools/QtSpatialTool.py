@@ -429,10 +429,10 @@ class SpatialTool(Tool):
         return None, None, None
 
     def get_current_z_data(self):
-        """Get current Z-channel data and settings from raster using transform pipeline"""
+        """Get current Z-channel data from raster (raw values)"""
         image_path = self.annotation_window.current_image_path
         if not image_path:
-            return None, None, None, None, None
+            return None, None
             
         raster_manager = self.annotation_window.main_window.image_window.raster_manager
         raster = raster_manager.get_raster(image_path)
@@ -440,22 +440,16 @@ class SpatialTool(Tool):
         # Check if scale exists (required for measurements)
         scale_x, scale_y, scale_units = self.get_current_scale()
         if scale_x is None:
-            return None, None, None, None, None
+            return None, None
         
         # Get Z-channel data using lazy loading
         if raster and raster.z_channel_lazy is not None:
             z_data = raster.z_channel_lazy
             z_unit = raster.z_unit or 'px'
             
-            # Get transform settings
-            z_settings = raster.z_settings
-            scalar = z_settings.get('scalar', 1.0)
-            offset = z_settings.get('offset', 0.0)
-            direction = z_settings.get('direction', 1)
-            
-            return z_data, z_unit, scalar, offset, direction
+            return z_data, z_unit
         
-        return None, None, None, None, None
+        return None, None
 
     def _generate_random_color(self):
         """Generate a random RGB color tuple"""
@@ -867,7 +861,7 @@ class SpatialTool(Tool):
 
     def update_z_controls(self):
         """Enable/disable Z-controls based on data availability"""
-        z_data, z_unit, scalar, offset, direction = self.get_current_z_data()
+        z_data, z_unit = self.get_current_z_data()
         has_z = z_data is not None
         
         if self.dialog:
@@ -1022,7 +1016,7 @@ class SpatialTool(Tool):
             self.dialog.line_length_2d_label.setText(f"{length_2d_display:.3f} {display_units}")
 
         # --- 3. 3D Calculations (if Z-data available) ---
-        z_data, z_unit, scalar, offset, direction = self.get_current_z_data()
+        z_data, z_unit = self.get_current_z_data()
         
         if z_data is None:
             if self.dialog:
@@ -1040,7 +1034,7 @@ class SpatialTool(Tool):
             # Convert z_unit to meters for 3D calculations
             z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
 
-            # Get transformed Z values at start/end
+            # Get raw Z values at start/end
             p1_x = int(max(0, min(self.start_point.x(), w - 1)))
             p1_y = int(max(0, min(self.start_point.y(), h - 1)))
             p2_x = int(max(0, min(self.end_point.x(), w - 1)))
@@ -1094,15 +1088,14 @@ class SpatialTool(Tool):
             x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
             y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
             
-            # Get RAW Z-values along the line
-            raw_z_samples = []
+            # Get raw Z-values along the line (no transform)
+            z_samples = []
             for i in range(num_samples):
                 x_idx = int(max(0, min(x_samples[i], w - 1)))
                 y_idx = int(max(0, min(y_samples[i], h - 1)))
-                raw_z_samples.append(z_data[y_idx, x_idx])
+                z_samples.append(z_data[y_idx, x_idx])
             
-            raw_z_array = np.array(raw_z_samples)
-            z_transformed_array = (raw_z_array * scalar * direction) + offset
+            z_array = np.array(z_samples)
             
             # Calculate 3D length
             profile_data_x = []
@@ -1111,13 +1104,13 @@ class SpatialTool(Tool):
             dist_2d_so_far = 0.0
             
             profile_data_x.append(0.0)
-            profile_data_y.append(z_transformed_array[0])
+            profile_data_y.append(z_array[0])
             
             for i in range(num_samples - 1):
                 x_a, y_a = x_samples[i], y_samples[i]
                 x_b, y_b = x_samples[i + 1], y_samples[i + 1]
-                z_a = z_transformed_array[i]
-                z_b = z_transformed_array[i + 1]
+                z_a = z_array[i]
+                z_b = z_array[i + 1]
                 
                 dx_m = (x_b - x_a) * scale_x
                 dy_m = (y_b - y_a) * scale_y

@@ -819,33 +819,22 @@ class AnnotationWindow(QGraphicsView):
         try:
             z_data = raster.z_channel_lazy
             
-            # Apply transform pipeline before visualization
-            # Formula: Z_display = Direction × (RawPixel × Scalar) + Offset
-            scalar = raster.z_settings.get('scalar', 1.0)
-            offset = raster.z_settings.get('offset', 0.0)
-            direction = raster.z_settings.get('direction', 1)
-            
-            # Apply transform to get semantic z-values
-            z_transformed = (z_data * scalar * direction) + offset
-            
-            # Store raw AND transformed Z-channel data for dynamic range calculations
-            self.z_data_raw = z_data.copy()  # Keep raw for potential future use
-            self.z_data_transformed = z_transformed.copy()  # Store transformed for calculations
+            # Store raw Z-channel data for dynamic range calculations
+            self.z_data_raw = z_data.copy()
             self.z_data_shape = z_data.shape
             
             # Create mask for NaN and nodata values
             # This mask identifies pixels that should be transparent/invalid
-            nodata_mask = np.isnan(z_transformed)
+            nodata_mask = np.isnan(z_data)
             if raster.z_nodata is not None:
-                # Also mask the nodata value from the original raw data
+                # Also mask the nodata value from the raw data
                 nodata_mask |= (z_data == raster.z_nodata)
             
-            # Normalize the TRANSFORMED Z-channel data to 0-255 range for colormap
-            # This ensures colormap reflects semantic meaning (direction flip = visual flip)
+            # Normalize the Z-channel data to 0-255 range for colormap
             if z_data.dtype == np.float32:
-                # For float32, normalize transformed values to 0-255 range
+                # For float32, normalize raw values to 0-255 range
                 # Exclude nodata values from min/max calculation to prevent range squishing
-                valid_data = z_transformed[~nodata_mask]
+                valid_data = z_data[~nodata_mask]
                 if len(valid_data) > 0:
                     self.z_data_min = np.min(valid_data)
                     self.z_data_max = np.max(valid_data)
@@ -854,21 +843,21 @@ class AnnotationWindow(QGraphicsView):
                     self.z_data_max = 1.0
                 
                 if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
+                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
                 else:
                     z_diff = self.z_data_max - self.z_data_min
                     # Normalize, keeping NaN as NaN temporarily
                     z_norm = (
-                        (z_transformed - self.z_data_min) / z_diff * 255
+                        (z_data - self.z_data_min) / z_diff * 255
                     )
                     # Convert to uint8, NaN will become 0
                     z_norm = z_norm.astype(np.uint8)
                     # Set nodata pixels to 0 (will be made transparent in colormap)
                     z_norm[nodata_mask] = 0
             else:
-                # For uint8, apply transform and normalize
+                # For uint8, normalize raw values
                 # Exclude nodata values from min/max calculation
-                valid_data = z_transformed[~nodata_mask]
+                valid_data = z_data[~nodata_mask]
                 if len(valid_data) > 0:
                     self.z_data_min = np.min(valid_data)
                     self.z_data_max = np.max(valid_data)
@@ -877,11 +866,11 @@ class AnnotationWindow(QGraphicsView):
                     self.z_data_max = 1.0
                     
                 if self.z_data_min == self.z_data_max:
-                    z_norm = np.zeros_like(z_transformed, dtype=np.uint8)
+                    z_norm = np.zeros_like(z_data, dtype=np.uint8)
                 else:
                     z_diff = self.z_data_max - self.z_data_min
                     z_norm = (
-                        (z_transformed - self.z_data_min) / z_diff * 255
+                        (z_data - self.z_data_min) / z_diff * 255
                     ).astype(np.uint8)
                     # Set nodata pixels to 0 (will be made transparent in colormap)
                     z_norm[nodata_mask] = 0
@@ -1198,13 +1187,12 @@ class AnnotationWindow(QGraphicsView):
     def refresh_z_channel_visualization(self):
         """
         Refresh the Z-channel visualization if it's available for the current image.
-        This is called when a z-channel is newly imported for the currently displayed image
-        or when z_settings are changed (e.g., switching between depth/elevation).
+        This is called when a z-channel is newly imported for the currently displayed image.
         """
         if self.current_image_path:
             raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
             if raster and raster.z_channel is not None:
-                # Reload the z-channel visualization (this recalculates with updated z_settings)
+                # Reload the z-channel visualization
                 self._load_z_channel_visualization(raster)
                 
                 # Apply the current colormap selection to the newly loaded z_item

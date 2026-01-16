@@ -590,9 +590,8 @@ class DeployModelDialog(CollapsibleSection):
                     self._update_camera_parameters(raster, result, index=i)
                     
                     # Add z-channel to raster with 'depth' type (DA3 produces depth maps)
-                    # Set direction=1 explicitly (high values = far, which is depth semantics)
                     # Note: 0 values are automatically treated as nodata for depth maps
-                    raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth', z_direction=1)
+                    raster.add_z_channel(z_channel, z_unit='meters', z_data_type='depth')
                     
                     # Note: add_z_channel now automatically emits zChannelUpdated signal
                     
@@ -718,14 +717,12 @@ class DeployModelDialog(CollapsibleSection):
                 existing_z=raster.z_channel,
                 predicted_z=z_predicted,
                 existing_unit=raster.z_unit or 'meters',
-                existing_type=raster.z_data_type or 'depth',
-                inversion_reference=raster.z_inversion_reference
+                existing_type=raster.z_data_type or 'depth'
             )
             
             # Update the raster with filled result
             raster.z_channel = z_result
             raster.z_unit = 'meters'
-            # z_data_type and z_inversion_reference are preserved
 
         except ValueError as e:
             # Handle errors from smart_fill_z_channel
@@ -740,10 +737,6 @@ class DeployModelDialog(CollapsibleSection):
                 QMessageBox.information(self.annotation_window,
                                         "No Gaps to Fill" if "No valid" in error_msg else "Insufficient Data",
                                         error_msg)
-            elif "requires inversion reference" in error_msg:
-                QMessageBox.warning(self.annotation_window,
-                                    "Missing Reference",
-                                    "Elevation data is missing inversion reference. Cannot perform Smart Fill.")
             else:
                 QMessageBox.warning(self.annotation_window, 
                                     "Smart Fill Error", 

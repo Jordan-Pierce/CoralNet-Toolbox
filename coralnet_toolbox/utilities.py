@@ -887,59 +887,7 @@ def get_standard_z_units():
     return ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px']
 
 
-def calculate_z_scalar(raw_difference, known_difference):
-    """
-    Calculate scalar for Z-scale calibration.
-    
-    Args:
-        raw_difference (float): The raw Z-difference measured in the image
-        known_difference (float): The known real-world Z-difference
-        
-    Returns:
-        float: The calculated scalar value
-        
-    Raises:
-        ValueError: If raw_difference is too small or if values are invalid
-    """
-    if abs(raw_difference) < 1e-6:
-        raise ValueError("Raw Z-difference is too small (near zero). Cannot calculate scalar.")
-    
-    if known_difference <= 0:
-        raise ValueError("Known difference must be positive.")
-    
-    scalar = known_difference / abs(raw_difference)
-    
-    # Warn about extreme scalars
-    if scalar > 10000 or scalar < 0.0001:
-        import warnings
-        warnings.warn(f"Calculated scalar {scalar:.2f} is extreme. Please verify your measurements.")
-    
-    return scalar
-
-
-def calculate_z_offset(current_value, target_value):
-    """
-    Calculate offset for Z-anchor calibration.
-    
-    Args:
-        current_value (float): The current Z-value at the anchor point
-        target_value (float): The desired Z-value at the anchor point
-        
-    Returns:
-        float: The calculated offset value
-    """
-    offset = target_value - current_value
-    
-    # Warn about extreme offsets
-    if abs(offset) > 1000:
-        import warnings
-        warnings.warn(f"Calculated offset {offset:.2f} is extreme. Please verify your measurements.")
-    
-    return offset
-
-
-def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existing_type='depth', 
-                         inversion_reference=None):
+def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existing_type='depth'):
     """
     Fill NaN values in existing Z-channel with non-linearly corrected predictions.
     
@@ -953,7 +901,6 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
         predicted_z (numpy.ndarray): New Z-channel predictions (2D array)
         existing_unit (str): Unit of existing data (default 'meters')
         existing_type (str): Type of existing data ('depth' or 'elevation')
-        inversion_reference (float): Reference value for depth/elevation conversion
         
     Returns:
         tuple: (filled_z, stats_dict)
@@ -1003,12 +950,9 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     if existing_unit != 'meters':
         z_existing[valid_mask] = convert_scale_units(z_existing[valid_mask], existing_unit, 'meters')
     
-    # Adjust prediction type (Depth vs Elevation)
+    # For elevation data, note: prediction is assumed to be depth, so we don't invert it
+    # User should import elevation data directly, not rely on conversions
     z_predicted_adjusted = predicted_z.copy()
-    if existing_type == 'elevation':
-        if inversion_reference is None:
-            raise ValueError("Elevation data requires inversion reference for Smart Fill")
-        z_predicted_adjusted = inversion_reference - predicted_z
 
     if num_valid < 100:
         raise ValueError("Insufficient valid data for non-linear modeling (need >100 pixels).")
@@ -1072,50 +1016,6 @@ def smart_fill_z_channel(existing_z, predicted_z, existing_unit='meters', existi
     return z_result, stats
 
 
-def validate_line_angle(start_point, end_point, warn_threshold=45.0):
-    """
-    Validate line angle and warn if too horizontal for Z-scale calibration.
-    
-    Args:
-        start_point (QPointF): Start point of the line
-        end_point (QPointF): End point of the line
-        warn_threshold (float): Angle threshold in degrees (default 45°)
-        
-    Returns:
-        tuple: (is_valid, angle_degrees, vertical_component, warning_message)
-            - is_valid (bool): True if line can be used
-            - angle_degrees (float): Angle from horizontal in degrees
-            - vertical_component (float): Vertical distance component
-            - warning_message (str): Warning message if applicable, else None
-    """
-    import math
-    
-    # Calculate components
-    dx = end_point.x() - start_point.x()
-    dy = end_point.y() - start_point.y()
-    
-    # Calculate angle from horizontal
-    angle_rad = math.atan2(abs(dy), abs(dx))
-    angle_deg = math.degrees(angle_rad)
-    
-    # Vertical component is the absolute Y difference
-    vertical_component = abs(dy)
-    
-    # Check if too horizontal
-    warning_message = None
-    is_valid = True
-    
-    if angle_deg < warn_threshold:
-        warning_message = (
-            f"Warning: Line angle ({angle_deg:.1f}°) is less than {warn_threshold}° from horizontal. "
-            f"For best results, draw a more vertical line."
-        )
-    
-    if vertical_component < 1.0:
-        is_valid = False
-        warning_message = "Error: Line is too short vertically. Please draw a longer line."
-    
-    return is_valid, angle_deg, vertical_component, warning_message
 
 
 def calculate_linear_transform_from_percentiles(source_data, target_min, target_max, min_percentile=5, 
