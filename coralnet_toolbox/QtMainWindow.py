@@ -789,22 +789,18 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-                "scale": ("Scale Tool\n\n"
-                          "Calibrate spatial and depth measurements.\n\n"
-                          "XY Scale Tab:\n"
-                          "• Set pixel size by drawing a line across a known distance.\n"
-                          "• Applies to highlighted images.\n\n"
-                          "Z-Calibration Tab:\n"
-                          "• Set nodata/NaN data value.\n"
-                          "• Calibrate vertical scale and reference point.\n"
-                          "• Real-time Z-Fence visualization while drawing."),
+            "scale": ("Scale Tool\n\n"
+                      "Calibrate spatial measurements.\n\n"
+                      "XY Scale Tab:\n"
+                      "• Set pixel size by drawing a line across a known distance.\n"
+                      "• Applies to highlighted images."),
 
-                "spatial": ("Spatial Measurement Tool\n\n"
-                            "Requires scale to be set.\n\n"
-                            "Measure rugosity:\n"
-                            "• Draw lines to measure 2D/3D distances and rugosity.\n"
-                            "• Generate measurement grids for systematic sampling.\n"
-                            "• View elevation profiles and 3D metrics when Z-data available."),
+            "spatial": ("Spatial Tool\n\n"
+                        "Requires scale to be set.\n\n"
+                        "Measure rugosity:\n"
+                        "• Draw lines to measure 2D/3D distances and rugosity.\n"
+                        "• Generate measurement grids for systematic sampling.\n"
+                        "• View elevation profiles and 3D metrics when Z-data available."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
@@ -1751,7 +1747,7 @@ class MainWindow(QMainWindow):
                 self.spatial_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "No Image Loaded",
-                                    "Please load an image before using the Spatial Measurement Tool.")
+                                    "Please load an image before using the Spatial Tool.")
                 return
             
             raster = self.image_window.raster_manager.get_raster(image_path)
@@ -1759,7 +1755,7 @@ class MainWindow(QMainWindow):
                 self.spatial_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "Scale Not Set",
-                                    "The Spatial Measurement Tool requires scale to be set on the current image.\n\n"
+                                    "The Spatial Tool requires scale to be set on the current image.\n\n"
                                     "Please use the Scale Tool to set the scale first.")
                 return
             
@@ -2133,7 +2129,7 @@ class MainWindow(QMainWindow):
             self.enable_z_visualization_controls(True)
             
             # Force status bar Z-value refresh at current mouse position
-            # This ensures z_nodata and z_settings are properly reflected when switching images
+            # This ensures z_nodata is properly reflected when switching images
             self.update_z_value_at_mouse_position(raster)
 
     def on_z_channel_removed(self, image_path):
@@ -2258,24 +2254,24 @@ class MainWindow(QMainWindow):
                 0 <= self.current_mouse_y < raster.height):
                 
                 try:
-                    # Get transformed z-value using non-destructive pipeline
-                    z_value_transformed = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
+                    # Get raw z-value
+                    z_value = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
                     
-                    if z_value_transformed is None:
+                    if z_value is None:
                         # Value is NaN or nodata
                         self.z_label.setText("Z: ----")
                         self.z_label.setToolTip("No valid Z-value at this location")
                     else:
-                        # Cache the transformed z-value for unit conversion
-                        self.current_z_value = z_value_transformed
+                        # Cache the z-value for unit conversion
+                        self.current_z_value = z_value
                         
                         # Get the original unit from the raster
                         original_unit = raster.z_unit if raster.z_unit else 'm'
                         
                         # Convert to selected unit if different from original
-                        display_value = z_value_transformed
+                        display_value = z_value
                         if self.current_unit_z != original_unit:
-                            display_value = convert_scale_units(z_value_transformed, original_unit, self.current_unit_z)
+                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
                         
                         # Format the display based on data type
                         if raster.z_channel.dtype == np.float32:
@@ -2283,19 +2279,9 @@ class MainWindow(QMainWindow):
                         else:
                             self.z_label.setText(f"Z: {int(display_value)}")
                         
-                        # Set tooltip showing Z-channel transformation settings
-                        z_settings = raster.z_settings
-                        scalar = z_settings.get('scalar', 1.0)
-                        offset = z_settings.get('offset', 0.0)
-                        direction = z_settings.get('direction', 1)
-                        
-                        tooltip_text = (
-                            f"Z-Channel Transformation:\n\n"
-                            f"  Scalar: {scalar:.6f}\n"
-                            f"  Offset: {offset:.6f}\n"
-                            f"  Direction: {direction}\n\n"
-                            f"Formula: Z_display = {direction} × (raw × {scalar:.6f}) + {offset:.6f}"
-                        )
+                        # Set simple tooltip with data type and unit
+                        z_type = raster.z_data_type if raster.z_data_type else 'Z-channel'
+                        tooltip_text = f"{z_type.capitalize()} data in {original_unit}"
                         self.z_label.setToolTip(tooltip_text)
                     
                     # Enable the z_label and dropdown since we have valid data

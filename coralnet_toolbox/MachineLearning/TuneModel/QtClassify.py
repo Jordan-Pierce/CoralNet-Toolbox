@@ -57,11 +57,11 @@ class Classify(Base):
                            'yolo11m-cls.pt',
                            'yolo11l-cls.pt',
                            'yolo11x-cls.pt',
-                           'yolo12n-cls.pt',
-                           'yolo12s-cls.pt',
-                           'yolo12m-cls.pt',
-                           'yolo12l-cls.pt',
-                           'yolo12x-cls.pt']
+                           'yolo26n-cls.pt',
+                           'yolo26s-cls.pt',
+                           'yolo26m-cls.pt',
+                           'yolo26l-cls.pt',
+                           'yolo26x-cls.pt']
         
         self.model_combo.addItems(standard_models)
 
@@ -72,4 +72,4 @@ class Classify(Base):
             self.model_combo.addItems(list(community_configs.keys()))
             
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo11n-cls.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo26n-cls.pt'))

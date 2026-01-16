@@ -254,7 +254,6 @@ class ZExportDialog(QDialog):
         progress_bar = ProgressBar(
             self,
             title="Exporting Z-Channels",
-            text_label="Exporting z-channels..."
         )
         progress_bar.show()
         progress_bar.start_progress(len(self.exportable_rasters))
@@ -337,14 +336,8 @@ class ZExportDialog(QDialog):
             bool: True if export successful, False otherwise
         """
         try:
-            # Get z-channel data and apply transform
+            # Get z-channel data (raw, no transform)
             z_data = raster.z_channel
-            
-            if z_data is not None:
-                scalar = raster.z_settings.get('scalar', 1.0)
-                offset = raster.z_settings.get('offset', 0.0)
-                direction = raster.z_settings.get('direction', 1)
-                z_data = (z_data * scalar * direction) + offset
             
             if z_data is None:
                 print(f"No z-channel data available for {raster.basename}")
@@ -361,9 +354,6 @@ class ZExportDialog(QDialog):
             
             if raster.z_nodata is not None:
                 metadata['z_nodata'] = str(raster.z_nodata)
-            
-            if raster.z_settings:
-                metadata['z_settings'] = str(raster.z_settings)
             
             # Get or create transform for georeferencing
             if hasattr(raster, 'rasterio_src') and raster.rasterio_src is not None:

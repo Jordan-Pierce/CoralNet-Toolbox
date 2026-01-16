@@ -713,8 +713,13 @@ class TrainModelDialog(QDialog):
                 'yoloe-11s-seg.pt',
                 'yoloe-11m-seg.pt',
                 'yoloe-11l-seg.pt',
+                'yoloe-26n-seg.pt',
+                'yoloe-26s-seg.pt',
+                'yoloe-26m-seg.pt',
+                'yoloe-26l-seg.pt',
+                'yoloe-26x-seg.pt'
             ]
-            default_model = 'yoloe-v8s-seg.pt'
+            default_model = 'yoloe-11s-seg.pt'
         else:  # detect
             standard_models = [
                 'yoloe-11s.yaml',

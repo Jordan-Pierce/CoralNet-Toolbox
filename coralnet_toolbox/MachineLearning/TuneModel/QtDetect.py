@@ -89,7 +89,12 @@ class Detect(Base):
                            'yolo12s.pt',
                            'yolo12m.pt',
                            'yolo12l.pt',
-                           'yolo12x.pt', 
+                           'yolo12x.pt',
+                           'yolo26n.pt',
+                           'yolo26s.pt',
+                           'yolo26m.pt',
+                           'yolo26l.pt',
+                           'yolo26x.pt', 
                            'rtdetr-l.pt',
                            'rtdetr-x.pt']
 
@@ -102,4 +107,4 @@ class Detect(Base):
             self.model_combo.addItems(list(community_configs.keys()))
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo11n.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo26n.pt'))
