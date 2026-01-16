@@ -19,7 +19,7 @@ class ProgressBar(QDialog):
     """
     progress_updated = pyqtSignal(int)
 
-    def __init__(self, parent=None, title="Progress", text_label=None):
+    def __init__(self, parent=None, title="Progress"):
         """
         Initialize the progress bar dialog.
         
@@ -38,11 +38,6 @@ class ProgressBar(QDialog):
         # This tells Qt to delete the widget when it receives a close event.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
 
-        # Create text label if provided
-        if text_label:
-            self.text_label = QLabel(text_label, self)
-            self.layout.addWidget(self.text_label)
-
         # Create progress bar widget
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setRange(0, 100)
@@ -54,8 +49,6 @@ class ProgressBar(QDialog):
 
         # Setup layout
         self.layout = QVBoxLayout(self)
-        if text_label:
-            self.layout.addWidget(self.text_label)
         self.layout.addWidget(self.progress_bar)
         self.layout.addWidget(self.cancel_button)
 

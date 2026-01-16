@@ -254,7 +254,6 @@ class ZExportDialog(QDialog):
         progress_bar = ProgressBar(
             self,
             title="Exporting Z-Channels",
-            text_label="Exporting z-channels..."
         )
         progress_bar.show()
         progress_bar.start_progress(len(self.exportable_rasters))
