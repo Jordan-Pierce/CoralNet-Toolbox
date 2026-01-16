@@ -357,6 +357,7 @@ class DeployModelDialog(CollapsibleSection):
     def _update_camera_parameters(self, raster, result, index=0):
         """
         Update raster with camera intrinsics and extrinsics from prediction result.
+        Only stores new parameters if the raster doesn't already have them.
         
         Args:
             raster: Raster object to update
@@ -365,11 +366,15 @@ class DeployModelDialog(CollapsibleSection):
         """
         intrinsics = result.get('intrinsics')
         if intrinsics is not None and len(intrinsics) > index and intrinsics[index] is not None:
-            raster.add_intrinsics(intrinsics[index])
+            # Only add if raster doesn't already have intrinsics
+            if raster.intrinsics is None:
+                raster.add_intrinsics(intrinsics[index])
         
         extrinsics = result.get('extrinsics')
         if extrinsics is not None and len(extrinsics) > index and extrinsics[index] is not None:
-            raster.add_extrinsics(extrinsics[index])
+            # Only add if raster doesn't already have extrinsics
+            if raster.extrinsics is None:
+                raster.add_extrinsics(extrinsics[index])
     
     def _convert_depth_to_elevation(self, depth_map):
         """
@@ -554,7 +559,24 @@ class DeployModelDialog(CollapsibleSection):
         # Batch predict for collected images
         if collected_overwrite:
             try:
-                result = self.loaded_model.predict(collected_overwrite)
+                # Gather existing camera parameters from rasters (if available)
+                intrinsics_list = []
+                extrinsics_list = []
+                for image_path in collected_overwrite:
+                    raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                    if raster is not None:
+                        intrinsics_list.append(raster.intrinsics)  # None if not available
+                        extrinsics_list.append(raster.extrinsics)  # None if not available
+                    else:
+                        intrinsics_list.append(None)
+                        extrinsics_list.append(None)
+                
+                # Call model with existing camera parameters (or None)
+                result = self.loaded_model.predict(
+                    collected_overwrite,
+                    intrinsics=intrinsics_list,
+                    extrinsics=extrinsics_list
+                )
                 
                 # Validate and extract depth maps
                 depth_maps = self._validate_prediction_result(result)
