@@ -12,8 +12,6 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QFormLayout, QHBoxLayout,
 from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.utilities import smart_fill_z_channel
-
 from coralnet_toolbox.Icons import get_icon
 
 import torch
@@ -447,7 +445,6 @@ class DeployModelDialog(CollapsibleSection):
             overwrite_mode: How to handle existing z-channels:
                            "overwrite" - overwrite without asking
                            "skip" - skip images with existing z-channels
-                           "smart_fill" - fill NaN values with scaled predictions
             show_dialog: Whether to show the overwrite dialog (False for single image from deploy_model)
         """
         if self.loaded_model is None:
@@ -494,41 +491,6 @@ class DeployModelDialog(CollapsibleSection):
                 # Check if raster already has z-channel
                 if raster.z_channel is not None:
                     if overwrite_mode == "skip":
-                        progress_bar.update_progress()
-                        continue
-                    
-                    elif overwrite_mode == "smart_fill":
-                        # Run prediction first
-                        result = self.loaded_model.predict([image_path])
-                        
-                        # Validate and extract depth maps
-                        depth_maps = self._validate_prediction_result(result, image_path)
-                        if depth_maps is None:
-                            progress_bar.update_progress()
-                            continue
-                        
-                        # Extract 2D depth map
-                        z_predicted = self._extract_depth_map(depth_maps[0], image_path)
-                        if z_predicted is None:
-                            progress_bar.update_progress()
-                            continue
-                        
-                        # Resize to match original raster dimensions
-                        z_predicted = self._resize_depth_map(z_predicted, raster)
-                        
-                        # Update camera parameters
-                        self._update_camera_parameters(raster, result, index=0)
-                        
-                        # Apply Smart Fill
-                        self._handle_smart_fill(raster, z_predicted)
-                        
-                        # Emit rasterUpdated signal to refresh UI (including status bar Z-value)
-                        self.main_window.image_window.raster_manager.rasterUpdated.emit(image_path)
-                        
-                        # Refresh visualization if this is the current raster
-                        if raster == self.main_window.image_window.current_raster:
-                            self.annotation_window.refresh_z_channel_visualization()
-                            
                         progress_bar.update_progress()
                         continue
                     # If overwrite_mode == "overwrite", fall through to collect for batch prediction
@@ -626,7 +588,7 @@ class DeployModelDialog(CollapsibleSection):
             is_batch (bool): Whether this is for batch processing multiple images.
         
         Returns:
-            str or None: "overwrite", "skip", "smart_fill", or None for cancel
+            str or None: "overwrite", "skip", or None for cancel
         """
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
@@ -637,22 +599,16 @@ class DeployModelDialog(CollapsibleSection):
         
         if is_batch:
             msg.setWindowTitle("Z-Inference Options")
-            msg.setText("How would you like to proceed with Z-Inference on these images?")
+            msg.setText("Some images already have Z-channels. How would you like to proceed?")
             msg.setInformativeText("")
             
             overwrite_btn = msg.addButton("Overwrite All", QMessageBox.AcceptRole)
             skip_btn = msg.addButton("Skip All", QMessageBox.RejectRole)
-            smart_fill_btn = msg.addButton("Smart Fill All", QMessageBox.ActionRole)
             cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
             
             # Add tooltips
             overwrite_btn.setToolTip("Replace existing Z-channels or add to images without Z-channels")
             skip_btn.setToolTip("Skip all images without processing")
-            smart_fill_btn.setToolTip(
-                "Preserve valid depth/elevation values and fill only NaN/missing areas "
-                "with scaled predictions matched to existing data. \nAutomatically handles "
-                "depth/elevation conversion and unit conversion to meters. Skips images without existing Z-channels."
-            )
             cancel_btn.setToolTip("Cancel the operation")
             
             msg.exec_()
@@ -663,8 +619,6 @@ class DeployModelDialog(CollapsibleSection):
                 return "overwrite"
             elif msg.clickedButton() == skip_btn:
                 return "skip"
-            elif msg.clickedButton() == smart_fill_btn:
-                return "smart_fill"
             else:
                 return None
         else:
@@ -674,16 +628,10 @@ class DeployModelDialog(CollapsibleSection):
             
             cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
             overwrite_btn = msg.addButton("Overwrite", QMessageBox.AcceptRole)
-            smart_fill_btn = msg.addButton("Smart Fill", QMessageBox.ActionRole)
             
             # Add tooltips to each button
             cancel_btn.setToolTip("Do nothing and return to the main window")
             overwrite_btn.setToolTip("Replace the entire existing Z-channel with new predictions")
-            smart_fill_btn.setToolTip(
-                "Preserve valid depth/elevation values and fill only NaN/missing areas "
-                "with scaled predictions matched to existing data. \nAutomatically handles "
-                "depth/elevation conversion and unit conversion to meters."
-            )
             
             msg.exec_()
             
@@ -691,62 +639,6 @@ class DeployModelDialog(CollapsibleSection):
                 return "cancel"
             elif msg.clickedButton() == overwrite_btn:
                 return "overwrite"
-            elif msg.clickedButton() == smart_fill_btn:
-                return "smart_fill"
             else:
                 return "cancel"
-            
-    def _handle_smart_fill(self, raster, z_predicted):
-        """
-        Handle Smart Fill - fill NaN values in existing z-channel with scaled predictions.
-        
-        This method uses the smart_fill_z_channel utility function to preserve known-good
-        depth measurements while filling gaps with model predictions.
-        
-        Args:
-            raster: The raster object with existing z_channel
-            z_predicted: New z-channel predictions from the model (numpy array, depth in meters)
-        """        
-        if raster.z_channel is None:
-            print("No existing z-channel to fill")
-            return
-        
-        try:
-            # Perform smart fill using utility function
-            z_result, stats = smart_fill_z_channel(
-                existing_z=raster.z_channel,
-                predicted_z=z_predicted,
-                existing_unit=raster.z_unit or 'meters',
-                existing_type=raster.z_data_type or 'depth'
-            )
-            
-            # Update the raster with filled result
-            raster.z_channel = z_result
-            raster.z_unit = 'meters'
 
-        except ValueError as e:
-            # Handle errors from smart_fill_z_channel
-            error_msg = str(e)
-            print(f"Smart Fill error: {error_msg}")
-            
-            if "only works with float32" in error_msg:
-                QMessageBox.warning(self.annotation_window, 
-                                    "Incompatible Data Type", 
-                                    "Smart Fill only works with float32 depth data, not uint8.")
-            elif "No valid" in error_msg or "Insufficient" in error_msg:
-                QMessageBox.information(self.annotation_window,
-                                        "No Gaps to Fill" if "No valid" in error_msg else "Insufficient Data",
-                                        error_msg)
-            else:
-                QMessageBox.warning(self.annotation_window, 
-                                    "Smart Fill Error", 
-                                    error_msg)
-            return
-        except Exception as e:
-            print(f"Unexpected error in Smart Fill: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self.annotation_window,
-                                 "Smart Fill Error",
-                                 f"An unexpected error occurred: {e}")
-            return
