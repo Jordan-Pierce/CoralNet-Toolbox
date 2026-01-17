@@ -161,7 +161,7 @@ class DeployModelDialog(CollapsibleSection):
             QMessageBox.warning(self, 
                                 "Missing Package", 
                                 "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
-                                "Please install it via pip:\npip install awesome-depth-anything-3")
+                                "Please install it via pip:\npip install awesome-depth-anything-3 or from source.")
             return
         
         # Check if HF_TOKEN environment variable is set
@@ -571,11 +571,39 @@ class DeployModelDialog(CollapsibleSection):
                         intrinsics_list.append(None)
                         extrinsics_list.append(None)
                 
+                # DA3 camera parameter requirements:
+                # - Intrinsics: can be provided for any number of images (N >= 1)
+                # - Extrinsics: requires at least 3 images for multi-view pose conditioning (N >= 3)
+                all_have_intrinsics = all(k is not None for k in intrinsics_list)
+                all_have_extrinsics = all(e is not None for e in extrinsics_list)
+                num_images = len(collected_overwrite)
+                
+                # Prepare intrinsics array if all images have them
+                if all_have_intrinsics:
+                    # Ensure each matrix has correct shape (3, 3) before stacking
+                    clean_intrinsics = [np.squeeze(k) for k in intrinsics_list]
+                    intrinsics_array = np.stack(clean_intrinsics, axis=0)  # Shape: (N, 3, 3)
+                else:
+                    intrinsics_array = None
+                
+                # Prepare extrinsics array if all images have them AND we have at least 3 images
+                if all_have_extrinsics and num_images >= 3:
+                    # Ensure each matrix has correct shape (4, 4) before stacking
+                    clean_extrinsics = [np.squeeze(e) for e in extrinsics_list]
+                    extrinsics_array = np.stack(clean_extrinsics, axis=0)  # Shape: (N, 4, 4)
+                else:
+                    # Don't use extrinsics if we have fewer than 3 images
+                    extrinsics_array = None
+                    if all_have_extrinsics and num_images < 3:
+                        print(f"Extrinsics available but not used (need >= 3 images, have {num_images})")
+                    if intrinsics_array is not None:
+                        print(f"Using intrinsics only: shape {intrinsics_array.shape}")
+                
                 # Call model with existing camera parameters (or None)
                 result = self.loaded_model.predict(
                     collected_overwrite,
-                    intrinsics=intrinsics_list,
-                    extrinsics=extrinsics_list
+                    intrinsics=intrinsics_array,
+                    extrinsics=extrinsics_array
                 )
                 
                 # Validate and extract depth maps
