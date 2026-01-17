@@ -407,7 +407,7 @@ class ImportCOLMAPCameras(QDialog):
             # Auto-fill images file if it exists in the same directory
             parent_dir = os.path.dirname(file_path)
             file_ext = os.path.splitext(file_path)[1]  # .bin or .txt
-            images_file = os.path.join(parent_dir, f"images{file_ext}")
+            images_file = f"{parent_dir}/images{file_ext}"
             
             if os.path.exists(images_file) and not self.images_file_edit.text():
                 self.images_file_edit.setText(images_file)
@@ -428,7 +428,7 @@ class ImportCOLMAPCameras(QDialog):
             # Auto-fill cameras file if it exists in the same directory
             parent_dir = os.path.dirname(file_path)
             file_ext = os.path.splitext(file_path)[1]  # .bin or .txt
-            cameras_file = os.path.join(parent_dir, f"cameras{file_ext}")
+            cameras_file = f"{parent_dir}/cameras{file_ext}"
             
             if os.path.exists(cameras_file) and not self.cameras_file_edit.text():
                 self.cameras_file_edit.setText(cameras_file)
