@@ -1088,7 +1088,9 @@ class MainWindow(QMainWindow):
 
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
-        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
+        self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.z_unit_dropdown.setFixedWidth(50)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
