@@ -109,7 +109,6 @@ class ExportMaskAnnotations(QDialog):
         right_col = QVBoxLayout()
 
         self.setup_annotation_layout(parent_layout=left_col)
-        self.setup_image_selection_layout(parent_layout=left_col)
         self.setup_label_layout(parent_layout=right_col)
 
         columns_layout.addLayout(left_col, 1)
@@ -212,29 +211,6 @@ class ExportMaskAnnotations(QDialog):
         parent_layout.addWidget(groupbox)
         self.update_georef_availability()
 
-    def setup_image_selection_layout(self, parent_layout=None):
-        """Set up the image selection layout."""
-        group_box = QGroupBox("Apply To")
-        layout = QVBoxLayout()
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
-
-        self.apply_group = QButtonGroup(self)
-        self.apply_group.addButton(self.apply_filtered_checkbox)
-        self.apply_group.addButton(self.apply_prev_checkbox)
-        self.apply_group.addButton(self.apply_next_checkbox)
-        self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(True)
-        group_box.setLayout(layout)
-        parent_layout.addWidget(group_box)
-
     def setup_annotation_layout(self, parent_layout=None):
         """Set up the annotations to include layout."""
         groupbox = QGroupBox("Annotations to Include")
@@ -256,6 +232,16 @@ class ExportMaskAnnotations(QDialog):
         layout.addWidget(self.rectangle_checkbox)
         layout.addWidget(self.polygon_checkbox)
         layout.addWidget(self.include_negative_samples_checkbox)
+        
+        info_text = QLabel(
+            "Select which types of annotations to include in the export. <b>Mask Annotations</b> serve as the base "
+            "layer, while vector annotations (patches, rectangles, polygons) are drawn on top. <b>'Include negative "
+            "samples'</b> exports masks for images without annotations."
+        )
+        info_text.setWordWrap(True)
+        info_text.setStyleSheet("color: #666;")
+        layout.addWidget(info_text)
+        
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
 
@@ -431,25 +417,8 @@ class ExportMaskAnnotations(QDialog):
             self.output_dir_edit.setText(directory)
 
     def get_selected_image_paths(self):
-        """Get the selected image paths based on the apply options."""
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
-            return []
-
-        if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.table_model.filtered_paths
-        elif self.apply_prev_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[:current_index + 1]
-        elif self.apply_next_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[current_index:]
-        elif self.apply_all_checkbox.isChecked():
-            return self.image_window.raster_manager.image_paths
-        
-        return [current_image_path]
+        """Get all image paths."""
+        return self.image_window.raster_manager.image_paths
 
     def validate_inputs(self):
         """Validate the user inputs before export."""
