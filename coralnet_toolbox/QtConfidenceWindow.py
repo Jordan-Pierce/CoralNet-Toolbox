@@ -536,6 +536,57 @@ class ConfidenceWindow(QWidget):
                 except Exception as e:
                     print(f"Error calculating 3D metrics for tooltip: {e}")
                     # Don't add to tooltip if calculation fails
+        
+        # Morphology metrics (only for annotation types that support it)
+        try:
+            morph_data = annotation.get_morphology()
+            if morph_data:
+                
+                # Get target unit for display
+                target_unit = self.main_window.current_unit_scale
+                has_scale = 'units' in morph_data and morph_data['units'] is not None
+                
+                # Dimensions section
+                if has_scale and 'major_axis_scaled' in morph_data:
+                    base_unit = morph_data['units']
+                    # Convert major/minor axis to target units
+                    major_scaled = convert_scale_units(morph_data['major_axis_scaled'], base_unit, target_unit)
+                    minor_scaled = convert_scale_units(morph_data['minor_axis_scaled'], base_unit, target_unit)
+                    tooltip_parts.append(f"<b>Length:</b> {major_scaled:.2f} {target_unit}")
+                    tooltip_parts.append(f"<b>Width:</b> {minor_scaled:.2f} {target_unit}")
+                else:
+                    # Show pixel values
+                    tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis_px']:.2f} px")
+                    tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis_px']:.2f} px")
+                
+                # Shape descriptors (unitless ratios)
+                if morph_data.get('aspect_ratio') is not None:
+                    tooltip_parts.append(f"<b>Aspect Ratio:</b> {morph_data['aspect_ratio']:.3f}")
+                if morph_data.get('roundness') is not None:
+                    tooltip_parts.append(f"<b>Roundness:</b> {morph_data['roundness']:.3f}")
+                if morph_data.get('circularity') is not None:
+                    tooltip_parts.append(f"<b>Circularity:</b> {morph_data['circularity']:.3f}")
+                if morph_data.get('solidity') is not None:
+                    tooltip_parts.append(f"<b>Solidity:</b> {morph_data['solidity']:.3f}")
+                if morph_data.get('convexity') is not None:
+                    tooltip_parts.append(f"<b>Convexity:</b> {morph_data['convexity']:.3f}")
+                
+                # Hull metrics
+                if has_scale and 'hull_area_scaled' in morph_data:
+                    base_unit = morph_data['units']
+                    # Convert hull area (need to square the linear conversion factor)
+                    linear_conv = convert_scale_units(1.0, base_unit, target_unit)
+                    area_conv = linear_conv * linear_conv
+                    hull_area = morph_data['hull_area_scaled'] * area_conv
+                    hull_perim = convert_scale_units(morph_data['hull_perimeter_scaled'], base_unit, target_unit)
+                    tooltip_parts.append(f"<b>Hull Area:</b> {hull_area:.2f} {target_unit}²")
+                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {hull_perim:.2f} {target_unit}")
+                else:
+                    tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area_px']:.2f} px²")
+                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter_px']:.2f} px")
+                    
+        except (NotImplementedError, AttributeError):
+            pass  # No morphology method available
                 
         # Additional data
         if hasattr(annotation, 'data') and annotation.data:

@@ -1,6 +1,6 @@
-import os
-import json
 import warnings
+
+import os
 
 import numpy as np
 from PIL import Image
@@ -80,7 +80,6 @@ class ImportMaskAnnotations(QDialog):
         self.detected_mode = None  # 'semantic' (1-channel) or 'rgb' (3-channel)
         self.unique_values = []  # List of unique values found in masks
         self.mapping_widgets = {}  # Maps value -> QComboBox for label selection
-        self.loaded_json_mapping = None  # Optional mapping from JSON file
 
         # Main layout for the dialog
         self.main_layout = QVBoxLayout(self)
@@ -104,7 +103,6 @@ class ImportMaskAnnotations(QDialog):
 
         # Initial UI state
         self.import_button.setEnabled(False)
-        self.load_mapping_button.setEnabled(False)
 
     def setup_info_layout(self, parent_layout=None):
         """Set up the information layout section."""
@@ -132,31 +130,28 @@ class ImportMaskAnnotations(QDialog):
 
     def setup_input_layout(self, parent_layout=None):
         """Set up the input directory and scan layout."""
-        groupbox = QGroupBox("Input Masks")
+        groupbox = QGroupBox("Input")
         layout = QVBoxLayout()
 
         # Directory/file selection
         input_layout = QHBoxLayout()
+        masks_label = QLabel("Masks:")
         self.input_path_edit = QLineEdit()
-        self.input_path_edit.setPlaceholderText("Select mask files or a directory containing masks...")
+        self.input_path_edit.setPlaceholderText("Select PNG mask files...")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self.browse_input)
+        input_layout.addWidget(masks_label)
         input_layout.addWidget(self.input_path_edit)
         input_layout.addWidget(self.browse_button)
         layout.addLayout(input_layout)
 
-        # Scan button
-        scan_layout = QHBoxLayout()
-        scan_layout.addStretch(1)
-        self.scan_button = QPushButton("Scan Masks")
-        self.scan_button.setMinimumWidth(120)
-        self.scan_button.clicked.connect(self.scan_masks)
-        scan_layout.addWidget(self.scan_button)
-        scan_layout.addStretch(1)
-        layout.addLayout(scan_layout)
-
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
+
+        # Scan button (outside groupbox)
+        self.scan_button = QPushButton("Scan Masks")
+        self.scan_button.clicked.connect(self.scan_masks)
+        parent_layout.addWidget(self.scan_button)
 
     def setup_mapping_table_layout(self, parent_layout=None):
         """Set up the value-to-label mapping table."""
@@ -184,15 +179,6 @@ class ImportMaskAnnotations(QDialog):
         self.mapping_table.hide()
         layout.addWidget(self.mapping_table)
 
-        # Load mapping button
-        mapping_button_layout = QHBoxLayout()
-        mapping_button_layout.addStretch(1)
-        self.load_mapping_button = QPushButton("Load Mapping from JSON...")
-        self.load_mapping_button.clicked.connect(self.load_mapping_json)
-        mapping_button_layout.addWidget(self.load_mapping_button)
-        mapping_button_layout.addStretch(1)
-        layout.addLayout(mapping_button_layout)
-
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
 
@@ -212,38 +198,17 @@ class ImportMaskAnnotations(QDialog):
         parent_layout.addLayout(button_layout)
 
     def browse_input(self):
-        """Open file dialog to select mask files or directory."""
+        """Open file dialog to select mask files."""
         options = QFileDialog.Options()
-        
-        # Ask user: files or directory?
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Select Input Type")
-        msg_box.setText("How would you like to select masks?")
-        files_button = msg_box.addButton("Select Files", QMessageBox.ActionRole)
-        dir_button = msg_box.addButton("Select Directory", QMessageBox.ActionRole)
-        msg_box.addButton(QMessageBox.Cancel)
-        msg_box.exec_()
-
-        if msg_box.clickedButton() == files_button:
-            file_paths, _ = QFileDialog.getOpenFileNames(
-                self,
-                "Select Mask Files",
-                "",
-                "PNG Files (*.png);;All Files (*)",
-                options=options
-            )
-            if file_paths:
-                self.input_path_edit.setText(";".join(file_paths))
-                
-        elif msg_box.clickedButton() == dir_button:
-            dir_path = QFileDialog.getExistingDirectory(
-                self,
-                "Select Masks Directory",
-                "",
-                options=options
-            )
-            if dir_path:
-                self.input_path_edit.setText(dir_path)
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Mask Files",
+            "",
+            "PNG Files (*.png);;All Files (*)",
+            options=options
+        )
+        if file_paths:
+            self.input_path_edit.setText(";".join(file_paths))
 
     def get_mask_files(self):
         """Get list of mask files from the input path."""
@@ -252,20 +217,12 @@ class ImportMaskAnnotations(QDialog):
             return []
 
         mask_files = []
-        
-        # Check if it's a directory or file list
-        if os.path.isdir(input_text):
-            # Scan directory for PNG files
-            for filename in os.listdir(input_text):
-                if filename.lower().endswith('.png'):
-                    mask_files.append(os.path.join(input_text, filename))
-        else:
-            # It's a semicolon-separated list of files
-            paths = input_text.split(";")
-            for path in paths:
-                path = path.strip()
-                if path and os.path.isfile(path) and path.lower().endswith('.png'):
-                    mask_files.append(path)
+        # Parse semicolon-separated list of files
+        paths = input_text.split(";")
+        for path in paths:
+            path = path.strip()
+            if path and os.path.isfile(path) and path.lower().endswith('.png'):
+                mask_files.append(path)
 
         return mask_files
 
@@ -409,13 +366,11 @@ class ImportMaskAnnotations(QDialog):
         if self.valid_mask_pairs and self.unique_values:
             self.populate_mapping_table()
             self.import_button.setEnabled(True)
-            self.load_mapping_button.setEnabled(True)
         else:
             self.placeholder_label.setText("No valid masks found. Check file names and dimensions.")
             self.placeholder_label.show()
             self.mapping_table.hide()
             self.import_button.setEnabled(False)
-            self.load_mapping_button.setEnabled(False)
 
     def populate_mapping_table(self):
         """Populate the mapping table with detected values."""
@@ -445,15 +400,16 @@ class ImportMaskAnnotations(QDialog):
                 swatch = ColorSwatchWidget(q_color)
                 container = QWidget()
                 layout = QHBoxLayout(container)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.addStretch(1)
                 layout.addWidget(swatch)
                 
                 # Also show RGB values as text
                 rgb_label = QLabel(f"({value[0]}, {value[1]}, {value[2]})")
                 rgb_label.setStyleSheet("color: #666; font-size: 10px;")
                 layout.addWidget(rgb_label)
+                layout.addStretch(1)
                 
-                layout.setAlignment(Qt.AlignCenter)
-                layout.setContentsMargins(5, 2, 5, 2)
                 self.mapping_table.setCellWidget(row, 0, container)
                 
                 # Store value in a hidden item for retrieval
@@ -477,76 +433,6 @@ class ImportMaskAnnotations(QDialog):
             
             self.mapping_table.setCellWidget(row, 1, combo)
             self.mapping_widgets[value] = combo
-
-        # Apply any loaded JSON mapping
-        if self.loaded_json_mapping:
-            self.apply_json_mapping()
-
-    def load_mapping_json(self):
-        """Load a mapping from a JSON file (e.g., exported metadata.json)."""
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Mapping JSON",
-            "",
-            "JSON Files (*.json);;All Files (*)",
-            options=options
-        )
-        
-        if not file_path:
-            return
-
-        try:
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-
-            self.loaded_json_mapping = data
-            self.apply_json_mapping()
-            
-            QMessageBox.information(self, "Mapping Loaded", 
-                                    f"Loaded mapping from: {os.path.basename(file_path)}\n\n"
-                                    "Mappings have been applied to matching values.")
-
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load JSON file:\n{str(e)}")
-
-    def apply_json_mapping(self):
-        """Apply the loaded JSON mapping to the current table."""
-        if not self.loaded_json_mapping or not self.mapping_widgets:
-            return
-
-        # Expected format from export: {"labels": [{"short_label_code": "...", "mask_value": N, "color": [R,G,B]}]}
-        labels_data = self.loaded_json_mapping.get('labels', [])
-        
-        # Build lookup: value -> label_short_code
-        value_to_label = {}
-        for label_info in labels_data:
-            short_code = label_info.get('short_label_code')
-            mask_value = label_info.get('mask_value')
-            color = label_info.get('color')
-            
-            if short_code and mask_value is not None:
-                if self.detected_mode == 'semantic':
-                    value_to_label[mask_value] = short_code
-                elif color and len(color) >= 3:
-                    value_to_label[tuple(color[:3])] = short_code
-
-        # Also check for reverse format: {"label_short_code": value}
-        for key, val in self.loaded_json_mapping.items():
-            if key != 'labels' and isinstance(val, (int, list)):
-                if self.detected_mode == 'semantic' and isinstance(val, int):
-                    value_to_label[val] = key
-                elif self.detected_mode == 'rgb' and isinstance(val, list) and len(val) >= 3:
-                    value_to_label[tuple(val[:3])] = key
-
-        # Apply to comboboxes
-        for value, combo in self.mapping_widgets.items():
-            if value in value_to_label:
-                label_code = value_to_label[value]
-                # Find index in combobox
-                idx = combo.findText(label_code)
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
 
     def validate_inputs(self):
         """Validate that we have valid data for import."""
@@ -598,14 +484,10 @@ class ImportMaskAnnotations(QDialog):
             msg_box.setWindowTitle("Existing Masks Detected")
             msg_box.setText(f"{len(conflicts)} image(s) already have mask annotations.\n\n"
                             "How would you like to proceed?")
-            detail_text = "Images with existing masks:\n" + "\n".join(conflicts[:20])
-            if len(conflicts) > 20:
-                detail_text += "\n..."
-            msg_box.setDetailedText(detail_text)
             
-            overwrite_btn = msg_box.addButton("Overwrite Existing", QMessageBox.AcceptRole)
-            skip_btn = msg_box.addButton("Skip Conflicts", QMessageBox.RejectRole)
-            msg_box.addButton(QMessageBox.Cancel)
+            overwrite_btn = msg_box.addButton("Overwrite", QMessageBox.AcceptRole)
+            skip_btn = msg_box.addButton("Skip", QMessageBox.RejectRole)
+            msg_box.addButton("Cancel", QMessageBox.RejectRole)
             
             msg_box.exec_()
             
@@ -728,8 +610,7 @@ class ImportMaskAnnotations(QDialog):
         QMessageBox.information(self, "Import Complete", "\n".join(summary_parts))
         
         # Close dialog on success
-        if imported_count > 0:
-            self.accept()
+        self.accept()
 
     def closeEvent(self, event):
         """Handle dialog close event."""

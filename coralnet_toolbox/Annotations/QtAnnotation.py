@@ -132,6 +132,105 @@ class Annotation(QObject):
             except (NotImplementedError, TypeError):
                 return None
         return None
+
+    def get_morphology(self) -> dict | None:
+        """
+        Calculate advanced morphology metrics for the annotation.
+        
+        This base implementation returns None. Subclasses that support
+        morphology calculations (e.g., PolygonAnnotation) should override
+        this method to return a dictionary of metrics.
+        
+        Returns:
+            dict | None: A dictionary containing morphology metrics, or None
+                        if morphology is not supported for this annotation type.
+        """
+        return None
+
+    def _apply_scale_to_morphology(self, raw_metrics: dict) -> dict:
+        """
+        Helper method to compute unitless ratios and optionally add scaled values.
+        
+        Args:
+            raw_metrics: Dictionary containing raw pixel values:
+                - major_axis_px: Length of major axis in pixels
+                - minor_axis_px: Length of minor axis in pixels  
+                - hull_area_px: Area of convex hull in pixels²
+                - hull_perimeter_px: Perimeter of convex hull in pixels
+                - area_px: Area of annotation in pixels²
+                - perimeter_px: Perimeter of annotation in pixels
+        
+        Returns:
+            dict: A flat dictionary containing all calculated metrics including:
+                - Unitless ratios (aspect_ratio, roundness, circularity, solidity, convexity)
+                - Raw pixel values
+                - Scaled values with units (if scale is available)
+        """
+        result = {}
+        
+        # Extract raw values
+        major_axis_px = raw_metrics.get('major_axis_px', 0)
+        minor_axis_px = raw_metrics.get('minor_axis_px', 0)
+        hull_area_px = raw_metrics.get('hull_area_px', 0)
+        hull_perimeter_px = raw_metrics.get('hull_perimeter_px', 0)
+        area_px = raw_metrics.get('area_px', 0)
+        perimeter_px = raw_metrics.get('perimeter_px', 0)
+        
+        # Store raw pixel values
+        result['major_axis_px'] = major_axis_px
+        result['minor_axis_px'] = minor_axis_px
+        result['hull_area_px'] = hull_area_px
+        result['hull_perimeter_px'] = hull_perimeter_px
+        
+        # Calculate unitless ratios (these are scale-invariant)
+        # Aspect Ratio: major / minor (elongation measure)
+        if minor_axis_px > 0:
+            result['aspect_ratio'] = major_axis_px / minor_axis_px
+        else:
+            result['aspect_ratio'] = None
+        
+        # Roundness: 4 * area / (π * major_axis²)
+        # Measures how close to a circle based on major axis
+        if major_axis_px > 0:
+            result['roundness'] = (4 * area_px) / (math.pi * major_axis_px * major_axis_px)
+        else:
+            result['roundness'] = None
+        
+        # Circularity: 4π * area / perimeter²
+        # Perfect circle = 1.0, more complex shapes < 1.0
+        if perimeter_px > 0:
+            result['circularity'] = (4 * math.pi * area_px) / (perimeter_px * perimeter_px)
+        else:
+            result['circularity'] = None
+        
+        # Solidity: area / hull_area
+        # Measures convexity of shape (1.0 = fully convex)
+        if hull_area_px > 0:
+            result['solidity'] = area_px / hull_area_px
+        else:
+            result['solidity'] = None
+        
+        # Convexity: hull_perimeter / perimeter
+        # Measures boundary smoothness (1.0 = perfectly smooth convex boundary)
+        if perimeter_px > 0:
+            result['convexity'] = hull_perimeter_px / perimeter_px
+        else:
+            result['convexity'] = None
+        
+        # Add scaled values if scale is available
+        if self.scale_x and self.scale_y and self.scale_units:
+            result['units'] = self.scale_units
+            
+            # Scale lengths (linear scaling)
+            result['major_axis_scaled'] = major_axis_px * self.scale_x
+            result['minor_axis_scaled'] = minor_axis_px * self.scale_x
+            result['hull_perimeter_scaled'] = hull_perimeter_px * self.scale_x
+            
+            # Scale areas (quadratic scaling)
+            area_scale = self.scale_x * self.scale_y
+            result['hull_area_scaled'] = hull_area_px * area_scale
+        
+        return result
     
     def _get_raster_slice_and_mask(self, full_raster_data: np.ndarray):
         """
@@ -966,6 +1065,11 @@ class Annotation(QObject):
         if scaled_perimeter:
             result['scaled_perimeter'] = scaled_perimeter[0]
             result['perimeter_units'] = scaled_perimeter[1]
+
+        # Add morphology data if available (only for annotation types that support it)
+        morph_data = self.get_morphology()
+        if morph_data is not None:
+            result['morphology'] = morph_data
 
         return result
 

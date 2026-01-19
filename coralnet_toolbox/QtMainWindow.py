@@ -448,7 +448,7 @@ class MainWindow(QMainWindow):
         self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
         # Import Mask Annotations
-        self.import_mask_annotations_action = QAction("Mask Annotations (PNG)", self)
+        self.import_mask_annotations_action = QAction("Masks (PNG)", self)
         self.import_mask_annotations_action.triggered.connect(self.open_import_mask_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_mask_annotations_action)
 
@@ -500,7 +500,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_action.triggered.connect(self.export_geojson_annotations_dialog.exec_)
         self.export_annotations_menu.addAction(self.export_geojson_annotations_action)
         # Export Mask Annotations
-        self.export_mask_annotations_action = QAction("Masks (Raster)", self)
+        self.export_mask_annotations_action = QAction("Masks (PNG)", self)
         self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_mask_annotations_action)
 
