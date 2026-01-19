@@ -101,11 +101,10 @@ class ExportGeoJSONAnnotations(QDialog):
         self.output_file_edit = QLineEdit()
         self.browse_output_file_button = QPushButton("Browse...")
         self.browse_output_file_button.clicked.connect(self.browse_output_file)
-        file_field_widget = QWidget()
-        file_field_layout = QHBoxLayout(file_field_widget)
+        file_field_layout = QHBoxLayout()
         file_field_layout.addWidget(self.output_file_edit)
         file_field_layout.addWidget(self.browse_output_file_button)
-        single_layout.addRow("Output File:", file_field_widget)
+        single_layout.addRow("Output File:", file_field_layout)
         self.tab_widget.addTab(single_tab, "Single File")
 
         # Multiple Files Tab
@@ -114,11 +113,10 @@ class ExportGeoJSONAnnotations(QDialog):
         self.output_dir_edit = QLineEdit()
         self.browse_output_dir_button = QPushButton("Browse...")
         self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
-        dir_field_widget = QWidget()
-        dir_field_layout = QHBoxLayout(dir_field_widget)
+        dir_field_layout = QHBoxLayout()
         dir_field_layout.addWidget(self.output_dir_edit)
         dir_field_layout.addWidget(self.browse_output_dir_button)
-        multi_layout.addRow("Output Directory:", dir_field_widget)
+        multi_layout.addRow("Output Directory:", dir_field_layout)
         self.tab_widget.addTab(multi_tab, "Multiple Files")
 
         layout.addWidget(self.tab_widget)
