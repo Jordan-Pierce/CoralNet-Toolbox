@@ -55,6 +55,7 @@ from coralnet_toolbox.IO import (
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
+    ImportMaskAnnotations,
     ImportCOLMAPCameras,
     ExportLabels,
     ExportTagLabLabels,
@@ -261,6 +262,7 @@ class MainWindow(QMainWindow):
         self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.import_squidle_annotations = ImportSquidleAnnotations(self)
+        self.import_mask_annotations_dialog = ImportMaskAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -445,6 +447,10 @@ class MainWindow(QMainWindow):
         self.import_squidle_annotations_action = QAction("Squidle (JSON)", self)
         self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
+        # Import Mask Annotations
+        self.import_mask_annotations_action = QAction("Mask Annotations (PNG)", self)
+        self.import_mask_annotations_action.triggered.connect(self.open_import_mask_annotations_dialog)
+        self.import_annotations_menu.addAction(self.import_mask_annotations_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
@@ -2656,6 +2662,28 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.export_mask_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_import_mask_annotations_dialog(self):
+        """Open the Import Mask Annotations dialog to import segmentation masks"""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before importing mask annotations.")
+            return
+
+        # Check if there are any labels
+        if not self.label_window.labels:
+            QMessageBox.warning(self,
+                                "No Labels",
+                                "Please create labels before importing mask annotations.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.import_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

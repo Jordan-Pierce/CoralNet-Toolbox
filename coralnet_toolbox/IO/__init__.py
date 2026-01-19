@@ -8,6 +8,7 @@ from .QtImportCoralNetAnnotations import ImportCoralNetAnnotations
 from .QtImportViscoreAnnotations import ImportViscoreAnnotations
 from .QtImportTagLabAnnotations import ImportTagLabAnnotations
 from .QtImportSquidleAnnotations import ImportSquidleAnnotations
+from .QtImportMaskAnnotations import ImportMaskAnnotations
 from .QtImportCOLMAPCameras import ImportCOLMAPCameras
 from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
@@ -31,6 +32,7 @@ __all__ = [
     'ImportViscoreAnnotations',
     'ImportTagLabAnnotations',
     'ImportSquidleAnnotations',
+    'ImportMaskAnnotations',
     'ImportCOLMAPCameras',
     'ExportLabels',
     'ExportTagLabLabels',
