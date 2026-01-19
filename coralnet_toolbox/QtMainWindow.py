@@ -404,7 +404,7 @@ class MainWindow(QMainWindow):
         # Cameras submenu
         self.import_cameras_menu = self.import_menu.addMenu("Cameras")
         # Import COLMAP Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP", self)
+        self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
 
@@ -609,11 +609,11 @@ class MainWindow(QMainWindow):
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
 
         # Transformers submenu
-        self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
+        # self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
         # Deploy Model
-        self.transformers_deploy_model_action = QAction("Deploy Model", self)
-        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
-        self.transformers_menu.addAction(self.transformers_deploy_model_action)
+        # self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        # self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        # self.transformers_menu.addAction(self.transformers_deploy_model_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -1004,6 +1004,8 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.toolbar.addWidget(spacer)
+        
+        self.toolbar.addSeparator()
 
         # Add the device label widget as an action in the toolbar
         self.devices = self.get_available_devices()
