@@ -401,8 +401,8 @@ class MainWindow(QMainWindow):
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
         
-        # Camera Parameters submenu
-        self.import_cameras_menu = self.import_menu.addMenu("Camera Parameters")
+        # Cameras submenu
+        self.import_cameras_menu = self.import_menu.addMenu("Cameras")
         # Import COLMAP Cameras
         self.import_colmap_cameras_action = QAction("COLMAP", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
