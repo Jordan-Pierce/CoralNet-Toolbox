@@ -556,8 +556,8 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Width:</b> {minor_scaled:.2f} {target_unit}")
                 else:
                     # Show pixel values
-                    tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis_px']:.2f} px")
-                    tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis_px']:.2f} px")
+                    tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis']:.2f} px")
+                    tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis']:.2f} px")
                 
                 # Shape descriptors (unitless ratios)
                 if morph_data.get('aspect_ratio') is not None:
@@ -582,8 +582,8 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Hull Area:</b> {hull_area:.2f} {target_unit}²")
                     tooltip_parts.append(f"<b>Hull Perimeter:</b> {hull_perim:.2f} {target_unit}")
                 else:
-                    tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area_px']:.2f} px²")
-                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter_px']:.2f} px")
+                    tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area']:.2f} px²")
+                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter']:.2f} px")
                     
         except (NotImplementedError, AttributeError):
             pass  # No morphology method available

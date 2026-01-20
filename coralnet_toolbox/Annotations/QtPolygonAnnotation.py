@@ -228,11 +228,11 @@ class PolygonAnnotation(Annotation):
             np_points = np.array([[p.x(), p.y()] for p in self.points], dtype=np.float32)
             
             # Get existing area and perimeter
-            area_px = self.get_area()
-            perimeter_px = self.get_perimeter()
+            area = self.get_area()
+            perimeter = self.get_perimeter()
             
             # Guard against degenerate polygons
-            if area_px <= 0 or perimeter_px <= 0:
+            if area <= 0 or perimeter <= 0:
                 return None
             
             # --- Calculate Minimum Area Bounding Rectangle ---
@@ -242,25 +242,25 @@ class PolygonAnnotation(Annotation):
             width, height = rect[1]  # (width, height) of the rotated rectangle
             
             # Major axis is the longer dimension, minor is the shorter
-            major_axis_px = max(width, height)
-            minor_axis_px = min(width, height)
+            major_axis = max(width, height)
+            minor_axis = min(width, height)
             
             # --- Calculate Convex Hull ---
             # cv2.convexHull requires at least 1 point
             hull = cv2.convexHull(np_points)
             
             # Calculate hull area and perimeter
-            hull_area_px = cv2.contourArea(hull)
-            hull_perimeter_px = cv2.arcLength(hull, closed=True)
+            hull_area = cv2.contourArea(hull)
+            hull_perimeter = cv2.arcLength(hull, closed=True)
             
             # Package raw metrics
             raw_metrics = {
-                'major_axis_px': major_axis_px,
-                'minor_axis_px': minor_axis_px,
-                'hull_area_px': hull_area_px,
-                'hull_perimeter_px': hull_perimeter_px,
-                'area_px': area_px,
-                'perimeter_px': perimeter_px,
+                'major_axis': major_axis,
+                'minor_axis': minor_axis,
+                'hull_area': hull_area,
+                'hull_perimeter': hull_perimeter,
+                'area': area,
+                'perimeter': perimeter,
             }
             
             # Use the base class helper to compute ratios and scaled values

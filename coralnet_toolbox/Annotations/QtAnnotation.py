@@ -155,12 +155,12 @@ class Annotation(QObject):
         
         Args:
             raw_metrics: Dictionary containing raw pixel values:
-                - major_axis_px: Length of major axis in pixels
-                - minor_axis_px: Length of minor axis in pixels  
-                - hull_area_px: Area of convex hull in pixels²
-                - hull_perimeter_px: Perimeter of convex hull in pixels
-                - area_px: Area of annotation in pixels²
-                - perimeter_px: Perimeter of annotation in pixels
+                - major_axis: Length of major axis in pixels
+                - minor_axis: Length of minor axis in pixels  
+                - hull_area: Area of convex hull in pixels²
+                - hull_perimeter: Perimeter of convex hull in pixels
+                - area: Area of annotation in pixels²
+                - perimeter: Perimeter of annotation in pixels
         
         Returns:
             dict: A flat dictionary containing all calculated metrics including:
@@ -171,51 +171,51 @@ class Annotation(QObject):
         result = {}
         
         # Extract raw values
-        major_axis_px = raw_metrics.get('major_axis_px', 0)
-        minor_axis_px = raw_metrics.get('minor_axis_px', 0)
-        hull_area_px = raw_metrics.get('hull_area_px', 0)
-        hull_perimeter_px = raw_metrics.get('hull_perimeter_px', 0)
-        area_px = raw_metrics.get('area_px', 0)
-        perimeter_px = raw_metrics.get('perimeter_px', 0)
+        major_axis = raw_metrics.get('major_axis', 0)
+        minor_axis = raw_metrics.get('minor_axis', 0)
+        hull_area = raw_metrics.get('hull_area', 0)
+        hull_perimeter = raw_metrics.get('hull_perimeter', 0)
+        area = raw_metrics.get('area', 0)
+        perimeter = raw_metrics.get('perimeter', 0)
         
         # Store raw pixel values
-        result['major_axis_px'] = major_axis_px
-        result['minor_axis_px'] = minor_axis_px
-        result['hull_area_px'] = hull_area_px
-        result['hull_perimeter_px'] = hull_perimeter_px
+        result['major_axis'] = major_axis
+        result['minor_axis'] = minor_axis
+        result['hull_area'] = hull_area
+        result['hull_perimeter'] = hull_perimeter
         
         # Calculate unitless ratios (these are scale-invariant)
         # Aspect Ratio: major / minor (elongation measure)
-        if minor_axis_px > 0:
-            result['aspect_ratio'] = major_axis_px / minor_axis_px
+        if minor_axis > 0:
+            result['aspect_ratio'] = major_axis / minor_axis
         else:
             result['aspect_ratio'] = None
         
         # Roundness: 4 * area / (π * major_axis²)
         # Measures how close to a circle based on major axis
-        if major_axis_px > 0:
-            result['roundness'] = (4 * area_px) / (math.pi * major_axis_px * major_axis_px)
+        if major_axis > 0:
+            result['roundness'] = (4 * area) / (math.pi * major_axis * major_axis)
         else:
             result['roundness'] = None
         
         # Circularity: 4π * area / perimeter²
         # Perfect circle = 1.0, more complex shapes < 1.0
-        if perimeter_px > 0:
-            result['circularity'] = (4 * math.pi * area_px) / (perimeter_px * perimeter_px)
+        if perimeter > 0:
+            result['circularity'] = (4 * math.pi * area) / (perimeter * perimeter)
         else:
             result['circularity'] = None
         
         # Solidity: area / hull_area
         # Measures convexity of shape (1.0 = fully convex)
-        if hull_area_px > 0:
-            result['solidity'] = area_px / hull_area_px
+        if hull_area > 0:
+            result['solidity'] = area / hull_area
         else:
             result['solidity'] = None
         
         # Convexity: hull_perimeter / perimeter
         # Measures boundary smoothness (1.0 = perfectly smooth convex boundary)
-        if perimeter_px > 0:
-            result['convexity'] = hull_perimeter_px / perimeter_px
+        if perimeter > 0:
+            result['convexity'] = hull_perimeter / perimeter
         else:
             result['convexity'] = None
         
@@ -224,13 +224,13 @@ class Annotation(QObject):
             result['units'] = self.scale_units
             
             # Scale lengths (linear scaling)
-            result['major_axis_scaled'] = major_axis_px * self.scale_x
-            result['minor_axis_scaled'] = minor_axis_px * self.scale_x
-            result['hull_perimeter_scaled'] = hull_perimeter_px * self.scale_x
+            result['major_axis_scaled'] = major_axis * self.scale_x
+            result['minor_axis_scaled'] = minor_axis * self.scale_x
+            result['hull_perimeter_scaled'] = hull_perimeter * self.scale_x
             
             # Scale areas (quadratic scaling)
             area_scale = self.scale_x * self.scale_y
-            result['hull_area_scaled'] = hull_area_px * area_scale
+            result['hull_area_scaled'] = hull_area * area_scale
             
         # For each value in result, if not None, use np.around to 2 decimal places
         for key, value in result.items():
