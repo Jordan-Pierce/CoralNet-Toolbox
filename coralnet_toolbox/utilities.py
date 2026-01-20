@@ -1,6 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import gc
@@ -23,6 +22,8 @@ from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1192,3 +1193,5 @@ def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_mo
 
     del dst_state_dict
     gc.collect()
+
+

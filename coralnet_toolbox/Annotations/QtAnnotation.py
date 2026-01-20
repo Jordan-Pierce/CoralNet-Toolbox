@@ -108,6 +108,7 @@ class Annotation(QObject):
             try:
                 pixel_area = self.get_area()
                 scaled_area = pixel_area * (self.scale_x * self.scale_y)
+                scaled_area = np.around(scaled_area, 2)  # Round to 2 decimal places
                 return scaled_area, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
@@ -128,10 +129,115 @@ class Annotation(QObject):
                 # Use scale_x as the primary factor.
                 # Our ScaleTool sets x and y to be the same.
                 scaled_perimeter = pixel_perimeter * self.scale_x
+                scaled_perimeter = np.around(scaled_perimeter, 2)  # Round to 2 decimal places
                 return scaled_perimeter, self.scale_units
             except (NotImplementedError, TypeError):
                 return None
         return None
+
+    def get_morphology(self) -> dict | None:
+        """
+        Calculate advanced morphology metrics for the annotation.
+        
+        This base implementation returns None. Subclasses that support
+        morphology calculations (e.g., PolygonAnnotation) should override
+        this method to return a dictionary of metrics.
+        
+        Returns:
+            dict | None: A dictionary containing morphology metrics, or None
+                        if morphology is not supported for this annotation type.
+        """
+        return None
+
+    def _apply_scale_to_morphology(self, raw_metrics: dict) -> dict:
+        """
+        Helper method to compute unitless ratios and optionally add scaled values.
+        
+        Args:
+            raw_metrics: Dictionary containing raw pixel values:
+                - major_axis: Length of major axis in pixels
+                - minor_axis: Length of minor axis in pixels  
+                - hull_area: Area of convex hull in pixels²
+                - hull_perimeter: Perimeter of convex hull in pixels
+                - area: Area of annotation in pixels²
+                - perimeter: Perimeter of annotation in pixels
+        
+        Returns:
+            dict: A flat dictionary containing all calculated metrics including:
+                - Unitless ratios (aspect_ratio, roundness, circularity, solidity, convexity)
+                - Raw pixel values
+                - Scaled values with units (if scale is available)
+        """
+        result = {}
+        
+        # Extract raw values
+        major_axis = raw_metrics.get('major_axis', 0)
+        minor_axis = raw_metrics.get('minor_axis', 0)
+        hull_area = raw_metrics.get('hull_area', 0)
+        hull_perimeter = raw_metrics.get('hull_perimeter', 0)
+        area = raw_metrics.get('area', 0)
+        perimeter = raw_metrics.get('perimeter', 0)
+        
+        # Store raw pixel values
+        result['major_axis'] = major_axis
+        result['minor_axis'] = minor_axis
+        result['hull_area'] = hull_area
+        result['hull_perimeter'] = hull_perimeter
+        
+        # Calculate unitless ratios (these are scale-invariant)
+        # Aspect Ratio: major / minor (elongation measure)
+        if minor_axis > 0:
+            result['aspect_ratio'] = major_axis / minor_axis
+        else:
+            result['aspect_ratio'] = None
+        
+        # Roundness: 4 * area / (π * major_axis²)
+        # Measures how close to a circle based on major axis
+        if major_axis > 0:
+            result['roundness'] = (4 * area) / (math.pi * major_axis * major_axis)
+        else:
+            result['roundness'] = None
+        
+        # Circularity: 4π * area / perimeter²
+        # Perfect circle = 1.0, more complex shapes < 1.0
+        if perimeter > 0:
+            result['circularity'] = (4 * math.pi * area) / (perimeter * perimeter)
+        else:
+            result['circularity'] = None
+        
+        # Solidity: area / hull_area
+        # Measures convexity of shape (1.0 = fully convex)
+        if hull_area > 0:
+            result['solidity'] = area / hull_area
+        else:
+            result['solidity'] = None
+        
+        # Convexity: hull_perimeter / perimeter
+        # Measures boundary smoothness (1.0 = perfectly smooth convex boundary)
+        if perimeter > 0:
+            result['convexity'] = hull_perimeter / perimeter
+        else:
+            result['convexity'] = None
+        
+        # Add scaled values if scale is available
+        if self.scale_x and self.scale_y and self.scale_units:
+            result['units'] = self.scale_units
+            
+            # Scale lengths (linear scaling)
+            result['major_axis_scaled'] = major_axis * self.scale_x
+            result['minor_axis_scaled'] = minor_axis * self.scale_x
+            result['hull_perimeter_scaled'] = hull_perimeter * self.scale_x
+            
+            # Scale areas (quadratic scaling)
+            area_scale = self.scale_x * self.scale_y
+            result['hull_area_scaled'] = hull_area * area_scale
+            
+        # For each value in result, if not None, use np.around to 2 decimal places
+        for key, value in result.items():
+            if isinstance(value, (int, float)):
+                result[key] = np.around(value, 2)
+        
+        return result
     
     def _get_raster_slice_and_mask(self, full_raster_data: np.ndarray):
         """
@@ -200,7 +306,8 @@ class Annotation(QObject):
         # 9. Return slice and boolean mask
         return data_slice, mask.astype(bool)
 
-    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float, z_unit: str = None) -> float | None:
+    def get_scaled_volume(self, z_channel: np.ndarray, scale_x: float, scale_y: float, 
+                          z_unit: str = None) -> float | None:
         """
         Calculates the 'volume' under the annotation relative to a Z=0 plane.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -244,6 +351,8 @@ class Annotation(QObject):
             # 7. Calculate total volume (in cubic meters)
             # This is the sum of (pixel_area * pixel_height)
             total_volume = np.sum(z_values_inside) * pixel_area_2d
+            
+            total_volume = np.around(total_volume, 2)  # Round to 2 decimal places
 
             return total_volume
         except Exception as e:
@@ -251,7 +360,7 @@ class Annotation(QObject):
             return None
 
     def get_scaled_surface_area(self, z_channel: np.ndarray, scale_x: float, 
-                               scale_y: float, z_unit: str = None) -> float | None:
+                                scale_y: float, z_unit: str = None) -> float | None:
         """
         Calculates the 3D surface area of the annotation using gradients.
         Requires the full z_channel (depth/elevation) data and scale factors.
@@ -314,6 +423,8 @@ class Annotation(QObject):
 
             # 10. Select only the 3D areas *inside* the polygon and sum them
             total_surface_area = np.sum(pixel_areas_3d[mask])
+            
+            total_surface_area = np.around(total_surface_area, 2)  # Round to 2 decimal places
 
             return total_surface_area
         except Exception as e:
@@ -966,6 +1077,11 @@ class Annotation(QObject):
         if scaled_perimeter:
             result['scaled_perimeter'] = scaled_perimeter[0]
             result['perimeter_units'] = scaled_perimeter[1]
+
+        # Add morphology data if available (only for annotation types that support it)
+        morph_data = self.get_morphology()
+        if morph_data is not None:
+            result['morphology'] = morph_data
 
         return result
 

@@ -94,6 +94,22 @@ class MultiPolygonAnnotation(Annotation):
         """Return the total perimeter of all polygons."""
         return sum(poly.get_perimeter() for poly in self.polygons)
 
+    def get_morphology(self) -> dict | None:
+        """
+        Return None for MultiPolygonAnnotation.
+        
+        Morphology metrics are not calculated for multi-polygons because:
+        - Metrics like convexity, circularity, and solidity are mathematically
+          ambiguous for disjoint polygon "islands"
+        - The convex hull of multiple separate polygons doesn't represent
+          meaningful shape properties
+        - Users who need morphology should split the multi-polygon first
+        
+        Returns:
+            None: Always returns None to opt out of morphology calculations.
+        """
+        return None
+
     def get_polygon(self):
         """Return the first polygon (for compatibility)."""
         return QPolygonF(self.polygons[0].points) if self.polygons else QPolygonF()

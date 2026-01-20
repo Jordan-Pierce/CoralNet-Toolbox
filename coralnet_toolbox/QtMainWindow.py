@@ -55,6 +55,8 @@ from coralnet_toolbox.IO import (
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
+    ImportMaskAnnotations,
+    ImportCOLMAPCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -251,6 +253,7 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
+        self.import_colmap_cameras = ImportCOLMAPCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -259,6 +262,7 @@ class MainWindow(QMainWindow):
         self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.import_squidle_annotations = ImportSquidleAnnotations(self)
+        self.import_mask_annotations_dialog = ImportMaskAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -398,6 +402,13 @@ class MainWindow(QMainWindow):
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
+        
+        # Cameras submenu
+        self.import_cameras_menu = self.import_menu.addMenu("Cameras")
+        # Import COLMAP Cameras
+        self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
+        self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
+        self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -436,6 +447,10 @@ class MainWindow(QMainWindow):
         self.import_squidle_annotations_action = QAction("Squidle (JSON)", self)
         self.import_squidle_annotations_action.triggered.connect(self.import_squidle_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_squidle_annotations_action)
+        # Import Mask Annotations
+        self.import_mask_annotations_action = QAction("Masks (PNG)", self)
+        self.import_mask_annotations_action.triggered.connect(self.open_import_mask_annotations_dialog)
+        self.import_annotations_menu.addAction(self.import_mask_annotations_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
@@ -485,7 +500,7 @@ class MainWindow(QMainWindow):
         self.export_geojson_annotations_action.triggered.connect(self.export_geojson_annotations_dialog.exec_)
         self.export_annotations_menu.addAction(self.export_geojson_annotations_action)
         # Export Mask Annotations
-        self.export_mask_annotations_action = QAction("Masks (Raster)", self)
+        self.export_mask_annotations_action = QAction("Masks (PNG)", self)
         self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_mask_annotations_action)
 
@@ -600,11 +615,11 @@ class MainWindow(QMainWindow):
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
 
         # Transformers submenu
-        self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
+        # self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
         # Deploy Model
-        self.transformers_deploy_model_action = QAction("Deploy Model", self)
-        self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
-        self.transformers_menu.addAction(self.transformers_deploy_model_action)
+        # self.transformers_deploy_model_action = QAction("Deploy Model", self)
+        # self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
+        # self.transformers_menu.addAction(self.transformers_deploy_model_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -995,6 +1010,8 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.toolbar.addWidget(spacer)
+        
+        self.toolbar.addSeparator()
 
         # Add the device label widget as an action in the toolbar
         self.devices = self.get_available_devices()
@@ -1079,7 +1096,9 @@ class MainWindow(QMainWindow):
 
         # Z unit dropdown
         self.z_unit_dropdown = QComboBox()
-        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi', 'px'])
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
+        self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
         self.z_unit_dropdown.setFixedWidth(50)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
@@ -2643,6 +2662,28 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.export_mask_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_import_mask_annotations_dialog(self):
+        """Open the Import Mask Annotations dialog to import segmentation masks"""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before importing mask annotations.")
+            return
+
+        # Check if there are any labels
+        if not self.label_window.labels:
+            QMessageBox.warning(self,
+                                "No Labels",
+                                "Please create labels before importing mask annotations.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.import_mask_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

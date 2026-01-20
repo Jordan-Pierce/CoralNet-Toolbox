@@ -161,7 +161,7 @@ class DeployModelDialog(CollapsibleSection):
             QMessageBox.warning(self, 
                                 "Missing Package", 
                                 "The 'awesome-depth-anything-3' package is required for Z-Inference.\n\n"
-                                "Please install it via pip:\npip install awesome-depth-anything-3")
+                                "Please install it via pip:\npip install awesome-depth-anything-3 or from source.")
             return
         
         # Check if HF_TOKEN environment variable is set
@@ -357,6 +357,7 @@ class DeployModelDialog(CollapsibleSection):
     def _update_camera_parameters(self, raster, result, index=0):
         """
         Update raster with camera intrinsics and extrinsics from prediction result.
+        Only stores new parameters if the raster doesn't already have them.
         
         Args:
             raster: Raster object to update
@@ -365,11 +366,15 @@ class DeployModelDialog(CollapsibleSection):
         """
         intrinsics = result.get('intrinsics')
         if intrinsics is not None and len(intrinsics) > index and intrinsics[index] is not None:
-            raster.add_intrinsics(intrinsics[index])
+            # Only add if raster doesn't already have intrinsics
+            if raster.intrinsics is None:
+                raster.add_intrinsics(intrinsics[index])
         
         extrinsics = result.get('extrinsics')
         if extrinsics is not None and len(extrinsics) > index and extrinsics[index] is not None:
-            raster.add_extrinsics(extrinsics[index])
+            # Only add if raster doesn't already have extrinsics
+            if raster.extrinsics is None:
+                raster.add_extrinsics(extrinsics[index])
     
     def _convert_depth_to_elevation(self, depth_map):
         """
@@ -554,7 +559,52 @@ class DeployModelDialog(CollapsibleSection):
         # Batch predict for collected images
         if collected_overwrite:
             try:
-                result = self.loaded_model.predict(collected_overwrite)
+                # Gather existing camera parameters from rasters (if available)
+                intrinsics_list = []
+                extrinsics_list = []
+                for image_path in collected_overwrite:
+                    raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                    if raster is not None:
+                        intrinsics_list.append(raster.intrinsics)  # None if not available
+                        extrinsics_list.append(raster.extrinsics)  # None if not available
+                    else:
+                        intrinsics_list.append(None)
+                        extrinsics_list.append(None)
+                
+                # DA3 camera parameter requirements:
+                # - Intrinsics: can be provided for any number of images (N >= 1)
+                # - Extrinsics: requires at least 3 images for multi-view pose conditioning (N >= 3)
+                all_have_intrinsics = all(k is not None for k in intrinsics_list)
+                all_have_extrinsics = all(e is not None for e in extrinsics_list)
+                num_images = len(collected_overwrite)
+                
+                # Prepare intrinsics array if all images have them
+                if all_have_intrinsics:
+                    # Ensure each matrix has correct shape (3, 3) before stacking
+                    clean_intrinsics = [np.squeeze(k) for k in intrinsics_list]
+                    intrinsics_array = np.stack(clean_intrinsics, axis=0)  # Shape: (N, 3, 3)
+                else:
+                    intrinsics_array = None
+                
+                # Prepare extrinsics array if all images have them AND we have at least 3 images
+                if all_have_extrinsics and num_images >= 3:
+                    # Ensure each matrix has correct shape (4, 4) before stacking
+                    clean_extrinsics = [np.squeeze(e) for e in extrinsics_list]
+                    extrinsics_array = np.stack(clean_extrinsics, axis=0)  # Shape: (N, 4, 4)
+                else:
+                    # Don't use extrinsics if we have fewer than 3 images
+                    extrinsics_array = None
+                    if all_have_extrinsics and num_images < 3:
+                        print(f"Extrinsics available but not used (need >= 3 images, have {num_images})")
+                    if intrinsics_array is not None:
+                        print(f"Using intrinsics only: shape {intrinsics_array.shape}")
+                
+                # Call model with existing camera parameters (or None)
+                result = self.loaded_model.predict(
+                    collected_overwrite,
+                    intrinsics=intrinsics_array,
+                    extrinsics=extrinsics_array
+                )
                 
                 # Validate and extract depth maps
                 depth_maps = self._validate_prediction_result(result)

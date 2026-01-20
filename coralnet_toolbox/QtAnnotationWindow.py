@@ -901,8 +901,10 @@ class AnnotationWindow(QGraphicsView):
             # Set Z-value between base image (-10) and annotations (0+)
             self.z_item.setZValue(2)
             
-            # Set initial opacity (half transparent)
-            self.z_item.setOpacity(0.5)
+            # Set opacity from current slider value (not hardcoded default)
+            # This preserves user's transparency preference when switching images
+            current_opacity = self.main_window.z_transparency_widget.value() / 255.0
+            self.z_item.setOpacity(current_opacity)
             
             # Add to scene
             self.scene.addItem(self.z_item)

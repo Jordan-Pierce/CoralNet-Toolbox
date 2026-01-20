@@ -69,12 +69,16 @@ class DA3(Base):
             if self.device.startswith('cuda'):
                 empty_cache()
                 
-    def predict(self, images):
+    def predict(self, images, intrinsics=None, extrinsics=None):
         """
         Run depth prediction on a list of images using DA3, returning depth maps (meters) and camera parameters.
         
         Args:
             images (list[str | numpy.ndarray]): List of input images as file paths or numpy arrays (H, W, C)
+            intrinsics (list[numpy.ndarray], optional): List of camera intrinsic matrices (one per image).
+                                                       If provided, DA3 will use these instead of estimating.
+            extrinsics (list[numpy.ndarray], optional): List of camera extrinsic matrices (one per image).
+                                                       If provided, DA3 will use these instead of estimating.
             
         Returns:
             dict: Dictionary containing:
@@ -85,9 +89,11 @@ class DA3(Base):
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
             
-        # Run inference
+        # Run inference with optional camera parameters
         prediction = self.model.inference(
             image=images,
+            intrinsics=intrinsics,
+            extrinsics=extrinsics,
             process_res=self.imgsz,
             process_res_method="upper_bound_resize",
         )

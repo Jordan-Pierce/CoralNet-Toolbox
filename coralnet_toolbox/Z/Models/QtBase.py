@@ -52,12 +52,16 @@ class Base(ABC):
         raise NotImplementedError("Subclasses must implement deactivate()")
         
     @abstractmethod
-    def predict(self, images):
+    def predict(self, images, intrinsics=None, extrinsics=None):
         """
         Run depth prediction on a list of images, returning depth maps and camera parameters.
         
         Args:
             images (list[str | numpy.ndarray]): List of input images as file paths or numpy arrays (H, W, C)
+            intrinsics (list[numpy.ndarray], optional): List of camera intrinsic matrices (one per image).
+                                                       Use None for images without existing intrinsics.
+            extrinsics (list[numpy.ndarray], optional): List of camera extrinsic matrices (one per image).
+                                                       Use None for images without existing extrinsics.
             
         Returns:
             dict: Dictionary containing:

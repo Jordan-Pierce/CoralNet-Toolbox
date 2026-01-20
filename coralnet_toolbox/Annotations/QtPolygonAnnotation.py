@@ -1,8 +1,8 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+import cv2
 import math
+import numpy as np
 
 from rasterio.windows import Window
 
@@ -20,6 +20,8 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 from coralnet_toolbox.utilities import densify_polygon
 from coralnet_toolbox.utilities import simplify_polygon
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -152,7 +154,7 @@ class PolygonAnnotation(Annotation):
             shapely_polygon = Polygon(shell=shell_coords, holes=holes_coords)
 
             # Return the net area calculated by Shapely
-            return shapely_polygon.area
+            return np.around(shapely_polygon.area, 2)
 
         except Exception:
             # If Shapely fails (e.g., due to invalid geometry), fall back to
@@ -164,7 +166,7 @@ class PolygonAnnotation(Annotation):
                 j = (i + 1) % n
                 area += self.points[i].x() * self.points[j].y()
                 area -= self.points[j].x() * self.points[i].y()
-            return abs(area) / 2.0
+            return np.around(abs(area) / 2.0, 2)
 
     def get_perimeter(self):
         """
@@ -183,7 +185,7 @@ class PolygonAnnotation(Annotation):
             shapely_polygon = Polygon(shell=shell_coords, holes=holes_coords)
 
             # Return the total perimeter (length) calculated by Shapely
-            return shapely_polygon.length
+            return np.around(shapely_polygon.length, 2)
 
         except Exception:
             # If Shapely fails, fall back to calculating the perimeter of the
@@ -196,7 +198,78 @@ class PolygonAnnotation(Annotation):
                 dy = self.points[i].y() - self.points[j].y()
                 distance = math.sqrt(dx * dx + dy * dy)
                 perimeter += distance
-            return perimeter
+            return np.around(perimeter, 2)
+
+    def get_morphology(self) -> dict | None:
+        """
+        Calculate advanced morphology metrics for the polygon annotation.
+        
+        Uses OpenCV functions to compute:
+        - Major/Minor axis lengths from minimum area bounding rectangle
+        - Convex hull area and perimeter
+        
+        Combined with existing area/perimeter, these enable calculation of:
+        - Aspect Ratio: major_axis / minor_axis
+        - Roundness: 4 * area / (π * major_axis²)
+        - Circularity: 4π * area / perimeter²
+        - Solidity: area / hull_area
+        - Convexity: hull_perimeter / perimeter
+        
+        Returns:
+            dict | None: Dictionary of morphology metrics, or None if 
+                        polygon has fewer than 3 points.
+        """
+        # Require at least 3 points to form a polygon
+        if len(self.points) < 3:
+            return None
+        
+        try:
+            # Convert QPointF list to numpy array for OpenCV
+            np_points = np.array([[p.x(), p.y()] for p in self.points], dtype=np.float32)
+            
+            # Get existing area and perimeter
+            area = self.get_area()
+            perimeter = self.get_perimeter()
+            
+            # Guard against degenerate polygons
+            if area <= 0 or perimeter <= 0:
+                return None
+            
+            # --- Calculate Minimum Area Bounding Rectangle ---
+            # cv2.minAreaRect requires at least 1 point, returns ((cx, cy), (w, h), angle)
+            # Note: minAreaRect works with any number of points >= 1
+            rect = cv2.minAreaRect(np_points)
+            width, height = rect[1]  # (width, height) of the rotated rectangle
+            
+            # Major axis is the longer dimension, minor is the shorter
+            major_axis = max(width, height)
+            minor_axis = min(width, height)
+            
+            # --- Calculate Convex Hull ---
+            # cv2.convexHull requires at least 1 point
+            hull = cv2.convexHull(np_points)
+            
+            # Calculate hull area and perimeter
+            hull_area = cv2.contourArea(hull)
+            hull_perimeter = cv2.arcLength(hull, closed=True)
+            
+            # Package raw metrics
+            raw_metrics = {
+                'major_axis': major_axis,
+                'minor_axis': minor_axis,
+                'hull_area': hull_area,
+                'hull_perimeter': hull_perimeter,
+                'area': area,
+                'perimeter': perimeter,
+            }
+            
+            # Use the base class helper to compute ratios and scaled values
+            return self._apply_scale_to_morphology(raw_metrics)
+            
+        except Exception as e:
+            # If any calculation fails, return None rather than partial data
+            print(f"Error calculating morphology for annotation {self.id}: {e}")
+            return None
 
     def get_polygon(self):
         """Get the polygon representation of this polygon annotation."""

@@ -1,21 +1,27 @@
 import warnings
+
 import os
 import ujson as json
-from rasterio.transform import Affine
+from datetime import datetime
+
+from rasterio.warp import transform as warp_transform
+from rasterio.crs import CRS
+
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
     QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
-    QApplication, QMessageBox, QLabel, QScrollArea, QWidget,
-    QButtonGroup
+    QApplication, QMessageBox, QLabel, QWidget, QGridLayout,
+    QListWidget, QListWidgetItem, QTabWidget
 )
+
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -35,653 +41,615 @@ class ExportGeoJSONAnnotations(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coralnet.png"))
-        self.setWindowTitle("Export Annotations as GeoJSON")
-        self.resize(500, 250)
+        self.setWindowTitle("Export Annotations to GeoJSON")
+        self.resize(400, 500)
 
-        self.selected_labels = []
-        self.annotation_types = []
-        self.class_mapping = {}
-
-        # Create the layout
+        # Create the main layout
         self.layout = QVBoxLayout(self)
 
-        # Setup the information layout
+        # 1. Info Section
         self.setup_info_layout()
-        # Setup the output directory and file format layout
-        self.setup_output_layout()
-        # Setup image selection layout
-        self.setup_image_selection_layout()
-        # Setup the annotation layout
+        
+        # 2. Export Mode (Single vs Individual) & Output Path
+        self.setup_output_configuration_layout()
+        
+        # 3. Annotations Configuration
         self.setup_annotation_layout()
-        # Setup the label selection layout
-        # Setup label selection
+        
+        # 4. Advanced Options (New: WGS84, Styles, Metadata)
+        self.setup_advanced_options_layout()
+
+        # 5. Label Selection
         self.setup_label_layout()
-        # Setup the buttons layout
+        
+        # 6. Action Buttons
         self.setup_buttons_layout()
 
+        # Initialize UI state
+        # self.update_output_mode_ui()  # Not needed for tabs
+
     def showEvent(self, event):
-        """Handle the show event"""
+        """Handle the show event to refresh label list."""
         super().showEvent(event)
-        # Update the labels in the label selection list
         self.update_label_selection_list()
 
+    # ----------------------------------------------------------------------
+    # UI Setup Methods
+    # ----------------------------------------------------------------------
+
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
-        group_box = QGroupBox("Information")
+        """Simple information header."""
+        info_label = QLabel(
+            "<b>Export Annotations to GeoJSON</b><br>"
+            "Export annotations for all images. Choose between a single merged file or individual files."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("margin-bottom: 5px;")
+        self.layout.addWidget(info_label)
+
+    def setup_output_configuration_layout(self):
+        """Setup the export mode and dynamic output file/folder selection."""
+        groupbox = QGroupBox("Export Configuration")
         layout = QVBoxLayout()
 
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Export Annotations to GeoJSON")
+        # Tab Widget for modes
+        self.tab_widget = QTabWidget()
 
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_output_layout(self):
-        """Setup the output directory and file format layout."""
-        groupbox = QGroupBox("Output File")
-        layout = QFormLayout()
-
-        # Output file selection
-        output_file_layout = QHBoxLayout()
+        # Single File Tab
+        single_tab = QWidget()
+        single_layout = QFormLayout(single_tab)
         self.output_file_edit = QLineEdit()
-        self.output_file_button = QPushButton("Browse...")
-        self.output_file_button.clicked.connect(self.browse_output_file)
-        output_file_layout.addWidget(self.output_file_edit)
-        output_file_layout.addWidget(self.output_file_button)
-        layout.addRow("Output File:", output_file_layout)
+        self.browse_output_file_button = QPushButton("Browse...")
+        self.browse_output_file_button.clicked.connect(self.browse_output_file)
+        file_field_layout = QHBoxLayout()
+        file_field_layout.addWidget(self.output_file_edit)
+        file_field_layout.addWidget(self.browse_output_file_button)
+        single_layout.addRow("Output File:", file_field_layout)
+        self.tab_widget.addTab(single_tab, "Single File")
 
+        # Multiple Files Tab
+        multi_tab = QWidget()
+        multi_layout = QFormLayout(multi_tab)
+        self.output_dir_edit = QLineEdit()
+        self.browse_output_dir_button = QPushButton("Browse...")
+        self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
+        dir_field_layout = QHBoxLayout()
+        dir_field_layout.addWidget(self.output_dir_edit)
+        dir_field_layout.addWidget(self.browse_output_dir_button)
+        multi_layout.addRow("Output Directory:", dir_field_layout)
+        self.tab_widget.addTab(multi_tab, "Multiple Files")
+
+        layout.addWidget(self.tab_widget)
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
-
-    def setup_image_selection_layout(self):
-        """Setup the image selection layout."""
-        group_box = QGroupBox("Apply To")
-        layout = QVBoxLayout()
-
-        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
-        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
-
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
-
-        self.apply_group = QButtonGroup(self)
-        self.apply_group.addButton(self.apply_filtered_checkbox)
-        self.apply_group.addButton(self.apply_prev_checkbox)
-        self.apply_group.addButton(self.apply_next_checkbox)
-        self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(True)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
 
     def setup_annotation_layout(self):
-        """Setup the annotation types, and label selection layout."""
+        """Setup annotation types in a grid layout."""
         groupbox = QGroupBox("Annotations to Include")
-        layout = QVBoxLayout()
-    
-        # Patch Annotation type checkboxes
+        layout = QGridLayout()
+        layout.setColumnStretch(1, 1) 
+        layout.setColumnStretch(2, 1)
+
+        # Patch Annotations (Row 0)
         self.patch_checkbox = QCheckBox("Patch Annotations")
         self.patch_checkbox.setChecked(True)
-        layout.addWidget(self.patch_checkbox)
-    
-        # Setup patch representation selection
-        self.setup_patch_representation_layout(layout)
-    
-        # Annotation types checkboxes
-        self.rectangle_checkbox = QCheckBox("Rectangle Annotations")
+        layout.addWidget(self.patch_checkbox, 0, 0)
+
+        # Patch Representation Combo (Row 0, Col 1)
+        patch_rep_layout = QHBoxLayout()
+        patch_rep_layout.addWidget(QLabel("Representation:"))
+        self.patch_representation_combo = QComboBox()
+        self.patch_representation_combo.addItems(["Polygon", "Point"])
+        patch_rep_layout.addWidget(self.patch_representation_combo)
+        patch_rep_layout.addStretch()
+        layout.addLayout(patch_rep_layout, 0, 1)
+
+        # Geometry Types (Row 1)
+        self.rectangle_checkbox = QCheckBox("Rectangle")
         self.rectangle_checkbox.setChecked(True)
-        layout.addWidget(self.rectangle_checkbox)
-        self.polygon_checkbox = QCheckBox("Polygon Annotations")
+        self.polygon_checkbox = QCheckBox("Polygon")
         self.polygon_checkbox.setChecked(True)
-        layout.addWidget(self.polygon_checkbox)
-        self.multipolygon_checkbox = QCheckBox("MultiPolygon Annotations")
+        self.multipolygon_checkbox = QCheckBox("MultiPolygon")
         self.multipolygon_checkbox.setChecked(True)
-        layout.addWidget(self.multipolygon_checkbox)
-    
+
+        layout.addWidget(self.rectangle_checkbox, 1, 0)
+        layout.addWidget(self.polygon_checkbox, 1, 1)
+        layout.addWidget(self.multipolygon_checkbox, 1, 2)
+
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
 
-    def setup_patch_representation_layout(self, layout):
-        """Setup the patch representation selection layout."""
-        # Patch representation selection
-        self.patch_representation_label = QLabel("Patch Representation:")
-        layout.addWidget(self.patch_representation_label)
-
-        self.patch_representation_combo = QComboBox()
-        self.patch_representation_combo.addItem("Polygon")
-        self.patch_representation_combo.addItem("Point")
-        layout.addWidget(self.patch_representation_combo)
-
-    def setup_label_layout(self):
-        """Setup the label selection layout."""
-        groupbox = QGroupBox("Labels to Include")
+    def setup_advanced_options_layout(self):
+        """Setup advanced processing options."""
+        groupbox = QGroupBox("Advanced Options")
         layout = QVBoxLayout()
 
-        # Label selection
-        self.label_selection_label = QLabel("Select Labels:")
-        layout.addWidget(self.label_selection_label)
+        # WGS84 Reprojection
+        self.wgs84_checkbox = QCheckBox("Reproject to WGS84 (Lat/Lon)")
+        self.wgs84_checkbox.setChecked(True)
+        self.wgs84_checkbox.setToolTip(
+            "If checked, coordinates will be transformed to EPSG:4326 (Latitude/Longitude).\n"
+            "This is required for compatibility with web maps (Leaflet, Mapbox, etc.)."
+        )
+        layout.addWidget(self.wgs84_checkbox)
 
-        # Create a scroll area for the labels
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
+        # Styling
+        self.style_checkbox = QCheckBox("Include Styling Properties (Color)")
+        self.style_checkbox.setChecked(True)
+        self.style_checkbox.setToolTip(
+            "If checked, 'marker-color', 'stroke', and 'fill' properties will be added \n"
+            "based on the Label's color assignment."
+        )
+        layout.addWidget(self.style_checkbox)
 
-        # Create a widget to hold the checkboxes
-        self.label_container = QWidget()
-        self.label_container.setMinimumHeight(200)  # Set a minimum height for the container
-        self.label_layout = QVBoxLayout(self.label_container)
-        self.label_layout.setSizeConstraint(QVBoxLayout.SetMinAndMaxSize)  # Respect widget sizes
+        # Metadata
+        self.metadata_checkbox = QCheckBox("Include Extra Metadata (Area, Date)")
+        self.metadata_checkbox.setChecked(True)
+        self.metadata_checkbox.setToolTip(
+            "If checked, calculates pixel area and adds timestamps/annotator info."
+        )
+        layout.addWidget(self.metadata_checkbox)
 
-        scroll_area.setWidget(self.label_container)
-        layout.addWidget(scroll_area)
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
 
-        # Store the checkbox references
-        self.label_checkboxes = []
+    def setup_label_layout(self):
+        """Setup label selection using a QListWidget."""
+        groupbox = QGroupBox("Filter by Label")
+        layout = QVBoxLayout()
+
+        # Tools layout (Select All/None)
+        tools_layout = QHBoxLayout()
+        btn_all = QPushButton("Select All")
+        btn_none = QPushButton("Select None")
+        btn_all.clicked.connect(lambda: self.toggle_labels(True))
+        btn_none.clicked.connect(lambda: self.toggle_labels(False))
+        tools_layout.addWidget(btn_all)
+        tools_layout.addWidget(btn_none)
+        tools_layout.addStretch()
+        layout.addLayout(tools_layout)
+
+        # List Widget
+        self.label_list_widget = QListWidget()
+        layout.addWidget(self.label_list_widget)
 
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
 
     def setup_buttons_layout(self):
-        """Setup the buttons layout."""
+        """Standard Export/Cancel buttons."""
         button_layout = QHBoxLayout()
+        button_layout.addStretch() 
 
-        self.export_button = QPushButton("Export")
+        self.export_button = QPushButton("Export GeoJSON")
+        self.export_button.setObjectName("primaryButton")
         self.export_button.clicked.connect(self.export_geojson)
+        self.export_button.setMinimumWidth(120)
+        self.export_button.setMinimumHeight(30)
+        
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
 
-        button_layout.addWidget(self.export_button)
         button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.export_button)
 
         self.layout.addLayout(button_layout)
 
+    # ----------------------------------------------------------------------
+    # UI Interaction Methods
+    # ----------------------------------------------------------------------
+
+    def update_output_mode_ui(self):
+        """Not used with tabs."""
+        pass
+
+    def browse_output_dir(self):
+        """Directory chooser for output."""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_path:
+            self.output_dir_edit.setText(dir_path)
+
     def browse_output_file(self):
-        """Open a file dialog to select the output file."""
-        options = QFileDialog.Options()
+        """File chooser for output."""
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Select Output File", "", "GeoJSON Files (*.geojson)", options=options
+            self, "Select Output File", "", "GeoJSON Files (*.geojson);;All Files (*)"
         )
         if file_path:
             self.output_file_edit.setText(file_path)
 
     def update_label_selection_list(self):
-        """Update the label selection list with labels from the label window."""
-        # Clear existing checkboxes
-        for checkbox in self.label_checkboxes:
-            self.label_layout.removeWidget(checkbox)
-            checkbox.deleteLater()
-        self.label_checkboxes = []
-
-        # Create a checkbox for each label
+        """Populate the QListWidget with labels."""
+        self.label_list_widget.clear()
         for label in self.label_window.labels:
-            checkbox = QCheckBox(label.short_label_code)
-            checkbox.setChecked(True)  # Default to checked
-            checkbox.setProperty("label", label)  # Store the label object
-            self.label_checkboxes.append(checkbox)
-            self.label_layout.addWidget(checkbox)
+            item = QListWidgetItem(f"{label.short_label_code} - {label.long_label_code}")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            item.setData(Qt.UserRole, label) 
+            self.label_list_widget.addItem(item)
 
-    def get_selected_image_paths(self):
-        """
-        Get the selected image paths based on the options.
+    def toggle_labels(self, select_all):
+        """Helper to check/uncheck all items."""
+        for i in range(self.label_list_widget.count()):
+            item = self.label_list_widget.item(i)
+            item.setCheckState(Qt.Checked if select_all else Qt.Unchecked)
 
-        :return: List of selected image paths
-        """
-        # Current image path showing
-        current_image_path = self.annotation_window.current_image_path
-        if not current_image_path:
+    # ----------------------------------------------------------------------
+    # Logic Helper Methods
+    # ----------------------------------------------------------------------
+
+    def get_selected_labels(self):
+        """Retrieve list of label objects from checked list items."""
+        selected = []
+        for i in range(self.label_list_widget.count()):
+            item = self.label_list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.data(Qt.UserRole))
+        return selected
+
+    def get_label_color_hex(self, label):
+        """Safely extract hex color string from label object."""
+        try:
+            if hasattr(label, 'color'):
+                c = label.color
+                if isinstance(c, QColor):
+                    return c.name()
+                elif isinstance(c, str):
+                    return c
+        except Exception:
+            pass
+        return "#555555"  # Fallback gray
+
+    def get_polygon_area_pixels(self, rings):
+        """Calculate polygon area using shoelace formula, accounting for holes."""
+        if not rings or len(rings[0]) < 3:
+            return 0.0
+        # Exterior area
+        ext_area = self._shoelace_area(rings[0])
+        # Subtract hole areas
+        hole_area = sum(self._shoelace_area(hole) for hole in rings[1:])
+        return ext_area - hole_area
+
+    def _shoelace_area(self, coords):
+        """Helper to compute area of a single ring using shoelace formula."""
+        n = len(coords)
+        if n < 3:
+            return 0.0
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += coords[i][0] * coords[j][1]
+            area -= coords[j][0] * coords[i][1]
+        return abs(area) / 2.0
+
+    def get_annotations_for_image(self, image_path, selected_label_codes):
+        """Get filtered annotations for a specific image."""
+        annotations = []
+        raw_annotations = self.annotation_window.get_image_annotations(image_path)
+        
+        if not raw_annotations:
             return []
 
-        # Determine which images to export annotations for
-        if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.table_model.filtered_paths
-        elif self.apply_prev_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[:current_index + 1]
-            else:
-                return [current_image_path]
-        elif self.apply_next_checkbox.isChecked():
-            if current_image_path in self.image_window.table_model.filtered_paths:
-                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
-                return self.image_window.table_model.filtered_paths[current_index:]
-            else:
-                return [current_image_path]
-        elif self.apply_all_checkbox.isChecked():
-            return self.image_window.raster_manager.image_paths
-        else:
-            # Only apply to the current image
-            return [current_image_path]
-
-    def get_annotations_for_image(self, image_path):
-        """Get annotations for a specific image."""
-        # Get the selected labels' short label codes
-        selected_labels = [label.short_label_code for label in self.selected_labels]
-    
-        # Get all annotations for this image
-        annotations = []
-    
-        for annotation in self.annotation_window.get_image_annotations(image_path):
-            # Check that the annotation's label is in the selected labels
-            if annotation.label.short_label_code not in selected_labels:
+        for annotation in raw_annotations:
+            if annotation.label.short_label_code not in selected_label_codes:
                 continue
-    
-            # Add the annotation to the list based on its type, if selected
+
             if self.patch_checkbox.isChecked() and isinstance(annotation, PatchAnnotation):
                 annotations.append(annotation)
-    
             elif self.rectangle_checkbox.isChecked() and isinstance(annotation, RectangleAnnotation):
                 annotations.append(annotation)
-    
             elif self.polygon_checkbox.isChecked() and isinstance(annotation, PolygonAnnotation):
                 annotations.append(annotation)
-                
             elif self.multipolygon_checkbox.isChecked() and isinstance(annotation, MultiPolygonAnnotation):
                 annotations.append(annotation)
-    
+
         return annotations
 
     def convert_annotation_to_polygon(self, annotation):
-        """Convert any annotation type to a polygon."""
-
-        # Convert Patch Annotation to a polygon
+        """Convert any annotation type to a list of pixel-coordinate rings (for GeoJSON compatibility)."""
         if isinstance(annotation, PatchAnnotation):
             size = annotation.annotation_size / 2
-            x = annotation.center_xy.x()
-            y = annotation.center_xy.y()
-            return [(x - size, y - size), (x + size, y - size), (x + size, y + size), (x - size, y + size)]
+            x, y = annotation.center_xy.x(), annotation.center_xy.y()
+            exterior = [(x - size, y - size), (x + size, y - size), 
+                        (x + size, y + size), (x - size, y + size)]
+            return [exterior]
 
-        # Convert Rectangle Annotation to a polygon
         elif isinstance(annotation, RectangleAnnotation):
-            return [(annotation.top_left.x(), annotation.top_left.y()),
-                    (annotation.bottom_right.x(), annotation.top_left.y()),
-                    (annotation.bottom_right.x(), annotation.bottom_right.y()),
-                    (annotation.top_left.x(), annotation.bottom_right.y())]
+            tl, br = annotation.top_left, annotation.bottom_right
+            exterior = [(tl.x(), tl.y()), (br.x(), tl.y()), 
+                        (br.x(), br.y()), (tl.x(), br.y())]
+            return [exterior]
 
-        # Convert Polygon Annotation to a polygon
         elif isinstance(annotation, PolygonAnnotation):
-            return [(p.x(), p.y()) for p in annotation.points]
+            rings = [[(p.x(), p.y()) for p in annotation.points]]
+            for hole in annotation.holes:
+                rings.append([(p.x(), p.y()) for p in hole])
+            return rings
 
         return []
 
-    def transform_coordinates(self, coords, transform):
+    def transform_coordinates(self, coords, src_transform, src_crs):
         """
-        Transform coordinates from pixel space to geographic space with proper validation.
-
-        Args:
-            coords: List of (x, y) coordinate tuples in pixel space
-            transform: Affine transformation matrix from rasterio
-
-        Returns:
-            List of [x, y] coordinate pairs in geographic space
-
-        Raises:
-            ValueError: If transform is invalid or coordinates cannot be transformed
+        Transform pixel coordinates to Geographic coordinates.
+        1. Apply Affine transform (Pixels -> Image CRS)
+        2. If WGS84 requested, Apply Warp (Image CRS -> EPSG:4326)
         """
-        # Validate transform
-        if transform is None:
-            raise ValueError("No coordinate transformation available")
-
-        if not isinstance(transform, Affine):
-            raise ValueError(f"Invalid transform type: {type(transform)}, expected Affine")
-
-        # Check if transform is valid (not identity or close to identity)
-        identity = Affine.identity()
-        is_close_to_identity = all(abs(a - b) < 1e-10 for a, b in zip(transform, identity))
-
-        if is_close_to_identity:
-            raise ValueError("Transform appears to be identity matrix - no geographic projection available")
-
-        transformed_coords = []
+        # 1. Pixels to Source CRS
+        projected_coords = []
         for x, y in coords:
+            wx, wy = src_transform * (x, y)
+            projected_coords.append((wx, wy))
+
+        # 2. Source CRS to WGS84 (if requested)
+        if self.wgs84_checkbox.isChecked():
+            # Check if source CRS is valid
+            if not src_crs:
+                raise ValueError("Cannot reproject: Source image has no CRS.")
+            
+            # Unzip for batch processing
+            xs, ys = zip(*projected_coords)
+            
             try:
-                # Validate input coordinates
-                if not (isinstance(x, (int, float)) and isinstance(y, (int, float))):
-                    raise ValueError(f"Invalid coordinate values: ({x}, {y})")
-
-                # Apply transformation
-                geo_x, geo_y = transform * (x, y)
-
-                # Check for unreasonable values that might indicate transformation problems
-                # These thresholds depend on your coordinate system, adjust as needed
-                if abs(geo_x) > 1e10 or abs(geo_y) > 1e10:
-                    raise ValueError(f"Transformed coordinates out of reasonable range: [{geo_x}, {geo_y}]")
-
-                transformed_coords.append([geo_x, geo_y])
+                # Perform the warp
+                wgs84_crs = CRS.from_epsg(4326)
+                txs, tys = warp_transform(src_crs, wgs84_crs, xs, ys)
+                return list(zip(txs, tys))
             except Exception as e:
-                raise ValueError(f"Failed to transform coordinates ({x}, {y}): {str(e)}")
-
-        return transformed_coords
-
-    def create_geojson_feature(self, annotation, image_path, transform=None):
-        """
-        Create a GeoJSON feature from an annotation with proper coordinate transformation error handling.
-
-        Args:
-            annotation: The annotation object to convert
-            image_path: Path to the image containing the annotation
-            transform: Optional affine transformation matrix
-
-        Returns:
-            GeoJSON feature dictionary or None if conversion fails
-        """
-        # Handle Patch Annotations as Points
-        if isinstance(annotation, PatchAnnotation) and self.patch_representation_combo.currentText() == "Point":
-            x = annotation.center_xy.x()
-            y = annotation.center_xy.y()
-
-            try:
-                # Transform the coordinates
-                [[geo_x, geo_y]] = self.transform_coordinates([(x, y)], transform)
-            except ValueError:
-                # Skip this annotation
-                return None
-
-            # Create the GeoJSON feature for Point
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [geo_x, geo_y]
-                },
-                "properties": {
-                    "label": annotation.label.short_label_code,
-                    "label_properties": annotation.label.to_dict(),
-                    "source_image": os.path.basename(image_path),
-                    "coordinate_system": "geographic"
-                }
-            }
-            return feature
-
-        # Handle MultiPolygon Annotations
-        elif isinstance(annotation, MultiPolygonAnnotation):
-            multipolygon_coords = []
-
-            for polygon in annotation.polygons:
-                polygon_coords = self.convert_annotation_to_polygon(polygon)
-
-                # Ensure the polygon has at least 4 points
-                if len(polygon_coords) < 4:
-                    print(f"Skipping polygon with less than 4 points in {image_path}")
-                    continue
-
-                try:
-                    # Transform the coordinates
-                    polygon_coords = self.transform_coordinates(polygon_coords, transform)
-                except ValueError:
-                    # Skip this polygon
-                    continue
-
-                # Ensure the polygon is closed (first and last positions are the same)
-                if polygon_coords[0] != polygon_coords[-1]:
-                    polygon_coords.append(polygon_coords[0])
-
-                multipolygon_coords.append([polygon_coords])
-
-            if not multipolygon_coords:
-                return None
-
-            # Create the GeoJSON feature for MultiPolygon
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "MultiPolygon",
-                    "coordinates": multipolygon_coords
-                },
-                "properties": {
-                    "label": annotation.label.short_label_code,
-                    "label_properties": annotation.label.to_dict(),
-                    "source_image": os.path.basename(image_path),
-                    "coordinate_system": "geographic"
-                }
-            }
-            return feature
+                raise ValueError(f"Reprojection failed: {str(e)}")
         
+        return projected_coords
+
+    def create_geojson_feature(self, annotation, image_path, transform, crs):
+        """Create a single GeoJSON Feature dictionary with styles and metadata."""
+        
+        # Determine geometry type
+        is_point = isinstance(annotation, PatchAnnotation) and self.patch_representation_combo.currentText() == "Point"
+        
+        # Prepare coordinates (Pixels)
+        pixel_coords_lists = []  # List of lists of rings (to handle Multipolygon)
+        
+        if isinstance(annotation, MultiPolygonAnnotation):
+            for poly in annotation.polygons:
+                rings = self.convert_annotation_to_polygon(poly)
+                if rings:
+                    pixel_coords_lists.append(rings)
+        elif is_point:
+            # For points, we treat center as single coord in a ring
+            pixel_coords_lists.append([(annotation.center_xy.x(), annotation.center_xy.y())])
         else:
-            # Handle all other annotations as Polygons
-            polygon_coords = self.convert_annotation_to_polygon(annotation)
+            # Polygon/Rect/Patch-as-Poly
+            rings = self.convert_annotation_to_polygon(annotation)
+            if rings:
+                pixel_coords_lists.append(rings)
 
-            # Ensure the polygon has at least 4 points
-            if len(polygon_coords) < 4:
-                print(f"Skipping annotation with less than 4 points in {image_path}")
-                return None
+        if not pixel_coords_lists:
+            return None
 
-            try:
-                # Transform the coordinates
-                polygon_coords = self.transform_coordinates(polygon_coords, transform)
-            except ValueError:
-                # Skip this annotation
-                return None
+        # Transform to Geographic Coordinates
+        try:
+            geo_coords_lists = []
+            for plist in pixel_coords_lists:  # plist is [ring1, ring2, ...] or for point [[point]]
+                transformed_rings = []
+                for ring in plist:
+                    geo_ring = self.transform_coordinates(ring, transform, crs)
+                    
+                    if not is_point:
+                        # Close the loop for polygons
+                        if geo_ring and geo_ring[0] != geo_ring[-1]: 
+                            geo_ring.append(geo_ring[0])
+                    
+                    transformed_rings.append(geo_ring)
+                geo_coords_lists.append(transformed_rings)
+        except ValueError:
+            return None
 
-            # Ensure the polygon is closed (first and last positions are the same)
-            if polygon_coords[0] != polygon_coords[-1]:
-                polygon_coords.append(polygon_coords[0])
-
-            # Create the GeoJSON feature
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [polygon_coords]
-                },
-                "properties": {
-                    "label": annotation.label.short_label_code,
-                    "label_properties": annotation.label.to_dict(),
-                    "source_image": os.path.basename(image_path),
-                    "coordinate_system": "geographic"
-                }
+        # Build Geometry Object
+        if is_point:
+            # Point
+            geometry = {
+                "type": "Point",
+                "coordinates": geo_coords_lists[0][0][0]  # First list, first ring, first point (x,y)
             }
-            return feature
+        elif isinstance(annotation, MultiPolygonAnnotation):
+            # MultiPolygon
+            geometry = {
+                "type": "MultiPolygon",
+                "coordinates": geo_coords_lists  # List of [rings] for each polygon
+            }
+        else:
+            # Polygon
+            geometry = {
+                "type": "Polygon",
+                "coordinates": geo_coords_lists[0]  # [rings]
+            }
 
-    def validate_images(self, images):
-        """
-        Validate that all selected images are TIFF files and have valid CRS and transform information.
+        # Build Properties
+        props = {
+            "short_label_code": annotation.label.short_label_code,
+            "long_label_code": annotation.label.long_label_code,
+            "source_image": os.path.basename(image_path)
+        }
 
-        Args:
-            images: List of image paths to validate
+        # Add Metadata (Area, Date)
+        if self.metadata_checkbox.isChecked():
+            # Calculate pixel area (sum of all parts)
+            total_px_area = sum(self.get_polygon_area_pixels(plist) for plist in pixel_coords_lists)
+            props["area_pixels"] = round(total_px_area, 2)
+            props["exported_at"] = datetime.now().isoformat()
+            # If annotator info exists in your annotation object, add it here:
+            # props["annotator"] = getattr(annotation, "annotator", "Unknown")
 
-        Returns:
-            True if all images are valid, False otherwise. Also displays warning messages.
-        """
-        for image_path in images:
-            # Check if the image is a .tif or .tiff
-            if not image_path.lower().endswith(('.tif', '.tiff')):
-                QMessageBox.warning(self,
-                                    "Invalid Image Format",
-                                    "Non-TIF images included. Select only TIF images.")
+        # Add Styling (SimpleStyle)
+        if self.style_checkbox.isChecked():
+            color_hex = self.get_label_color_hex(annotation.label)
+            props["marker-color"] = color_hex
+            props["stroke"] = color_hex
+            props["fill"] = color_hex
+            props["fill-opacity"] = 0.5
+            props["stroke-width"] = 2
+
+        return {
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": props
+        }
+
+    # ----------------------------------------------------------------------
+    # Main Export Execution
+    # ----------------------------------------------------------------------
+
+    def validate_inputs(self):
+        """Check if output paths and selections are valid."""
+        mode = "single" if self.tab_widget.currentIndex() == 0 else "individual"
+        
+        # Output Path Validation
+        if mode == "single":
+            if not self.output_file_edit.text().strip():
+                QMessageBox.warning(self, "Output Error", "Please select an output file.")
+                return False
+        else:
+            if not self.output_dir_edit.text().strip():
+                QMessageBox.warning(self, "Output Error", "Please select an output directory.")
                 return False
 
-            # Get the raster from the raster manager
-            raster = self.image_window.raster_manager.get_raster(image_path)
-            if not raster or not raster.rasterio_src:
-                QMessageBox.warning(self,
-                                    "Invalid Image",
-                                    f"Could not open {os.path.basename(image_path)}.")
-                return False
+        # Annotation/Label Validation
+        if not any([self.patch_checkbox.isChecked(), self.rectangle_checkbox.isChecked(),
+                    self.polygon_checkbox.isChecked(), self.multipolygon_checkbox.isChecked()]):
+            QMessageBox.warning(self, "Selection Error", "Select at least one annotation type.")
+            return False
 
-            try:
-                # Get the image transform from the rasterio source
-                transform = raster.rasterio_src.transform
-                crs = raster.rasterio_src.crs
-
-                # Check if CRS exists
-                if not crs:
-                    QMessageBox.warning(self,
-                                        "Missing CRS Information",
-                                        f"No coordinate reference system found for {os.path.basename(image_path)}.")
-                    return False
-
-                # Check the transform
-                if not isinstance(transform, Affine):
-                    QMessageBox.warning(self,
-                                        "Invalid Transform",
-                                        f"Invalid transform for {os.path.basename(image_path)}.")
-                    return False
-
-            except Exception as e:
-                QMessageBox.warning(self,
-                                    "Missing CRS Information",
-                                    f"Could not get CRS information for {os.path.basename(image_path)}: {str(e)}")
-                return False
+        if not self.get_selected_labels():
+            QMessageBox.warning(self, "Selection Error", "Select at least one label.")
+            return False
 
         return True
 
     def export_geojson(self):
-        """Export annotations as GeoJSON."""
-        # Validate inputs
-        if not self.output_file_edit.text():
-            QMessageBox.warning(self,
-                                "Missing Output File",
-                                "Please select an output file.")
+        """Main export execution method."""
+        if not self.validate_inputs():
             return
 
-        # Check if at least one annotation type is selected
-        if not any([self.patch_checkbox.isChecked(),
-                    self.rectangle_checkbox.isChecked(),
-                    self.polygon_checkbox.isChecked(),
-                    self.multipolygon_checkbox.isChecked()]):
-            QMessageBox.warning(self,
-                                "No Annotation Type Selected",
-                                "Please select at least one annotation type.")
-            return
+        # Prepare configuration
+        mode = "single" if self.tab_widget.currentIndex() == 0 else "individual"
+        selected_label_objects = self.get_selected_labels()
+        selected_label_codes = [label.short_label_code for label in selected_label_objects]
+        
+        # Determine output paths
+        if mode == 'single':
+            final_output_path = self.output_file_edit.text().strip()
+        else:
+            final_output_dir = self.output_dir_edit.text().strip()
+            if not os.path.exists(final_output_dir):
+                try:
+                    os.makedirs(final_output_dir)
+                except OSError as e:
+                    QMessageBox.critical(self, "Error", f"Could not create directory: {e}")
+                    return
 
-        # Check for checked items
-        self.selected_labels = []
-        for checkbox in self.label_checkboxes:
-            if checkbox.isChecked():
-                self.selected_labels.append(checkbox.property("label"))
-
-        # Check if at least one label is selected
-        if not self.selected_labels:
-            QMessageBox.warning(self,
-                                "No Labels Selected",
-                                "Please select at least one label.")
-            return
-
-        output_path = self.output_file_edit.text()
-
-        # Get the list of images to process
-        images = self.get_selected_image_paths()
-        if not images:
-            QMessageBox.warning(self,
-                                "No Images",
-                                "No images found in the project.")
-            return
-
-        # Validate images before proceeding
-        if not self.validate_images(images):
-            return
-
-        # Collect annotation types to include
-        self.annotation_types = []
-        if self.patch_checkbox.isChecked():
-            self.annotation_types.append(PatchAnnotation)
-        if self.rectangle_checkbox.isChecked():
-            self.annotation_types.append(RectangleAnnotation)
-        if self.polygon_checkbox.isChecked():
-            self.annotation_types.append(PolygonAnnotation)
-        if self.multipolygon_checkbox.isChecked():
-            self.annotation_types.append(MultiPolygonAnnotation)
-            
-        # Create the GeoJSON structure
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": []
-        }
-
-        # CRS information
-        crs = None
-
-        # Make the cursor busy
+        # Get all images in project
+        all_images = self.image_window.raster_manager.image_paths
+        
+        # Start Progress
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, "Exporting GeoJSON")
         progress_bar.show()
-        progress_bar.start_progress(len(images))
+        progress_bar.start_progress(len(all_images))
+
+        # Data holder for Single Mode
+        combined_features = []
+        
+        # Determine final CRS name for GeoJSON header
+        final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if self.wgs84_checkbox.isChecked() else None
 
         try:
-            # Iterate through the images
-            for image_path in images:
-                # Check if the image is a .tif or .tiff
-                if not image_path.lower().endswith(('.tif', '.tiff')):
-                    print(f"Warning: Non-TIFF image {os.path.basename(image_path)} included; skipping.")
+            for image_path in all_images:
+                # 1. Check for annotations first
+                annotations = self.get_annotations_for_image(image_path, selected_label_codes)
+                if not annotations:
+                    progress_bar.update_progress()
                     continue
 
-                # Get the annotations for this image
-                annotations = self.get_annotations_for_image(image_path)
-
-                # Get the raster from the raster manager
+                # 2. Load Raster Data
+                if not image_path.lower().endswith(('.tif', '.tiff')):
+                    continue
+                    
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if not raster or not raster.rasterio_src:
-                    print(f"Error: Could not get raster for {os.path.basename(image_path)}; skipping.")
                     continue
 
                 try:
-                    # Get the image transform from the rasterio source
                     transform = raster.rasterio_src.transform
-                    crs = raster.rasterio_src.crs.to_string()
+                    src_crs = raster.rasterio_src.crs
+                    
+                    # Store original CRS if we aren't reprojecting and haven't set one yet
+                    if not self.wgs84_checkbox.isChecked() and final_crs_name is None:
+                        if src_crs: 
+                            final_crs_name = src_crs.to_string()
 
-                    # Check the transform
-                    if not isinstance(transform, Affine):
-                        print(f"Error: Invalid transform for {os.path.basename(image_path)}; skipping.")
-                        continue
-
-                except Exception as e:
-                    print(f"Error: Could not get CRS for {os.path.basename(image_path)}; skipping: {str(e)}")
+                except Exception:
+                    print(f"Skipping {os.path.basename(image_path)}: Invalid CRS/Transform")
                     continue
 
-                # Create GeoJSON features for each annotation
-                for annotation in annotations:
-                    feature = self.create_geojson_feature(annotation, image_path, transform)
-                    if feature is not None:
-                        geojson_data["features"].append(feature)
+                # 3. Create Features
+                image_features = []
+                for ann in annotations:
+                    feat = self.create_geojson_feature(ann, image_path, transform, src_crs)
+                    if feat: 
+                        image_features.append(feat)
+
+                if not image_features:
+                    progress_bar.update_progress()
+                    continue
+
+                # 4. Write Data (Depending on Mode)
+                if mode == 'single':
+                    combined_features.extend(image_features)
+                else:
+                    # Individual Mode: Write immediately
+                    filename = os.path.splitext(os.path.basename(image_path))[0] + ".geojson"
+                    out_file = os.path.join(final_output_dir, filename)
+                    
+                    feature_collection = {
+                        "type": "FeatureCollection",
+                        "features": image_features
+                    }
+                    
+                    # Add CRS block if not WGS84
+                    if final_crs_name and "CRS84" not in final_crs_name:
+                        feature_collection["crs"] = {
+                            "type": "name", "properties": {"name": final_crs_name}
+                        }
+
+                    with open(out_file, 'w') as f:
+                        json.dump(feature_collection, f, indent=2)
 
                 progress_bar.update_progress()
 
-            # Add CRS to GeoJSON data if available
-            if crs:
-                geojson_data["crs"] = {
-                    "type": "name",
-                    "properties": {
-                        "name": crs
-                    }
+            # 5. Final Write for Single Mode
+            if mode == 'single':
+                feature_collection = {
+                    "type": "FeatureCollection",
+                    "features": combined_features
                 }
+                
+                # Add CRS block if not WGS84
+                if final_crs_name and "CRS84" not in final_crs_name:
+                    feature_collection["crs"] = {
+                        "type": "name", "properties": {"name": final_crs_name}
+                    }
+                
+                with open(final_output_path, 'w') as f:
+                    json.dump(feature_collection, f, indent=2)
 
-            else:
-                QMessageBox.critical(self,
-                                     "Missing CRS",
-                                     "No CRS information available for the images.")
-                return
-
-            # Write the GeoJSON data to a file
-            with open(output_path, 'w') as f:
-                json.dump(geojson_data, f, indent=2)
-
-            QMessageBox.information(self,
-                                    "Export Complete",
-                                    "Annotations have been successfully exported as GeoJSON")
+            QMessageBox.information(self, "Success", "Export completed successfully.")
             self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self,
-                                 "Error Exporting GeoJSON",
-                                 f"An error occurred: {str(e)}")
+            QMessageBox.critical(self, "Error", f"An error occurred during export: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
         finally:
-            # Make cursor normal again
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
-
-    def closeEvent(self, event):
-        """Handle the close event."""
-        # Clean up any resources if needed
-        super().closeEvent(event)
