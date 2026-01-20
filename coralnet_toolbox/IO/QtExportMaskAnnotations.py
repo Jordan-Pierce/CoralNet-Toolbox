@@ -88,7 +88,7 @@ class ExportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("mask.png"))
         self.setWindowTitle("Export Annotations to Masks")
-        self.resize(1000, 800)
+        self.resize(800, 600)
 
         self.mask_mode = 'semantic'  # 'semantic', 'sfm', or 'rgb'
         self.rgb_background_color = QColor(0, 0, 0)
