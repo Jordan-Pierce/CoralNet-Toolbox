@@ -403,12 +403,10 @@ class ImportMaskAnnotations(QDialog):
                 layout.setContentsMargins(0, 0, 0, 0)
                 layout.addStretch(1)
                 layout.addWidget(swatch)
-                
-                # Also show RGB values as text
-                rgb_label = QLabel(f"({value[0]}, {value[1]}, {value[2]})")
-                rgb_label.setStyleSheet("color: #666; font-size: 10px;")
-                layout.addWidget(rgb_label)
                 layout.addStretch(1)
+                
+                # Set RGB values as tooltip
+                container.setToolTip(f"({value[0]}, {value[1]}, {value[2]})")
                 
                 self.mapping_table.setCellWidget(row, 0, container)
                 
