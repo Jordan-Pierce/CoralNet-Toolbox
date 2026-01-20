@@ -6,6 +6,8 @@ It's extracted into a separate module to allow easy importing in tests without
 Qt dependencies.
 """
 
+import os
+
 TRANSFORMER_MODELS = {
     'ResNet-50': 'microsoft/resnet-50',
     'ResNet-101': 'microsoft/resnet-101',
@@ -14,21 +16,30 @@ TRANSFORMER_MODELS = {
     'DINOv2 (Large)': 'facebook/dinov2-large',
     'DINOv2 (Giant)': 'facebook/dinov2-giant',
     'DINOv2 (Giant ImageNet1k)': 'facebook/dinov2-giant-imagenet1k-1-layer',
-    'DINOv3 ConvNext (Tiny)': 'facebook/dinov3-convnext-tiny-pretrain-lvd1689m',
-    'DINOv3 ConvNext (Small)': 'facebook/dinov3-convnext-small-pretrain-lvd1689m',
-    'DINOv3 ConvNext (Base)': 'facebook/dinov3-convnext-base-pretrain-lvd1689m',
-    'DINOv3 ConvNext (Large)': 'facebook/dinov3-convnext-large-pretrain-lvd1689m',
-    'DINOv3 ViT (Small/16)': 'facebook/dinov3-vits16-pretrain-lvd1689m',
-    'DINOv3 ViT (Small/16+)': 'facebook/dinov3-vits16plus-pretrain-lvd1689m',
-    'DINOv3 ViT (Base/16)': 'facebook/dinov3-vitb16-pretrain-lvd1689m',
-    'DINOv3 ViT (Large/16)': 'facebook/dinov3-vitl16-pretrain-lvd1689m',
-    'DINOv3 ViT (Huge/16+)': 'facebook/dinov3-vith16plus-pretrain-lvd1689m',
-    'DINOv3 ViT (7B/16)': 'facebook/dinov3-vit7b16-pretrain-lvd1689m',
     'Swin Transformer (Tiny)': 'microsoft/swin-tiny-patch4-window7-224',
     'Swin Transformer (Base)': 'microsoft/swin-base-patch4-window7-224',
     'ViT (Base)': 'google/vit-base-patch16-224',
     'ViT (Large)': 'google/vit-large-patch16-224',
 }
+
+# Check if HF_TOKEN environment variable is set
+# (if not, user can definitely not access the model)
+hf_token = os.getenv("HF_TOKEN")
+        
+if hf_token and hf_token.strip():
+    # Add the DINOv3 models if the HuggingFace token is set
+    TRANSFORMER_MODELS.update({
+        'DINOv3 ConvNext (Tiny)': 'facebook/dinov3-convnext-tiny-pretrain-lvd1689m',
+        'DINOv3 ConvNext (Small)': 'facebook/dinov3-convnext-small-pretrain-lvd1689m',
+        'DINOv3 ConvNext (Base)': 'facebook/dinov3-convnext-base-pretrain-lvd1689m',
+        'DINOv3 ConvNext (Large)': 'facebook/dinov3-convnext-large-pretrain-lvd1689m',
+        'DINOv3 ViT (Small/16)': 'facebook/dinov3-vits16-pretrain-lvd1689m',
+        'DINOv3 ViT (Small/16+)': 'facebook/dinov3-vits16plus-pretrain-lvd1689m',
+        'DINOv3 ViT (Base/16)': 'facebook/dinov3-vitb16-pretrain-lvd1689m',
+        'DINOv3 ViT (Large/16)': 'facebook/dinov3-vitl16-pretrain-lvd1689m',
+        'DINOv3 ViT (Huge/16+)': 'facebook/dinov3-vith16plus-pretrain-lvd1689m',
+        'DINOv3 ViT (7B/16)': 'facebook/dinov3-vit7b16-pretrain-lvd1689m',
+    })
 
 
 def is_transformer_model(model_name):
