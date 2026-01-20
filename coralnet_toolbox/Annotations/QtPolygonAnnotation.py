@@ -154,7 +154,7 @@ class PolygonAnnotation(Annotation):
             shapely_polygon = Polygon(shell=shell_coords, holes=holes_coords)
 
             # Return the net area calculated by Shapely
-            return shapely_polygon.area
+            return np.around(shapely_polygon.area, 2)
 
         except Exception:
             # If Shapely fails (e.g., due to invalid geometry), fall back to
@@ -166,7 +166,7 @@ class PolygonAnnotation(Annotation):
                 j = (i + 1) % n
                 area += self.points[i].x() * self.points[j].y()
                 area -= self.points[j].x() * self.points[i].y()
-            return abs(area) / 2.0
+            return np.around(abs(area) / 2.0, 2)
 
     def get_perimeter(self):
         """
@@ -185,7 +185,7 @@ class PolygonAnnotation(Annotation):
             shapely_polygon = Polygon(shell=shell_coords, holes=holes_coords)
 
             # Return the total perimeter (length) calculated by Shapely
-            return shapely_polygon.length
+            return np.around(shapely_polygon.length, 2)
 
         except Exception:
             # If Shapely fails, fall back to calculating the perimeter of the
@@ -198,7 +198,7 @@ class PolygonAnnotation(Annotation):
                 dy = self.points[i].y() - self.points[j].y()
                 distance = math.sqrt(dx * dx + dy * dy)
                 perimeter += distance
-            return perimeter
+            return np.around(perimeter, 2)
 
     def get_morphology(self) -> dict | None:
         """

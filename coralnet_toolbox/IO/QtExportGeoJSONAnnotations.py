@@ -299,10 +299,20 @@ class ExportGeoJSONAnnotations(QDialog):
             pass
         return "#555555"  # Fallback gray
 
-    def get_polygon_area_pixels(self, coords):
-        """Calculate polygon area using shoelace formula."""
+    def get_polygon_area_pixels(self, rings):
+        """Calculate polygon area using shoelace formula, accounting for holes."""
+        if not rings or len(rings[0]) < 3:
+            return 0.0
+        # Exterior area
+        ext_area = self._shoelace_area(rings[0])
+        # Subtract hole areas
+        hole_area = sum(self._shoelace_area(hole) for hole in rings[1:])
+        return ext_area - hole_area
+
+    def _shoelace_area(self, coords):
+        """Helper to compute area of a single ring using shoelace formula."""
         n = len(coords)
-        if n < 3: 
+        if n < 3:
             return 0.0
         area = 0.0
         for i in range(n):
@@ -335,20 +345,25 @@ class ExportGeoJSONAnnotations(QDialog):
         return annotations
 
     def convert_annotation_to_polygon(self, annotation):
-        """Convert any annotation type to a pixel-coordinate polygon."""
+        """Convert any annotation type to a list of pixel-coordinate rings (for GeoJSON compatibility)."""
         if isinstance(annotation, PatchAnnotation):
             size = annotation.annotation_size / 2
             x, y = annotation.center_xy.x(), annotation.center_xy.y()
-            return [(x - size, y - size), (x + size, y - size), 
-                    (x + size, y + size), (x - size, y + size)]
+            exterior = [(x - size, y - size), (x + size, y - size), 
+                        (x + size, y + size), (x - size, y + size)]
+            return [exterior]
 
         elif isinstance(annotation, RectangleAnnotation):
             tl, br = annotation.top_left, annotation.bottom_right
-            return [(tl.x(), tl.y()), (br.x(), tl.y()), 
-                    (br.x(), br.y()), (tl.x(), br.y())]
+            exterior = [(tl.x(), tl.y()), (br.x(), tl.y()), 
+                        (br.x(), br.y()), (tl.x(), br.y())]
+            return [exterior]
 
         elif isinstance(annotation, PolygonAnnotation):
-            return [(p.x(), p.y()) for p in annotation.points]
+            rings = [[(p.x(), p.y()) for p in annotation.points]]
+            for hole in annotation.holes:
+                rings.append([(p.x(), p.y()) for p in hole])
+            return rings
 
         return []
 
@@ -390,21 +405,21 @@ class ExportGeoJSONAnnotations(QDialog):
         is_point = isinstance(annotation, PatchAnnotation) and self.patch_representation_combo.currentText() == "Point"
         
         # Prepare coordinates (Pixels)
-        pixel_coords_lists = []  # List of lists of coords (to handle Multipolygon)
+        pixel_coords_lists = []  # List of lists of rings (to handle Multipolygon)
         
         if isinstance(annotation, MultiPolygonAnnotation):
             for poly in annotation.polygons:
-                pts = self.convert_annotation_to_polygon(poly)
-                if len(pts) >= 3: 
-                    pixel_coords_lists.append(pts)
+                rings = self.convert_annotation_to_polygon(poly)
+                if rings:
+                    pixel_coords_lists.append(rings)
         elif is_point:
-            # For points, we just treat center as single coord
+            # For points, we treat center as single coord in a ring
             pixel_coords_lists.append([(annotation.center_xy.x(), annotation.center_xy.y())])
         else:
             # Polygon/Rect/Patch-as-Poly
-            pts = self.convert_annotation_to_polygon(annotation)
-            if len(pts) >= 3: 
-                pixel_coords_lists.append(pts)
+            rings = self.convert_annotation_to_polygon(annotation)
+            if rings:
+                pixel_coords_lists.append(rings)
 
         if not pixel_coords_lists:
             return None
@@ -412,15 +427,18 @@ class ExportGeoJSONAnnotations(QDialog):
         # Transform to Geographic Coordinates
         try:
             geo_coords_lists = []
-            for plist in pixel_coords_lists:
-                geo_pts = self.transform_coordinates(plist, transform, crs)
-                
-                if not is_point:
-                    # Close the loop for polygons
-                    if geo_pts[0] != geo_pts[-1]: 
-                        geo_pts.append(geo_pts[0])
-                
-                geo_coords_lists.append(geo_pts)
+            for plist in pixel_coords_lists:  # plist is [ring1, ring2, ...] or for point [[point]]
+                transformed_rings = []
+                for ring in plist:
+                    geo_ring = self.transform_coordinates(ring, transform, crs)
+                    
+                    if not is_point:
+                        # Close the loop for polygons
+                        if geo_ring and geo_ring[0] != geo_ring[-1]: 
+                            geo_ring.append(geo_ring[0])
+                    
+                    transformed_rings.append(geo_ring)
+                geo_coords_lists.append(transformed_rings)
         except ValueError:
             return None
 
@@ -429,19 +447,19 @@ class ExportGeoJSONAnnotations(QDialog):
             # Point
             geometry = {
                 "type": "Point",
-                "coordinates": geo_coords_lists[0][0]  # First list, first point (x,y)
+                "coordinates": geo_coords_lists[0][0][0]  # First list, first ring, first point (x,y)
             }
         elif isinstance(annotation, MultiPolygonAnnotation):
             # MultiPolygon
             geometry = {
                 "type": "MultiPolygon",
-                "coordinates": [[g] for g in geo_coords_lists]  # GeoJSON MultiPoly needs extra nesting
+                "coordinates": geo_coords_lists  # List of [rings] for each polygon
             }
         else:
             # Polygon
             geometry = {
                 "type": "Polygon",
-                "coordinates": [geo_coords_lists[0]]
+                "coordinates": geo_coords_lists[0]  # [rings]
             }
 
         # Build Properties

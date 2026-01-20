@@ -1,10 +1,10 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from rasterio.windows import Window
-
+import numpy as np
 from shapely.ops import split, unary_union
 from shapely.geometry import Point, LineString, box
+
+from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
@@ -15,6 +15,7 @@ from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -99,13 +100,13 @@ class RectangleAnnotation(Annotation):
                                self.top_left.y(),
                                self.bottom_right.x(), 
                                self.bottom_right.y())
-            return shapely_rect.area
+            return np.around(shapely_rect.area, 2)  # Round to 2 decimal places
 
         except Exception:
             # Fallback to the original implementation if Shapely fails
             width = self.bottom_right.x() - self.top_left.x()
             height = self.bottom_right.y() - self.top_left.y()
-            return width * height
+            return np.around(width * height, 2)
 
     def get_perimeter(self):
         """Calculate the perimeter of the rectangle using Shapely."""
@@ -115,13 +116,13 @@ class RectangleAnnotation(Annotation):
                                self.top_left.y(),
                                self.bottom_right.x(), 
                                self.bottom_right.y())
-            return shapely_rect.length
+            return np.around(shapely_rect.length, 2)  # Round to 2 decimal places
         
         except Exception:
             # Fallback to the original implementation if Shapely fails
             width = self.bottom_right.x() - self.top_left.x()
             height = self.bottom_right.y() - self.top_left.y()
-            return 2 * width + 2 * height
+            return np.around(2 * width + 2 * height, 2)
 
     def get_polygon(self):
         """Get the polygon representation of this rectangle."""

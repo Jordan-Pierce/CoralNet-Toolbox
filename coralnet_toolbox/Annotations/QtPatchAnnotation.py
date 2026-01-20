@@ -1,9 +1,10 @@
 import warnings
 
-from rasterio.windows import Window
-
+import numpy as np
 from shapely.ops import unary_union
 from shapely.geometry import Point, Polygon 
+
+from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPathItem
@@ -110,7 +111,7 @@ class PatchAnnotation(Annotation):
 
             # Create a Shapely polygon and return its area
             shapely_polygon = Polygon(shell=shell_coords)
-            return shapely_polygon.area
+            return np.around(shapely_polygon.area, 2)   # Round to 2 decimal places
 
         except Exception:
             # Fallback to the original implementation if Shapely fails
@@ -131,11 +132,11 @@ class PatchAnnotation(Annotation):
 
             # Create a Shapely polygon and return its perimeter (length)
             shapely_polygon = Polygon(shell=shell_coords)
-            return shapely_polygon.length
+            return np.around(shapely_polygon.length, 2)  # Round to 2 decimal places
 
         except Exception:
             # Fallback to the original implementation if Shapely fails
-            return 4 * self.annotation_size
+            return np.around(4 * self.annotation_size, 2)
 
     def get_polygon(self):
         """Get the polygon representation of this patch (a square)."""
