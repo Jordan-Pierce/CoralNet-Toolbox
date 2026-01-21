@@ -124,6 +124,64 @@ class RectangleAnnotation(Annotation):
             height = self.bottom_right.y() - self.top_left.y()
             return np.around(2 * width + 2 * height, 2)
 
+    def get_morphology(self) -> dict | None:
+        """
+        Calculate morphology metrics for the rectangle annotation.
+        
+        Rectangles have fixed shape properties:
+        - Orientation is always 0 for axis-aligned rectangles
+        - Solidity and convexity are always 1.0 (rectangles are convex)
+        - Rectangularity is always 1.0 (perfect rectangle)
+        - Hull metrics equal the rectangle itself
+        
+        Returns:
+            dict | None: Dictionary of morphology metrics, or None if 
+                        rectangle dimensions are invalid.
+        """
+        try:
+            # Get dimensions
+            bbox_width = abs(self.bottom_right.x() - self.top_left.x())
+            bbox_height = abs(self.bottom_right.y() - self.top_left.y())
+            
+            # Guard against degenerate rectangles
+            if bbox_width <= 0 or bbox_height <= 0:
+                return None
+            
+            # Get area and perimeter
+            area = self.get_area()
+            perimeter = self.get_perimeter()
+            
+            if area <= 0 or perimeter <= 0:
+                return None
+            
+            # For rectangles, major/minor axes are the bbox dimensions
+            major_axis = max(bbox_width, bbox_height)
+            minor_axis = min(bbox_width, bbox_height)
+            
+            # For axis-aligned rectangles, hull equals the rectangle itself
+            hull_area = area
+            hull_perimeter = perimeter
+            
+            # Package raw metrics
+            raw_metrics = {
+                'major_axis': major_axis,
+                'minor_axis': minor_axis,
+                'hull_area': hull_area,
+                'hull_perimeter': hull_perimeter,
+                'area': area,
+                'perimeter': perimeter,
+                'orientation': 0.0,  # Axis-aligned rectangles have 0 orientation
+                'bbox_width': bbox_width,
+                'bbox_height': bbox_height,
+            }
+            
+            # Use the base class helper to compute ratios and scaled values
+            return self._apply_scale_to_morphology(raw_metrics)
+            
+        except Exception as e:
+            print(f"Error calculating morphology for rectangle annotation {self.id}: {e}")
+            return None
+
     def get_polygon(self):
         """Get the polygon representation of this rectangle."""
         points = [

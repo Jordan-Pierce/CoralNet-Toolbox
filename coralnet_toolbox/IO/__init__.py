@@ -18,6 +18,7 @@ from .QtExportGeoJSONAnnotations import ExportGeoJSONAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
 from .QtExportTagLabAnnotations import ExportTagLabAnnotations
+from .QtExportSpatialMetrics import ExportSpatialMetrics
 from .QtOpenProject import OpenProject
 from .QtSaveProject import SaveProject
 
@@ -42,6 +43,7 @@ __all__ = [
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',
     'ExportTagLabAnnotations',
+    'ExportSpatialMetrics',
     'OpenProject',
     'SaveProject'
 ]

@@ -65,6 +65,7 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
+    ExportSpatialMetrics,
     OpenProject,
     SaveProject
 )
@@ -271,6 +272,7 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
+        self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
@@ -523,6 +525,14 @@ class MainWindow(QMainWindow):
         self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
+        # Add a separator
+        self.export_menu.addSeparator()
+        
+        # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
+        self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
+        self.export_spatial_metrics_action.triggered.connect(self.export_spatial_metrics_dialog.exec_)
+        self.export_menu.addAction(self.export_spatial_metrics_action)
+        
         # Add a separator
         self.file_menu.addSeparator()
 
