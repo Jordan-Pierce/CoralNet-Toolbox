@@ -669,10 +669,20 @@ class PolygonAnnotation(Annotation):
             for anno in annotations:
                 shell = [(p.x(), p.y()) for p in anno.points]
                 holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
-                shapely_polygons.append(Polygon(shell, holes))
+                poly = Polygon(shell, holes)
+                
+                # Fix topology issues by buffering with zero width
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                
+                shapely_polygons.append(poly)
 
             # 2. Perform the union operation.
             merged_geom = unary_union(shapely_polygons)
+            
+            # Fix any remaining topology issues
+            if not merged_geom.is_valid:
+                merged_geom = merged_geom.buffer(0)
             
             # --- Get properties from the first annotation to transfer to the new one ---
             first_anno = annotations[0]
