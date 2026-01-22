@@ -10,6 +10,7 @@ from .QtImportTagLabAnnotations import ImportTagLabAnnotations
 from .QtImportSquidleAnnotations import ImportSquidleAnnotations
 from .QtImportMaskAnnotations import ImportMaskAnnotations
 from .QtImportCOLMAPCameras import ImportCOLMAPCameras
+from .QtImportMetashapeCameras import ImportMetashapeCameras
 from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
@@ -35,6 +36,7 @@ __all__ = [
     'ImportSquidleAnnotations',
     'ImportMaskAnnotations',
     'ImportCOLMAPCameras',
+    'ImportMetashapeCameras',
     'ExportLabels',
     'ExportTagLabLabels',
     'ExportAnnotations',
