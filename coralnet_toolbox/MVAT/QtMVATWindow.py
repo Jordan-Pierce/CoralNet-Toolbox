@@ -1,7 +1,7 @@
 """
-Multi-View Annotation Tool (MVAT) Window
+MultiView Annotation Tool (MVAT) Window
 
-A 3D viewer for visualizing camera frustums and navigating multi-view imagery.
+A 3D viewer for visualizing camera frustums and navigating MultiView imagery.
 Uses PyVista for 3D rendering and integrates with the main application's RasterManager.
 """
 
@@ -25,9 +25,12 @@ except ImportError:
     PYVISTA_AVAILABLE = False
     print("Warning: PyVista or PyVistaQt not installed. MVAT will not be available.")
 
+from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -37,37 +40,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-class MVATViewer(QFrame):
-    """
-    A dedicated widget for holding the PyVista 3D Interactor.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.NoFrame)
-        
-        # Layout
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Create PyVista QtInteractor
-        self.plotter = QtInteractor(self)
-        self.plotter.set_background('white')
-        self.plotter.enable_trackball_style()
-        
-        # Add to layout
-        self.layout.addWidget(self.plotter.interactor)
-
-    def close(self):
-        """Clean up the plotter resources."""
-        if self.plotter:
-            self.plotter.close()
-
 
 class MVATWindow(QMainWindow):
     """
-    Multi-View Annotation Tool Window.
+    MultiView Annotation Tool Window.
     
-    Provides a 3D visualization of camera frustums for multi-view imagery projects.
+    Provides a 3D visualization of camera frustums for MultiView imagery projects.
     Allows users to navigate between views in 3D space and select cameras.
     """
     
@@ -93,7 +71,7 @@ class MVATWindow(QMainWindow):
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
         
-        # Display settings
+        # Display status
         self.frustum_scale = 0.5
         self.show_wireframes = True
         self.show_thumbnails = True
@@ -110,7 +88,7 @@ class MVATWindow(QMainWindow):
         
     def _setup_window(self):
         """Configure the main window properties."""
-        self.setWindowTitle("Multi-View Annotation Tool (MVAT)")
+        self.setWindowTitle("MultiView Annotation Tool (MVAT)")
         self.setWindowIcon(QIcon(get_icon("camera.png")))
         self.setMinimumSize(1200, 800)
         
@@ -167,7 +145,7 @@ class MVATWindow(QMainWindow):
         # to match the Main Window's look and feel.
         
     def _setup_central_layout(self):
-        """Create the central widget, top settings bar, and splitters."""
+        """Create the central widget, top status bar, and splitters."""
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         
@@ -176,22 +154,22 @@ class MVATWindow(QMainWindow):
         self.main_layout.setContentsMargins(5, 5, 5, 5)
         self.main_layout.setSpacing(5)  # Reduce spacing between bar and splitter
         
-        # 1. Top Settings Group Box (Mimics MainWindow Status/Param Bar)
-        self.settings_group_box = QGroupBox("Settings / Status")
+        # 1. Top status Group Box (Mimics MainWindow Status/Param Bar)
+        self.status_bar_group_box = QGroupBox("Status Bar")
         # FORCE HEIGHT: Match typical compact status bar height (~50-60px)
-        self.settings_group_box.setMaximumHeight(65) 
+        self.status_bar_group_box.setMaximumHeight(65) 
         
-        self.settings_layout = QHBoxLayout(self.settings_group_box)
+        self.status_bar_layout = QHBoxLayout(self.status_bar_group_box)
         # TIGHT MARGINS: (left, top, right, bottom) - Top needs space for GroupBox title
-        self.settings_layout.setContentsMargins(5, 15, 5, 5) 
-        self.settings_layout.setSpacing(10)  # Reduce spacing between widgets
+        self.status_bar_layout.setContentsMargins(5, 15, 5, 5) 
+        self.status_bar_layout.setSpacing(10)  # Reduce spacing between widgets
         
         # --- Widget: Stats Label ---
         self.stats_label = QLabel("Cameras: 0")
-        self.settings_layout.addWidget(self.stats_label)
+        self.status_bar_layout.addWidget(self.stats_label)
         
         # Vertical Separator
-        self.settings_layout.addWidget(self._create_v_line())
+        self.status_bar_layout.addWidget(self._create_v_line())
         
         # --- Widget: Frustum Scale ---
         scale_label = QLabel("Scale:")
@@ -201,8 +179,8 @@ class MVATWindow(QMainWindow):
         self.scale_spinbox.setValue(self.frustum_scale)
         self.scale_spinbox.setToolTip("Adjust camera frustum size")
         self.scale_spinbox.valueChanged.connect(self._on_scale_changed)
-        self.settings_layout.addWidget(scale_label)
-        self.settings_layout.addWidget(self.scale_spinbox)
+        self.status_bar_layout.addWidget(scale_label)
+        self.status_bar_layout.addWidget(self.scale_spinbox)
         
         # --- Widget: Opacity Slider ---
         opacity_label = QLabel("Opacity:")
@@ -212,45 +190,45 @@ class MVATWindow(QMainWindow):
         self.opacity_slider.setFixedWidth(100)
         self.opacity_slider.setToolTip("Adjust thumbnail opacity")
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        self.settings_layout.addWidget(opacity_label)
-        self.settings_layout.addWidget(self.opacity_slider)
+        self.status_bar_layout.addWidget(opacity_label)
+        self.status_bar_layout.addWidget(self.opacity_slider)
         
         # --- Widget: Checkboxes ---
         self.wireframe_checkbox = QCheckBox("Wireframes")
         self.wireframe_checkbox.setChecked(self.show_wireframes)
         self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)
-        self.settings_layout.addWidget(self.wireframe_checkbox)
+        self.status_bar_layout.addWidget(self.wireframe_checkbox)
         
         self.thumbnail_checkbox = QCheckBox("Thumbnails")
         self.thumbnail_checkbox.setChecked(self.show_thumbnails)
         self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
-        self.settings_layout.addWidget(self.thumbnail_checkbox)
+        self.status_bar_layout.addWidget(self.thumbnail_checkbox)
         
         # Vertical Separator
-        self.settings_layout.addWidget(self._create_v_line())
+        self.status_bar_layout.addWidget(self._create_v_line())
         
         # --- Widget: Selection Info & Button ---
         self.selection_label = QLabel("None selected")
         self.selection_label.setStyleSheet("color: #666;")
-        self.settings_layout.addWidget(self.selection_label)
+        self.status_bar_layout.addWidget(self.selection_label)
         
         self.goto_image_btn = QPushButton("Go to Image")
         self.goto_image_btn.setEnabled(False)
         self.goto_image_btn.setToolTip("Load selected camera in Main Window")
         self.goto_image_btn.clicked.connect(self._goto_selected_image)
-        self.settings_layout.addWidget(self.goto_image_btn)
+        self.status_bar_layout.addWidget(self.goto_image_btn)
         
         # Push everything to the left
-        self.settings_layout.addStretch()
+        self.status_bar_layout.addStretch()
         
         # Refresh Button (Right aligned)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setToolTip("Reload cameras from project")
         self.refresh_btn.clicked.connect(self._refresh_scene)
-        self.settings_layout.addWidget(self.refresh_btn)
+        self.status_bar_layout.addWidget(self.refresh_btn)
         
-        # Add Settings box to main layout
-        self.main_layout.addWidget(self.settings_group_box)
+        # Add status box to main layout
+        self.main_layout.addWidget(self.status_bar_group_box)
         
         # 2. Main Horizontal Splitter
         self.splitter = QSplitter(Qt.Horizontal)
@@ -259,7 +237,7 @@ class MVATWindow(QMainWindow):
         # --- Left Panel: 3D Viewer ---
         # Create the viewer container class
         self.viewer = MVATViewer(self)
-        
+
         # Enable picking for camera selection using the viewer's plotter
         self.viewer.plotter.enable_point_picking(
             callback=self._on_pick,
@@ -267,13 +245,15 @@ class MVATWindow(QMainWindow):
             use_picker=True,
             pickable_window=True
         )
-        
-        self.splitter.addWidget(self.viewer)
+
+        # NEW: Wrap the viewer in a groupbox
+        left_groupbox = QGroupBox("3D Viewer")
+        left_layout = QVBoxLayout(left_groupbox)
+        left_layout.addWidget(self.viewer)
+        self.splitter.addWidget(left_groupbox)  # Add the groupbox instead of the viewer directly
         
         # --- Right Panel: Empty Container ---
-        self.right_container = QFrame()
-        self.right_container.setFrameShape(QFrame.StyledPanel)
-        self.right_container.setStyleSheet("background-color: #f0f0f0;")
+        self.right_container = QGroupBox("Camera Grid")
         
         # Add a label just to denote it's the future container
         right_layout = QVBoxLayout(self.right_container)
