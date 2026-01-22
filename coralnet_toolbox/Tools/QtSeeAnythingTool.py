@@ -530,12 +530,15 @@ class SeeAnythingTool(Tool):
                 masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
 
         # Predict from prompts, providing masks if the task is segmentation
-        results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)[0]
+        results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)
 
         if not results:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
             return None
+        
+        # Get the first result from the list
+        results = results[0]
 
         # Create a results processor to merge and filter results
         results_processor = ResultsProcessor(self.main_window, {})
