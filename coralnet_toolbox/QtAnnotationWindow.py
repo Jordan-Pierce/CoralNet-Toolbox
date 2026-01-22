@@ -893,13 +893,14 @@ class AnnotationWindow(QGraphicsView):
             self.z_item = QGraphicsPixmapItem(pixmap)
             
             # Force Nearest Neighbor scaling to prevent color bleeding at transparent edges
-            self.z_item.setTransformationMode(Qt.FastTransformation)
+            self.z_item.setTransformationMode(Qt.SmoothTransformation)
             
             # Position at origin to align with base image
             self.z_item.setPos(0, 0)
             
             # Set Z-value between base image (-10) and annotations (0+)
-            self.z_item.setZValue(2)
+            # Layer order: base image (-10) < z-channel (-5) < annotations (0+)
+            self.z_item.setZValue(-5)
             
             # Set opacity from current slider value (not hardcoded default)
             # This preserves user's transparency preference when switching images
