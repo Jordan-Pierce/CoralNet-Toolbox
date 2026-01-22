@@ -141,7 +141,7 @@ class DeployPredictorDialog(QDialog):
         self.model_combo.addItems(standard_models)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yoloe-11s-seg.pt'))
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")
@@ -544,13 +544,24 @@ class DeployPredictorDialog(QDialog):
         
         # Set the predictor
         predictor = YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor
+        
+        if False:
+            # Debugging
+            import matplotlib.pyplot as plt
+            # Plot the resized image with the visual prompts
+            plt.imshow(cv2.cvtColor(self.resized_image, cv2.COLOR_BGR2RGB))
+            for bbox in visual_prompts['bboxes']:
+                x1, y1, x2, y2 = bbox
+                plt.gca().add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1,
+                                                  edgecolor='red', facecolor='none', linewidth=2))
+            plt.show()
 
-        try:
+        try:            
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
                                                 visual_prompts=visual_prompts.copy(),
                                                 predictor=predictor,
-                                                imgsz=max(self.resized_image.shape[:2]),
+                                                # imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                 iou=self.thresholds_widget.get_iou_thresh(),
                                                 max_det=self.thresholds_widget.get_max_detections(),
