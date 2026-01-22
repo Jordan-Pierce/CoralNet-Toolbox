@@ -634,15 +634,15 @@ class ExplorerWindow(QMainWindow):
             total_items = len(query_ann_ids)
             num_anomalies = len(anomalous_ann_ids)
             QMessageBox.information(self,
-                                   "Anomaly Detection Complete",
-                                   f"Found {num_anomalies} anomalous annotations out of {total_items} total.\n\n"
-                                   f"Threshold: {threshold_percentile}th percentile (score ≥ {anomaly_threshold:.3f})\n"
-                                   f"Results sorted by anomaly score (highest first).")
+                                    "Anomaly Detection Complete",
+                                    f"Found {num_anomalies} anomalous annotations out of {total_items} total.\n\n"
+                                    f"Threshold: {threshold_percentile}th percentile (score ≥ {anomaly_threshold:.3f})"
+                                    f"\nResults sorted by anomaly score (highest first).")
 
         except ImportError as e:
             QMessageBox.critical(self,
-                               "Missing Dependencies",
-                               f"Anomaly detection requires scikit-learn.\n\n{str(e)}")
+                                 "Missing Dependencies",
+                                 f"Anomaly detection requires scikit-learn.\n\n{str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -830,11 +830,11 @@ class ExplorerWindow(QMainWindow):
                 filters_text += "• Across all images\n"
             
             QMessageBox.information(self,
-                                   "Duplicate Detection Complete",
-                                   f"Found {num_groups} duplicate groups with {num_duplicates} duplicate copies.\n\n"
-                                   f"Filters applied:\n"
-                                   f"{filters_text}\n"
-                                   f"Results sorted by group size (largest first).")
+                                    "Duplicate Detection Complete",
+                                    f"Found {num_groups} duplicate groups with {num_duplicates} duplicate copies.\n\n"
+                                    f"Filters applied:\n"
+                                    f"{filters_text}\n"
+                                    f"Results sorted by group size (largest first).")
 
         finally:
             QApplication.restoreOverrideCursor()

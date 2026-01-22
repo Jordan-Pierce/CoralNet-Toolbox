@@ -2,8 +2,6 @@ import warnings
 
 import os
 
-import numpy as np
-
 from PyQt5.QtCore import Qt, QRectF, QRect
 from PyQt5.QtGui import QPen, QColor, QPainter, QFont
 from PyQt5.QtWidgets import QGraphicsObject, QStyle, QVBoxLayout, QLabel, QWidget, QGraphicsItem
