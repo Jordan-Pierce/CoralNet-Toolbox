@@ -556,8 +556,14 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Width:</b> {minor_scaled:.2f} {target_unit}")
                 else:
                     # Show pixel values
-                    tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis']:.2f} px")
-                    tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis']:.2f} px")
+                    if morph_data.get('major_axis') is not None:
+                        tooltip_parts.append(f"<b>Length:</b> {morph_data['major_axis']:.2f} px")
+                    if morph_data.get('minor_axis') is not None:
+                        tooltip_parts.append(f"<b>Width:</b> {morph_data['minor_axis']:.2f} px")
+                
+                # Orientation
+                if morph_data.get('orientation') is not None:
+                    tooltip_parts.append(f"<b>Orientation:</b> {morph_data['orientation']:.1f}°")
                 
                 # Shape descriptors (unitless ratios)
                 if morph_data.get('aspect_ratio') is not None:
@@ -566,10 +572,18 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Roundness:</b> {morph_data['roundness']:.3f}")
                 if morph_data.get('circularity') is not None:
                     tooltip_parts.append(f"<b>Circularity:</b> {morph_data['circularity']:.3f}")
+                if morph_data.get('compactness') is not None:
+                    tooltip_parts.append(f"<b>Compactness:</b> {morph_data['compactness']:.3f}")
                 if morph_data.get('solidity') is not None:
                     tooltip_parts.append(f"<b>Solidity:</b> {morph_data['solidity']:.3f}")
                 if morph_data.get('convexity') is not None:
                     tooltip_parts.append(f"<b>Convexity:</b> {morph_data['convexity']:.3f}")
+                if morph_data.get('elongation') is not None:
+                    tooltip_parts.append(f"<b>Elongation:</b> {morph_data['elongation']:.3f}")
+                if morph_data.get('rectangularity') is not None:
+                    tooltip_parts.append(f"<b>Rectangularity:</b> {morph_data['rectangularity']:.3f}")
+                if morph_data.get('eccentricity') is not None:
+                    tooltip_parts.append(f"<b>Eccentricity:</b> {morph_data['eccentricity']:.3f}")
                 
                 # Hull metrics
                 if has_scale and 'hull_area_scaled' in morph_data:
@@ -582,8 +596,10 @@ class ConfidenceWindow(QWidget):
                     tooltip_parts.append(f"<b>Hull Area:</b> {hull_area:.2f} {target_unit}²")
                     tooltip_parts.append(f"<b>Hull Perimeter:</b> {hull_perim:.2f} {target_unit}")
                 else:
-                    tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area']:.2f} px²")
-                    tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter']:.2f} px")
+                    if morph_data.get('hull_area') is not None:
+                        tooltip_parts.append(f"<b>Hull Area:</b> {morph_data['hull_area']:.2f} px²")
+                    if morph_data.get('hull_perimeter') is not None:
+                        tooltip_parts.append(f"<b>Hull Perimeter:</b> {morph_data['hull_perimeter']:.2f} px")
                     
         except (NotImplementedError, AttributeError):
             pass  # No morphology method available

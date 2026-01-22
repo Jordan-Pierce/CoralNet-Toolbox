@@ -57,6 +57,7 @@ from coralnet_toolbox.IO import (
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
     ImportCOLMAPCameras,
+    ImportMetashapeCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -65,6 +66,7 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
+    ExportSpatialMetrics,
     OpenProject,
     SaveProject
 )
@@ -254,6 +256,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_colmap_cameras = ImportCOLMAPCameras(self)
+        self.import_metashape_cameras = ImportMetashapeCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -271,6 +274,7 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
         self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
+        self.export_spatial_metrics_dialog = ExportSpatialMetrics(self)
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
@@ -409,6 +413,10 @@ class MainWindow(QMainWindow):
         self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
+        # Import Metashape Cameras
+        self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
+        self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
+        self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -523,6 +531,14 @@ class MainWindow(QMainWindow):
         self.export_semantic_dataset_action.triggered.connect(self.open_semantic_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_semantic_dataset_action)
 
+        # Add a separator
+        self.export_menu.addSeparator()
+        
+        # Export Spatial Metrics (at Export menu level, not in Annotations submenu)
+        self.export_spatial_metrics_action = QAction("Spatial Metrics", self)
+        self.export_spatial_metrics_action.triggered.connect(self.export_spatial_metrics_dialog.exec_)
+        self.export_menu.addAction(self.export_spatial_metrics_action)
+        
         # Add a separator
         self.file_menu.addSeparator()
 

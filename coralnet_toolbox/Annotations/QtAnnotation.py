@@ -161,10 +161,14 @@ class Annotation(QObject):
                 - hull_perimeter: Perimeter of convex hull in pixels
                 - area: Area of annotation in pixels²
                 - perimeter: Perimeter of annotation in pixels
+                - orientation: Rotation angle in degrees (optional)
+                - bbox_width: Bounding box width in pixels (optional)
+                - bbox_height: Bounding box height in pixels (optional)
         
         Returns:
             dict: A flat dictionary containing all calculated metrics including:
-                - Unitless ratios (aspect_ratio, roundness, circularity, solidity, convexity)
+                - Unitless ratios (aspect_ratio, roundness, circularity, solidity, convexity,
+                  elongation, eccentricity, rectangularity, compactness)
                 - Raw pixel values
                 - Scaled values with units (if scale is available)
         """
@@ -177,12 +181,19 @@ class Annotation(QObject):
         hull_perimeter = raw_metrics.get('hull_perimeter', 0)
         area = raw_metrics.get('area', 0)
         perimeter = raw_metrics.get('perimeter', 0)
+        orientation = raw_metrics.get('orientation', None)
+        bbox_width = raw_metrics.get('bbox_width', None)
+        bbox_height = raw_metrics.get('bbox_height', None)
         
         # Store raw pixel values
         result['major_axis'] = major_axis
         result['minor_axis'] = minor_axis
         result['hull_area'] = hull_area
         result['hull_perimeter'] = hull_perimeter
+        
+        # Store orientation if available
+        if orientation is not None:
+            result['orientation'] = orientation
         
         # Calculate unitless ratios (these are scale-invariant)
         # Aspect Ratio: major / minor (elongation measure)
@@ -205,6 +216,13 @@ class Annotation(QObject):
         else:
             result['circularity'] = None
         
+        # Compactness: perimeter² / area
+        # Inverse of circularity, perfect circle = 4π
+        if area > 0:
+            result['compactness'] = (perimeter * perimeter) / area
+        else:
+            result['compactness'] = None
+        
         # Solidity: area / hull_area
         # Measures convexity of shape (1.0 = fully convex)
         if hull_area > 0:
@@ -218,6 +236,31 @@ class Annotation(QObject):
             result['convexity'] = hull_perimeter / perimeter
         else:
             result['convexity'] = None
+        
+        # Elongation: 1 - (minor_axis / major_axis)
+        # Measures how stretched the shape is (0 = circle, 1 = line)
+        if major_axis > 0:
+            result['elongation'] = 1 - (minor_axis / major_axis)
+        else:
+            result['elongation'] = None
+        
+        # Rectangularity: area / (bbox_width * bbox_height)
+        # Measures how well the shape fills its bounding box (1.0 = rectangle)
+        if bbox_width is not None and bbox_height is not None and bbox_width * bbox_height > 0:
+            result['rectangularity'] = area / (bbox_width * bbox_height)
+        else:
+            result['rectangularity'] = None
+        
+        # Eccentricity: sqrt(1 - (minor/major)²)
+        # Measures how much the shape deviates from being circular (0 = circle, 1 = line)
+        if major_axis > 0:
+            ratio = minor_axis / major_axis
+            if ratio <= 1:
+                result['eccentricity'] = math.sqrt(1 - ratio * ratio)
+            else:
+                result['eccentricity'] = 0
+        else:
+            result['eccentricity'] = None
         
         # Add scaled values if scale is available
         if self.scale_x and self.scale_y and self.scale_units:
@@ -432,6 +475,124 @@ class Annotation(QObject):
             # Fallback to 2D area on error
             scaled_area_data = self.get_scaled_area()
             return scaled_area_data[0] if scaled_area_data else None
+
+    def get_min_z(self, z_channel: np.ndarray, scale_x: float = None, 
+                  z_unit: str = None) -> dict | None:
+        """
+        Get the minimum z-value within the annotation.
+        
+        Args:
+            z_channel (np.ndarray): The full 2D z_channel data from the Raster.
+            scale_x (float, optional): Scale factor for converting z-values to real-world units.
+            z_unit (str, optional): The unit of the z_channel data (e.g., 'mm', 'cm', 'ft').
+                                   If provided, z-values will be converted to meters.
+        
+        Returns:
+            dict | None: Dictionary with 'pixels' and 'meters' keys containing min z-value,
+                        or None if z_channel is not available or annotation is empty.
+        """
+        if z_channel is None:
+            return None
+        
+        try:
+            # Get the sliced data and mask
+            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            
+            # Check for valid data
+            if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
+                return None
+            
+            # Get masked z-values
+            masked_z_values = z_slice[mask]
+            
+            if len(masked_z_values) == 0:
+                return None
+            
+            # Calculate min in pixels
+            min_z_pixels = float(np.min(masked_z_values))
+            
+            # Calculate min in meters if scale is available
+            min_z_meters = None
+            if scale_x is not None:
+                # Scale the z-value
+                min_z_scaled = min_z_pixels * scale_x
+                
+                # Convert to meters if z_unit is provided
+                if z_unit:
+                    try:
+                        min_z_meters = convert_scale_units(min_z_scaled, z_unit, 'metre')
+                    except Exception:
+                        min_z_meters = min_z_scaled
+                else:
+                    min_z_meters = min_z_scaled
+            
+            return {
+                'pixels': np.around(min_z_pixels, 2),
+                'meters': np.around(min_z_meters, 2) if min_z_meters is not None else None
+            }
+            
+        except Exception as e:
+            print(f"Error calculating min z for annotation {self.id}: {e}")
+            return None
+
+    def get_max_z(self, z_channel: np.ndarray, scale_x: float = None, 
+                  z_unit: str = None) -> dict | None:
+        """
+        Get the maximum z-value within the annotation.
+        
+        Args:
+            z_channel (np.ndarray): The full 2D z_channel data from the Raster.
+            scale_x (float, optional): Scale factor for converting z-values to real-world units.
+            z_unit (str, optional): The unit of the z_channel data (e.g., 'mm', 'cm', 'ft').
+                                   If provided, z-values will be converted to meters.
+        
+        Returns:
+            dict | None: Dictionary with 'pixels' and 'meters' keys containing max z-value,
+                        or None if z_channel is not available or annotation is empty.
+        """
+        if z_channel is None:
+            return None
+        
+        try:
+            # Get the sliced data and mask
+            z_slice, mask = self._get_raster_slice_and_mask(z_channel)
+            
+            # Check for valid data
+            if z_slice.size == 0 or mask.size == 0 or not np.any(mask):
+                return None
+            
+            # Get masked z-values
+            masked_z_values = z_slice[mask]
+            
+            if len(masked_z_values) == 0:
+                return None
+            
+            # Calculate max in pixels
+            max_z_pixels = float(np.max(masked_z_values))
+            
+            # Calculate max in meters if scale is available
+            max_z_meters = None
+            if scale_x is not None:
+                # Scale the z-value
+                max_z_scaled = max_z_pixels * scale_x
+                
+                # Convert to meters if z_unit is provided
+                if z_unit:
+                    try:
+                        max_z_meters = convert_scale_units(max_z_scaled, z_unit, 'metre')
+                    except Exception:
+                        max_z_meters = max_z_scaled
+                else:
+                    max_z_meters = max_z_scaled
+            
+            return {
+                'pixels': np.around(max_z_pixels, 2),
+                'meters': np.around(max_z_meters, 2) if max_z_meters is not None else None
+            }
+            
+        except Exception as e:
+            print(f"Error calculating max z for annotation {self.id}: {e}")
+            return None
 
     def get_polygon(self):
         """Get the polygon representation of this annotation."""
@@ -1004,21 +1165,6 @@ class Annotation(QObject):
             confidences.append(np.nan)
         while len(suggestions) < 5:
             suggestions.append(np.nan)
-            
-        # Default to pixel values and "pixels" units
-        area_val = self.get_area()
-        perimeter_val = self.get_perimeter()
-        units_val = "pixels"
-        
-        # Overwrite with scaled values if available
-        scaled_area = self.get_scaled_area()
-        if scaled_area:
-            area_val = scaled_area[0]
-            units_val = scaled_area[1]  # e.g., "m"
-
-        scaled_perimeter = self.get_scaled_perimeter()
-        if scaled_perimeter:
-            perimeter_val = scaled_perimeter[0]
 
         return {
             'Name': os.path.basename(self.image_path),
@@ -1026,9 +1172,6 @@ class Annotation(QObject):
             'Row': int(self.center_xy.y()),
             'Column': int(self.center_xy.x()),
             'Patch Size': self.annotation_size,
-            'Area': area_val,
-            'Perimeter': perimeter_val,
-            'Units': units_val,
             'Annotation Type': type(self).__name__.replace('Annotation', ''),
             'Label': self.label.short_label_code,
             'Long Label': self.label.long_label_code,
@@ -1063,25 +1206,7 @@ class Annotation(QObject):
             'data': self.data,
             'machine_confidence': machine_confidence,
             'verified': self.verified,
-            'area': self.get_area(),
-            'perimeter': self.get_perimeter(),
         }
-        
-        # Add scaled values if they exist
-        scaled_area = self.get_scaled_area()
-        if scaled_area:
-            result['scaled_area'] = scaled_area[0]
-            result['area_units'] = scaled_area[1]
-
-        scaled_perimeter = self.get_scaled_perimeter()
-        if scaled_perimeter:
-            result['scaled_perimeter'] = scaled_perimeter[0]
-            result['perimeter_units'] = scaled_perimeter[1]
-
-        # Add morphology data if available (only for annotation types that support it)
-        morph_data = self.get_morphology()
-        if morph_data is not None:
-            result['morphology'] = morph_data
 
         return result
 

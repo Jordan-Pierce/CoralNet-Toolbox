@@ -557,22 +557,22 @@ class ImportCOLMAPCameras(QDialog):
             for idx, (img_id, img) in enumerate(matched_images.items()):
                 try:
                     # Get the intrinsics and extrinsics for this image
-                    K = all_intrinsics[idx]
-                    w2c = all_extrinsics[idx]
+                    intrinsics = all_intrinsics[idx]  # K
+                    extrinsics = all_extrinsics[idx]  # w2c
                     
                     # Get the raster and update camera parameters
-                    img_basename = os.path.basename(img.name)
-                    image_path = image_path_map[img_basename]
+                    image_basename = os.path.basename(img.name)
+                    image_path = image_path_map[image_basename]
                     raster = self.image_window.raster_manager.get_raster(image_path)
                     
                     if raster:
                         # Add or update camera parameters
                         if raster.intrinsics is not None or raster.extrinsics is not None:
-                            raster.update_intrinsics(K)
-                            raster.update_extrinsics(w2c)
+                            raster.update_intrinsics(intrinsics)
+                            raster.update_extrinsics(extrinsics)
                         else:
-                            raster.add_intrinsics(K)
-                            raster.add_extrinsics(w2c)
+                            raster.add_intrinsics(intrinsics)
+                            raster.add_extrinsics(extrinsics)
                         
                         updated_count += 1
                     else:
@@ -581,7 +581,7 @@ class ImportCOLMAPCameras(QDialog):
                 except Exception as e:
                     print(f"Error processing image {img.name}: {str(e)}")
                     skipped_count += 1
-                
+                                    
                 progress_bar.update_progress()
             
             # Show summary

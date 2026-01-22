@@ -240,6 +240,7 @@ class PolygonAnnotation(Annotation):
             # Note: minAreaRect works with any number of points >= 1
             rect = cv2.minAreaRect(np_points)
             width, height = rect[1]  # (width, height) of the rotated rectangle
+            angle = rect[2]  # Rotation angle in degrees
             
             # Major axis is the longer dimension, minor is the shorter
             major_axis = max(width, height)
@@ -253,6 +254,12 @@ class PolygonAnnotation(Annotation):
             hull_area = cv2.contourArea(hull)
             hull_perimeter = cv2.arcLength(hull, closed=True)
             
+            # Get bounding box for rectangularity calculation
+            top_left = self.get_bounding_box_top_left()
+            bottom_right = self.get_bounding_box_bottom_right()
+            bbox_width = abs(bottom_right.x() - top_left.x()) if top_left and bottom_right else None
+            bbox_height = abs(bottom_right.y() - top_left.y()) if top_left and bottom_right else None
+            
             # Package raw metrics
             raw_metrics = {
                 'major_axis': major_axis,
@@ -261,6 +268,9 @@ class PolygonAnnotation(Annotation):
                 'hull_perimeter': hull_perimeter,
                 'area': area,
                 'perimeter': perimeter,
+                'orientation': angle,
+                'bbox_width': bbox_width,
+                'bbox_height': bbox_height,
             }
             
             # Use the base class helper to compute ratios and scaled values
@@ -659,10 +669,20 @@ class PolygonAnnotation(Annotation):
             for anno in annotations:
                 shell = [(p.x(), p.y()) for p in anno.points]
                 holes = [[(p.x(), p.y()) for p in hole] for hole in getattr(anno, 'holes', [])]
-                shapely_polygons.append(Polygon(shell, holes))
+                poly = Polygon(shell, holes)
+                
+                # Fix topology issues by buffering with zero width
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                
+                shapely_polygons.append(poly)
 
             # 2. Perform the union operation.
             merged_geom = unary_union(shapely_polygons)
+            
+            # Fix any remaining topology issues
+            if not merged_geom.is_valid:
+                merged_geom = merged_geom.buffer(0)
             
             # --- Get properties from the first annotation to transfer to the new one ---
             first_anno = annotations[0]

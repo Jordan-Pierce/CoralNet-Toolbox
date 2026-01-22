@@ -10,6 +10,7 @@ from .QtImportTagLabAnnotations import ImportTagLabAnnotations
 from .QtImportSquidleAnnotations import ImportSquidleAnnotations
 from .QtImportMaskAnnotations import ImportMaskAnnotations
 from .QtImportCOLMAPCameras import ImportCOLMAPCameras
+from .QtImportMetashapeCameras import ImportMetashapeCameras
 from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
@@ -18,6 +19,7 @@ from .QtExportGeoJSONAnnotations import ExportGeoJSONAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
 from .QtExportTagLabAnnotations import ExportTagLabAnnotations
+from .QtExportSpatialMetrics import ExportSpatialMetrics
 from .QtOpenProject import OpenProject
 from .QtSaveProject import SaveProject
 
@@ -34,6 +36,7 @@ __all__ = [
     'ImportSquidleAnnotations',
     'ImportMaskAnnotations',
     'ImportCOLMAPCameras',
+    'ImportMetashapeCameras',
     'ExportLabels',
     'ExportTagLabLabels',
     'ExportAnnotations',
@@ -42,6 +45,7 @@ __all__ = [
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',
     'ExportTagLabAnnotations',
+    'ExportSpatialMetrics',
     'OpenProject',
     'SaveProject'
 ]

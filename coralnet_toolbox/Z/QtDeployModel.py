@@ -82,8 +82,8 @@ class DeployModelDialog(CollapsibleSection):
         
         # Image size spinbox
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(256, 504)
-        self.imgsz_spinbox.setSingleStep(64)
+        self.imgsz_spinbox.setRange(126, 2016)
+        self.imgsz_spinbox.setSingleStep(14)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
@@ -157,6 +157,7 @@ class DeployModelDialog(CollapsibleSection):
         try:
             # Check if depth-anything-3 is installed
             from depth_anything_3.api import DepthAnything3
+            
         except ImportError:
             QMessageBox.warning(self, 
                                 "Missing Package", 
@@ -351,7 +352,9 @@ class DeployModelDialog(CollapsibleSection):
         """
         if depth_map.shape != (raster.height, raster.width):
             # Use INTER_NEAREST to preserve depth values without interpolation artifacts
-            depth_map = cv2.resize(depth_map, (raster.width, raster.height), interpolation=cv2.INTER_NEAREST)
+            # depth_map = cv2.resize(depth_map, (raster.width, raster.height), interpolation=cv2.INTER_NEAREST)
+            # Use Linear interpolation if you want smoother results:
+            depth_map = cv2.resize(depth_map, (raster.width, raster.height), interpolation=cv2.INTER_LINEAR)
         return depth_map
     
     def _update_camera_parameters(self, raster, result, index=0):
