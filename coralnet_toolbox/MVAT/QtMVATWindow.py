@@ -6,14 +6,15 @@ Uses PyVista for 3D rendering and integrates with the main application's RasterM
 """
 
 import warnings
+import numpy as np
 
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QToolBar, QAction, QStatusBar, QLabel, QSlider, QCheckBox,
+    QToolBar, QAction, QLabel, QSlider, QCheckBox,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
-    QPushButton, QComboBox
+    QPushButton, QSizePolicy, QSpacerItem
 )
 
 try:
@@ -26,9 +27,7 @@ except ImportError:
 
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -37,6 +36,31 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+class MVATViewer(QFrame):
+    """
+    A dedicated widget for holding the PyVista 3D Interactor.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.NoFrame)
+        
+        # Layout
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create PyVista QtInteractor
+        self.plotter = QtInteractor(self)
+        self.plotter.set_background('white')
+        self.plotter.enable_trackball_style()
+        
+        # Add to layout
+        self.layout.addWidget(self.plotter.interactor)
+
+    def close(self):
+        """Clean up the plotter resources."""
+        if self.plotter:
+            self.plotter.close()
 
 
 class MVATWindow(QMainWindow):
@@ -75,15 +99,11 @@ class MVATWindow(QMainWindow):
         self.show_thumbnails = True
         self.thumbnail_opacity = 0.8
         
-        # PyVista plotter reference
-        self.plotter = None
-        
         # Setup UI
         self._setup_window()
         self._setup_menubar()
         self._setup_toolbar()
-        self._setup_central_widget()
-        self._setup_statusbar()
+        self._setup_central_layout()
         
         # Flag to track initialization
         self._initialized = False
@@ -91,9 +111,7 @@ class MVATWindow(QMainWindow):
     def _setup_window(self):
         """Configure the main window properties."""
         self.setWindowTitle("Multi-View Annotation Tool (MVAT)")
-        mvat_icon_path = get_icon("camera.png")
-        if mvat_icon_path:
-            self.setWindowIcon(QIcon(mvat_icon_path))
+        self.setWindowIcon(QIcon(get_icon("camera.png")))
         self.setMinimumSize(1200, 800)
         
     def _setup_menubar(self):
@@ -132,160 +150,151 @@ class MVATWindow(QMainWindow):
         self.view_menu.addAction(self.fit_view_action)
         
     def _setup_toolbar(self):
-        """Create the toolbar."""
-        self.toolbar = QToolBar("Main Toolbar")
+        """Create the left-side vertical toolbar."""
+        self.toolbar = QToolBar("Tools")
+        self.toolbar.setOrientation(Qt.Vertical)
+        self.toolbar.setFixedWidth(40)
         self.toolbar.setMovable(False)
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
         
-        # Reset View button
-        reset_action = QAction("Reset", self)
-        reset_action.setToolTip("Reset the 3D view (R)")
-        reset_action.triggered.connect(self._reset_camera_view)
-        self.toolbar.addAction(reset_action)
+        # Define spacer
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        spacer.setFixedHeight(10)
+        self.toolbar.addWidget(spacer)
         
-        # Fit View button
-        fit_action = QAction("Fit", self)
-        fit_action.setToolTip("Fit all cameras in view (F)")
-        fit_action.triggered.connect(self._fit_to_view)
-        self.toolbar.addAction(fit_action)
+        # Currently the toolbar is empty of actions, but the gutter exists 
+        # to match the Main Window's look and feel.
         
-        self.toolbar.addSeparator()
+    def _setup_central_layout(self):
+        """Create the central widget, top settings bar, and splitters."""
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
         
-        # Deselect button
-        deselect_action = QAction("Deselect", self)
-        deselect_action.setToolTip("Deselect current camera (Escape)")
-        deselect_action.triggered.connect(self._deselect_camera)
-        self.toolbar.addAction(deselect_action)
+        # Main Vertical Layout
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(5, 5, 5, 5)
+        self.main_layout.setSpacing(5)  # Reduce spacing between bar and splitter
         
-    def _setup_central_widget(self):
-        """Create the central widget with splitter layout."""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 1. Top Settings Group Box (Mimics MainWindow Status/Param Bar)
+        self.settings_group_box = QGroupBox("Settings / Status")
+        # FORCE HEIGHT: Match typical compact status bar height (~50-60px)
+        self.settings_group_box.setMaximumHeight(65) 
         
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        self.settings_layout = QHBoxLayout(self.settings_group_box)
+        # TIGHT MARGINS: (left, top, right, bottom) - Top needs space for GroupBox title
+        self.settings_layout.setContentsMargins(5, 15, 5, 5) 
+        self.settings_layout.setSpacing(10)  # Reduce spacing between widgets
         
-        # Create splitter
+        # --- Widget: Stats Label ---
+        self.stats_label = QLabel("Cameras: 0")
+        self.settings_layout.addWidget(self.stats_label)
+        
+        # Vertical Separator
+        self.settings_layout.addWidget(self._create_v_line())
+        
+        # --- Widget: Frustum Scale ---
+        scale_label = QLabel("Scale:")
+        self.scale_spinbox = QDoubleSpinBox()
+        self.scale_spinbox.setRange(0.01, 10.0)
+        self.scale_spinbox.setSingleStep(0.1)
+        self.scale_spinbox.setValue(self.frustum_scale)
+        self.scale_spinbox.setToolTip("Adjust camera frustum size")
+        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)
+        self.settings_layout.addWidget(scale_label)
+        self.settings_layout.addWidget(self.scale_spinbox)
+        
+        # --- Widget: Opacity Slider ---
+        opacity_label = QLabel("Opacity:")
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(int(self.thumbnail_opacity * 100))
+        self.opacity_slider.setFixedWidth(100)
+        self.opacity_slider.setToolTip("Adjust thumbnail opacity")
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        self.settings_layout.addWidget(opacity_label)
+        self.settings_layout.addWidget(self.opacity_slider)
+        
+        # --- Widget: Checkboxes ---
+        self.wireframe_checkbox = QCheckBox("Wireframes")
+        self.wireframe_checkbox.setChecked(self.show_wireframes)
+        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)
+        self.settings_layout.addWidget(self.wireframe_checkbox)
+        
+        self.thumbnail_checkbox = QCheckBox("Thumbnails")
+        self.thumbnail_checkbox.setChecked(self.show_thumbnails)
+        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
+        self.settings_layout.addWidget(self.thumbnail_checkbox)
+        
+        # Vertical Separator
+        self.settings_layout.addWidget(self._create_v_line())
+        
+        # --- Widget: Selection Info & Button ---
+        self.selection_label = QLabel("None selected")
+        self.selection_label.setStyleSheet("color: #666;")
+        self.settings_layout.addWidget(self.selection_label)
+        
+        self.goto_image_btn = QPushButton("Go to Image")
+        self.goto_image_btn.setEnabled(False)
+        self.goto_image_btn.setToolTip("Load selected camera in Main Window")
+        self.goto_image_btn.clicked.connect(self._goto_selected_image)
+        self.settings_layout.addWidget(self.goto_image_btn)
+        
+        # Push everything to the left
+        self.settings_layout.addStretch()
+        
+        # Refresh Button (Right aligned)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Reload cameras from project")
+        self.refresh_btn.clicked.connect(self._refresh_scene)
+        self.settings_layout.addWidget(self.refresh_btn)
+        
+        # Add Settings box to main layout
+        self.main_layout.addWidget(self.settings_group_box)
+        
+        # 2. Main Horizontal Splitter
         self.splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(self.splitter)
+        self.main_layout.addWidget(self.splitter)
         
-        # Left panel: 3D Viewport
-        self.viewport_widget = QWidget()
-        viewport_layout = QVBoxLayout(self.viewport_widget)
-        viewport_layout.setContentsMargins(0, 0, 0, 0)
+        # --- Left Panel: 3D Viewer ---
+        # Create the viewer container class
+        self.viewer = MVATViewer(self)
         
-        # Create PyVista QtInteractor
-        self.plotter = QtInteractor(self.viewport_widget)
-        self.plotter.set_background('white')
-        self.plotter.enable_trackball_style()
-        
-        # Enable picking for camera selection
-        self.plotter.enable_point_picking(
+        # Enable picking for camera selection using the viewer's plotter
+        self.viewer.plotter.enable_point_picking(
             callback=self._on_pick,
             show_message=False,
             use_picker=True,
             pickable_window=True
         )
         
-        viewport_layout.addWidget(self.plotter.interactor)
+        self.splitter.addWidget(self.viewer)
         
-        # Right panel: Control Panel
-        self.control_panel = self._create_control_panel()
+        # --- Right Panel: Empty Container ---
+        self.right_container = QFrame()
+        self.right_container.setFrameShape(QFrame.StyledPanel)
+        self.right_container.setStyleSheet("background-color: #f0f0f0;")
         
-        # Add panels to splitter
-        self.splitter.addWidget(self.viewport_widget)
-        self.splitter.addWidget(self.control_panel)
+        # Add a label just to denote it's the future container
+        right_layout = QVBoxLayout(self.right_container)
+        right_label = QLabel("Tools / Info Panel")
+        right_label.setAlignment(Qt.AlignCenter)
+        right_label.setEnabled(False) 
+        right_layout.addStretch()
+        right_layout.addWidget(right_label)
+        right_layout.addStretch()
         
-        # Set splitter sizes (80% viewport, 20% controls)
-        self.splitter.setSizes([800, 200])
+        self.splitter.addWidget(self.right_container)
         
-    def _create_control_panel(self):
-        """Create the right-side control panel."""
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 10, 10, 10)
-        
-        # ===== Display Settings Group =====
-        display_group = QGroupBox("Display Settings")
-        display_layout = QVBoxLayout(display_group)
-        
-        # Frustum Scale
-        scale_layout = QHBoxLayout()
-        scale_label = QLabel("Frustum Scale:")
-        self.scale_spinbox = QDoubleSpinBox()
-        self.scale_spinbox.setRange(0.01, 10.0)
-        self.scale_spinbox.setSingleStep(0.1)
-        self.scale_spinbox.setValue(self.frustum_scale)
-        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)
-        scale_layout.addWidget(scale_label)
-        scale_layout.addWidget(self.scale_spinbox)
-        display_layout.addLayout(scale_layout)
-        
-        # Wireframe checkbox
-        self.wireframe_checkbox = QCheckBox("Show Wireframes")
-        self.wireframe_checkbox.setChecked(self.show_wireframes)
-        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)
-        display_layout.addWidget(self.wireframe_checkbox)
-        
-        # Thumbnail checkbox
-        self.thumbnail_checkbox = QCheckBox("Show Thumbnails")
-        self.thumbnail_checkbox.setChecked(self.show_thumbnails)
-        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
-        display_layout.addWidget(self.thumbnail_checkbox)
-        
-        # Thumbnail Opacity
-        opacity_layout = QHBoxLayout()
-        opacity_label = QLabel("Thumbnail Opacity:")
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(int(self.thumbnail_opacity * 100))
-        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        opacity_layout.addWidget(opacity_label)
-        opacity_layout.addWidget(self.opacity_slider)
-        display_layout.addLayout(opacity_layout)
-        
-        layout.addWidget(display_group)
-        
-        # ===== Selection Info Group =====
-        selection_group = QGroupBox("Selected Camera")
-        selection_layout = QVBoxLayout(selection_group)
-        
-        self.selection_label = QLabel("No camera selected")
-        self.selection_label.setWordWrap(True)
-        selection_layout.addWidget(self.selection_label)
-        
-        # Go to image button
-        self.goto_image_btn = QPushButton("Go to Image")
-        self.goto_image_btn.setEnabled(False)
-        self.goto_image_btn.clicked.connect(self._goto_selected_image)
-        selection_layout.addWidget(self.goto_image_btn)
-        
-        layout.addWidget(selection_group)
-        
-        # ===== Statistics Group =====
-        stats_group = QGroupBox("Statistics")
-        stats_layout = QVBoxLayout(stats_group)
-        
-        self.stats_label = QLabel("Cameras: 0")
-        stats_layout.addWidget(self.stats_label)
-        
-        layout.addWidget(stats_group)
-        
-        # Add stretch to push everything to top
-        layout.addStretch()
-        
-        # ===== Refresh Button =====
-        self.refresh_btn = QPushButton("Refresh Scene")
-        self.refresh_btn.clicked.connect(self._refresh_scene)
-        layout.addWidget(self.refresh_btn)
-        
-        return panel
-        
-    def _setup_statusbar(self):
-        """Create the status bar."""
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
+        # Set splitter proportions (75% Viewer, 25% Right Panel)
+        self.splitter.setSizes([900, 300])
+
+    def _create_v_line(self):
+        """Helper to create a vertical separator line."""
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setFrameShadow(QFrame.Sunken)
+        return line
         
     def showEvent(self, event):
         """Handle show event - load cameras when window is shown."""
@@ -302,12 +311,9 @@ class MVATWindow(QMainWindow):
         self.cameras.clear()
         self.selected_camera = None
         
-        # Close the plotter
-        if self.plotter:
-            try:
-                self.plotter.close()
-            except Exception:
-                pass
+        # Close the viewer
+        if self.viewer:
+            self.viewer.close()
                 
         event.accept()
         
@@ -369,7 +375,6 @@ class MVATWindow(QMainWindow):
             
         # Update stats
         self.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
-        self.status_bar.showMessage(f"Loaded {valid_count} cameras")
         
         # Render frustums
         self._render_frustums()
@@ -379,25 +384,25 @@ class MVATWindow(QMainWindow):
         
     def _render_frustums(self):
         """Render all camera frustums in the 3D scene."""
-        if not self.plotter:
+        if not self.viewer or not self.viewer.plotter:
             return
             
         # Clear existing actors
-        self.plotter.clear()
+        self.viewer.plotter.clear()
         
         # Add a reference grid
-        self.plotter.add_axes()
+        self.viewer.plotter.add_axes()
         
         for path, camera in self.cameras.items():
             try:
                 # Create wireframe actor
                 if self.show_wireframes:
-                    camera.frustum.create_actor(self.plotter, scale=self.frustum_scale)
+                    camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
                     
                 # Create thumbnail actor
                 if self.show_thumbnails:
                     camera.frustum.create_image_plane_actor(
-                        self.plotter, 
+                        self.viewer.plotter, 
                         scale=self.frustum_scale,
                         opacity=self.thumbnail_opacity
                     )
@@ -405,18 +410,18 @@ class MVATWindow(QMainWindow):
                 print(f"Failed to render frustum for {path}: {e}")
                 
         # Update the render
-        self.plotter.update()
+        self.viewer.plotter.update()
         
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
-        if self.plotter:
-            self.plotter.reset_camera()
-            self.plotter.view_isometric()
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.reset_camera()
+            self.viewer.plotter.view_isometric()
             
     def _fit_to_view(self):
         """Fit all objects in the view."""
-        if self.plotter:
-            self.plotter.reset_camera()
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.reset_camera()
             
     def _toggle_wireframes(self, checked=None):
         """Toggle wireframe visibility."""
@@ -424,8 +429,12 @@ class MVATWindow(QMainWindow):
             checked = self.toggle_wireframes_action.isChecked()
             
         self.show_wireframes = checked
+        
+        # Sync UI elements
         self.toggle_wireframes_action.setChecked(checked)
+        self.wireframe_checkbox.blockSignals(True)
         self.wireframe_checkbox.setChecked(checked)
+        self.wireframe_checkbox.blockSignals(False)
         
         # Re-render the scene
         self._render_frustums()
@@ -436,8 +445,12 @@ class MVATWindow(QMainWindow):
             checked = self.toggle_thumbnails_action.isChecked()
             
         self.show_thumbnails = checked
+        
+        # Sync UI elements
         self.toggle_thumbnails_action.setChecked(checked)
+        self.thumbnail_checkbox.blockSignals(True)
         self.thumbnail_checkbox.setChecked(checked)
+        self.thumbnail_checkbox.blockSignals(False)
         
         # Re-render the scene
         self._render_frustums()
@@ -478,7 +491,7 @@ class MVATWindow(QMainWindow):
                 closest_camera = camera
                 closest_path = path
                 
-        # Select if within reasonable distance
+        # Select if within reasonable distance (heuristic based on scale)
         if closest_camera and min_dist < self.frustum_scale * 2:
             self._select_camera(closest_path, closest_camera)
         else:
@@ -499,9 +512,7 @@ class MVATWindow(QMainWindow):
         self.goto_image_btn.setEnabled(True)
         
         # Update the plotter to show selection
-        self.plotter.update()
-        
-        self.status_bar.showMessage(f"Selected: {camera.label}")
+        self.viewer.plotter.update()
         
     def _deselect_camera(self):
         """Deselect the current camera."""
@@ -509,13 +520,11 @@ class MVATWindow(QMainWindow):
             self.selected_camera.frustum.deselect()
             self.selected_camera = None
             
-        self.selection_label.setText("No camera selected")
+        self.selection_label.setText("None selected")
         self.goto_image_btn.setEnabled(False)
         
-        if self.plotter:
-            self.plotter.update()
-            
-        self.status_bar.showMessage("Ready")
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
         
     def _goto_selected_image(self):
         """Navigate to the selected camera's image in the main window."""
@@ -527,7 +536,6 @@ class MVATWindow(QMainWindow):
         # Use ImageWindow to select the image
         try:
             self.image_window.load_image_by_path(path)
-            self.status_bar.showMessage(f"Navigated to: {self.selected_camera.label}")
         except Exception as e:
             QMessageBox.warning(self, "Navigation Error", f"Could not navigate to image: {e}")
             
@@ -551,7 +559,3 @@ class MVATWindow(QMainWindow):
             self._fit_to_view()
         else:
             super().keyPressEvent(event)
-
-
-# Import numpy here to avoid issues if pyvista is not available
-import numpy as np
