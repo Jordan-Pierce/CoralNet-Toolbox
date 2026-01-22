@@ -31,6 +31,8 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 
 from coralnet_toolbox.Explorer import ExplorerWindow
 
+from coralnet_toolbox.MVAT import MVATWindow
+
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
@@ -751,6 +753,12 @@ class MainWindow(QMainWindow):
         self.open_explorer_action.triggered.connect(self.open_explorer_window)
         self.menu_bar.addAction(self.open_explorer_action)
 
+        # ========== MVAT ACTION ==========
+        # MVAT (Multi-View Annotation Tool) action
+        self.open_mvat_action = QAction("MVAT", self)
+        self.open_mvat_action.triggered.connect(self.open_mvat_window)
+        self.menu_bar.addAction(self.open_mvat_action)
+
         # ========== HELP MENU ==========
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
@@ -1062,6 +1070,7 @@ class MainWindow(QMainWindow):
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
+        self.transparency_slider.setMinimumWidth(100)  # Prevent slider from being completely squished
         self.transparency_slider.setTickPosition(QSlider.TicksBelow)
         self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
@@ -1131,7 +1140,8 @@ class MainWindow(QMainWindow):
         self.z_transparency_widget = QSlider(Qt.Horizontal)
         self.z_transparency_widget.setRange(0, 255)
         self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
-        self.z_transparency_widget.setFixedWidth(150)  # Compact width
+        self.z_transparency_widget.setMinimumWidth(100)  # Prevent slider from being completely squished
+        self.z_transparency_widget.setMaximumWidth(150)  # Compact width
         self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
         self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
         self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
@@ -2744,6 +2754,31 @@ class MainWindow(QMainWindow):
             # Re-enable everything if there was an error
             self.set_main_window_enabled_state()
         
+    def open_mvat_window(self):
+        """Open the Multi-View Annotation Tool (MVAT) window."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening MVAT.")
+            return
+        
+        try:
+            # Create and show the MVAT window (modeless - doesn't block main window)
+            # Create a new instance each time to ensure fresh state
+            self.mvat_window = MVATWindow(self)
+            self.mvat_window.show()
+            self.mvat_window.activateWindow()
+            self.mvat_window.raise_()
+            
+        except ImportError as e:
+            QMessageBox.warning(self,
+                                "MVAT Unavailable",
+                                "MVAT requires PyVista and PyVistaQt.\n\n"
+                                "Install with: pip install pyvista pyvistaqt")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
+
     def explorer_closed(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
