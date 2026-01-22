@@ -17,6 +17,7 @@ faiss-cpu
 jenkspy
 timm==0.9.2
 transformers>=4.56.0
+pyarrow
 hf_xet
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.27
