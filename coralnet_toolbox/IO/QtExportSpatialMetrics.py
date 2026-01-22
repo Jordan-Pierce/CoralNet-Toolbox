@@ -3,6 +3,7 @@ import warnings
 import os
 import math
 
+import numpy as np
 import pandas as pd
 
 from PyQt5.QtCore import Qt
@@ -634,20 +635,41 @@ class ExportSpatialMetrics(QDialog):
                     # 3D Metrics
                     elif metric == 'volume':
                         if z_channel is not None and has_scale:
-                            volume = annotation.get_scaled_volume(z_channel, scale_x, scale_y, z_unit)
+                            # Convert scales to meters/pixel as required by get_scaled_volume
+                            scale_x_meters = scale_x * to_meters_factor
+                            scale_y_meters = scale_y * to_meters_factor
+                            volume = annotation.get_scaled_volume(z_channel, scale_x_meters, scale_y_meters, z_unit)
                             if volume is not None:
-                                # Volume is already in the correct units
+                                # Volume is already in the correct units (cubic meters)
                                 meter_value = volume
-                                # Calculate pixel equivalent (approximation)
-                                pixel_value = volume / (scale_x * scale_y * (to_meters_factor ** 2))
+                                # Calculate pixel-based volume: sum of z-values in pixels
+                                try:
+                                    z_slice, mask = annotation._get_raster_slice_and_mask(z_channel)
+                                    if z_slice.size > 0 and mask.size > 0 and np.any(mask):
+                                        pixel_value = float(np.sum(z_slice[mask]))
+                                except Exception:
+                                    pixel_value = None
                     elif metric == 'surface_area':
                         if z_channel is not None and has_scale:
-                            surf_area = annotation.get_scaled_surface_area(z_channel, scale_x, scale_y, z_unit)
+                            # Convert scales to meters/pixel as required by get_scaled_surface_area
+                            scale_x_meters = scale_x * to_meters_factor
+                            scale_y_meters = scale_y * to_meters_factor
+                            surf_area = annotation.get_scaled_surface_area(z_channel, scale_x_meters, scale_y_meters, z_unit)
                             if surf_area is not None:
-                                # Surface area is already in the correct units
+                                # Surface area is already in the correct units (square meters)
                                 meter_value = surf_area
-                                # Calculate pixel equivalent (approximation)
-                                pixel_value = surf_area / (scale_x * scale_y * (to_meters_factor ** 2))
+                                # Calculate pixel-based surface area: sum of 3D surface elements
+                                try:
+                                    z_slice, mask = annotation._get_raster_slice_and_mask(z_channel)
+                                    if z_slice.size > 0 and mask.size > 0 and np.any(mask):
+                                        # Calculate gradients in pixel space
+                                        dz_dy, dz_dx = np.gradient(z_slice)
+                                        # Surface area multiplier for each pixel
+                                        multiplier = np.sqrt(1.0 + dz_dx**2 + dz_dy**2)
+                                        # Sum surface elements inside mask (each pixel has area = 1 in pixel space)
+                                        pixel_value = float(np.sum(multiplier[mask]))
+                                except Exception:
+                                    pixel_value = None
                     elif metric == 'min_z':
                         if z_channel is not None:
                             z_data = annotation.get_min_z(z_channel, scale_x, z_unit)
