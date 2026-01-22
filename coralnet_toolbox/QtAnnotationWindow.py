@@ -1088,12 +1088,8 @@ class AnnotationWindow(QGraphicsView):
             return
         
         try:
-            # Use transformed Z-channel data (not raw) for dynamic range
-            # This ensures contrast enhancement respects the semantic meaning
-            if not hasattr(self, 'z_data_transformed'):
-                return
-            
-            z_data = self.z_data_transformed
+            # Use normalized Z-channel data for dynamic range calculations
+            z_data = self.z_data_normalized
             if z_data is None:
                 return
             

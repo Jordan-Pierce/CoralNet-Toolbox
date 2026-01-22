@@ -82,8 +82,7 @@ class DeployModelDialog(CollapsibleSection):
         
         # Image size spinbox
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(256, 504)
-        self.imgsz_spinbox.setSingleStep(64)
+        self.imgsz_spinbox.setSingleStep(14)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
@@ -157,6 +156,7 @@ class DeployModelDialog(CollapsibleSection):
         try:
             # Check if depth-anything-3 is installed
             from depth_anything_3.api import DepthAnything3
+            
         except ImportError:
             QMessageBox.warning(self, 
                                 "Missing Package", 
