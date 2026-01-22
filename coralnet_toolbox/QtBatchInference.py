@@ -1,4 +1,5 @@
 import warnings
+
 import os
 from itertools import groupby
 from operator import attrgetter
@@ -25,7 +26,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class BatchInferenceDialog(QDialog):
     """
     Consolidated batch inference dialog for all models.
-    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Transformers, Z-Inference.
+    Supports: Classify, Detect, Segment, Semantic, SAM, SeeAnything, Z-Inference.
     
     This dialog provides:
     - Model selection dropdown for all loaded models
@@ -54,7 +55,6 @@ class BatchInferenceDialog(QDialog):
         self.semantic_dialog = getattr(main_window, 'semantic_deploy_model_dialog', None)
         self.sam_dialog = getattr(main_window, 'sam_deploy_generator_dialog', None)
         self.see_anything_dialog = getattr(main_window, 'see_anything_deploy_generator_dialog', None)
-        self.transformers_dialog = getattr(main_window, 'transformers_deploy_model_dialog', None)
         self.z_dialog = getattr(main_window, 'z_deploy_model_dialog', None)
 
         # Dictionary to store available model dialogs
@@ -288,8 +288,6 @@ class BatchInferenceDialog(QDialog):
             self.model_dialogs["SAM"] = self.sam_dialog
         if self.see_anything_dialog and getattr(self.see_anything_dialog, "loaded_model", None):
             self.model_dialogs["See Anything"] = self.see_anything_dialog
-        if self.transformers_dialog and getattr(self.transformers_dialog, "loaded_model", None):
-            self.model_dialogs["Transformers"] = self.transformers_dialog
         if self.z_dialog and getattr(self.z_dialog, "loaded_model", None):
             self.model_dialogs["Z-Inference"] = self.z_dialog
 
@@ -438,14 +436,6 @@ class BatchInferenceDialog(QDialog):
         elif model_name == "See Anything":
             self.configure_thresholds(
                 enable_max_detections=False,
-                enable_uncertainty=True,
-                enable_iou=True,
-                enable_area=True
-            )
-        # Transformers uses uncertainty, iou, and area
-        elif model_name == "Transformers":
-            self.configure_thresholds(
-                enable_max_detections=True,
                 enable_uncertainty=True,
                 enable_iou=True,
                 enable_area=True
@@ -743,10 +733,6 @@ class BatchInferenceDialog(QDialog):
 
             # SAM, See Anything: predict on image paths (using deploy_generator_dialog)
             elif selected_model in ("SAM", "See Anything"):
-                model_dialog.predict(self.image_paths, progress_bar)
-
-            # Transformers: predict on image paths
-            elif selected_model == "Transformers":
                 model_dialog.predict(self.image_paths, progress_bar)
             
             # Z-Inference: predict on image paths with user-selected overwrite mode

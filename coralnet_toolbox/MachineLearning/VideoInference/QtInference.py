@@ -1,3 +1,5 @@
+import warnings
+
 import gc
 from typing import List, Optional, Dict, Tuple
 
@@ -19,7 +21,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
-from coralnet_toolbox.Icons import get_icon
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -272,7 +274,9 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
         # Line 2: Entry/Exit/Net flow
         if self.show_entry_exit:
             net_sign = "+" if self.custom_zone.net_flow >= 0 else ""
-            label_lines.append(f"In:{self.custom_zone.entry_count} | Out:{self.custom_zone.exit_count} | Net:{net_sign}{self.custom_zone.net_flow}")
+            label_lines.append(f"In:{self.custom_zone.entry_count} | "
+                               f"Out:{self.custom_zone.exit_count} | "
+                               f"Net:{net_sign}{self.custom_zone.net_flow}")
 
         if not label_lines:
             return annotated_scene
@@ -563,7 +567,7 @@ class RegionZoneManager:
         return annotated_scene
     
     def draw_detection_annotations_only(self, frame: np.ndarray, detections: sv.Detections, 
-                                       selected_annotators: List[str]) -> np.ndarray:
+                                        selected_annotators: List[str]) -> np.ndarray:
         """
         Draw only detection annotations without zones.
         

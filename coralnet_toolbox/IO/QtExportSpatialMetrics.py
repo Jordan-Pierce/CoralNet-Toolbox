@@ -13,9 +13,6 @@ from PyQt5.QtWidgets import (
     QLabel, QWidget, QListWidget, QListWidgetItem, QTabWidget
 )
 
-from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -625,8 +622,8 @@ class ExportSpatialMetrics(QDialog):
                             if pixel_value is not None and has_scale:
                                 meter_value = pixel_value * scale_x * scale_y * (to_meters_factor ** 2)
                     elif metric in ['aspect_ratio', 'orientation', 'roundness', 'circularity', 
-                                   'compactness', 'solidity', 'convexity', 'elongation', 
-                                   'rectangularity', 'eccentricity']:
+                                    'compactness', 'solidity', 'convexity', 'elongation', 
+                                    'rectangularity', 'eccentricity']:
                         # Unitless ratios - pull directly from morphology
                         if morph_data:
                             pixel_value = morph_data.get(metric)
@@ -654,7 +651,10 @@ class ExportSpatialMetrics(QDialog):
                             # Convert scales to meters/pixel as required by get_scaled_surface_area
                             scale_x_meters = scale_x * to_meters_factor
                             scale_y_meters = scale_y * to_meters_factor
-                            surf_area = annotation.get_scaled_surface_area(z_channel, scale_x_meters, scale_y_meters, z_unit)
+                            surf_area = annotation.get_scaled_surface_area(z_channel, 
+                                                                           scale_x_meters, 
+                                                                           scale_y_meters,
+                                                                           z_unit)
                             if surf_area is not None:
                                 # Surface area is already in the correct units (square meters)
                                 meter_value = surf_area
