@@ -157,14 +157,19 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
         else:
             continue  # No focal length available
         
-        # Extract principal point - use calibration values or image center
+        # Extract principal point - Metashape stores cx/cy as offsets from image center
+        # Convert to absolute pixel coordinates by adding to image center
+        image_center_x = sensor.width / 2.0
+        image_center_y = sensor.height / 2.0
+        
         if calib.cx is not None and calib.cy is not None:
-            cx = calib.cx
-            cy = calib.cy
+            # Metashape: cx, cy are offsets from center, convert to absolute coordinates
+            cx = image_center_x + calib.cx
+            cy = image_center_y + calib.cy
         else:
             # Fallback to image center
-            cx = sensor.width / 2.0
-            cy = sensor.height / 2.0
+            cx = image_center_x
+            cy = image_center_y
         
         # Build intrinsics matrix K
         K = np.array([
@@ -175,7 +180,9 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
         intrinsics_list.append(K)
         
         # Invert camera-to-world transform to get world-to-camera
-        # Metashape stores c2w, we need w2c
+        # Metashape stores camera-to-world (c2w), but we need world-to-camera (w2c)
+        # Note: The actual values will differ from COLMAP due to different world coordinate
+        # frame definitions and bundle adjustment algorithms, but the format is correct
         try:
             c2w = cam.transform
             w2c = np.linalg.inv(c2w)
