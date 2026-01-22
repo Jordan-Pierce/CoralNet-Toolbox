@@ -91,7 +91,7 @@ class MVATWindow(QMainWindow):
     def _setup_window(self):
         """Configure the main window properties."""
         self.setWindowTitle("Multi-View Annotation Tool (MVAT)")
-        mvat_icon_path = get_icon("cube.png")
+        mvat_icon_path = get_icon("camera.png")
         if mvat_icon_path:
             self.setWindowIcon(QIcon(mvat_icon_path))
         self.setMinimumSize(1200, 800)
