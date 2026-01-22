@@ -349,7 +349,7 @@ class ImportMetashapeCameras(QDialog):
         for cam_id, cam in matched_cameras.items():
             image_basename = cam.label
             image_path = image_path_map[image_basename]
-            raster = self.image_window.raster_manager.get_raster_by_path(image_path)
+            raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and (raster.intrinsics is not None or raster.extrinsics is not None):
                 rasters_with_cameras.append(image_basename)
         
@@ -412,7 +412,7 @@ class ImportMetashapeCameras(QDialog):
                 
                 # Get the raster
                 image_path = image_path_map[image_basename]
-                raster = self.image_window.raster_manager.get_raster_by_path(image_path)
+                raster = self.image_window.raster_manager.get_raster(image_path)
                 
                 if raster is None:
                     skipped_count += 1
@@ -421,8 +421,13 @@ class ImportMetashapeCameras(QDialog):
                 
                 # Set intrinsics and extrinsics
                 try:
-                    raster.set_intrinsics(intrinsics)
-                    raster.set_extrinsics(extrinsics)
+                    # Add or update camera parameters
+                    if raster.intrinsics is not None or raster.extrinsics is not None:
+                        raster.update_intrinsics(intrinsics)
+                        raster.update_extrinsics(extrinsics)
+                    else:
+                        raster.add_intrinsics(intrinsics)
+                        raster.add_extrinsics(extrinsics)
                     updated_count += 1
                 except Exception as e:
                     print(f"Error setting camera parameters for {image_basename}: {e}")
