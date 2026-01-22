@@ -375,6 +375,11 @@ class DeployGeneratorDialog(QDialog):
             'yoloe-11s-seg.pt',
             'yoloe-11m-seg.pt',
             'yoloe-11l-seg.pt',
+            'yoloe-26n-seg.pt',
+            'yoloe-26s-seg.pt',
+            'yoloe-26m-seg.pt',
+            'yoloe-26l-seg.pt',
+            'yoloe-110n-seg.pt',
         ]
 
         # Add all models to combo box
@@ -382,7 +387,7 @@ class DeployGeneratorDialog(QDialog):
             self.model_combo.addItem(model_name)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(self.models.index('yoloe-v8s-seg.pt'))
+        self.model_combo.setCurrentIndex(self.models.index('yoloe-11s-seg.pt'))
         model_select_layout.addRow("Model:", self.model_combo)
 
         # Add VPE file selection to the first tab
