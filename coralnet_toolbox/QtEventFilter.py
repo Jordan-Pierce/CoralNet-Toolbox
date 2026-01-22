@@ -27,7 +27,6 @@ class GlobalEventFilter(QObject):
         self.semantic_deploy_model_dialog = main_window.semantic_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.see_anything_deploy_generator_dialog = main_window.see_anything_deploy_generator_dialog
-        self.transformers_deploy_model_dialog = main_window.transformers_deploy_model_dialog
         
     def eventFilter(self, obj, event):
         # Check for explorer window first - this applies to all event types
@@ -109,14 +108,6 @@ class GlobalEventFilter(QObject):
                         self.see_anything_deploy_generator_dialog.predict()
                     else:
                         self.main_window.open_see_anything_deploy_generator_dialog()
-                    return True
-
-                # Handle hotkey for transformers prediction
-                if event.key() == Qt.Key_7:
-                    if self.transformers_deploy_model_dialog.loaded_model is not None:
-                        self.transformers_deploy_model_dialog.predict()
-                    else:
-                        self.main_window.open_transformers_deploy_model_dialog()
                     return True
 
                 # Handle annotation cycling hotkeys

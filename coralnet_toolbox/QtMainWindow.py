@@ -111,10 +111,6 @@ from coralnet_toolbox.SeeAnything import (
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
 
-from coralnet_toolbox.Transformers import (
-    DeployModelDialog as TransformersDeployModelDialog,
-)
-
 from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
@@ -322,9 +318,6 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-
-        # Create dialogs (Transformers)
-        self.transformers_deploy_model_dialog = TransformersDeployModelDialog(self)
         
         # Create dialogs (Z-Inference)
         self.z_deploy_model_dialog = ZDeployModelDialog(self)
@@ -629,13 +622,6 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
         self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
-
-        # Transformers submenu
-        # self.transformers_menu = self.ai_assist_menu.addMenu("Transformers")
-        # Deploy Model
-        # self.transformers_deploy_model_action = QAction("Deploy Model", self)
-        # self.transformers_deploy_model_action.triggered.connect(self.open_transformers_deploy_model_dialog)
-        # self.transformers_menu.addAction(self.transformers_deploy_model_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -3157,20 +3143,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_video_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_transformers_deploy_model_dialog(self):
-        """Open the Transformers Deploy Model dialog to deploy an Transformers model."""
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "Transformers Deploy Model",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.transformers_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

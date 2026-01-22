@@ -1,12 +1,4 @@
-import os
-import cv2
-import numpy as np
-import supervision as sv
-from datetime import datetime
-
-from shapely.geometry import Polygon
-
-from ultralytics import YOLO
+import warnings
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
@@ -21,6 +13,8 @@ from coralnet_toolbox.MachineLearning.VideoInference.QtVideoWidget import VideoR
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
