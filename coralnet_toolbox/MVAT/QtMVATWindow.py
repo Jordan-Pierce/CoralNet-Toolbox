@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QToolBar, QAction, QLabel, QSlider, QCheckBox,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
-    QPushButton, QSizePolicy, QSpacerItem
+    QPushButton, QSizePolicy, QSpacerItem, QSpinBox
 )
 
 try:
@@ -71,12 +71,17 @@ class MVATWindow(QMainWindow):
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
         
+        # Actor lists for efficient updates
+        self.wireframe_actors = []
+        self.thumbnail_actors = []
+        
         # Display status
         self.frustum_scale = 0.5
         self.show_wireframes = True
         self.show_thumbnails = True
         self.thumbnail_opacity = 0.8
         self.show_point_cloud = True
+        self.point_size = 3
         
         # Setup UI
         self._setup_window()
@@ -183,7 +188,7 @@ class MVATWindow(QMainWindow):
         self.scale_spinbox.setSingleStep(0.1)
         self.scale_spinbox.setValue(self.frustum_scale)
         self.scale_spinbox.setToolTip("Adjust camera frustum size")
-        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)
+        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)  
         self.horizontal_layout.addWidget(scale_label)
         self.horizontal_layout.addWidget(self.scale_spinbox)
         
@@ -194,24 +199,34 @@ class MVATWindow(QMainWindow):
         self.opacity_slider.setValue(int(self.thumbnail_opacity * 100))
         self.opacity_slider.setFixedWidth(100)
         self.opacity_slider.setToolTip("Adjust thumbnail opacity")
-        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)  
         self.horizontal_layout.addWidget(opacity_label)
         self.horizontal_layout.addWidget(self.opacity_slider)
+        
+        # --- Widget: Point Size ---
+        point_size_label = QLabel("Point Size:")
+        self.point_size_spinbox = QSpinBox()
+        self.point_size_spinbox.setRange(1, 20)
+        self.point_size_spinbox.setValue(self.point_size)
+        self.point_size_spinbox.setToolTip("Adjust point cloud point size")
+        self.point_size_spinbox.valueChanged.connect(self._on_point_size_changed)
+        self.horizontal_layout.addWidget(point_size_label)
+        self.horizontal_layout.addWidget(self.point_size_spinbox)
         
         # --- Widget: Checkboxes ---
         self.wireframe_checkbox = QCheckBox("Wireframes")
         self.wireframe_checkbox.setChecked(self.show_wireframes)
-        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)
+        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)  
         self.horizontal_layout.addWidget(self.wireframe_checkbox)
         
         self.thumbnail_checkbox = QCheckBox("Thumbnails")
         self.thumbnail_checkbox.setChecked(self.show_thumbnails)
-        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
+        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)  
         self.horizontal_layout.addWidget(self.thumbnail_checkbox)
         
         self.point_cloud_checkbox = QCheckBox("Point cloud")
         self.point_cloud_checkbox.setChecked(self.show_point_cloud)
-        self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)
+        self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)  
         self.horizontal_layout.addWidget(self.point_cloud_checkbox)
         
         # Vertical Separator
@@ -230,12 +245,6 @@ class MVATWindow(QMainWindow):
         
         # Push everything to the left
         self.horizontal_layout.addStretch()
-        
-        # Refresh Button (Right aligned)
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setToolTip("Reload cameras from project")
-        self.refresh_btn.clicked.connect(self._refresh_scene)
-        self.horizontal_layout.addWidget(self.refresh_btn)
         
         # Add stretches and horizontal layout to vertical layout for centering
         self.status_bar_layout.addStretch()
@@ -305,6 +314,10 @@ class MVATWindow(QMainWindow):
         # Clear camera references
         self.cameras.clear()
         self.selected_camera = None
+        
+        # Clear actor lists
+        self.wireframe_actors.clear()
+        self.thumbnail_actors.clear()
         
         # Close the viewer
         if self.viewer:
@@ -385,6 +398,10 @@ class MVATWindow(QMainWindow):
         # Clear existing actors
         self.viewer.plotter.clear()
         
+        # Clear actor lists
+        self.wireframe_actors.clear()
+        self.thumbnail_actors.clear()
+        
         # Re-add point cloud
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
@@ -397,15 +414,21 @@ class MVATWindow(QMainWindow):
             try:
                 # Create wireframe actor
                 if self.show_wireframes:
-                    camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
+                    actor = camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
+                    self.wireframe_actors.append(actor)
                     
                 # Create thumbnail actor
                 if self.show_thumbnails:
-                    camera.frustum.create_image_plane_actor(
+                    actor = camera.frustum.create_image_plane_actor(
                         self.viewer.plotter, 
                         scale=self.frustum_scale,
                         opacity=self.thumbnail_opacity
                     )
+                    self.thumbnail_actors.append(actor)
+                    
+                # Re-apply selection if this camera is selected
+                if camera == self.selected_camera:
+                    camera.frustum.select()
             except Exception as e:
                 print(f"Failed to render frustum for {path}: {e}")
                 
@@ -436,8 +459,13 @@ class MVATWindow(QMainWindow):
         self.wireframe_checkbox.setChecked(checked)
         self.wireframe_checkbox.blockSignals(False)
         
-        # Re-render the scene
-        self._render_frustums()
+        # Update visibility of existing actors
+        for actor in self.wireframe_actors:
+            actor.SetVisibility(checked)
+        
+        # Update the render
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
         
     def _toggle_thumbnails(self, checked=None):
         """Toggle thumbnail visibility."""
@@ -452,8 +480,13 @@ class MVATWindow(QMainWindow):
         self.thumbnail_checkbox.setChecked(checked)
         self.thumbnail_checkbox.blockSignals(False)
         
-        # Re-render the scene
-        self._render_frustums()
+        # Update visibility of existing actors
+        for actor in self.thumbnail_actors:
+            actor.SetVisibility(checked)
+        
+        # Update the render
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
         
     def _toggle_point_cloud(self, checked):
         """Toggle point cloud visibility."""
@@ -464,20 +497,30 @@ class MVATWindow(QMainWindow):
         """Handle frustum scale change."""
         self.frustum_scale = value
         
-        # Invalidate geometry caches
-        for camera in self.cameras.values():
-            camera.frustum._frustum_mesh = None
-            camera.frustum._image_plane_mesh = None
-            
-        # Re-render
-        self._render_frustums()
+        # Update scale of existing actors
+        for actor in self.wireframe_actors + self.thumbnail_actors:
+            actor.SetScale(value)
+        
+        # Update the render
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
         
     def _on_opacity_changed(self, value):
         """Handle thumbnail opacity change."""
         self.thumbnail_opacity = value / 100.0
         
-        # Re-render to apply new opacity
-        self._render_frustums()
+        # Update opacity of existing thumbnail actors
+        for actor in self.thumbnail_actors:
+            actor.GetProperty().SetOpacity(self.thumbnail_opacity)
+        
+        # Update the render
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
+    
+    def _on_point_size_changed(self, value):
+        """Handle point size change for point clouds."""
+        self.point_size = value
+        self.viewer.set_point_size(value)
         
     def _on_pick(self, point):
         """Handle picking in the 3D view."""
@@ -545,7 +588,21 @@ class MVATWindow(QMainWindow):
             QMessageBox.warning(self, "Navigation Error", f"Could not navigate to image: {e}")
             
     def _refresh_scene(self):
-        """Refresh the entire scene by reloading cameras."""
+        """Apply changes and refresh the entire scene by reloading cameras."""
+        # Update scale
+        self.frustum_scale = self.scale_spinbox.value()
+        
+        # Update opacity
+        self.thumbnail_opacity = self.opacity_slider.value() / 100.0
+        
+        # Update point size
+        self.point_size = self.point_size_spinbox.value()
+        
+        # Update show flags
+        self.show_wireframes = self.wireframe_checkbox.isChecked()
+        self.show_thumbnails = self.thumbnail_checkbox.isChecked()
+        self.show_point_cloud = self.point_cloud_checkbox.isChecked()
+        
         # Clear existing
         self.cameras.clear()
         self.selected_camera = None
