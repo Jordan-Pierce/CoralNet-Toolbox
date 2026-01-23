@@ -76,6 +76,7 @@ class MVATWindow(QMainWindow):
         self.show_wireframes = True
         self.show_thumbnails = True
         self.thumbnail_opacity = 0.8
+        self.show_point_cloud = True
         
         # Setup UI
         self._setup_window()
@@ -207,6 +208,11 @@ class MVATWindow(QMainWindow):
         self.thumbnail_checkbox.setChecked(self.show_thumbnails)
         self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
         self.horizontal_layout.addWidget(self.thumbnail_checkbox)
+        
+        self.point_cloud_checkbox = QCheckBox("Point cloud")
+        self.point_cloud_checkbox.setChecked(self.show_point_cloud)
+        self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)
+        self.horizontal_layout.addWidget(self.point_cloud_checkbox)
         
         # Vertical Separator
         self.horizontal_layout.addWidget(self._create_v_line())
@@ -379,6 +385,11 @@ class MVATWindow(QMainWindow):
         # Clear existing actors
         self.viewer.plotter.clear()
         
+        # Re-add point cloud
+        self.viewer.point_cloud_actor = None
+        self.viewer.add_point_cloud()
+        self.viewer.set_point_cloud_visible(self.show_point_cloud)
+        
         # Add a reference grid
         self.viewer.plotter.add_axes()
         
@@ -443,6 +454,11 @@ class MVATWindow(QMainWindow):
         
         # Re-render the scene
         self._render_frustums()
+        
+    def _toggle_point_cloud(self, checked):
+        """Toggle point cloud visibility."""
+        self.show_point_cloud = checked
+        self.viewer.set_point_cloud_visible(checked)
         
     def _on_scale_changed(self, value):
         """Handle frustum scale change."""
