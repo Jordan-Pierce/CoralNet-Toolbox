@@ -159,17 +159,21 @@ class MVATWindow(QMainWindow):
         # FORCE HEIGHT: Match typical compact status bar height (~50-60px)
         self.status_bar_group_box.setMaximumHeight(65) 
         
-        self.status_bar_layout = QHBoxLayout(self.status_bar_group_box)
-        # TIGHT MARGINS: (left, top, right, bottom) - Top needs space for GroupBox title
-        self.status_bar_layout.setContentsMargins(5, 15, 5, 5) 
-        self.status_bar_layout.setSpacing(10)  # Reduce spacing between widgets
+        self.status_bar_layout = QVBoxLayout(self.status_bar_group_box)
+        # TIGHT MARGINS: (left, top, right, bottom)
+        self.status_bar_layout.setContentsMargins(5, 5, 5, 5) 
+        self.status_bar_layout.setSpacing(0)  # No spacing in vertical layout
+        
+        # Horizontal layout for the widgets
+        self.horizontal_layout = QHBoxLayout()
+        self.horizontal_layout.setSpacing(10)  # Spacing between widgets
         
         # --- Widget: Stats Label ---
         self.stats_label = QLabel("Cameras: 0")
-        self.status_bar_layout.addWidget(self.stats_label)
+        self.horizontal_layout.addWidget(self.stats_label)
         
         # Vertical Separator
-        self.status_bar_layout.addWidget(self._create_v_line())
+        self.horizontal_layout.addWidget(self._create_v_line())
         
         # --- Widget: Frustum Scale ---
         scale_label = QLabel("Scale:")
@@ -179,8 +183,8 @@ class MVATWindow(QMainWindow):
         self.scale_spinbox.setValue(self.frustum_scale)
         self.scale_spinbox.setToolTip("Adjust camera frustum size")
         self.scale_spinbox.valueChanged.connect(self._on_scale_changed)
-        self.status_bar_layout.addWidget(scale_label)
-        self.status_bar_layout.addWidget(self.scale_spinbox)
+        self.horizontal_layout.addWidget(scale_label)
+        self.horizontal_layout.addWidget(self.scale_spinbox)
         
         # --- Widget: Opacity Slider ---
         opacity_label = QLabel("Opacity:")
@@ -190,42 +194,47 @@ class MVATWindow(QMainWindow):
         self.opacity_slider.setFixedWidth(100)
         self.opacity_slider.setToolTip("Adjust thumbnail opacity")
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        self.status_bar_layout.addWidget(opacity_label)
-        self.status_bar_layout.addWidget(self.opacity_slider)
+        self.horizontal_layout.addWidget(opacity_label)
+        self.horizontal_layout.addWidget(self.opacity_slider)
         
         # --- Widget: Checkboxes ---
         self.wireframe_checkbox = QCheckBox("Wireframes")
         self.wireframe_checkbox.setChecked(self.show_wireframes)
         self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)
-        self.status_bar_layout.addWidget(self.wireframe_checkbox)
+        self.horizontal_layout.addWidget(self.wireframe_checkbox)
         
         self.thumbnail_checkbox = QCheckBox("Thumbnails")
         self.thumbnail_checkbox.setChecked(self.show_thumbnails)
         self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)
-        self.status_bar_layout.addWidget(self.thumbnail_checkbox)
+        self.horizontal_layout.addWidget(self.thumbnail_checkbox)
         
         # Vertical Separator
-        self.status_bar_layout.addWidget(self._create_v_line())
+        self.horizontal_layout.addWidget(self._create_v_line())
         
         # --- Widget: Selection Info & Button ---
         self.selection_label = QLabel("None selected")
         self.selection_label.setStyleSheet("color: #666;")
-        self.status_bar_layout.addWidget(self.selection_label)
+        self.horizontal_layout.addWidget(self.selection_label)
         
         self.goto_image_btn = QPushButton("Go to Image")
         self.goto_image_btn.setEnabled(False)
         self.goto_image_btn.setToolTip("Load selected camera in Main Window")
         self.goto_image_btn.clicked.connect(self._goto_selected_image)
-        self.status_bar_layout.addWidget(self.goto_image_btn)
+        self.horizontal_layout.addWidget(self.goto_image_btn)
         
         # Push everything to the left
-        self.status_bar_layout.addStretch()
+        self.horizontal_layout.addStretch()
         
         # Refresh Button (Right aligned)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setToolTip("Reload cameras from project")
         self.refresh_btn.clicked.connect(self._refresh_scene)
-        self.status_bar_layout.addWidget(self.refresh_btn)
+        self.horizontal_layout.addWidget(self.refresh_btn)
+        
+        # Add stretches and horizontal layout to vertical layout for centering
+        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addLayout(self.horizontal_layout)
+        self.status_bar_layout.addStretch()
         
         # Add status box to main layout
         self.main_layout.addWidget(self.status_bar_group_box)
