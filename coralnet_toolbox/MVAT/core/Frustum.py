@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista as pv
+from PyQt5.QtGui import QImage
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -44,7 +45,7 @@ class Frustum:
         Create the geometric meshes (wireframe and image plane) based on camera parameters.
         
         Args:
-            scale (float): The distance of the near plane from the camera center.
+            scale (float): The distance of the image plane from the camera center.
         """
         # 1. Define corners of the near plane in camera space
         # Camera Coordinate System: X=Right, Y=Down, Z=Forward
@@ -93,7 +94,7 @@ class Frustum:
         self._frustum_mesh = pv.UnstructuredGrid(cells, cell_types, all_points_world)
 
         # --- Create Image Plane Mesh (Textured Quad) ---
-        # We use the first 4 points (the corners)
+        # We use the first 4 points (the corners) which represent the image plane at 'scale' distance
         plane_points = all_points_world[:4]
         
         # Define the face (one quad)
@@ -103,18 +104,18 @@ class Frustum:
         self._image_plane_mesh = pv.PolyData(plane_points, plane_faces)
         
         # Define Texture Coordinates (UV)
-        # We need to map the image (0,0 at TL) to the mesh geometry
-        # V=1 is usually "up" in texture space, but our Y=0 is "up" in image space.
         # Mapping:
-        # Pt 0 (TL) -> UV (0, 1)
-        # Pt 1 (TR) -> UV (1, 1)
-        # Pt 2 (BR) -> UV (1, 0)
-        # Pt 3 (BL) -> UV (0, 0)
-        self._image_plane_mesh.point_data["t_coords"] = np.array([
-            [0, 1], # Top-Left
-            [1, 1], # Top-Right
+        # Pt 0 (TL) -> UV (0, 0) (Bottom-Left of Texture)
+        # Pt 1 (TR) -> UV (1, 0) (Bottom-Right of Texture)
+        # Pt 2 (BR) -> UV (1, 1) (Top-Right of Texture)
+        # Pt 3 (BL) -> UV (0, 1) (Top-Left of Texture)
+        # Note: We will flip the image array vertically later so that Row 0 (Image Top) 
+        # maps to V=1 (Texture Top).
+        self._image_plane_mesh.point_data.active_texture_coordinates = np.array([
+            [0, 0], # Bottom-Left
             [1, 0], # Bottom-Right
-            [0, 0]  # Bottom-Left
+            [1, 1], # Top-Right
+            [0, 1]  # Top-Left
         ])
 
     def get_mesh(self, scale=0.1):
@@ -167,31 +168,49 @@ class Frustum:
             texture = None
             
             if qimg and not qimg.isNull():
-                # Convert QImage to numpy array for PyVista texture
-                # Assumes QImage format is compatible (e.g. RGB/RGBA)
                 try:
-                    qimg = qimg.convertToFormat(4) # QImage.Format_RGB32
+                    # 1. Convert QImage to RGBA8888 (Standard byte order R-G-B-A)
+                    # This avoids BGRA issues common with Format_RGB32 on Windows/LittleEndian
+                    qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+                    
                     width = qimg.width()
                     height = qimg.height()
                     
-                    ptr = qimg.bits()
-                    ptr.setsize(qimg.byteCount())
-                    # Reshape to (H, W, 4) for RGBA
-                    arr = np.array(ptr).reshape(height, width, 4)
+                    # 2. Robustly convert to Numpy Array
+                    # constBits() returns a pointer to the first byte
+                    ptr = qimg.constBits()
+                    ptr.setsize(height * width * 4)
                     
-                    # Create PyVista Texture
-                    texture = pv.Texture(arr)
+                    # Create numpy array from buffer
+                    arr = np.frombuffer(ptr, np.uint8).reshape(height, width, 4)
+                    
+                    # 3. Flip vertically
+                    # QImage Top (Row 0) maps to OpenGL Bottom (V=0) by default.
+                    # We flip it so Row 0 becomes the "Top" (V=1) to match our UVs.
+                    arr = arr[::-1, :, :]
+                    
+                    # 4. Create PyVista Texture
+                    # We create a deep copy to ensure memory safety if QImage is garbage collected
+                    texture = pv.Texture(arr.copy())
+                    
                 except Exception as e:
-                    print(f"Failed to create texture for frustum: {e}")
+                    print(f"Failed to create texture for frustum {self.camera.label}: {e}")
             
             # Add mesh to plotter
-            self.image_actors[plotter] = plotter.add_mesh(
+            actor = plotter.add_mesh(
                 mesh,
                 texture=texture,
                 opacity=opacity,
                 show_edges=False,
                 name=f"frustum_plane_{id(self)}"
             )
+            
+            # 5. Disable Lighting
+            # This ensures the image is shown as "emissive" (true colors) 
+            # and doesn't get darkened by shadows inside the frustum.
+            actor.GetProperty().SetLighting(False)
+            
+            self.image_actors[plotter] = actor
             
         return self.image_actors[plotter]
 
@@ -216,18 +235,17 @@ class Frustum:
                 # Set color
                 prop = actor.GetProperty()
                 if self.color == 'red':
-                    prop.SetColor(230 / 255, 62 / 255, 0 / 255)  # blood red (230, 62, 0)
+                    prop.SetColor(230 / 255, 62 / 255, 0 / 255)  # blood red
                 elif self.color == 'cyan':
-                    prop.SetColor(0.0, 168 / 255, 230 / 255)  # cyan (0, 168, 230)
+                    prop.SetColor(0.0, 168 / 255, 230 / 255)  # cyan
                 else:
                     prop.SetColor(1.0, 1.0, 1.0)
                 
                 prop.SetLineWidth(self.line_width)
 
-            # Update image plane border/highlight if needed
+            # Update image plane selection highlight (Optional)
             if p in self.image_actors:
-                # We could adjust opacity or add an outline here if selected
-                pass
+                pass 
 
     def select(self):
         """Mark this frustum as selected and update appearance."""
