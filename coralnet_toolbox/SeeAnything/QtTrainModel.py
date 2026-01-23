@@ -522,11 +522,6 @@ class TrainModelDialog(QDialog):
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
 
-        # Multi Scale
-        self.multi_scale_combo = create_bool_combo()
-        self.multi_scale_combo.setCurrentText("False")
-        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
-
         # Single Class (cls)
         self.single_class_combo = create_bool_combo()
         self.single_class_combo.setCurrentText("False")
@@ -814,7 +809,6 @@ class TrainModelDialog(QDialog):
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'multi_scale': self.multi_scale_combo.currentText() == "True",
             'single_cls': self.single_class_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
@@ -917,7 +911,6 @@ class TrainModelDialog(QDialog):
                 'epochs': self.epochs_spinbox,
                 'patience': self.patience_spinbox,
                 'imgsz': self.imgsz_spinbox,
-                'multi_scale': self.multi_scale_combo,
                 'batch': self.batch_spinbox,
                 'single_cls': self.single_class_combo,
                 'dropout': self.dropout_spinbox,
@@ -949,7 +942,7 @@ class TrainModelDialog(QDialog):
                         if isinstance(converted_value, (int, float)):
                             widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
-                        if param_name in ['multi_scale', 'save', 'val', 'verbose', 'single_cls']:
+                        if param_name in ['save', 'val', 'verbose', 'single_cls']:
                             widget.setCurrentText("True" if converted_value else "False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
@@ -1000,7 +993,6 @@ class TrainModelDialog(QDialog):
             export_data['momentum'] = self.momentum_spinbox.value()
             export_data['imgsz'] = self.imgsz_spinbox.value()
             export_data['batch'] = self.batch_spinbox.value()
-            export_data['multi_scale'] = self.multi_scale_combo.currentText() == "True"
             export_data['single_cls'] = self.single_class_combo.currentText() == "True"
             export_data['dropout'] = self.dropout_spinbox.value()
             export_data['workers'] = self.workers_spinbox.value()
