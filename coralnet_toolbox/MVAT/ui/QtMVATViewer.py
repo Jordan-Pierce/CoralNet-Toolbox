@@ -33,6 +33,7 @@ class MVATViewer(QFrame):
         # Point cloud management
         self.point_cloud_mesh = None
         self.point_cloud_actor = None
+        self.point_size = 3
         
         # Add to layout
         self.layout.addWidget(self.plotter.interactor)
@@ -63,10 +64,15 @@ class MVATViewer(QFrame):
                 self.plotter.remove_actor(self.point_cloud_actor)
             # Handle styling for point cloud vs meshes
             if 'RGB' in mesh.point_data:
-                self.point_cloud_actor = self.plotter.add_mesh(mesh, scalars='RGB', rgb=True, point_size=3)
+                self.point_cloud_actor = self.plotter.add_mesh(mesh, 
+                                                               scalars='RGB', 
+                                                               rgb=True, 
+                                                               point_size=self.point_size)
             else:
-                point_size = 3 if mesh.n_cells == 0 else None
-                self.point_cloud_actor = self.plotter.add_mesh(mesh, color='cyan', point_size=point_size)
+                point_size = self.point_size if mesh.n_cells == 0 else None
+                self.point_cloud_actor = self.plotter.add_mesh(mesh, 
+                                                               color='cyan', 
+                                                               point_size=point_size)
             # Store for re-adding after clears
             self.point_cloud_mesh = mesh
             self.plotter.reset_camera()
@@ -86,9 +92,9 @@ class MVATViewer(QFrame):
                     self.point_cloud_actor = self.plotter.add_mesh(self.point_cloud_mesh, 
                                                                    scalars='RGB', 
                                                                    rgb=True, 
-                                                                   point_size=3)
+                                                                   point_size=self.point_size)
                 else:
-                    point_size = 3 if self.point_cloud_mesh.n_cells == 0 else None
+                    point_size = self.point_size if self.point_cloud_mesh.n_cells == 0 else None
                     self.point_cloud_actor = self.plotter.add_mesh(self.point_cloud_mesh, 
                                                                    color='cyan', 
                                                                    point_size=point_size)
@@ -99,6 +105,14 @@ class MVATViewer(QFrame):
         """Set visibility of the point cloud actor."""
         if self.point_cloud_actor is not None:
             self.point_cloud_actor.SetVisibility(visible)
+
+    def set_point_size(self, size):
+        """Update the point size for point clouds."""
+        self.point_size = size
+        # If point cloud is loaded, update the actor
+        if self.point_cloud_actor is not None:
+            self.point_cloud_actor.GetProperty().SetPointSize(size)
+            self.plotter.render()  # Force re-render
 
     def close(self):
         """Clean up the plotter resources."""
