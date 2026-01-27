@@ -98,10 +98,6 @@ The main window consists of several components:
     - Generate visual prompt encodings (VPEs) from reference images / annotations (save and show if needed)
     - Use the loaded model w/ VPEs on new images, or work areas
 
-- **Transformers**:
-  - **Deploy Model**: Deploy a foundational model
-    - Models Available: `Grounding DINO`, `OWLViT`
-
 ### Machine Learning
 
 - **Machine Learning**:
@@ -378,14 +374,13 @@ The main window consists of several components:
   - When the PatchTool is active, this switches back to the SelectTool
   - When the BrushTool is active, this switches to the EraseTool, and vice versa
 
-- **Machine Learning, SAM, See Anything (YOLOE), and Transformers**: After a model is loaded
+- **Machine Learning, SAM, and See Anything (YOLOE)**: After a model is loaded
   - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Make prediction on selected Patch annotation, else all in the image with Review label using Classification model
   - <kbd>Ctrl</kbd> + <kbd>2</kbd>: Make predictions using Object Detection model
   - <kbd>Ctrl</kbd> + <kbd>3</kbd>: Make predictions using Instance Segmentation model
   - <kbd>Ctrl</kbd> + <kbd>4</kbd>: Make predictions using Semantic Segmentation model
   - <kbd>Ctrl</kbd> + <kbd>5</kbd>: Make predictions using FastSAM model
   - <kbd>Ctrl</kbd> + <kbd>6</kbd>: Make predictions using YOLOE model
-  - <kbd>Ctrl</kbd> + <kbd>7</kbd>: Make predictions using Transformers model
 
 - **Tooltips**: Hover over tool buttons, image / annotation rows, and the Confidence Window for additional information
 

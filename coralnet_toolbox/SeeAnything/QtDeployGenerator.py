@@ -13,7 +13,6 @@ import pyqtgraph as pg
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
-from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog,
@@ -64,7 +63,6 @@ class DeployGeneratorDialog(QDialog):
         self.resize(800, 800)  # Increased size to accommodate the horizontal layout
 
         self.deploy_model_dialog = None
-        self.loaded_model = None
         self.last_selected_label_code = None
         
         # Initialize variables
@@ -379,7 +377,7 @@ class DeployGeneratorDialog(QDialog):
             'yoloe-26s-seg.pt',
             'yoloe-26m-seg.pt',
             'yoloe-26l-seg.pt',
-            'yoloe-110n-seg.pt',
+            'yoloe-26x-seg.pt',
         ]
 
         # Add all models to combo box
@@ -920,7 +918,7 @@ class DeployGeneratorDialog(QDialog):
             self.model_path = self.model_combo.currentText()
 
         # Load model using registry
-        self.loaded_model = YOLOE(self.model_path, verbose=False).to(self.device)
+        self.loaded_model = YOLOE(self.model_path)
 
         # Create a dummy visual dictionary for standard model loading
         visual_prompts = dict(
@@ -937,8 +935,8 @@ class DeployGeneratorDialog(QDialog):
         # Run a dummy prediction to load the model
         self.loaded_model.predict(
             np.zeros((640, 640, 3), dtype=np.uint8),
-            visual_prompts=visual_prompts.copy(),  # This needs to happen to properly initialize the predictor
-            predictor=YOLOEVPDetectPredictor if self.task == "detect" else YOLOEVPSegPredictor,
+            visual_prompts=visual_prompts,
+            predictor=YOLOEVPSegPredictor,
             imgsz=640,
             conf=0.99,
         )

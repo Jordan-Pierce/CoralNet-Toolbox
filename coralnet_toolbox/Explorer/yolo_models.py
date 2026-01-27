@@ -30,6 +30,13 @@ YOLO_MODELS = {
     # 'YOLOv12 (Medium)': 'yolo12m-cls.pt',
     # 'YOLOv12 (Large)': 'yolo12l-cls.pt',
     # 'YOLOv12 (X-Large)': 'yolo12x-cls.pt',
+    
+    # YOLO26 classification models
+    'YOLO26 (Nano)': 'yolo26n-cls.pt',
+    'YOLO26 (Small)': 'yolo26s-cls.pt',
+    'YOLO26 (Medium)': 'yolo26m-cls.pt',
+    'YOLO26 (Large)': 'yolo26l-cls.pt',
+    'YOLO26 (X-Large)': 'yolo26x-cls.pt',
 }
 
 

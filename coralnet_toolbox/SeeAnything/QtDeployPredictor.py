@@ -11,7 +11,6 @@ from torch.cuda import empty_cache
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
-from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
@@ -344,7 +343,7 @@ class DeployPredictorDialog(QDialog):
                 self.model_path = self.model_combo.currentText()
     
             # Load model using registry
-            self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
+            self.loaded_model = YOLOE(self.model_path)
     
             # Create a dummy visual dictionary for standard model loading
             visuals = dict(
@@ -362,7 +361,7 @@ class DeployPredictorDialog(QDialog):
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
                 visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-                predictor=YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor,
+                predictor=YOLOEVPSegPredictor,
                 imgsz=640,
                 conf=0.99,
             )
@@ -542,9 +541,6 @@ class DeployPredictorDialog(QDialog):
         # Get the scaled visual prompts
         visual_prompts = self.scale_prompts(bboxes, masks)
         
-        # Set the predictor
-        predictor = YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor
-        
         if False:
             # Debugging
             import matplotlib.pyplot as plt
@@ -559,8 +555,8 @@ class DeployPredictorDialog(QDialog):
         try:            
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
-                                                visual_prompts=visual_prompts.copy(),
-                                                predictor=predictor,
+                                                visual_prompts=visual_prompts,
+                                                predictor=YOLOEVPSegPredictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                 iou=self.thresholds_widget.get_iou_thresh(),
@@ -581,7 +577,7 @@ class DeployPredictorDialog(QDialog):
         return results
 
     def predict_from_annotations(self, refer_image, refer_label, refer_bboxes, refer_masks, target_images):
-        """"""
+        """Make predictions using the currently loaded model and annotations."""
         # Create a class mapping
         class_mapping = {0: refer_label}
 
@@ -621,9 +617,6 @@ class DeployPredictorDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(target_images))
-        
-        # Set the predictor
-        predictor = YOLOEVPDetectPredictor if self.task == 'detect' else YOLOEVPSegPredictor
 
         for target_image in target_images:
 
@@ -631,8 +624,8 @@ class DeployPredictorDialog(QDialog):
                 # Make predictions
                 results = self.loaded_model.predict(target_image,
                                                     refer_image=refer_image,
-                                                    visual_prompts=visual_prompts.copy(),
-                                                    predictor=predictor,
+                                                    visual_prompts=visual_prompts,
+                                                    predictor=YOLOEVPSegPredictor,
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                     iou=self.thresholds_widget.get_iou_thresh(),

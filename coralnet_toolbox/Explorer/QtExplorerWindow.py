@@ -4,6 +4,7 @@ import os
 
 import numpy as np
 import torch
+
 import faiss
 
 from ultralytics import YOLO

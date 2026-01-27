@@ -82,4 +82,4 @@ class Classify(Base):
             self.model_combo.addItems(list(community_configs.keys()))
             
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo26n-cls.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo11n-cls.pt'))
