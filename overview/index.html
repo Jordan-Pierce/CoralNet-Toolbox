@@ -995,7 +995,7 @@
 <li>The SAM model processes the image using the provided prompt(s) and, in a fraction of a second, automatically generates a high-fidelity, pixel-perfect polygon mask that traces the coral's boundary.</li>
 </ol>
 <p>This workflow effectively bridges the gap between low-effort bounding boxes and high-effort, high-value segmentation masks. It allows researchers to create rich instance segmentation datasets in a fraction of the time it would take with manual tracing alone. This practical application directly realizes the concept of using an object detection model's outputs (bounding boxes) to feed a segmentation model (SAM) to generate instance segmentations.</p>
-<p>The CoralNet-Toolbox integrates a suite of SAM variants to suit different needs, including the original, high-accuracy SAM; the faster FastSAM; and the lightweight MobileSAM, which is optimized for speed and use on systems with less computational power. Furthermore, the toolbox incorporates other advanced AI-assisted annotation tools like Transformers, which can leverage models like Grounding DINO and OWLViT to perform zero-shot object detection from natural language text prompts, further reducing the manual annotation burden.</p>
+<p>The CoralNet-Toolbox integrates a suite of SAM variants to suit different needs, including the original, high-accuracy SAM; the faster FastSAM; and the lightweight MobileSAM, which is optimized for speed and use on systems with less computational power. Furthermore, the toolbox incorporates other advanced AI-assisted annotation tools, further reducing the manual annotation burden.</p>
 <h2 id="section-3-training-and-tuning-models-with-the-ultralytics-engine">Section 3: Training and Tuning Models with the Ultralytics Engine<a class="headerlink" href="#section-3-training-and-tuning-models-with-the-ultralytics-engine" title="Permanent link">&para;</a></h2>
 <p>Once a high-quality annotated dataset has been prepared, the CoralNet-Toolbox provides a powerful and flexible local environment for training custom machine learning models. By leveraging the state-of-the-art YOLOv8 architecture through the Ultralytics framework, the toolbox empowers researchers with a level of control and transparency that is not possible on the official CoralNet platform. This section details the process of preparing a dataset for training, understanding the YOLOv8 engine, and executing the local training and tuning workflow.</p>
 <h3 id="31-preparing-a-training-dataset">3.1 Preparing a Training Dataset<a class="headerlink" href="#31-preparing-a-training-dataset" title="Permanent link">&para;</a></h3>
@@ -1065,7 +1065,7 @@
 </tr>
 <tr>
 <td>Visual Prompting / Zero-Shot Models</td>
-<td>YOLOE (See Anything), Transformers (Grounding DINO, OWLViT)</td>
+<td>YOLOE (See Anything)</td>
 <td>AI-assisted annotation; detecting objects based on visual examples or text prompts without prior training.</td>
 </tr>
 </tbody>
@@ -1263,7 +1263,7 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 3, 2025 21:04:11 UTC"><span class="timeago" datetime="2025-10-03T21:04:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 3, 2025 21:04:11 UTC">2025-10-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="January 27, 2026 21:03:23 UTC"><span class="timeago" datetime="2026-01-27T21:03:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="January 27, 2026 21:03:23 UTC">2026-01-27</span>
   </span>
 
     
