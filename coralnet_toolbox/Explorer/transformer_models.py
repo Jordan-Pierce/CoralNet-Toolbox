@@ -8,23 +8,23 @@ Qt dependencies.
 
 import os
 
+TRANSFORMER_MODELS = {
+    'ResNet-50': 'microsoft/resnet-50',
+    'ResNet-101': 'microsoft/resnet-101',
+    'Swin Transformer (Tiny)': 'microsoft/swin-tiny-patch4-window7-224',
+    'Swin Transformer (Base)': 'microsoft/swin-base-patch4-window7-224',
+    'ViT (Base)': 'google/vit-base-patch16-224',
+    'ViT (Large)': 'google/vit-large-patch16-224',
+    'DINOv2 (Small)': 'facebook/dinov2-small',
+    'DINOv2 (Base)': 'facebook/dinov2-base',
+    'DINOv2 (Large)': 'facebook/dinov2-large',
+    'DINOv2 (Giant)': 'facebook/dinov2-giant',
+    'DINOv2 (Giant ImageNet1k)': 'facebook/dinov2-giant-imagenet1k-1-layer',
+}
+
 try:
     from transformers import pipeline
     from huggingface_hub import snapshot_download
-
-    TRANSFORMER_MODELS = {
-        'ResNet-50': 'microsoft/resnet-50',
-        'ResNet-101': 'microsoft/resnet-101',
-        'Swin Transformer (Tiny)': 'microsoft/swin-tiny-patch4-window7-224',
-        'Swin Transformer (Base)': 'microsoft/swin-base-patch4-window7-224',
-        'ViT (Base)': 'google/vit-base-patch16-224',
-        'ViT (Large)': 'google/vit-large-patch16-224',
-        'DINOv2 (Small)': 'facebook/dinov2-small',
-        'DINOv2 (Base)': 'facebook/dinov2-base',
-        'DINOv2 (Large)': 'facebook/dinov2-large',
-        'DINOv2 (Giant)': 'facebook/dinov2-giant',
-        'DINOv2 (Giant ImageNet1k)': 'facebook/dinov2-giant-imagenet1k-1-layer',
-    }
 
     # Check if HF_TOKEN environment variable is set
     # (if not, user can definitely not access the model)
@@ -45,8 +45,8 @@ try:
             'DINOv3 ViT (7B/16)': 'facebook/dinov3-vit7b16-pretrain-lvd1689m',
         })
         
-except ImportError:
-    TRANSFORMER_MODELS = {}
+except Exception as e:
+    pass
 
 
 def is_transformer_model(model_name):
