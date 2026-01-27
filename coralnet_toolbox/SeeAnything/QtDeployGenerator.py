@@ -385,7 +385,7 @@ class DeployGeneratorDialog(QDialog):
             self.model_combo.addItem(model_name)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(self.models.index('yoloe-26s-seg.pt'))
+        self.model_combo.setCurrentIndex(self.models.index('yoloe-11s-seg.pt'))
         model_select_layout.addRow("Model:", self.model_combo)
 
         # Add VPE file selection to the first tab

@@ -140,7 +140,7 @@ class DeployPredictorDialog(QDialog):
         self.model_combo.addItems(standard_models)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yoloe-26s-seg.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yoloe-11s-seg.pt'))
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")

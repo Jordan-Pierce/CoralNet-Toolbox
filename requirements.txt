@@ -21,6 +21,8 @@ pyarrow
 hf_xet
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.27
+pyvista
+pyvistaqt
 requests
 selenium>=4.15.2
 beautifulsoup4>=4.12.2

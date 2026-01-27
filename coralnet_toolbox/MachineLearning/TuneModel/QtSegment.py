@@ -75,4 +75,4 @@ class Segment(Base):
             self.model_combo.addItems(list(community_configs.keys()))
             
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo26n-seg.pt'))
+        self.model_combo.setCurrentIndex(standard_models.index('yolo11n-seg.pt'))

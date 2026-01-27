@@ -714,7 +714,7 @@ class TrainModelDialog(QDialog):
                 'yoloe-26l-seg.pt',
                 'yoloe-26x-seg.pt'
             ]
-            default_model = 'yoloe-26s-seg.pt'
+            default_model = 'yoloe-11s-seg.pt'
         else:  # detect
             standard_models = [
                 'yoloe-v8s.yaml',
@@ -729,7 +729,7 @@ class TrainModelDialog(QDialog):
                 'yoloe-26l.yaml',
                 'yoloe-26x.yaml'
             ]
-            default_model = 'yoloe-26s.yaml'
+            default_model = 'yoloe-11s.yaml'
 
         self.model_combo.addItems(standard_models)
 
