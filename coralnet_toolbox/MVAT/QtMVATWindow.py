@@ -76,12 +76,12 @@ class MVATWindow(QMainWindow):
         self.thumbnail_actors = []
         
         # Display status
-        self.frustum_scale = 0.5
+        self.frustum_scale = 0.1
         self.show_wireframes = True
         self.show_thumbnails = True
-        self.thumbnail_opacity = 0.8
+        self.thumbnail_opacity = 1.0
         self.show_point_cloud = True
-        self.point_size = 3
+        self.point_size = 1
         
         # Setup UI
         self._setup_window()
@@ -402,6 +402,11 @@ class MVATWindow(QMainWindow):
         self.wireframe_actors.clear()
         self.thumbnail_actors.clear()
         
+        # Clear frustum actor dictionaries to allow recreation with new scale
+        for camera in self.cameras.values():
+            camera.frustum.actors.clear()
+            camera.frustum.image_actors.clear()
+        
         # Re-add point cloud
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
@@ -497,13 +502,9 @@ class MVATWindow(QMainWindow):
         """Handle frustum scale change."""
         self.frustum_scale = value
         
-        # Update scale of existing actors
-        for actor in self.wireframe_actors + self.thumbnail_actors:
-            actor.SetScale(value)
-        
-        # Update the render
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+        # Regenerate all frustums with new scale
+        # This creates new geometry at the correct size rather than transforming existing geometry
+        self._render_frustums()
         
     def _on_opacity_changed(self, value):
         """Handle thumbnail opacity change."""
