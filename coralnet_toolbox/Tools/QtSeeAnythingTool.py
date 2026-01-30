@@ -21,7 +21,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import simplify_polygon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -578,7 +577,7 @@ class SeeAnythingTool(Tool):
                     polygon_abs[:, 0] = polygon_abs[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
                     polygon_abs[:, 1] = polygon_abs[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
 
-                    polygon_abs = simplify_polygon(polygon_abs, 0.1)
+                    # No automatic simplification - preserve full precision
                     self.create_polygon_annotation(polygon_abs, confidence)
                     
         else:  # Task is 'detect'

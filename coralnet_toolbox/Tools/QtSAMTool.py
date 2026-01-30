@@ -15,7 +15,6 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import simplify_polygon
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -854,17 +853,15 @@ class SAMTool(Tool):
             working_area_top_left = self.working_area.rect.topLeft()
             offset_x, offset_y = working_area_top_left.x(), working_area_top_left.y()
             
-            # Simplify, offset, and convert the exterior points
-            simplified_exterior = simplify_polygon(exterior_coords, 0.1)
-            self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_exterior]
+            # Offset and convert the exterior points (no simplification)
+            self.points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in exterior_coords]
             
-            # Simplify, offset, and convert each hole only if allowed
+            # Offset and convert each hole only if allowed (no simplification)
             final_holes = []
             if self.allow_holes:
                 for hole_coords in holes_coords_list:
-                    simplified_hole = simplify_polygon(hole_coords, 0.1)
-                    if len(simplified_hole) >= 3:
-                        hole_points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in simplified_hole]
+                    if len(hole_coords) >= 3:
+                        hole_points = [QPointF(p[0] + offset_x, p[1] + offset_y) for p in hole_coords]
                         final_holes.append(hole_points)
             
             # Require at least 3 points for valid polygon

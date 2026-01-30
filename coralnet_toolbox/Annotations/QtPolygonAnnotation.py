@@ -50,31 +50,21 @@ class PolygonAnnotation(Annotation):
         self.holes = holes if holes is not None else []
 
         # Set the main polygon points and calculate initial properties
-        self.set_precision(points, True)
+        self.set_precision(points, False)
         self.set_centroid()
         self.set_cropped_bbox()
 
     def set_precision(self, points: list, reduce: bool = True):
         """
-        Set the precision of the outer points and all inner holes.
+        Set the precision of the outer points (no longer reduces precision).
+        The reduce parameter is kept for API compatibility but is ignored.
 
         Args:
             points: List of QPointF vertices for the outer boundary.
-            reduce: Whether to round coordinates to a set number of decimal places.
+            reduce: Kept for compatibility, but no longer applies rounding.
         """
-        # Process and assign the outer boundary points
-        if reduce:
-            self.points = [QPointF(round(p.x(), 6), round(p.y(), 6)) for p in points]
-        else:
-            self.points = points
-
-        # Process each list of points for the inner holes, if any
-        if self.holes and reduce:
-            processed_holes = []
-            for hole in self.holes:
-                processed_hole = [QPointF(round(p.x(), 6), round(p.y(), 6)) for p in hole]
-                processed_holes.append(processed_hole)
-            self.holes = processed_holes
+        # Simply assign the points without any rounding to preserve full precision
+        self.points = points
 
     def set_centroid(self):
         """
@@ -477,13 +467,13 @@ class PolygonAnnotation(Annotation):
                 updated_hole_coords = process_function(xy_hole_points)
                 updated_holes.append([QPointF(x, y) for x, y in updated_hole_coords])
         
-        # Update the holes attribute before calling set_precision
+        # Update the holes attribute
         self.holes = updated_holes
 
         # --- Finalize and Update ---
-        # Convert outer boundary points and set precision for all points
+        # Convert outer boundary points and update directly
         final_points = [QPointF(x, y) for x, y in updated_coords]
-        self.set_precision(final_points)
+        self.points = final_points
 
         # Recalculate properties and refresh the graphics
         self.set_centroid()
@@ -513,8 +503,8 @@ class PolygonAnnotation(Annotation):
             new_holes.append(moved_hole)
         self.holes = new_holes
 
-        # Update precision, recalculate properties, and refresh the graphics
-        self.set_precision(new_points)
+        # Update points directly, recalculate properties, and refresh the graphics
+        self.points = new_points
         self.set_centroid()
         self.set_cropped_bbox()
         self.update_graphics_item()
@@ -600,8 +590,8 @@ class PolygonAnnotation(Annotation):
             new_holes.append(scaled_hole)
         self.holes = new_holes
 
-        # 5. Update precision, recalculate properties, and refresh the graphics.
-        self.set_precision(new_points)
+        # 5. Update points directly, recalculate properties, and refresh the graphics.
+        self.points = new_points
         self.set_centroid()
         self.set_cropped_bbox()
         self.update_graphics_item()
@@ -628,8 +618,8 @@ class PolygonAnnotation(Annotation):
                 if 0 <= vertex_index < len(self.points):
                     new_points = self.points.copy()
                     new_points[vertex_index] = new_pos
-                    # set_precision will handle updating self.points
-                    self.set_precision(new_points)
+                    # Update points directly without precision reduction
+                    self.points = new_points
             else:
                 # Handle resizing one of the holes
                 poly_index = int(poly_index_str)
@@ -639,8 +629,7 @@ class PolygonAnnotation(Annotation):
                         new_hole = self.holes[poly_index].copy()
                         new_hole[vertex_index] = new_pos
                         self.holes[poly_index] = new_hole
-                        # set_precision will handle the holes list in-place
-                        self.set_precision(self.points)
+                        # Holes are already updated, no precision reduction needed
 
         except (ValueError, IndexError):
             # Fail gracefully if the handle format is invalid
