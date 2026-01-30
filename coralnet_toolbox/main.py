@@ -3,6 +3,7 @@ import traceback
 
 import qdarktheme
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
@@ -25,7 +26,10 @@ def run():
     try:
         # Install the exception hook (initial setup without main_window)
         sys.excepthook = except_hook
+        
         app = QApplication(sys.argv)
+        app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         # Custom colors with command-line green accents
         # 00BFFF (Deep Sky Blue) - bright and vibrant
