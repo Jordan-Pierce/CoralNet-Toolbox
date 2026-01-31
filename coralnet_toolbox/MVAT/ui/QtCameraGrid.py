@@ -109,10 +109,16 @@ class CameraDataItem:
         if self._thumbnail_pixmap is not None and self._thumbnail_size == longest_edge:
             return self._thumbnail_pixmap
             
-        # Get thumbnail from raster
-        qimage = self.raster.get_thumbnail(longest_edge=longest_edge)
+        # Get full QImage from raster and scale to requested size
+        qimage = self.raster.get_qimage()
         if qimage and not qimage.isNull():
-            self._thumbnail_pixmap = QPixmap.fromImage(qimage)
+            # Scale the image to the requested thumbnail size
+            scaled = qimage.scaled(
+                longest_edge, longest_edge,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self._thumbnail_pixmap = QPixmap.fromImage(scaled)
             self._thumbnail_size = longest_edge
             return self._thumbnail_pixmap
             

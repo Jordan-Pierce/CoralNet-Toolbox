@@ -26,7 +26,7 @@ except ImportError:
     print("Warning: PyVista or PyVistaQt not installed. MVAT will not be available.")
 
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
-from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid, MAX_THUMBNAIL_SIZE
+from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
 
@@ -278,7 +278,7 @@ class MVATWindow(QMainWindow):
         
         # Set minimum width for camera grid to prevent collapse
         # Ensure at least one column of thumbnails is always visible
-        self.right_container.setMinimumWidth(MAX_THUMBNAIL_SIZE + 50)  # Thumbnail + scrollbar/padding
+        self.right_container.setMinimumWidth(512 + 32)  # Thumbnail + scrollbar/padding
         
         # Set stretch factors: 3D viewer gets 3x weight, grid gets 1x weight
         self.splitter.setStretchFactor(0, 3)  # Left panel (3D viewer)
