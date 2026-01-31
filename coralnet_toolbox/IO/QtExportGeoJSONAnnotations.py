@@ -81,10 +81,15 @@ class ExportGeoJSONAnnotations(QDialog):
         """Simple information header."""
         info_label = QLabel(
             "<b>Export Annotations to GeoJSON</b><br>"
-            "Export annotations for all images. Choose between a single merged file or individual files."
+            "Export annotations for all rasterio-compatible images (e.g., .tif, .jpg, .png). "
+            "Non-georeferenced images can export in pixel coordinates if allowed. "
+            "Choose between a single merged file or individual files."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("margin-bottom: 5px;")
+        info_label.setToolTip(
+            "Requires images with valid raster data. Use advanced options for non-georeferenced handling."
+        )
         self.layout.addWidget(info_label)
 
     def setup_output_configuration_layout(self):
@@ -189,6 +194,15 @@ class ExportGeoJSONAnnotations(QDialog):
             "If checked, calculates pixel area and adds timestamps/annotator info."
         )
         layout.addWidget(self.metadata_checkbox)
+
+        # Pixel Coordinates for Non-Georeferenced
+        self.pixel_checkbox = QCheckBox("Allow pixel coordinates for non-georeferenced images")
+        self.pixel_checkbox.setChecked(False)
+        self.pixel_checkbox.setToolTip(
+            "If checked, images without CRS will export coordinates in pixel space.\n"
+            "Otherwise, such images are skipped."
+        )
+        layout.addWidget(self.pixel_checkbox)
 
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
@@ -396,6 +410,9 @@ class ExportGeoJSONAnnotations(QDialog):
             except Exception as e:
                 raise ValueError(f"Reprojection failed: {str(e)}")
         
+        if not src_crs and self.pixel_checkbox.isChecked():
+            return coords
+        
         return projected_coords
 
     def create_geojson_feature(self, annotation, image_path, transform, crs):
@@ -557,6 +574,13 @@ class ExportGeoJSONAnnotations(QDialog):
         # Data holder for Single Mode
         combined_features = []
         
+        # Counters for summary
+        exported_count = 0
+        skipped_no_annotations = 0
+        skipped_no_raster = 0
+        skipped_invalid_crs_transform = 0
+        skipped_no_features = 0
+        
         # Determine final CRS name for GeoJSON header
         final_crs_name = "urn:ogc:def:crs:OGC:1.3:CRS84" if self.wgs84_checkbox.isChecked() else None
 
@@ -565,15 +589,14 @@ class ExportGeoJSONAnnotations(QDialog):
                 # 1. Check for annotations first
                 annotations = self.get_annotations_for_image(image_path, selected_label_codes)
                 if not annotations:
+                    skipped_no_annotations += 1
                     progress_bar.update_progress()
                     continue
 
                 # 2. Load Raster Data
-                if not image_path.lower().endswith(('.tif', '.tiff')):
-                    continue
-                    
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if not raster or not raster.rasterio_src:
+                    skipped_no_raster += 1
                     continue
 
                 try:
@@ -586,6 +609,7 @@ class ExportGeoJSONAnnotations(QDialog):
                             final_crs_name = src_crs.to_string()
 
                 except Exception:
+                    skipped_invalid_crs_transform += 1
                     print(f"Skipping {os.path.basename(image_path)}: Invalid CRS/Transform")
                     continue
 
@@ -597,12 +621,14 @@ class ExportGeoJSONAnnotations(QDialog):
                         image_features.append(feat)
 
                 if not image_features:
+                    skipped_no_features += 1
                     progress_bar.update_progress()
                     continue
 
                 # 4. Write Data (Depending on Mode)
                 if mode == 'single':
                     combined_features.extend(image_features)
+                    exported_count += 1
                 else:
                     # Individual Mode: Write immediately
                     filename = os.path.splitext(os.path.basename(image_path))[0] + ".geojson"
@@ -621,6 +647,7 @@ class ExportGeoJSONAnnotations(QDialog):
 
                     with open(out_file, 'w') as f:
                         json.dump(feature_collection, f, indent=2)
+                    exported_count += 1
 
                 progress_bar.update_progress()
 
@@ -640,7 +667,16 @@ class ExportGeoJSONAnnotations(QDialog):
                 with open(final_output_path, 'w') as f:
                     json.dump(feature_collection, f, indent=2)
 
-            QMessageBox.information(self, "Success", "Export completed successfully.")
+            if mode == 'single':
+                feature_count = len(combined_features)
+            else:
+                feature_count = "individual files"
+            QMessageBox.information(
+                self, "Export Completed",
+                f"Exported {exported_count} images ({feature_count} features).\n"
+                f"Skipped: {skipped_no_annotations} (no annotations), {skipped_no_raster} (no raster),\n"
+                f"{skipped_invalid_crs_transform} (invalid CRS/transform), {skipped_no_features} (no valid features)."
+            )
             self.accept()
 
         except Exception as e:
