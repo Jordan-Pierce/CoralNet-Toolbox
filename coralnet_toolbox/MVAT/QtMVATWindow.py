@@ -260,7 +260,7 @@ class MVATWindow(QMainWindow):
         
         # --- Left Panel: 3D Viewer ---
         # Create the viewer container class
-        self.viewer = MVATViewer(self)
+        self.viewer = MVATViewer(self, point_size=self.point_size)
 
         # Enable picking for camera selection using the viewer's plotter
         self.viewer.plotter.enable_point_picking(

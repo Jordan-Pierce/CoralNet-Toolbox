@@ -16,7 +16,7 @@ class MVATViewer(QFrame):
     """
     A dedicated widget for holding the PyVista 3D Interactor.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, point_size=1):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
@@ -33,7 +33,7 @@ class MVATViewer(QFrame):
         # Point cloud management
         self.point_cloud_mesh = None
         self.point_cloud_actor = None
-        self.point_size = 3
+        self.point_size = point_size
         
         # Add to layout
         self.layout.addWidget(self.plotter.interactor)
