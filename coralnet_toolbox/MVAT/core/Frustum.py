@@ -29,6 +29,7 @@ class Frustum:
         
         # Visual properties
         self.selected = False
+        self.highlighted = False
         self.color = 'cyan'  # Default color
         self.line_width = 1  # Default line width
         
@@ -217,14 +218,21 @@ class Frustum:
 
     def update_appearance(self, plotter=None):
         """
-        Update the frustum appearance based on selection state.
+        Update the frustum appearance based on selection state and color.
         
         Args:
             plotter: Specific plotter to update, or None to update all
         """
-        # Update visual properties based on selection
-        self.color = 'red' if self.selected else 'cyan'
-        self.line_width = 3 if self.selected else 1
+        # Update visual properties based on selection and highlight
+        if self.selected:
+            display_color = 'lime'
+            self.line_width = 3
+        elif self.highlighted:
+            display_color = 'cyan'
+            self.line_width = 2
+        else:
+            display_color = 'white'
+            self.line_width = 1
         
         # Update actors
         plotters_to_update = [plotter] if plotter else list(self.actors.keys())
@@ -235,12 +243,14 @@ class Frustum:
                 
                 # Set color
                 prop = actor.GetProperty()
-                if self.color == 'red':
-                    prop.SetColor(230 / 255, 62 / 255, 0 / 255)  # blood red
-                elif self.color == 'cyan':
+                if display_color == 'lime':
+                    prop.SetColor(50 / 255, 205 / 255, 50 / 255)  # lime green
+                elif display_color == 'cyan':
                     prop.SetColor(0.0, 168 / 255, 230 / 255)  # cyan
+                elif display_color == 'white':
+                    prop.SetColor(0.8, 0.8, 0.8)  # light gray/white
                 else:
-                    prop.SetColor(1.0, 1.0, 1.0)
+                    prop.SetColor(1.0, 1.0, 1.0)  # default white
                 
                 prop.SetLineWidth(self.line_width)
 
@@ -251,11 +261,23 @@ class Frustum:
     def select(self):
         """Mark this frustum as selected and update appearance."""
         self.selected = True
+        self.highlighted = False  # Selection overrides highlight
         self.update_appearance()
     
     def deselect(self):
         """Mark this frustum as deselected and update appearance."""
         self.selected = False
+        self.update_appearance()
+    
+    def highlight(self):
+        """Mark this frustum as highlighted and update appearance."""
+        if not self.selected:  # Only highlight if not selected
+            self.highlighted = True
+            self.update_appearance()
+    
+    def unhighlight(self):
+        """Mark this frustum as not highlighted and update appearance."""
+        self.highlighted = False
         self.update_appearance()
     
     def remove_from_plotter(self, plotter):

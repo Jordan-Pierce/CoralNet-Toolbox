@@ -26,6 +26,7 @@ except ImportError:
     print("Warning: PyVista or PyVistaQt not installed. MVAT will not be available.")
 
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
+from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid, MAX_THUMBNAIL_SIZE
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
 
@@ -79,7 +80,7 @@ class MVATWindow(QMainWindow):
         self.frustum_scale = 0.1
         self.show_wireframes = True
         self.show_thumbnails = True
-        self.thumbnail_opacity = 1.0
+        self.thumbnail_opacity = 0.25
         self.show_point_cloud = True
         self.point_size = 1
         
@@ -229,20 +230,6 @@ class MVATWindow(QMainWindow):
         self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)  
         self.horizontal_layout.addWidget(self.point_cloud_checkbox)
         
-        # Vertical Separator
-        self.horizontal_layout.addWidget(self._create_v_line())
-        
-        # --- Widget: Selection Info & Button ---
-        self.selection_label = QLabel("None selected")
-        self.selection_label.setStyleSheet("color: #666;")
-        self.horizontal_layout.addWidget(self.selection_label)
-        
-        self.goto_image_btn = QPushButton("Go to Image")
-        self.goto_image_btn.setEnabled(False)
-        self.goto_image_btn.setToolTip("Load selected camera in Main Window")
-        self.goto_image_btn.clicked.connect(self._goto_selected_image)
-        self.horizontal_layout.addWidget(self.goto_image_btn)
-        
         # Push everything to the left
         self.horizontal_layout.addStretch()
         
@@ -276,19 +263,32 @@ class MVATWindow(QMainWindow):
         left_layout.addWidget(self.viewer)
         self.splitter.addWidget(left_groupbox)  # Add the groupbox instead of the viewer directly
         
-        # --- Right Panel: Empty Container ---
+        # --- Right Panel: Camera Grid ---
         self.right_container = QGroupBox("Camera Grid")
-        
-        # Add a label just to denote it's the future container
         right_layout = QVBoxLayout(self.right_container)
-        right_label = QLabel("Tools / Info Panel")
-        right_label.setAlignment(Qt.AlignCenter)
-        right_label.setEnabled(False) 
-        right_layout.addStretch()
-        right_layout.addWidget(right_label)
-        right_layout.addStretch()
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        
+        # Create the camera grid widget
+        self.camera_grid = CameraGrid(mvat_window=self)
+        self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
+        self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
+        right_layout.addWidget(self.camera_grid)
         
         self.splitter.addWidget(self.right_container)
+        
+        # Set minimum width for camera grid to prevent collapse
+        # Ensure at least one column of thumbnails is always visible
+        self.right_container.setMinimumWidth(MAX_THUMBNAIL_SIZE + 50)  # Thumbnail + scrollbar/padding
+        
+        # Set stretch factors: 3D viewer gets 3x weight, grid gets 1x weight
+        self.splitter.setStretchFactor(0, 3)  # Left panel (3D viewer)
+        self.splitter.setStretchFactor(1, 1)  # Right panel (camera grid)
+        
+        # Prevent panels from being completely collapsed
+        self.splitter.setChildrenCollapsible(False)
+        
+        # Connect splitter resize to grid layout update
+        self.splitter.splitterMoved.connect(self._on_splitter_moved)
         
         # Set splitter proportions (75% Viewer, 25% Right Panel)
         self.splitter.setSizes([900, 300])
@@ -305,6 +305,8 @@ class MVATWindow(QMainWindow):
         super().showEvent(event)
         
         if not self._initialized:
+            # Open window in fullscreen/maximized mode on first show
+            self.showMaximized()
             # Use QTimer to load cameras after the window is fully shown
             QTimer.singleShot(100, self._load_cameras)
             self._initialized = True
@@ -383,6 +385,9 @@ class MVATWindow(QMainWindow):
             
         # Update stats
         self.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
+        
+        # Populate camera grid
+        self.camera_grid.set_cameras(self.cameras)
         
         # Render frustums
         self._render_frustums()
@@ -523,6 +528,99 @@ class MVATWindow(QMainWindow):
         self.point_size = value
         self.viewer.set_point_size(value)
         
+    def _on_splitter_moved(self, pos, index):
+        """Handle splitter resize to update camera grid layout."""
+        if hasattr(self, 'camera_grid'):
+            self.camera_grid.recalculate_layout()
+            
+    def _on_grid_camera_selected(self, path):
+        """Handle camera selection from the grid (double-click)."""
+        camera = self.cameras.get(path)
+        if camera:
+            self._select_camera(path, camera)
+            # Match 3D view to camera perspective
+            self._match_camera_perspective(camera)
+            # Automatically navigate to the image
+            self._goto_selected_image()
+            
+    def _on_grid_cameras_highlighted(self, paths):
+        """Handle camera highlighting changes from the grid."""
+        # Update frustum appearance for highlighted cameras
+        for cam_path, camera in self.cameras.items():
+            # Check if this camera is selected (takes priority)
+            if self.selected_camera and cam_path == self.selected_camera.image_path:
+                camera.frustum.color = 'lime'
+            elif cam_path in paths:
+                camera.frustum.color = 'cyan'
+            else:
+                camera.frustum.color = 'white'
+            camera.frustum.update_appearance(self.viewer.plotter)
+            
+        # Update the render
+        if self.viewer and self.viewer.plotter:
+            self.viewer.plotter.update()
+            
+    def _match_camera_perspective(self, camera):
+        """Match the 3D viewer perspective to a camera's viewpoint."""
+        if not self.viewer or not self.viewer.plotter:
+            return
+            
+        try:
+            # Get camera position (optical center in world coordinates)
+            position = camera.position
+            
+            # Calculate view direction: Z-axis in camera frame transformed to world
+            # Camera looks along +Z in camera coordinates
+            view_direction = camera.R.T @ np.array([0, 0, 1])
+            
+            # Calculate up vector: -Y in camera frame (Y points down in image)
+            up_vector = camera.R.T @ np.array([0, -1, 0])
+            
+            # Calculate focal distance based on scene bounds for better viewing
+            # This ensures we're not too zoomed in or out regardless of frustum scale
+            try:
+                bounds = self.viewer.plotter.bounds
+                # Calculate scene diagonal for a reasonable focal distance
+                scene_size = np.sqrt(
+                    (bounds[1] - bounds[0])**2 + 
+                    (bounds[3] - bounds[2])**2 + 
+                    (bounds[5] - bounds[4])**2
+                )
+                # Use 20% of scene size as focal distance (can be tuned)
+                focal_distance = scene_size * 0.2
+            except:
+                # Fallback to a fixed reasonable distance if bounds aren't available
+                focal_distance = 5.0
+            
+            focal_point = position + view_direction * focal_distance
+            
+            # Set the plotter camera
+            self.viewer.plotter.camera.position = position.tolist()
+            self.viewer.plotter.camera.focal_point = focal_point.tolist()
+            self.viewer.plotter.camera.up = up_vector.tolist()
+            
+            # Optional: Match camera field of view from intrinsics
+            # This makes the 3D view more accurately represent what the camera sees
+            try:
+                if camera.K is not None:
+                    # Calculate vertical field of view from intrinsics
+                    # FOV = 2 * atan(height / (2 * fy))
+                    fy = camera.K[1, 1]
+                    height = camera.height
+                    fov_rad = 2 * np.arctan(height / (2 * fy))
+                    fov_deg = np.degrees(fov_rad)
+                    # Clamp FOV to reasonable range
+                    fov_deg = np.clip(fov_deg, 10, 120)
+                    self.viewer.plotter.camera.view_angle = fov_deg
+            except:
+                pass  # Use default FOV if calculation fails
+            
+            # Update the render
+            self.viewer.plotter.update()
+            
+        except Exception as e:
+            print(f"Failed to match camera perspective: {e}")
+    
     def _on_pick(self, point):
         """Handle picking in the 3D view."""
         if point is None:
@@ -543,22 +641,28 @@ class MVATWindow(QMainWindow):
         # Select if within reasonable distance (heuristic based on scale)
         if closest_camera and min_dist < self.frustum_scale * 2:
             self._select_camera(closest_path, closest_camera)
+            # Sync selection to grid
+            if hasattr(self, 'camera_grid'):
+                self.camera_grid.render_selection_from_path(closest_path)
         else:
             self._deselect_camera()
+            if hasattr(self, 'camera_grid'):
+                self.camera_grid.clear_all_selections()
             
     def _select_camera(self, path, camera):
         """Select a camera and update UI."""
         # Deselect previous
         if self.selected_camera:
             self.selected_camera.frustum.deselect()
+            # Reset previous camera color to white (unless highlighted)
+            if hasattr(self, 'camera_grid') and path not in self.camera_grid.highlighted_paths:
+                self.selected_camera.frustum.color = 'white'
+                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
             
         # Select new
         self.selected_camera = camera
+        camera.frustum.color = 'lime'
         camera.frustum.select()
-        
-        # Update UI
-        self.selection_label.setText(f"Selected: {camera.label}")
-        self.goto_image_btn.setEnabled(True)
         
         # Update the plotter to show selection
         self.viewer.plotter.update()
@@ -567,11 +671,16 @@ class MVATWindow(QMainWindow):
         """Deselect the current camera."""
         if self.selected_camera:
             self.selected_camera.frustum.deselect()
+            # Reset color to white (unless highlighted)
+            if hasattr(self, 'camera_grid'):
+                path = self.selected_camera.image_path
+                if path in self.camera_grid.highlighted_paths:
+                    self.selected_camera.frustum.color = 'cyan'
+                else:
+                    self.selected_camera.frustum.color = 'white'
+                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
             self.selected_camera = None
             
-        self.selection_label.setText("None selected")
-        self.goto_image_btn.setEnabled(False)
-        
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.update()
         
