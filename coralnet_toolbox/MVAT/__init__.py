@@ -8,9 +8,11 @@ from coralnet_toolbox.MVAT.QtMVATWindow import MVATWindow
 
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 __all__ = [
     'MVATWindow',
     'Camera', 
     'Frustum',
+    'CameraRay',
 ]

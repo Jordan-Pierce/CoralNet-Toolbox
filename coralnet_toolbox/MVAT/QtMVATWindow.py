@@ -9,7 +9,7 @@ import warnings
 import numpy as np
 
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QToolBar, QAction, QLabel, QSlider, QCheckBox,
@@ -17,18 +17,11 @@ from PyQt5.QtWidgets import (
     QPushButton, QSizePolicy, QSpacerItem, QSpinBox
 )
 
-try:
-    import pyvista as pv
-    from pyvistaqt import QtInteractor
-    PYVISTA_AVAILABLE = True
-except ImportError:
-    PYVISTA_AVAILABLE = False
-    print("Warning: PyVista or PyVistaQt not installed. MVAT will not be available.")
-
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -38,8 +31,171 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Throttle interval for mouse position updates (milliseconds)
+MOUSE_THROTTLE_MS = 30
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class MousePositionBridge:
+    """
+    Bridges mouse position events from AnnotationWindow to MVATWindow.
+    
+    Handles:
+    - Throttling mouse position updates to prevent performance issues
+    - Creating rays from 2D pixel positions through the selected camera
+    - Projecting rays onto other camera views
+    - Updating markers on visible camera widgets
+    - Updating ray visualization in the 3D viewer
+    """
+    
+    def __init__(self, mvat_window: 'MVATWindow'):
+        """
+        Initialize the MousePositionBridge.
+        
+        Args:
+            mvat_window: Reference to the parent MVATWindow.
+        """
+        self.mvat_window = mvat_window
+        self.enabled = True
+        self._last_update_time = 0
+        self._pending_position = None
+        
+        # Throttle timer
+        self._throttle_timer = QTimer()
+        self._throttle_timer.setSingleShot(True)
+        self._throttle_timer.timeout.connect(self._process_pending_position)
+        
+    def on_mouse_moved(self, x: int, y: int):
+        """
+        Handle mouse moved signal from AnnotationWindow.
+        
+        Throttles updates to prevent performance issues with rapid mouse movement.
+        
+        Args:
+            x: X pixel coordinate in image space.
+            y: Y pixel coordinate in image space.
+        """
+        if not self.enabled:
+            return
+            
+        # Store pending position
+        self._pending_position = (x, y)
+        
+        # Start throttle timer if not running
+        if not self._throttle_timer.isActive():
+            self._throttle_timer.start(MOUSE_THROTTLE_MS)
+            
+    def _process_pending_position(self):
+        """Process the pending mouse position after throttle delay."""
+        if self._pending_position is None:
+            return
+            
+        x, y = self._pending_position
+        self._pending_position = None
+        
+        # Get the selected camera
+        camera = self.mvat_window.selected_camera
+        if camera is None:
+            self.clear_all_markers()
+            self.mvat_window.viewer.clear_ray()
+            return
+            
+        # Check if position is within image bounds
+        if not (0 <= x < camera.width and 0 <= y < camera.height):
+            self.clear_all_markers()
+            self.mvat_window.viewer.clear_ray()
+            return
+            
+        # Get depth from z-channel if available
+        raster = camera._raster
+        depth = None
+        
+        if raster.z_channel is not None and raster.z_data_type == 'depth':
+            depth = raster.get_z_value(x, y)
+            # TODO: Improve depth estimation when z-channel unavailable
+            # Could use mesh intersection or other depth estimation techniques
+        
+        # Get default depth from scene if no depth available
+        if depth is None or depth <= 0 or np.isnan(depth):
+            default_depth = self.mvat_window.viewer.get_scene_median_depth(camera.position)
+        else:
+            default_depth = 10.0  # Fallback
+        
+        # Create ray from pixel position
+        ray = CameraRay.from_pixel_and_camera(
+            pixel_xy=(x, y),
+            camera=camera,
+            depth=depth,
+            default_depth=default_depth
+        )
+        
+        # Update 3D ray visualization
+        self.mvat_window.viewer.show_ray(ray)
+        
+        # Project ray onto other camera views
+        projections = ray.project_to_cameras(self.mvat_window.cameras)
+        
+        # Update markers on visible camera widgets
+        self._update_camera_markers(projections, ray.has_accurate_depth)
+        
+    def _update_camera_markers(self, projections: dict, accurate: bool):
+        """
+        Update marker positions on visible camera widgets.
+        
+        Only updates markers for widgets that are currently visible in the
+        camera grid viewport.
+        
+        Args:
+            projections: Dict mapping image_path to (x, y, is_valid) tuples.
+            accurate: Whether the depth used was accurate.
+        """
+        camera_grid = self.mvat_window.camera_grid
+        
+        # Get visible widgets from the camera grid
+        visible_widgets = camera_grid.get_visible_widgets()
+        
+        # Update each visible widget
+        for path, widget in visible_widgets.items():
+            if path in projections:
+                px, py, is_valid = projections[path]
+                if is_valid:
+                    widget.set_marker_position(px, py, accurate=accurate)
+                else:
+                    widget.clear_marker()
+            else:
+                widget.clear_marker()
+                
+    def clear_all_markers(self):
+        """Clear markers from all visible camera widgets."""
+        camera_grid = self.mvat_window.camera_grid
+        visible_widgets = camera_grid.get_visible_widgets()
+        
+        for widget in visible_widgets.values():
+            widget.clear_marker()
+            
+    def set_enabled(self, enabled: bool):
+        """
+        Enable or disable the mouse position bridge.
+        
+        Args:
+            enabled: Whether to enable mouse position tracking.
+        """
+        self.enabled = enabled
+        if not enabled:
+            self.clear_all_markers()
+            self.mvat_window.viewer.clear_ray()
+            
+    def cleanup(self):
+        """Clean up resources."""
+        self._throttle_timer.stop()
+        self.clear_all_markers()
 
 
 class MVATWindow(QMainWindow):
@@ -48,7 +204,13 @@ class MVATWindow(QMainWindow):
     
     Provides a 3D visualization of camera frustums for MultiView imagery projects.
     Allows users to navigate between views in 3D space and select cameras.
+    
+    Signals:
+        cameraSelectedInMVAT: Emitted when a camera is selected in MVAT (image_path).
     """
+    
+    # Signal emitted when a camera is selected in MVAT
+    cameraSelectedInMVAT = pyqtSignal(str)
     
     def __init__(self, main_window, parent=None):
         """
@@ -59,10 +221,6 @@ class MVATWindow(QMainWindow):
             parent: Parent widget (default: None)
         """
         super().__init__(parent)
-        
-        if not PYVISTA_AVAILABLE:
-            raise ImportError("PyVista and PyVistaQt are required for MVAT. "
-                              "Install with: pip install pyvista pyvistaqt")
         
         self.main_window = main_window
         self.image_window = main_window.image_window
@@ -84,11 +242,20 @@ class MVATWindow(QMainWindow):
         self.show_point_cloud = True
         self.point_size = 1
         
+        # Mouse position bridge for cross-window sync
+        self.mouse_bridge = None  # Initialized after UI setup
+        
+        # Reference to annotation window for signal connections
+        self.annotation_window = main_window.annotation_window
+        
         # Setup UI
         self._setup_window()
         self._setup_menubar()
         self._setup_toolbar()
         self._setup_central_layout()
+        
+        # Setup mouse position bridge and signal connections
+        self._setup_signal_connections()
         
         # Flag to track initialization
         self._initialized = False
@@ -299,6 +466,57 @@ class MVATWindow(QMainWindow):
         line.setFrameShape(QFrame.VLine)
         line.setFrameShadow(QFrame.Sunken)
         return line
+    
+    def _setup_signal_connections(self):
+        """
+        Set up signal connections between MVAT and main application windows.
+        
+        Establishes bi-directional synchronization:
+        - Main app → MVAT: Image selection and mouse position
+        - MVAT → Main app: Camera selection
+        """
+        # Create mouse position bridge
+        self.mouse_bridge = MousePositionBridge(self)
+        
+        # Connect AnnotationWindow.mouseMoved to bridge
+        if hasattr(self.annotation_window, 'mouseMoved'):
+            self.annotation_window.mouseMoved.connect(self.mouse_bridge.on_mouse_moved)
+        
+        # Connect ImageWindow.imageLoaded to sync MVAT selection
+        if hasattr(self.image_window, 'imageLoaded'):
+            self.image_window.imageLoaded.connect(self._on_main_image_loaded)
+        
+        # Connect our signal to navigate main app (for completeness)
+        self.cameraSelectedInMVAT.connect(self._on_camera_selected_sync)
+    
+    def _on_main_image_loaded(self, path: str):
+        """
+        Handle image loaded in main application.
+        
+        Updates MVAT selection to match main app's current image.
+        
+        Args:
+            path: Image path that was loaded in the main app.
+        """
+        if path in self.cameras:
+            # Update camera grid selection without triggering navigation
+            self.camera_grid.render_selection_from_path(path)
+            
+            # Update 3D view selection
+            camera = self.cameras[path]
+            self._select_camera(path, camera)
+    
+    def _on_camera_selected_sync(self, path: str):
+        """
+        Handle camera selection sync (internal slot).
+        
+        This is connected to our own signal for extensibility.
+        
+        Args:
+            path: Image path of the selected camera.
+        """
+        # Navigation to main app is handled in _goto_selected_image
+        pass
         
     def showEvent(self, event):
         """Handle show event - load cameras when window is shown."""
@@ -313,6 +531,20 @@ class MVATWindow(QMainWindow):
             
     def closeEvent(self, event):
         """Handle close event - cleanup resources."""
+        # Disconnect signal connections
+        try:
+            if hasattr(self.annotation_window, 'mouseMoved'):
+                self.annotation_window.mouseMoved.disconnect(self.mouse_bridge.on_mouse_moved)
+            if hasattr(self.image_window, 'imageLoaded'):
+                self.image_window.imageLoaded.disconnect(self._on_main_image_loaded)
+        except:
+            pass  # Signals may already be disconnected
+        
+        # Cleanup mouse bridge
+        if self.mouse_bridge:
+            self.mouse_bridge.cleanup()
+            self.mouse_bridge = None
+        
         # Clear camera references
         self.cameras.clear()
         self.selected_camera = None
@@ -667,6 +899,9 @@ class MVATWindow(QMainWindow):
         # Update the plotter to show selection
         self.viewer.plotter.update()
         
+        # Emit signal for bi-directional sync
+        self.cameraSelectedInMVAT.emit(path)
+        
     def _deselect_camera(self):
         """Deselect the current camera."""
         if self.selected_camera:
@@ -680,6 +915,14 @@ class MVATWindow(QMainWindow):
                     self.selected_camera.frustum.color = 'white'
                 self.selected_camera.frustum.update_appearance(self.viewer.plotter)
             self.selected_camera = None
+        
+        # Clear ray visualization when camera is deselected
+        if self.viewer:
+            self.viewer.clear_ray()
+        
+        # Clear markers
+        if self.mouse_bridge:
+            self.mouse_bridge.clear_all_markers()
             
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.update()

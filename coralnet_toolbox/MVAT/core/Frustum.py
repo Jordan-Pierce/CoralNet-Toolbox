@@ -114,10 +114,10 @@ class Frustum:
         # Note: We will flip the image array vertically later so that Row 0 (Image Top) 
         # maps to V=1 (Texture Top).
         self._image_plane_mesh.point_data.active_texture_coordinates = np.array([
-            [0, 0], # Bottom-Left
-            [1, 0], # Bottom-Right
-            [1, 1], # Top-Right
-            [0, 1]  # Top-Left
+            [0, 0],  # Bottom-Left
+            [1, 0],  # Bottom-Right
+            [1, 1],  # Top-Right
+            [0, 1]   # Top-Left
         ])
 
     def get_mesh(self, scale=0.1):
@@ -149,7 +149,7 @@ class Frustum:
                 style='wireframe',
                 color=self.color,
                 line_width=self.line_width,
-                name=f"frustum_wire_{id(self)}" # Unique name
+                name=f"frustum_wire_{id(self)}"  # Unique name
             )
         return self.actors[plotter]
 

@@ -24,8 +24,11 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 HIGHLIGHT_COLOR = QColor(0, 255, 255)      # Cyan for multi-highlight
 SELECT_COLOR = QColor(50, 205, 50)          # Lime Green for single select
+MARKER_COLOR = QColor(255, 0, 255)          # Magenta for cross-camera marker
 HIGHLIGHT_WIDTH = 2
 SELECT_WIDTH = 4
+MARKER_SIZE = 12                            # Diameter of marker circle
+MARKER_LINE_WIDTH = 2                       # Line width for marker crosshairs
 DEFAULT_THUMBNAIL_SIZE = 256
 MIN_THUMBNAIL_SIZE = 256
 MAX_THUMBNAIL_SIZE = 1024
@@ -205,6 +208,10 @@ class CameraImageWidget(QWidget):
         # Set tooltip
         self.setToolTip(data_item.get_tooltip_text())
         
+        # Marker overlay for cross-camera position display
+        self._marker_position = None  # (x, y) in image pixel coordinates or None
+        self._marker_accurate = True  # True = solid marker, False = dashed marker
+        
     def _update_size(self):
         """Update widget size based on aspect ratio and target size."""
         if self.aspect_ratio >= 1.0:
@@ -246,6 +253,32 @@ class CameraImageWidget(QWidget):
         self.pixmap = None
         self.is_loaded = False
         # Don't clear the data_item cache - it may be reused
+    
+    def set_marker_position(self, x: float, y: float, accurate: bool = True):
+        """
+        Set a marker position to display on the thumbnail.
+        
+        The marker indicates where a point from another camera view
+        projects onto this camera's image.
+        
+        Args:
+            x: X pixel coordinate in the original image space.
+            y: Y pixel coordinate in the original image space.
+            accurate: If True, draws solid marker (from depth data).
+                     If False, draws dashed marker (estimated position).
+        
+        # TODO: Add visual indicator when marker position may be inaccurate 
+        # (no depth/potential occlusion) - currently using solid vs dashed
+        """
+        self._marker_position = (x, y)
+        self._marker_accurate = accurate
+        self.update()  # Trigger repaint
+        
+    def clear_marker(self):
+        """Clear any displayed marker."""
+        if self._marker_position is not None:
+            self._marker_position = None
+            self.update()  # Trigger repaint
         
     def update_selection_visuals(self):
         """Trigger a repaint to update selection/highlight visuals."""
@@ -296,6 +329,71 @@ class CameraImageWidget(QWidget):
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        
+        # Draw marker overlay if position is set
+        if self._marker_position is not None:
+            self._draw_marker(painter, rect)
+            
+    def _draw_marker(self, painter: QPainter, rect):
+        """
+        Draw the cross-camera position marker.
+        
+        Args:
+            painter: QPainter instance.
+            rect: Widget rect for coordinate transformation.
+        """
+        # Transform image coordinates to widget coordinates
+        # Account for centering of pixmap in widget
+        if self.pixmap and not self.pixmap.isNull():
+            # Calculate offset for centered pixmap
+            pixmap_x = (rect.width() - self.pixmap.width()) // 2
+            pixmap_y = (rect.height() - self.pixmap.height()) // 2
+            
+            # Scale from original image coords to thumbnail coords
+            raster = self.data_item.raster
+            scale_x = self.pixmap.width() / raster.width
+            scale_y = self.pixmap.height() / raster.height
+            
+            # Transform marker position
+            marker_x = pixmap_x + int(self._marker_position[0] * scale_x)
+            marker_y = pixmap_y + int(self._marker_position[1] * scale_y)
+        else:
+            # Fallback: just scale to widget size
+            raster = self.data_item.raster
+            marker_x = int(self._marker_position[0] * rect.width() / raster.width)
+            marker_y = int(self._marker_position[1] * rect.height() / raster.height)
+        
+        # Check if marker is within widget bounds
+        if not (0 <= marker_x < rect.width() and 0 <= marker_y < rect.height()):
+            return  # Don't draw marker outside widget
+        
+        # Configure pen based on accuracy
+        pen = QPen(MARKER_COLOR, MARKER_LINE_WIDTH)
+        if self._marker_accurate:
+            pen.setStyle(Qt.SolidLine)
+        else:
+            pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        
+        # Draw circle
+        half_size = MARKER_SIZE // 2
+        painter.drawEllipse(marker_x - half_size, 
+                            marker_y - half_size, 
+                            MARKER_SIZE, MARKER_SIZE)
+        
+        # Draw crosshairs extending from circle
+        crosshair_extend = half_size + 4  # Extend beyond circle
+        # Horizontal line
+        painter.drawLine(marker_x - crosshair_extend, marker_y,
+                         marker_x - half_size - 1, marker_y)
+        painter.drawLine(marker_x + half_size + 1, marker_y,
+                         marker_x + crosshair_extend, marker_y)
+        # Vertical line
+        painter.drawLine(marker_x, marker_y - crosshair_extend,
+                         marker_x, marker_y - half_size - 1)
+        painter.drawLine(marker_x, marker_y + half_size + 1,
+                         marker_x, marker_y + crosshair_extend)
             
     def mousePressEvent(self, event):
         """Handle mouse press for selection."""
@@ -570,6 +668,40 @@ class CameraGrid(QWidget):
                 # Widget is not visible - hide and unload
                 widget.hide()
                 widget.unload_image()
+    
+    def get_visible_widgets(self) -> dict:
+        """
+        Get dictionary of currently visible camera widgets.
+        
+        Returns widgets that are currently visible in the viewport,
+        used for efficient marker updates.
+        
+        Returns:
+            Dict mapping image_path to CameraImageWidget for visible widgets.
+        """
+        if not self.data_items:
+            return {}
+            
+        # Get viewport rect
+        viewport = self.scroll_area.viewport()
+        scroll_y = self.scroll_area.verticalScrollBar().value()
+        visible_rect = QRect(0, scroll_y, viewport.width(), viewport.height())
+        
+        # Add small buffer for edge cases
+        buffer_height = self.thumbnail_size // 2
+        visible_rect.adjust(0, -buffer_height, 0, buffer_height)
+        
+        visible_widgets = {}
+        
+        for data_item in self.data_items:
+            path = data_item.image_path
+            widget = self.widgets_by_path.get(path)
+            pos_rect = self.widget_positions.get(path)
+            
+            if widget and pos_rect and pos_rect.intersects(visible_rect):
+                visible_widgets[path] = widget
+                
+        return visible_widgets
                 
     def _on_scroll(self, value):
         """Handle scroll events."""
