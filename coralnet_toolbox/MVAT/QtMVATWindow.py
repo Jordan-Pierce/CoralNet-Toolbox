@@ -791,8 +791,8 @@ class MVATWindow(QMainWindow):
             # Select camera (updates frustum colors)
             self._select_camera(path, camera)
             
-            # Match 3D view to camera perspective with zoom
-            self._match_camera_perspective(camera, and_zoom=False)
+            # Match 3D view to camera perspective
+            self._match_camera_perspective(camera)
             
             # Reorder cameras based on proximity to selected camera
             self._reorder_cameras(path, hide_distant_cameras=True)
@@ -822,14 +822,8 @@ class MVATWindow(QMainWindow):
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.update()
             
-    def _match_camera_perspective(self, camera, and_zoom=False):
-        """Match the 3D viewer perspective to a camera's viewpoint.
-        
-        Args:
-            camera: The Camera object to match perspective to.
-            and_zoom (bool): If True, also zoom to fit the camera's view.
-                           If False, only update position/orientation, preserve current zoom.
-        """
+    def _match_camera_perspective(self, camera):
+        """Match the 3D viewer perspective to a camera's viewpoint."""
         if not self.viewer or not self.viewer.plotter:
             return
             
@@ -844,27 +838,21 @@ class MVATWindow(QMainWindow):
             # Calculate up vector: -Y in camera frame (Y points down in image)
             up_vector = camera.R.T @ np.array([0, -1, 0])
             
-            if and_zoom:
-                # Calculate focal distance based on scene bounds for better viewing
-                # This ensures we're not too zoomed in or out regardless of frustum scale
-                try:
-                    bounds = self.viewer.plotter.bounds
-                    # Calculate scene diagonal for a reasonable focal distance
-                    scene_size = np.sqrt(
-                        (bounds[1] - bounds[0])**2 + 
-                        (bounds[3] - bounds[2])**2 + 
-                        (bounds[5] - bounds[4])**2
-                    )
-                    # Use 20% of scene size as focal distance (can be tuned)
-                    focal_distance = scene_size * 0.2
-                except:
-                    # Fallback to a fixed reasonable distance if bounds aren't available
-                    focal_distance = 5.0
-            else:
-                # Preserve current zoom by maintaining the current focal distance
-                current_position = np.array(self.viewer.plotter.camera.position)
-                current_focal_point = np.array(self.viewer.plotter.camera.focal_point)
-                focal_distance = np.linalg.norm(current_focal_point - current_position)
+            # Calculate focal distance based on scene bounds for better viewing
+            # This ensures we're not too zoomed in or out regardless of frustum scale
+            try:
+                bounds = self.viewer.plotter.bounds
+                # Calculate scene diagonal for a reasonable focal distance
+                scene_size = np.sqrt(
+                    (bounds[1] - bounds[0])**2 + 
+                    (bounds[3] - bounds[2])**2 + 
+                    (bounds[5] - bounds[4])**2
+                )
+                # Use 20% of scene size as focal distance (can be tuned)
+                focal_distance = scene_size * 0.2
+            except:
+                # Fallback to a fixed reasonable distance if bounds aren't available
+                focal_distance = 5.0
             
             focal_point = position + view_direction * focal_distance
             
@@ -875,20 +863,19 @@ class MVATWindow(QMainWindow):
             
             # Optional: Match camera field of view from intrinsics
             # This makes the 3D view more accurately represent what the camera sees
-            if and_zoom:
-                try:
-                    if camera.K is not None:
-                        # Calculate vertical field of view from intrinsics
-                        # FOV = 2 * atan(height / (2 * fy))
-                        fy = camera.K[1, 1]
-                        height = camera.height
-                        fov_rad = 2 * np.arctan(height / (2 * fy))
-                        fov_deg = np.degrees(fov_rad)
-                        # Clamp FOV to reasonable range
-                        fov_deg = np.clip(fov_deg, 10, 120)
-                        self.viewer.plotter.camera.view_angle = fov_deg
-                except:
-                    pass  # Use default FOV if calculation fails
+            try:
+                if camera.K is not None:
+                    # Calculate vertical field of view from intrinsics
+                    # FOV = 2 * atan(height / (2 * fy))
+                    fy = camera.K[1, 1]
+                    height = camera.height
+                    fov_rad = 2 * np.arctan(height / (2 * fy))
+                    fov_deg = np.degrees(fov_rad)
+                    # Clamp FOV to reasonable range
+                    fov_deg = np.clip(fov_deg, 10, 120)
+                    self.viewer.plotter.camera.view_angle = fov_deg
+            except:
+                pass  # Use default FOV if calculation fails
             
             # Update the render
             self.viewer.plotter.update()
