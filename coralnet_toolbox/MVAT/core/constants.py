@@ -13,14 +13,14 @@ from PyQt5.QtGui import QColor
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Selection/Highlight Colors
-HIGHLIGHT_COLOR = QColor(0, 255, 255)       # Cyan for multi-highlight
-SELECT_COLOR = QColor(50, 205, 50)          # Lime Green for single select
+HIGHLIGHT_COLOR = QColor(0, 168, 230)       # Cyan for multi-highlight
+SELECT_COLOR = QColor(144, 238, 144)        # Lime Green for single select
 
 # Marker Colors (for cross-camera position display)
 # Now using highlight/select colors instead of generic magenta
 MARKER_COLOR_SELECTED = SELECT_COLOR        # Lime Green for selected camera marker
 MARKER_COLOR_HIGHLIGHTED = HIGHLIGHT_COLOR  # Cyan for highlighted camera markers
-MARKER_COLOR_DEFAULT = QColor(255, 0, 255)  # Magenta fallback (legacy)
+MARKER_COLOR_DEFAULT = SELECT_COLOR
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -30,14 +30,12 @@ MARKER_COLOR_DEFAULT = QColor(255, 0, 255)  # Magenta fallback (legacy)
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Selection/Highlight Colors for PyVista
-HIGHLIGHT_COLOR_RGB = (0, 255, 255)         # Cyan
-SELECT_COLOR_RGB = (50, 205, 50)            # Lime Green
+HIGHLIGHT_COLOR_RGB = (0, 168, 230)         # Cyan
+SELECT_COLOR_RGB = (144, 238, 144)          # Lime Green
 
 # Marker/Ray Colors for PyVista
-RAY_COLOR_SELECTED = 'lime'                 # Named color for selected camera ray
-RAY_COLOR_HIGHLIGHTED = 'cyan'              # Named color for highlighted camera rays
-RAY_COLOR_DEFAULT = 'magenta'               # Fallback color (legacy)
-
+RAY_COLOR_SELECTED = SELECT_COLOR_RGB        # RGB tuple for selected camera ray
+RAY_COLOR_HIGHLIGHTED = HIGHLIGHT_COLOR_RGB  # RGB tuple for highlighted camera rays
 
 # ----------------------------------------------------------------------------------------------------------------------
 # UI Sizing Constants

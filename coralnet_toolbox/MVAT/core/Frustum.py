@@ -244,7 +244,7 @@ class Frustum:
                 # Set color
                 prop = actor.GetProperty()
                 if display_color == 'lime':
-                    prop.SetColor(50 / 255, 205 / 255, 50 / 255)  # lime green
+                    prop.SetColor(144 / 255, 238 / 255, 144 / 255)  # lime green
                 elif display_color == 'cyan':
                     prop.SetColor(0.0, 168 / 255, 230 / 255)  # cyan
                 elif display_color == 'white':

@@ -22,6 +22,10 @@ from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
+                                                  MARKER_COLOR_HIGHLIGHTED, 
+                                                  RAY_COLOR_SELECTED, 
+                                                  RAY_COLOR_HIGHLIGHTED)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -143,7 +147,7 @@ class MousePositionBridge:
         
         # Build list of rays with colors for visualization
         # Selected camera ray is lime, highlighted camera rays are cyan
-        rays_with_colors = [(ray, 'lime')]  # Selected camera ray first
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]  # Selected camera ray first
         
         for highlighted_camera in highlighted_cameras:
             # Skip the selected camera if it's also highlighted
@@ -155,7 +159,7 @@ class MousePositionBridge:
                 world_point=ray.terminal_point,
                 camera=highlighted_camera
             )
-            rays_with_colors.append((highlighted_ray, 'cyan'))
+            rays_with_colors.append((highlighted_ray, RAY_COLOR_HIGHLIGHTED))
         
         # Update 3D ray visualization with all rays
         self.mvat_window.viewer.show_rays(rays_with_colors)
@@ -178,9 +182,7 @@ class MousePositionBridge:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
             accurate: Whether the depth used was accurate.
             highlighted_cameras: List of highlighted Camera objects.
-        """
-        from coralnet_toolbox.MVAT.core.constants import MARKER_COLOR_SELECTED, MARKER_COLOR_HIGHLIGHTED
-        
+        """        
         camera_grid = self.mvat_window.camera_grid
         selected_camera = self.mvat_window.selected_camera
         
@@ -276,11 +278,12 @@ class MVATWindow(QMainWindow):
         
         # Display status
         self.frustum_scale = 0.1
-        self.show_wireframes = True
-        self.show_thumbnails = True
+        self._show_wireframes_enabled = True
+        self._show_thumbnails_enabled = True
         self.thumbnail_opacity = 0.25
-        self.show_point_cloud = True
+        self._show_point_cloud_enabled = True
         self.point_size = 1
+        self._show_rays_enabled = True
         
         # Mouse position bridge for cross-window sync
         self.mouse_bridge = None  # Initialized after UI setup
@@ -332,6 +335,13 @@ class MVATWindow(QMainWindow):
         self.toggle_thumbnails_action.setChecked(True)
         self.toggle_thumbnails_action.triggered.connect(self._toggle_thumbnails)
         self.view_menu.addAction(self.toggle_thumbnails_action)
+        
+        # Toggle Rays
+        self.toggle_rays_action = QAction("Show Rays", self)
+        self.toggle_rays_action.setCheckable(True)
+        self.toggle_rays_action.setChecked(True)
+        self.toggle_rays_action.triggered.connect(self._toggle_rays)
+        self.view_menu.addAction(self.toggle_rays_action)
         
         self.view_menu.addSeparator()
         
@@ -423,19 +433,24 @@ class MVATWindow(QMainWindow):
         
         # --- Widget: Checkboxes ---
         self.wireframe_checkbox = QCheckBox("Wireframes")
-        self.wireframe_checkbox.setChecked(self.show_wireframes)
+        self.wireframe_checkbox.setChecked(self._show_wireframes_enabled)
         self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)  
         self.horizontal_layout.addWidget(self.wireframe_checkbox)
         
         self.thumbnail_checkbox = QCheckBox("Thumbnails")
-        self.thumbnail_checkbox.setChecked(self.show_thumbnails)
+        self.thumbnail_checkbox.setChecked(self._show_thumbnails_enabled)
         self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)  
         self.horizontal_layout.addWidget(self.thumbnail_checkbox)
         
         self.point_cloud_checkbox = QCheckBox("Point cloud")
-        self.point_cloud_checkbox.setChecked(self.show_point_cloud)
+        self.point_cloud_checkbox.setChecked(self._show_point_cloud_enabled)
         self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)  
         self.horizontal_layout.addWidget(self.point_cloud_checkbox)
+        
+        self.rays_checkbox = QCheckBox("Rays")
+        self.rays_checkbox.setChecked(self._show_rays_enabled)
+        self.rays_checkbox.toggled.connect(self._toggle_rays)  
+        self.horizontal_layout.addWidget(self.rays_checkbox)
         
         # Push everything to the left
         self.horizontal_layout.addStretch()
@@ -454,7 +469,7 @@ class MVATWindow(QMainWindow):
         
         # --- Left Panel: 3D Viewer ---
         # Create the viewer container class
-        self.viewer = MVATViewer(self, point_size=self.point_size)
+        self.viewer = MVATViewer(self, point_size=self.point_size, show_rays=self._show_rays_enabled)
 
         # Enable picking for camera selection using the viewer's plotter
         self.viewer.plotter.enable_point_picking(
@@ -551,6 +566,7 @@ class MVATWindow(QMainWindow):
             # Update 3D view selection
             camera = self.cameras[path]
             self._select_camera(path, camera)
+            self._match_camera_perspective(camera)
     
     def _on_camera_selected_sync(self, path: str):
         """
@@ -688,6 +704,15 @@ class MVATWindow(QMainWindow):
         # Fit view to show all cameras
         self._fit_to_view()
         
+        # Auto-select the current image if it exists in the loaded cameras
+        if hasattr(self.annotation_window, 'current_image_path') and self.annotation_window.current_image_path:
+            current_path = self.annotation_window.current_image_path
+            if current_path in self.cameras:
+                # Select the camera corresponding to the current image
+                self._select_camera(current_path, self.cameras[current_path])
+                # Update camera grid selection
+                self.camera_grid.render_selection_from_path(current_path)
+        
     def _render_frustums(self):
         """Render all camera frustums in the 3D scene."""
         if not self.viewer or not self.viewer.plotter:
@@ -708,7 +733,7 @@ class MVATWindow(QMainWindow):
         # Re-add point cloud
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
-        self.viewer.set_point_cloud_visible(self.show_point_cloud)
+        self.viewer.set_point_cloud_visible(self._show_point_cloud_enabled)
         
         # Add a reference grid
         self.viewer.plotter.add_axes()
@@ -716,12 +741,12 @@ class MVATWindow(QMainWindow):
         for path, camera in self.cameras.items():
             try:
                 # Create wireframe actor
-                if self.show_wireframes:
+                if self._show_wireframes_enabled:
                     actor = camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
                     self.wireframe_actors.append(actor)
                     
                 # Create thumbnail actor
-                if self.show_thumbnails:
+                if self._show_thumbnails_enabled:
                     actor = camera.frustum.create_image_plane_actor(
                         self.viewer.plotter, 
                         scale=self.frustum_scale,
@@ -754,7 +779,7 @@ class MVATWindow(QMainWindow):
         if checked is None:
             checked = self.toggle_wireframes_action.isChecked()
             
-        self.show_wireframes = checked
+        self._show_wireframes_enabled = checked
         
         # Sync UI elements
         self.toggle_wireframes_action.setChecked(checked)
@@ -775,7 +800,7 @@ class MVATWindow(QMainWindow):
         if checked is None:
             checked = self.toggle_thumbnails_action.isChecked()
             
-        self.show_thumbnails = checked
+        self._show_thumbnails_enabled = checked
         
         # Sync UI elements
         self.toggle_thumbnails_action.setChecked(checked)
@@ -793,8 +818,26 @@ class MVATWindow(QMainWindow):
         
     def _toggle_point_cloud(self, checked):
         """Toggle point cloud visibility."""
-        self.show_point_cloud = checked
+        self._show_point_cloud_enabled = checked
         self.viewer.set_point_cloud_visible(checked)
+        
+    def _toggle_rays(self, checked=None):
+        """Toggle ray visibility."""
+        if checked is None:
+            checked = self.toggle_rays_action.isChecked()
+            
+        self._show_rays_enabled = checked
+        self.viewer._show_rays_enabled = checked
+        
+        # Sync UI elements
+        self.toggle_rays_action.setChecked(checked)
+        self.rays_checkbox.blockSignals(True)
+        self.rays_checkbox.setChecked(checked)
+        self.rays_checkbox.blockSignals(False)
+        
+        # Clear rays if disabling
+        if not checked and self.viewer:
+            self.viewer.clear_ray()
         
     def _on_scale_changed(self, value):
         """Handle frustum scale change."""
@@ -1154,9 +1197,10 @@ class MVATWindow(QMainWindow):
         self.point_size = self.point_size_spinbox.value()
         
         # Update show flags
-        self.show_wireframes = self.wireframe_checkbox.isChecked()
-        self.show_thumbnails = self.thumbnail_checkbox.isChecked()
-        self.show_point_cloud = self.point_cloud_checkbox.isChecked()
+        self._show_wireframes_enabled = self.wireframe_checkbox.isChecked()
+        self._show_thumbnails_enabled = self.thumbnail_checkbox.isChecked()
+        self._show_point_cloud_enabled = self.point_cloud_checkbox.isChecked()
+        self._show_rays_enabled = self.rays_checkbox.isChecked()
         
         # Clear existing
         self.cameras.clear()

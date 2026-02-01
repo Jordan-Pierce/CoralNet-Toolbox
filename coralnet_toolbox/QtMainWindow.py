@@ -408,10 +408,10 @@ class MainWindow(QMainWindow):
         self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras
-        self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
-        self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
-        self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
+        # Import Metashape Cameras  TODO re-enable when implemented corectly
+        # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
+        # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
+        # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")

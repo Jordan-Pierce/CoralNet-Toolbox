@@ -26,7 +26,7 @@ class MVATViewer(QFrame):
     - Ray casting visualization with accuracy indicators
     - Multiple simultaneous rays with distinct colors
     """
-    def __init__(self, parent=None, point_size=1):
+    def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
@@ -43,6 +43,9 @@ class MVATViewer(QFrame):
         # Point cloud management
         self.point_cloud = None
         self.point_size = point_size
+        
+        # Ray visualization management
+        self._show_rays_enabled = show_rays
         
         # Ray visualization management - single ray (legacy)
         self._ray_line_actor = None
@@ -179,6 +182,9 @@ class MVATViewer(QFrame):
         # TODO: When depth is fully incorporated, re-evaluate solid vs dashed
         # line styling for rays based on depth accuracy.
         """
+        if not self._show_rays_enabled:
+            return
+            
         # Clear all existing ray visualizations
         self._remove_ray_actors()
         self._remove_multi_ray_actors()
@@ -189,7 +195,7 @@ class MVATViewer(QFrame):
         
         # Calculate sphere radius based on first ray's distance
         first_ray = rays_with_colors[0][0]
-        sphere_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.02
+        sphere_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.005
         sphere_radius = max(sphere_radius, 0.01)  # Minimum size
         
         for i, (ray, color) in enumerate(rays_with_colors):
