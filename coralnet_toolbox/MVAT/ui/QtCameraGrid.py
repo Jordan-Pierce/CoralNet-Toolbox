@@ -25,8 +25,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 HIGHLIGHT_COLOR = QColor(0, 255, 255)      # Cyan for multi-highlight
 SELECT_COLOR = QColor(50, 205, 50)          # Lime Green for single select
 MARKER_COLOR = QColor(255, 0, 255)          # Magenta for cross-camera marker
-HIGHLIGHT_WIDTH = 2
-SELECT_WIDTH = 4
+HIGHLIGHT_WIDTH = 4                         # Increased from 2 for visibility
+SELECT_WIDTH = 6                            # Increased from 4 for visibility
 MARKER_SIZE = 12                            # Diameter of marker circle
 MARKER_LINE_WIDTH = 2                       # Line width for marker crosshairs
 DEFAULT_THUMBNAIL_SIZE = 256
@@ -414,14 +414,16 @@ class CameraGrid(QWidget):
     Scrollable grid of camera thumbnails with virtualization.
     
     Signals:
-        camera_selected: Emitted when a camera is single-selected (double-click)
+        camera_selected: Emitted when a camera is selected (double-click) - loads image
+        camera_highlighted_single: Emitted when single camera is highlighted (single-click) - changes 3D view
         cameras_highlighted: Emitted when highlight selection changes
         selection_changed: Emitted when any selection state changes
     """
     
-    camera_selected = pyqtSignal(str)       # image_path of selected camera
-    cameras_highlighted = pyqtSignal(list)  # list of image_paths
-    selection_changed = pyqtSignal(list)    # list of all selected/highlighted paths
+    camera_selected = pyqtSignal(str)              # image_path when double-clicked (loads image)
+    camera_highlighted_single = pyqtSignal(str)    # image_path when single-clicked (changes 3D view)
+    cameras_highlighted = pyqtSignal(list)         # list of image_paths
+    selection_changed = pyqtSignal(list)           # list of all selected/highlighted paths
     
     def __init__(self, mvat_window=None, parent=None):
         """
@@ -740,6 +742,8 @@ class CameraGrid(QWidget):
             # Plain click: Clear others, highlight this one
             self._clear_highlights()
             self._add_highlight(path)
+            # Emit signal for single camera highlight -> change 3D view perspective
+            self.camera_highlighted_single.emit(path)
             
         self.last_clicked_index = clicked_index
         self._emit_highlight_changed()

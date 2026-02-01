@@ -35,7 +35,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Throttle interval for mouse position updates (milliseconds)
-MOUSE_THROTTLE_MS = 30
+# 16ms is approximately 60fps for responsive mouse tracking
+MOUSE_THROTTLE_MS = 16
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -438,6 +439,7 @@ class MVATWindow(QMainWindow):
         # Create the camera grid widget
         self.camera_grid = CameraGrid(mvat_window=self)
         self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
+        self.camera_grid.camera_highlighted_single.connect(self._on_grid_camera_highlighted_single)
         self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
         right_layout.addWidget(self.camera_grid)
         
@@ -445,7 +447,7 @@ class MVATWindow(QMainWindow):
         
         # Set minimum width for camera grid to prevent collapse
         # Ensure at least one column of thumbnails is always visible
-        self.right_container.setMinimumWidth(512 + 32)  # Thumbnail + scrollbar/padding
+        self.right_container.setMinimumWidth(512)  # Thumbnail + scrollbar/padding
         
         # Set stretch factors: 3D viewer gets 3x weight, grid gets 1x weight
         self.splitter.setStretchFactor(0, 3)  # Left panel (3D viewer)
@@ -764,15 +766,33 @@ class MVATWindow(QMainWindow):
         """Handle splitter resize to update camera grid layout."""
         if hasattr(self, 'camera_grid'):
             self.camera_grid.recalculate_layout()
+    
+    def _on_grid_camera_highlighted_single(self, path):
+        """Handle single camera highlight from the grid (single-click).
+        
+        Changes the 3D view to match this camera's perspective but does NOT
+        load the image in the annotation window. Use double-click for that.
+        """
+        camera = self.cameras.get(path)
+        if camera:
+            # Select camera (updates frustum colors)
+            self._select_camera(path, camera)
+            # Match 3D view to camera perspective
+            self._match_camera_perspective(camera)
+            # NOTE: Do NOT call _goto_selected_image() here
+            # That only happens on double-click
             
     def _on_grid_camera_selected(self, path):
-        """Handle camera selection from the grid (double-click)."""
+        """Handle camera selection from the grid (double-click).
+        
+        Both changes the 3D view AND loads the image in the annotation window.
+        """
         camera = self.cameras.get(path)
         if camera:
             self._select_camera(path, camera)
             # Match 3D view to camera perspective
             self._match_camera_perspective(camera)
-            # Automatically navigate to the image
+            # Automatically navigate to the image (only on double-click)
             self._goto_selected_image()
             
     def _on_grid_cameras_highlighted(self, paths):
@@ -781,11 +801,16 @@ class MVATWindow(QMainWindow):
         for cam_path, camera in self.cameras.items():
             # Check if this camera is selected (takes priority)
             if self.selected_camera and cam_path == self.selected_camera.image_path:
-                camera.frustum.color = 'lime'
+                # Selected camera stays lime (handled by select())
+                camera.frustum.select()
             elif cam_path in paths:
-                camera.frustum.color = 'cyan'
+                # Highlighted camera gets cyan
+                camera.frustum.highlight()
             else:
-                camera.frustum.color = 'white'
+                # Not selected or highlighted - reset to white
+                camera.frustum.unhighlight()
+                camera.frustum.deselect()
+            
             camera.frustum.update_appearance(self.viewer.plotter)
             
         # Update the render

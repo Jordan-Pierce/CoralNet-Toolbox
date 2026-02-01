@@ -194,10 +194,8 @@ class CameraRay:
         projections = {}
         
         for path, camera in cameras.items():
-            # Skip the source camera
-            if self.source_camera and path == self.source_camera.image_path:
-                continue
-                
+            # Include all cameras including source camera
+            # Source camera will show marker at cursor position
             try:
                 # Project 3D point to 2D pixel
                 pixel_coord = camera.project(self.terminal_point)
