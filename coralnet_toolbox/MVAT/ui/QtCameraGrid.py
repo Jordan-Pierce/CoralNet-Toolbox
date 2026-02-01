@@ -15,20 +15,25 @@ from PyQt5.QtWidgets import (
     QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton
 )
 
+from coralnet_toolbox.MVAT.core.constants import (
+    HIGHLIGHT_COLOR,
+    SELECT_COLOR,
+    MARKER_COLOR_SELECTED,
+    MARKER_COLOR_HIGHLIGHTED,
+    MARKER_COLOR_DEFAULT,
+    HIGHLIGHT_WIDTH,
+    SELECT_WIDTH,
+    MARKER_SIZE,
+    MARKER_LINE_WIDTH,
+)
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Constants
+# Constants (non-color, kept local)
 # ----------------------------------------------------------------------------------------------------------------------
 
-HIGHLIGHT_COLOR = QColor(0, 255, 255)      # Cyan for multi-highlight
-SELECT_COLOR = QColor(50, 205, 50)          # Lime Green for single select
-MARKER_COLOR = QColor(255, 0, 255)          # Magenta for cross-camera marker
-HIGHLIGHT_WIDTH = 4                         # Increased from 2 for visibility
-SELECT_WIDTH = 6                            # Increased from 4 for visibility
-MARKER_SIZE = 12                            # Diameter of marker circle
-MARKER_LINE_WIDTH = 2                       # Line width for marker crosshairs
 DEFAULT_THUMBNAIL_SIZE = 256
 MIN_THUMBNAIL_SIZE = 256
 MAX_THUMBNAIL_SIZE = 1024
@@ -211,6 +216,7 @@ class CameraImageWidget(QWidget):
         # Marker overlay for cross-camera position display
         self._marker_position = None  # (x, y) in image pixel coordinates or None
         self._marker_accurate = True  # True = solid marker, False = dashed marker
+        self._marker_color = MARKER_COLOR_DEFAULT  # Color for the marker
         
     def _update_size(self):
         """Update widget size based on aspect ratio and target size."""
@@ -254,7 +260,7 @@ class CameraImageWidget(QWidget):
         self.is_loaded = False
         # Don't clear the data_item cache - it may be reused
     
-    def set_marker_position(self, x: float, y: float, accurate: bool = True):
+    def set_marker_position(self, x: float, y: float, accurate: bool = True, color: QColor = None):
         """
         Set a marker position to display on the thumbnail.
         
@@ -266,18 +272,23 @@ class CameraImageWidget(QWidget):
             y: Y pixel coordinate in the original image space.
             accurate: If True, draws solid marker (from depth data).
                      If False, draws dashed marker (estimated position).
+            color: QColor for the marker. If None, uses MARKER_COLOR_DEFAULT.
+                   Use MARKER_COLOR_SELECTED (lime) for selected camera,
+                   MARKER_COLOR_HIGHLIGHTED (cyan) for highlighted cameras.
         
-        # TODO: Add visual indicator when marker position may be inaccurate 
-        # (no depth/potential occlusion) - currently using solid vs dashed
+        # TODO: When depth is fully incorporated, re-evaluate solid vs dashed
+        # styling based on depth accuracy at the projected point.
         """
         self._marker_position = (x, y)
         self._marker_accurate = accurate
+        self._marker_color = color if color is not None else MARKER_COLOR_DEFAULT
         self.update()  # Trigger repaint
         
     def clear_marker(self):
         """Clear any displayed marker."""
         if self._marker_position is not None:
             self._marker_position = None
+            self._marker_color = MARKER_COLOR_DEFAULT
             self.update()  # Trigger repaint
         
     def update_selection_visuals(self):
@@ -367,8 +378,9 @@ class CameraImageWidget(QWidget):
         if not (0 <= marker_x < rect.width() and 0 <= marker_y < rect.height()):
             return  # Don't draw marker outside widget
         
-        # Configure pen based on accuracy
-        pen = QPen(MARKER_COLOR, MARKER_LINE_WIDTH)
+        # Configure pen with marker color (lime for selected, cyan for highlighted)
+        pen = QPen(self._marker_color, MARKER_LINE_WIDTH)
+        # TODO: Re-evaluate solid vs dashed styling when depth is fully incorporated
         if self._marker_accurate:
             pen.setStyle(Qt.SolidLine)
         else:
@@ -704,6 +716,23 @@ class CameraGrid(QWidget):
                 visible_widgets[path] = widget
                 
         return visible_widgets
+    
+    def get_highlighted_cameras(self) -> list:
+        """
+        Get list of Camera objects for all currently highlighted cameras.
+        
+        Used by MousePositionBridge to create rays from highlighted cameras
+        to the 3D world point determined by the selected camera's ray.
+        
+        Returns:
+            List of Camera objects for highlighted paths.
+        """
+        cameras = []
+        for path in self.highlighted_paths:
+            widget = self.widgets_by_path.get(path)
+            if widget and widget.data_item:
+                cameras.append(widget.data_item.camera)
+        return cameras
                 
     def _on_scroll(self, value):
         """Handle scroll events."""

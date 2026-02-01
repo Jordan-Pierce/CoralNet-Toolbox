@@ -131,6 +131,48 @@ class CameraRay:
             source_camera=camera
         )
     
+    @classmethod
+    def from_world_point_and_camera(cls, 
+                                     world_point: np.ndarray, 
+                                     camera: 'Camera') -> 'CameraRay':
+        """
+        Create a ray from a camera's origin to a known 3D world point.
+        
+        This is used to visualize rays from highlighted cameras to a point
+        determined by another camera's ray (e.g., the selected camera).
+        
+        Args:
+            world_point: 3D point in world coordinates (the target).
+            camera: Camera object from which to cast the ray.
+            
+        Returns:
+            CameraRay: A new ray from the camera to the world point.
+            
+        # TODO: When depth is fully incorporated, re-evaluate whether rays
+        # from highlighted cameras should use solid or dashed line styling
+        # based on depth accuracy at the projected point.
+        """
+        origin = camera.position.copy()
+        world_point = np.asarray(world_point, dtype=np.float64)
+        
+        # Calculate direction from camera to world point
+        direction = world_point - origin
+        norm = np.linalg.norm(direction)
+        if norm > 0:
+            direction = direction / norm
+        else:
+            # Fallback to camera's forward direction
+            direction = camera.R.T @ np.array([0, 0, 1])
+            
+        return cls(
+            origin=origin,
+            direction=direction,
+            terminal_point=world_point,
+            has_accurate_depth=True,  # World point is known precisely
+            pixel_coord=None,  # Not originating from a pixel
+            source_camera=camera
+        )
+    
     def cast_on_mesh(self, mesh) -> Optional[np.ndarray]:
         """
         Cast this ray onto a PyVista mesh to find intersection point.

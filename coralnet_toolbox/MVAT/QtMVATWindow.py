@@ -51,8 +51,9 @@ class MousePositionBridge:
     Handles:
     - Throttling mouse position updates to prevent performance issues
     - Creating rays from 2D pixel positions through the selected camera
+    - Creating rays from highlighted cameras to the same 3D world point
     - Projecting rays onto other camera views
-    - Updating markers on visible camera widgets
+    - Updating markers on visible camera widgets with appropriate colors
     - Updating ray visualization in the 3D viewer
     """
     
@@ -129,7 +130,7 @@ class MousePositionBridge:
         else:
             default_depth = 10.0  # Fallback
         
-        # Create ray from pixel position
+        # Create ray from pixel position (selected camera)
         ray = CameraRay.from_pixel_and_camera(
             pixel_xy=(x, y),
             camera=camera,
@@ -137,27 +138,57 @@ class MousePositionBridge:
             default_depth=default_depth
         )
         
-        # Update 3D ray visualization
-        self.mvat_window.viewer.show_ray(ray)
+        # Get highlighted cameras and create rays from them to the world point
+        highlighted_cameras = self.mvat_window.camera_grid.get_highlighted_cameras()
         
-        # Project ray onto other camera views
+        # Build list of rays with colors for visualization
+        # Selected camera ray is lime, highlighted camera rays are cyan
+        rays_with_colors = [(ray, 'lime')]  # Selected camera ray first
+        
+        for highlighted_camera in highlighted_cameras:
+            # Skip the selected camera if it's also highlighted
+            if highlighted_camera.image_path == camera.image_path:
+                continue
+            
+            # Create ray from highlighted camera to the same world point
+            highlighted_ray = CameraRay.from_world_point_and_camera(
+                world_point=ray.terminal_point,
+                camera=highlighted_camera
+            )
+            rays_with_colors.append((highlighted_ray, 'cyan'))
+        
+        # Update 3D ray visualization with all rays
+        self.mvat_window.viewer.show_rays(rays_with_colors)
+        
+        # Project ray onto other camera views (using selected camera's ray terminal point)
         projections = ray.project_to_cameras(self.mvat_window.cameras)
         
-        # Update markers on visible camera widgets
-        self._update_camera_markers(projections, ray.has_accurate_depth)
+        # Update markers on visible camera widgets with appropriate colors
+        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras)
         
-    def _update_camera_markers(self, projections: dict, accurate: bool):
+    def _update_camera_markers(self, projections: dict, accurate: bool, highlighted_cameras: list):
         """
         Update marker positions on visible camera widgets.
         
         Only updates markers for widgets that are currently visible in the
-        camera grid viewport.
+        camera grid viewport. Uses lime color for selected camera marker,
+        cyan for highlighted camera markers.
         
         Args:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
             accurate: Whether the depth used was accurate.
+            highlighted_cameras: List of highlighted Camera objects.
         """
+        from coralnet_toolbox.MVAT.core.constants import MARKER_COLOR_SELECTED, MARKER_COLOR_HIGHLIGHTED
+        
         camera_grid = self.mvat_window.camera_grid
+        selected_camera = self.mvat_window.selected_camera
+        
+        # Get set of highlighted camera paths for quick lookup
+        highlighted_paths = {cam.image_path for cam in highlighted_cameras}
+        
+        # Get selected camera path
+        selected_path = selected_camera.image_path if selected_camera else None
         
         # Get visible widgets from the camera grid
         visible_widgets = camera_grid.get_visible_widgets()
@@ -167,7 +198,15 @@ class MousePositionBridge:
             if path in projections:
                 px, py, is_valid = projections[path]
                 if is_valid:
-                    widget.set_marker_position(px, py, accurate=accurate)
+                    # Determine marker color based on camera state
+                    if path == selected_path:
+                        color = MARKER_COLOR_SELECTED  # Lime for selected
+                    elif path in highlighted_paths:
+                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for highlighted
+                    else:
+                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for other projections
+                    
+                    widget.set_marker_position(px, py, accurate=accurate, color=color)
                 else:
                     widget.clear_marker()
             else:
@@ -476,6 +515,7 @@ class MVATWindow(QMainWindow):
         Establishes bi-directional synchronization:
         - Main app → MVAT: Image selection and mouse position
         - MVAT → Main app: Camera selection
+        - Camera grid highlight changes → Ray clearing
         """
         # Create mouse position bridge
         self.mouse_bridge = MousePositionBridge(self)
@@ -490,6 +530,10 @@ class MVATWindow(QMainWindow):
         
         # Connect our signal to navigate main app (for completeness)
         self.cameraSelectedInMVAT.connect(self._on_camera_selected_sync)
+        
+        # Connect camera grid highlight changes to clear rays
+        # This ensures stale rays from previously-highlighted cameras are removed
+        self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
     
     def _on_main_image_loaded(self, path: str):
         """
@@ -519,6 +563,19 @@ class MVATWindow(QMainWindow):
         """
         # Navigation to main app is handled in _goto_selected_image
         pass
+    
+    def _on_highlights_changed(self, highlighted_paths: list):
+        """
+        Handle camera highlight selection changes.
+        
+        Clears rays when highlights change to ensure stale rays from
+        previously-highlighted cameras are removed. The rays will be
+        recreated on the next mouse move event.
+        
+        Args:
+            highlighted_paths: List of currently highlighted camera paths.
+        """
+        self._clear_rays()
         
     def showEvent(self, event):
         """Handle show event - load cameras when window is shown."""
@@ -539,6 +596,8 @@ class MVATWindow(QMainWindow):
                 self.annotation_window.mouseMoved.disconnect(self.mouse_bridge.on_mouse_moved)
             if hasattr(self.image_window, 'imageLoaded'):
                 self.image_window.imageLoaded.disconnect(self._on_main_image_loaded)
+            if hasattr(self.camera_grid, 'cameras_highlighted'):
+                self.camera_grid.cameras_highlighted.disconnect(self._on_highlights_changed)
         except:
             pass  # Signals may already be disconnected
         
