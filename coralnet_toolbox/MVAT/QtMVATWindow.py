@@ -425,7 +425,7 @@ class MVATWindow(QMainWindow):
             pickable_window=True
         )
 
-        # NEW: Wrap the viewer in a groupbox
+        # Wrap the viewer in a groupbox
         left_groupbox = QGroupBox("3D Viewer")
         left_layout = QVBoxLayout(left_groupbox)
         left_layout.addWidget(self.viewer)
@@ -770,17 +770,13 @@ class MVATWindow(QMainWindow):
     def _on_grid_camera_highlighted_single(self, path):
         """Handle single camera highlight from the grid (single-click).
         
-        Changes the 3D view to match this camera's perspective but does NOT
-        load the image in the annotation window. Use double-click for that.
+        Only updates frustum colors without changing the 3D view.
+        Use double-click to both change view and load image.
         """
-        camera = self.cameras.get(path)
-        if camera:
-            # Select camera (updates frustum colors)
-            self._select_camera(path, camera)
-            # Match 3D view to camera perspective
-            self._match_camera_perspective(camera)
-            # NOTE: Do NOT call _goto_selected_image() here
-            # That only happens on double-click
+        # Note: We don't change the 3D view on single-click highlight
+        # That only happens on double-click selection
+        # The highlighting is handled by _on_grid_cameras_highlighted signal
+        pass
             
     def _on_grid_camera_selected(self, path):
         """Handle camera selection from the grid (double-click).
@@ -789,9 +785,18 @@ class MVATWindow(QMainWindow):
         """
         camera = self.cameras.get(path)
         if camera:
+            # Clear any rendered rays before navigation
+            self._clear_rays()
+            
+            # Select camera (updates frustum colors)
             self._select_camera(path, camera)
-            # Match 3D view to camera perspective
-            self._match_camera_perspective(camera)
+            
+            # Match 3D view to camera perspective with zoom
+            self._match_camera_perspective(camera, and_zoom=False)
+            
+            # Reorder cameras based on proximity to selected camera
+            self._reorder_cameras(path, hide_distant_cameras=True)
+            
             # Automatically navigate to the image (only on double-click)
             self._goto_selected_image()
             
@@ -817,8 +822,14 @@ class MVATWindow(QMainWindow):
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.update()
             
-    def _match_camera_perspective(self, camera):
-        """Match the 3D viewer perspective to a camera's viewpoint."""
+    def _match_camera_perspective(self, camera, and_zoom=False):
+        """Match the 3D viewer perspective to a camera's viewpoint.
+        
+        Args:
+            camera: The Camera object to match perspective to.
+            and_zoom (bool): If True, also zoom to fit the camera's view.
+                           If False, only update position/orientation, preserve current zoom.
+        """
         if not self.viewer or not self.viewer.plotter:
             return
             
@@ -833,21 +844,27 @@ class MVATWindow(QMainWindow):
             # Calculate up vector: -Y in camera frame (Y points down in image)
             up_vector = camera.R.T @ np.array([0, -1, 0])
             
-            # Calculate focal distance based on scene bounds for better viewing
-            # This ensures we're not too zoomed in or out regardless of frustum scale
-            try:
-                bounds = self.viewer.plotter.bounds
-                # Calculate scene diagonal for a reasonable focal distance
-                scene_size = np.sqrt(
-                    (bounds[1] - bounds[0])**2 + 
-                    (bounds[3] - bounds[2])**2 + 
-                    (bounds[5] - bounds[4])**2
-                )
-                # Use 20% of scene size as focal distance (can be tuned)
-                focal_distance = scene_size * 0.2
-            except:
-                # Fallback to a fixed reasonable distance if bounds aren't available
-                focal_distance = 5.0
+            if and_zoom:
+                # Calculate focal distance based on scene bounds for better viewing
+                # This ensures we're not too zoomed in or out regardless of frustum scale
+                try:
+                    bounds = self.viewer.plotter.bounds
+                    # Calculate scene diagonal for a reasonable focal distance
+                    scene_size = np.sqrt(
+                        (bounds[1] - bounds[0])**2 + 
+                        (bounds[3] - bounds[2])**2 + 
+                        (bounds[5] - bounds[4])**2
+                    )
+                    # Use 20% of scene size as focal distance (can be tuned)
+                    focal_distance = scene_size * 0.2
+                except:
+                    # Fallback to a fixed reasonable distance if bounds aren't available
+                    focal_distance = 5.0
+            else:
+                # Preserve current zoom by maintaining the current focal distance
+                current_position = np.array(self.viewer.plotter.camera.position)
+                current_focal_point = np.array(self.viewer.plotter.camera.focal_point)
+                focal_distance = np.linalg.norm(current_focal_point - current_position)
             
             focal_point = position + view_direction * focal_distance
             
@@ -858,25 +875,139 @@ class MVATWindow(QMainWindow):
             
             # Optional: Match camera field of view from intrinsics
             # This makes the 3D view more accurately represent what the camera sees
-            try:
-                if camera.K is not None:
-                    # Calculate vertical field of view from intrinsics
-                    # FOV = 2 * atan(height / (2 * fy))
-                    fy = camera.K[1, 1]
-                    height = camera.height
-                    fov_rad = 2 * np.arctan(height / (2 * fy))
-                    fov_deg = np.degrees(fov_rad)
-                    # Clamp FOV to reasonable range
-                    fov_deg = np.clip(fov_deg, 10, 120)
-                    self.viewer.plotter.camera.view_angle = fov_deg
-            except:
-                pass  # Use default FOV if calculation fails
+            if and_zoom:
+                try:
+                    if camera.K is not None:
+                        # Calculate vertical field of view from intrinsics
+                        # FOV = 2 * atan(height / (2 * fy))
+                        fy = camera.K[1, 1]
+                        height = camera.height
+                        fov_rad = 2 * np.arctan(height / (2 * fy))
+                        fov_deg = np.degrees(fov_rad)
+                        # Clamp FOV to reasonable range
+                        fov_deg = np.clip(fov_deg, 10, 120)
+                        self.viewer.plotter.camera.view_angle = fov_deg
+                except:
+                    pass  # Use default FOV if calculation fails
             
             # Update the render
             self.viewer.plotter.update()
             
         except Exception as e:
             print(f"Failed to match camera perspective: {e}")
+    
+    def _clear_rays(self):
+        """Clear any rendered rays from the viewer."""
+        if self.viewer:
+            self.viewer.clear_ray()
+            
+        # Also clear markers from the camera grid
+        if self.mouse_bridge:
+            self.mouse_bridge.clear_all_markers()
+    
+    def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
+        """Calculate proximity score between two cameras.
+        
+        Combines spatial distance and view overlap to rank cameras.
+        Higher scores indicate cameras that are closer and have more similar views.
+        
+        Args:
+            reference_camera: The selected/reference Camera object.
+            candidate_camera: The candidate Camera object to score.
+            
+        Returns:
+            float: Proximity score (higher = closer/more similar view).
+                  Returns 0 if cameras have no shared view.
+        """
+        # 1. Calculate spatial distance (Euclidean distance between camera positions)
+        spatial_distance = np.linalg.norm(
+            reference_camera.position - candidate_camera.position
+        )
+        
+        # 2. Calculate view similarity (dot product of view directions)
+        # View direction is Z-axis in camera frame transformed to world
+        ref_view_dir = reference_camera.R.T @ np.array([0, 0, 1])
+        cand_view_dir = candidate_camera.R.T @ np.array([0, 0, 1])
+        
+        # Normalize to ensure unit vectors
+        ref_view_dir = ref_view_dir / np.linalg.norm(ref_view_dir)
+        cand_view_dir = cand_view_dir / np.linalg.norm(cand_view_dir)
+        
+        # Dot product gives cosine of angle between view directions
+        # Range: [-1, 1] where 1 = same direction, -1 = opposite, 0 = perpendicular
+        view_alignment = np.dot(ref_view_dir, cand_view_dir)
+        
+        # 3. Normalize spatial distance to a score (0 to 1)
+        # Use exponential decay: closer cameras get higher scores
+        # Adjust the decay rate based on your scene scale
+        try:
+            bounds = self.viewer.plotter.bounds
+            scene_size = np.sqrt(
+                (bounds[1] - bounds[0])**2 + 
+                (bounds[3] - bounds[2])**2 + 
+                (bounds[5] - bounds[4])**2
+            )
+            # Normalize distance by scene size
+            normalized_distance = spatial_distance / (scene_size + 1e-6)
+        except:
+            # Fallback normalization
+            normalized_distance = spatial_distance / 10.0
+        
+        # Distance score: 1 at distance 0, decays exponentially
+        distance_score = np.exp(-2.0 * normalized_distance)
+        
+        # 4. Convert view alignment to score (0 to 1)
+        # Map from [-1, 1] to [0, 1], where 1 = same direction
+        view_score = (view_alignment + 1.0) / 2.0
+        
+        # 5. Combine scores with weights
+        # 50% weight on distance, 50% weight on view direction
+        combined_score = 0.5 * distance_score + 0.5 * view_score
+        
+        # 6. Filter out cameras with very different views (optional)
+        # If view alignment is negative (> 90 degrees apart), set score to 0
+        if view_alignment < 0:
+            combined_score = 0.0
+        
+        return combined_score
+    
+    def _reorder_cameras(self, reference_path, hide_distant_cameras=True):
+        """Reorder cameras in the grid based on proximity to a reference camera.
+        
+        Args:
+            reference_path: Image path of the reference/selected camera.
+            hide_distant_cameras (bool): If True, hide cameras with zero overlap score.
+        """
+        if not hasattr(self, 'camera_grid'):
+            return
+            
+        reference_camera = self.cameras.get(reference_path)
+        if not reference_camera:
+            return
+        
+        # Calculate proximity scores for all cameras
+        camera_scores = []
+        for path, camera in self.cameras.items():
+            if path == reference_path:
+                # Reference camera gets highest score (always first)
+                score = float('inf')
+            else:
+                score = self._calculate_camera_proximity_score(reference_camera, camera)
+            
+            # Filter based on hide_distant_cameras setting
+            if hide_distant_cameras and score == 0.0 and path != reference_path:
+                continue  # Skip cameras with no shared view
+            
+            camera_scores.append((path, score))
+        
+        # Sort by score (descending - highest score first)
+        camera_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Extract ordered paths
+        ordered_paths = [path for path, score in camera_scores]
+        
+        # Update camera grid order
+        self.camera_grid.set_camera_order(ordered_paths)
     
     def _on_pick(self, point):
         """Handle picking in the 3D view."""

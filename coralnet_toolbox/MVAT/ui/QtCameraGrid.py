@@ -870,6 +870,38 @@ class CameraGrid(QWidget):
         else:
             self.selected_label.setText("None selected")
         
+    def set_camera_order(self, ordered_paths):
+        """
+        Reorder cameras in the grid based on provided path list.
+        
+        Cameras will be displayed in the order specified by ordered_paths.
+        Any cameras not in the list will be hidden/removed from display.
+        
+        Args:
+            ordered_paths (list): List of image paths in desired display order
+        """
+        if not ordered_paths:
+            return
+        
+        # Create new ordered data_items list
+        new_data_items = []
+        
+        for path in ordered_paths:
+            # Find the data item for this path
+            for data_item in self.data_items:
+                if data_item.image_path == path:
+                    new_data_items.append(data_item)
+                    break
+        
+        # Update the data_items list
+        self.data_items = new_data_items
+        
+        # Recalculate layout with new order
+        self.recalculate_layout()
+        
+        # Scroll to top to show the newly ordered cameras (most relevant ones first)
+        self.scroll_area.verticalScrollBar().setValue(0)
+    
     def render_selection_from_path(self, path):
         """
         Update the grid to show selection from external source (e.g., 3D picker).

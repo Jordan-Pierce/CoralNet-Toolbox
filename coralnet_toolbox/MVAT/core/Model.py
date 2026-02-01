@@ -29,6 +29,8 @@ class PointCloud():
                 self.point_cloud.point_data['RGB'] = colors
         else:
             raise ValueError("Either file_path or points must be provided")
+        
+        print("Loaded PointCloud:", self.label, "with", self.point_cloud.n_points, "points")
             
     def get_label(self):
         return self.label

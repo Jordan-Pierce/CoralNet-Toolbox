@@ -7,10 +7,7 @@ from PyQt5.QtWidgets import QFrame, QVBoxLayout
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 
 # ----------------------------------------------------------------------------------------------------------------------
