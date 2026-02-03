@@ -1210,6 +1210,11 @@ class MVATWindow(QMainWindow):
         # Reload
         self._load_cameras()
         
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.camera_grid.recalculate_layout()
+        self.camera_grid._update_visible_widgets()
+        
     def keyPressEvent(self, event):
         """Handle key press events."""
         if event.key() == Qt.Key_Escape:
