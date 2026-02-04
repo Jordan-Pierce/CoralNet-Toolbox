@@ -200,9 +200,14 @@ class RugosityDialog(QDialog):
         
         self.layout.addLayout(button_layout)
 
-    # Optionally, add a method to update the status label
     def set_status(self, text):
+        """Set the status label text."""
         self.status_label.setText(text)
+
+    def showEvent(self, event):
+        """Handle dialog show"""
+        super().showEvent(event)
+        self.annotation_window.set_selected_tool(self.tool)
 
     def closeEvent(self, event):
         """Handle dialog close"""
@@ -399,11 +404,13 @@ class RugosityTool(Tool):
         
         # Create dialog if it doesn't exist
         if self.dialog is None:
-            self.dialog = RugosityDialog(self, self.annotation_window.main_window)
+            self.dialog = RugosityDialog(self.annotation_window.main_window, self)
         
-        self.dialog.show()
-        self.dialog.raise_()
-        self.dialog.activateWindow()
+        # Only show the dialog if it's not already visible
+        if not self.dialog.isVisible():
+            self.dialog.show()
+            self.dialog.raise_()
+            self.dialog.activateWindow()
 
         # Update UI based on available data
         self.update_z_controls()
