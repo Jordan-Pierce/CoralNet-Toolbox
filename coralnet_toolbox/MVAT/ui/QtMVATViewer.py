@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED, RAY_COLOR_HIGHLIGHTED
+from coralnet_toolbox.MVAT.core.utils import BatchedRayManager
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -22,8 +23,8 @@ class MVATViewer(QFrame):
     
     Supports visualization of:
     - Point clouds (drag & drop)
-    - Camera frustums
-    - Ray casting visualization with accuracy indicators
+    - Camera frustums (via BatchedFrustumManager in QtMVATWindow)
+    - Ray casting visualization with batched rendering
     - Multiple simultaneous rays with distinct colors
     """
     def __init__(self, parent=None, point_size=1, show_rays=True):
@@ -44,16 +45,10 @@ class MVATViewer(QFrame):
         self.point_cloud = None
         self.point_size = point_size
         
-        # Ray visualization management
+        # Ray visualization management - use batched manager for efficiency
         self._show_rays_enabled = show_rays
-        
-        # Ray visualization management - single ray (legacy)
-        self._ray_line_actor = None
-        self._ray_point_actor = None
         self._ray_visible = True
-        
-        # Multiple ray visualization management
-        self._ray_actors = []  # List of (line_actor, point_actor) tuples
+        self._ray_manager = BatchedRayManager()
         
         # Add to layout
         self.layout.addWidget(self.plotter.interactor)
@@ -113,7 +108,7 @@ class MVATViewer(QFrame):
             self.plotter.render()  # Force re-render
 
     # --------------------------------------------------------------------------
-    # Ray Visualization Methods
+    # Ray Visualization Methods (Using BatchedRayManager)
     # --------------------------------------------------------------------------
     
     def show_ray(self, ray: 'CameraRay', color: str = RAY_COLOR_SELECTED):
@@ -128,146 +123,49 @@ class MVATViewer(QFrame):
             color: Color for the ray (default: lime for selected camera).
             
         Note: For multiple rays, use show_rays() instead.
-        
-        # TODO: When depth is fully incorporated, re-evaluate solid vs dashed
-        # line styling based on depth accuracy at the terminal point.
         """
         if ray is None:
             self.clear_ray()
             return
             
-        # Clear existing ray visualization
-        self._remove_ray_actors()
-        
-        # Create line mesh
-        line_mesh = pv.Line(ray.origin.tolist(), ray.terminal_point.tolist())
-        
-        # Add line - using solid lines for now
-        # TODO: Re-evaluate solid vs dashed styling when depth is fully incorporated
-        self._ray_line_actor = self.plotter.add_mesh(
-            line_mesh,
-            color=color,
-            line_width=3,
-            name='_ray_line',
-            pickable=False
-        )
-        
-        # Create sphere at terminal point
-        sphere_radius = np.linalg.norm(ray.terminal_point - ray.origin) * 0.02
-        sphere_radius = max(sphere_radius, 0.01)  # Minimum size
-        sphere = pv.Sphere(radius=sphere_radius, center=ray.terminal_point.tolist())
-        
-        self._ray_point_actor = self.plotter.add_mesh(
-            sphere,
-            color=color,
-            name='_ray_point',
-            pickable=False
-        )
-        
-        # Update display
-        self.plotter.render()
+        # Use batched manager for single ray too (consistency)
+        self.show_rays([(ray, color)])
     
     def show_rays(self, rays_with_colors: list):
         """
         Display multiple rays in the 3D viewer with distinct colors.
         
-        Each ray is drawn as a line from origin to terminal point with a
-        sphere at the terminal point. All rays share the same terminal point
-        (the 3D world point from the selected camera's ray).
+        Uses BatchedRayManager for efficient rendering - all rays are merged
+        into a single PolyData mesh with one draw call instead of 2*N calls.
         
         Args:
-            rays_with_colors: List of (CameraRay, color_string) tuples.
-                              Colors should be 'lime' for selected, 'cyan' for highlighted.
-        
-        # TODO: When depth is fully incorporated, re-evaluate solid vs dashed
-        # line styling for rays based on depth accuracy.
+            rays_with_colors: List of (CameraRay, color_tuple) tuples.
+                              Colors should be RGB tuples (0-255 or 0-1).
         """
         if not self._show_rays_enabled:
             return
-            
-        # Clear all existing ray visualizations
-        self._remove_ray_actors()
-        self._remove_multi_ray_actors()
         
         if not rays_with_colors:
-            self.plotter.render()
+            self.clear_ray()
             return
         
-        # Calculate sphere radius based on first ray's distance
-        first_ray = rays_with_colors[0][0]
-        sphere_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.005
-        sphere_radius = max(sphere_radius, 0.01)  # Minimum size
+        # Build batched ray geometry
+        self._ray_manager.build_ray_batch(rays_with_colors)
         
-        for i, (ray, color) in enumerate(rays_with_colors):
-            if ray is None:
-                continue
-                
-            # Create line mesh
-            line_mesh = pv.Line(ray.origin.tolist(), ray.terminal_point.tolist())
-            
-            # Add line - using solid lines for all rays
-            # TODO: Re-evaluate solid vs dashed styling when depth is fully incorporated
-            line_actor = self.plotter.add_mesh(
-                line_mesh,
-                color=color,
-                line_width=3,
-                name=f'_ray_line_{i}',
-                pickable=False
-            )
-            
-            # Create sphere at terminal point (smaller for non-primary rays)
-            # Only the first (selected) ray gets a full-size sphere
-            current_radius = sphere_radius if i == 0 else sphere_radius * 0.6
-            sphere = pv.Sphere(radius=current_radius, center=ray.terminal_point.tolist())
-            
-            point_actor = self.plotter.add_mesh(
-                sphere,
-                color=color,
-                name=f'_ray_point_{i}',
-                pickable=False
-            )
-            
-            self._ray_actors.append((line_actor, point_actor))
+        # Add to plotter (removes old actors first)
+        self._ray_manager.add_to_plotter(self.plotter, line_width=3)
+        
+        # Apply visibility state
+        self._ray_manager.set_visibility(self._ray_visible)
         
         # Update display
         self.plotter.render()
         
     def clear_ray(self):
         """Remove any displayed ray visualization."""
-        self._remove_ray_actors()
-        self._remove_multi_ray_actors()
+        self._ray_manager.remove_from_plotter(self.plotter)
+        self._ray_manager.clear()
         self.plotter.render()
-        
-    def _remove_ray_actors(self):
-        """Internal method to remove single ray actors from the plotter."""
-        if self._ray_line_actor is not None:
-            try:
-                self.plotter.remove_actor(self._ray_line_actor)
-            except:
-                pass
-            self._ray_line_actor = None
-            
-        if self._ray_point_actor is not None:
-            try:
-                self.plotter.remove_actor(self._ray_point_actor)
-            except:
-                pass
-            self._ray_point_actor = None
-    
-    def _remove_multi_ray_actors(self):
-        """Internal method to remove multiple ray actors from the plotter."""
-        for line_actor, point_actor in self._ray_actors:
-            try:
-                if line_actor is not None:
-                    self.plotter.remove_actor(line_actor)
-            except:
-                pass
-            try:
-                if point_actor is not None:
-                    self.plotter.remove_actor(point_actor)
-            except:
-                pass
-        self._ray_actors.clear()
             
     def set_ray_visible(self, visible: bool):
         """
@@ -277,10 +175,7 @@ class MVATViewer(QFrame):
             visible: Whether the ray should be visible.
         """
         self._ray_visible = visible
-        if self._ray_line_actor is not None:
-            self._ray_line_actor.SetVisibility(visible)
-        if self._ray_point_actor is not None:
-            self._ray_point_actor.SetVisibility(visible)
+        self._ray_manager.set_visibility(visible)
         self.plotter.render()
         
     def get_scene_median_depth(self, camera_position: np.ndarray) -> float:
@@ -315,5 +210,9 @@ class MVATViewer(QFrame):
 
     def close(self):
         """Clean up the plotter resources."""
+        # Clean up ray manager
+        if hasattr(self, '_ray_manager'):
+            self._ray_manager.clear()
+        
         if self.plotter:
             self.plotter.close()

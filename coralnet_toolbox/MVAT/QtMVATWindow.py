@@ -20,12 +20,15 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
-from coralnet_toolbox.MVAT.core.Frustum import Frustum
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
                                                   RAY_COLOR_SELECTED, 
                                                   RAY_COLOR_HIGHLIGHTED)
+from coralnet_toolbox.MVAT.core.utils import (
+    BatchedFrustumManager,
+    BatchedRayManager
+)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -272,8 +275,11 @@ class MVATWindow(QMainWindow):
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
         
-        # Actor lists for efficient updates
-        self.wireframe_actors = []
+        # Batched geometry managers for efficient rendering (O(1) draw calls)
+        self.frustum_manager = BatchedFrustumManager()
+        self.ray_manager = BatchedRayManager()
+        
+        # Actor lists for thumbnails (cannot be batched due to textures)
         self.thumbnail_actors = []
         
         # Display status
@@ -626,8 +632,9 @@ class MVATWindow(QMainWindow):
         self.cameras.clear()
         self.selected_camera = None
         
-        # Clear actor lists
-        self.wireframe_actors.clear()
+        # Clear batched geometry managers
+        self.frustum_manager.clear()
+        self.ray_manager.clear()
         self.thumbnail_actors.clear()
         
         # Close the viewer
@@ -714,21 +721,19 @@ class MVATWindow(QMainWindow):
                 self.camera_grid.render_selection_from_path(current_path)
         
     def _render_frustums(self):
-        """Render all camera frustums in the 3D scene."""
+        """Render all camera frustums in the 3D scene using batched geometry."""
         if not self.viewer or not self.viewer.plotter:
             return
             
         # Clear existing actors
         self.viewer.plotter.clear()
         
-        # Clear actor lists
-        self.wireframe_actors.clear()
+        # Clear thumbnail actors (textures cannot be batched)
         self.thumbnail_actors.clear()
         
-        # Clear frustum actor dictionaries to allow recreation with new scale
-        for camera in self.cameras.values():
-            camera.frustum.actors.clear()
-            camera.frustum.image_actors.clear()
+        # Clear batched managers
+        self.frustum_manager.clear()
+        self.ray_manager.clear()
         
         # Re-add point cloud
         self.viewer.point_cloud_actor = None
@@ -738,30 +743,58 @@ class MVATWindow(QMainWindow):
         # Add a reference grid
         self.viewer.plotter.add_axes()
         
-        for path, camera in self.cameras.items():
-            try:
-                # Create wireframe actor
-                if self._show_wireframes_enabled:
-                    actor = camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
-                    self.wireframe_actors.append(actor)
-                    
-                # Create thumbnail actor
-                if self._show_thumbnails_enabled:
-                    actor = camera.frustum.create_image_plane_actor(
-                        self.viewer.plotter, 
-                        scale=self.frustum_scale,
-                        opacity=self.thumbnail_opacity
-                    )
-                    self.thumbnail_actors.append(actor)
-                    
-                # Re-apply selection if this camera is selected
-                if camera == self.selected_camera:
-                    camera.frustum.select()
-            except Exception as e:
-                print(f"Failed to render frustum for {path}: {e}")
+        # Build batched wireframe geometry (single mesh for all frustums)
+        if self._show_wireframes_enabled and self.cameras:
+            merged_mesh = self.frustum_manager.build_frustum_batch(
+                self.cameras, 
+                scale=self.frustum_scale
+            )
+            
+            if merged_mesh is not None:
+                # Add single merged actor to plotter
+                self.frustum_manager.add_to_plotter(self.viewer.plotter, line_width=1.5)
+                
+                # Apply current selection state
+                selected_path = self.selected_camera.image_path if self.selected_camera else None
+                highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+                self.frustum_manager.update_camera_states(selected_path, highlighted_paths)
+                self.frustum_manager.mark_modified()
+        
+        # Thumbnails: Only render for selected camera (lazy loading)
+        # This avoids creating N texture actors; just 1 for the selected camera
+        if self._show_thumbnails_enabled and self.selected_camera:
+            self._add_thumbnail_for_camera(self.selected_camera)
                 
         # Update the render
         self.viewer.plotter.update()
+    
+    def _add_thumbnail_for_camera(self, camera):
+        """Add thumbnail actor for a single camera (lazy loading)."""
+        try:
+            # Clear old frustum actor cache to allow recreation
+            camera.frustum.image_actors.clear()
+            
+            actor = camera.frustum.create_image_plane_actor(
+                self.viewer.plotter, 
+                scale=self.frustum_scale,
+                opacity=self.thumbnail_opacity
+            )
+            self.thumbnail_actors.append(actor)
+        except Exception as e:
+            print(f"Failed to render thumbnail for {camera.image_path}: {e}")
+    
+    def _remove_thumbnails(self):
+        """Remove all thumbnail actors from the plotter."""
+        for actor in self.thumbnail_actors:
+            try:
+                self.viewer.plotter.remove_actor(actor)
+            except:
+                pass
+        self.thumbnail_actors.clear()
+        
+        # Clear frustum image actor caches
+        for camera in self.cameras.values():
+            camera.frustum.image_actors.clear()
         
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
@@ -787,9 +820,8 @@ class MVATWindow(QMainWindow):
         self.wireframe_checkbox.setChecked(checked)
         self.wireframe_checkbox.blockSignals(False)
         
-        # Update visibility of existing actors
-        for actor in self.wireframe_actors:
-            actor.SetVisibility(checked)
+        # Update visibility of batched wireframe actor
+        self.frustum_manager.set_visibility(checked)
         
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -904,25 +936,16 @@ class MVATWindow(QMainWindow):
             
     def _on_grid_cameras_highlighted(self, paths):
         """Handle camera highlighting changes from the grid."""
-        # Update frustum appearance for highlighted cameras
-        for cam_path, camera in self.cameras.items():
-            # Check if this camera is selected (takes priority)
-            if self.selected_camera and cam_path == self.selected_camera.image_path:
-                # Selected camera stays lime (handled by select())
-                camera.frustum.select()
-            elif cam_path in paths:
-                # Highlighted camera gets cyan
-                camera.frustum.highlight()
-            else:
-                # Not selected or highlighted - reset to white
-                camera.frustum.unhighlight()
-                camera.frustum.deselect()
-            
-            camera.frustum.update_appearance(self.viewer.plotter)
+        # Update frustum appearance using batched scalar updates
+        selected_path = self.selected_camera.image_path if self.selected_camera else None
+        
+        # Batch update all camera states at once (O(1) instead of O(N) actor updates)
+        self.frustum_manager.update_camera_states(selected_path, paths)
+        self.frustum_manager.mark_modified()
             
         # Update the render
         if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+            self.viewer.plotter.render()
             
     def _match_camera_perspective(self, camera):
         """Match the 3D viewer perspective to a camera's viewpoint."""
@@ -1128,21 +1151,30 @@ class MVATWindow(QMainWindow):
             
     def _select_camera(self, path, camera):
         """Select a camera and update UI."""
-        # Deselect previous
-        if self.selected_camera:
-            self.selected_camera.frustum.deselect()
-            # Reset previous camera color to white (unless highlighted)
-            if hasattr(self, 'camera_grid') and path not in self.camera_grid.highlighted_paths:
-                self.selected_camera.frustum.color = 'white'
-                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
-            
-        # Select new
+        previous_camera = self.selected_camera
+        
+        # Update selected camera reference
         self.selected_camera = camera
-        camera.frustum.color = 'lime'
-        camera.frustum.select()
+        
+        # Get highlighted paths
+        highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+        
+        # Update batched frustum colors
+        self.frustum_manager.update_camera_states(path, highlighted_paths)
+        self.frustum_manager.mark_modified()
+        
+        # Lazy thumbnail loading: update thumbnail for new selection
+        if self._show_thumbnails_enabled:
+            # Remove previous camera's thumbnail if different
+            if previous_camera and previous_camera != camera:
+                self._remove_thumbnails()
+            
+            # Add thumbnail for newly selected camera
+            if not self.thumbnail_actors:
+                self._add_thumbnail_for_camera(camera)
         
         # Update the plotter to show selection
-        self.viewer.plotter.update()
+        self.viewer.plotter.render()
         
         # Emit signal for bi-directional sync
         self.cameraSelectedInMVAT.emit(path)
@@ -1150,15 +1182,17 @@ class MVATWindow(QMainWindow):
     def _deselect_camera(self):
         """Deselect the current camera."""
         if self.selected_camera:
-            self.selected_camera.frustum.deselect()
-            # Reset color to white (unless highlighted)
-            if hasattr(self, 'camera_grid'):
-                path = self.selected_camera.image_path
-                if path in self.camera_grid.highlighted_paths:
-                    self.selected_camera.frustum.color = 'cyan'
-                else:
-                    self.selected_camera.frustum.color = 'white'
-                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
+            # Get highlighted paths
+            highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+            
+            # Update batched frustum colors (no selection, keep highlights)
+            self.frustum_manager.update_camera_states(None, highlighted_paths)
+            self.frustum_manager.mark_modified()
+            
+            # Remove thumbnail actor (lazy unloading)
+            if self._show_thumbnails_enabled:
+                self._remove_thumbnails()
+            
             self.selected_camera = None
         
         # Clear ray visualization when camera is deselected
@@ -1170,7 +1204,7 @@ class MVATWindow(QMainWindow):
             self.mouse_bridge.clear_all_markers()
             
         if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+            self.viewer.plotter.render()
         
     def _goto_selected_image(self):
         """Navigate to the selected camera's image in the main window."""
