@@ -42,6 +42,7 @@ class RugosityDialog(QDialog):
         
         # Properties of a tool 
         self.tool = RugosityTool(self.annotation_window)
+        self.tool.dialog = self
 
         self.setWindowTitle("Rugosity")
         self.setWindowIcon(get_icon("spatial.png"))  # use the spatial icon
