@@ -3,12 +3,6 @@ MultiView Annotation Tool (MVAT) Window
 
 A 3D viewer for visualizing camera frustums and navigating MultiView imagery.
 Uses PyVista for 3D rendering and integrates with the main application's RasterManager.
-
-Rendering Architecture (Data-Oriented):
-- Frustum wireframes: Single merged PolyData mesh with per-vertex "State" scalars
-- Thumbnails: Individual actors with lazy loading (only for selected camera)
-- Rays: Persistent PolyData with in-place geometry updates
-- Selection: Scalar array modifications + mesh.Modified() for instant updates
 """
 
 import warnings
@@ -20,12 +14,13 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QToolBar, QAction, QLabel, QSlider, QCheckBox,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
-    QSizePolicy, QSpinBox
+    QPushButton, QSizePolicy, QSpacerItem, QSpinBox
 )
 
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
+from coralnet_toolbox.MVAT.core.Frustum import Frustum
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
@@ -47,18 +42,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # 16ms is approximately 60fps for responsive mouse tracking
 MOUSE_THROTTLE_MS = 16
 
-# Point cloud LOD debounce delay (milliseconds)
-# Time to wait after mouse stops moving before restoring point cloud
-POINT_CLOUD_RESTORE_DELAY_MS = 400
-
-# Frustum state scalars for merged mesh coloring
-FRUSTUM_STATE_DEFAULT = 0      # White/Gray
-FRUSTUM_STATE_HIGHLIGHTED = 1  # Cyan
-FRUSTUM_STATE_SELECTED = 2     # Lime Green
-
-# Number of vertices per frustum (5 points: 4 corners + 1 center)
-FRUSTUM_VERTEX_COUNT = 5
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -76,7 +59,6 @@ class MousePositionBridge:
     - Projecting rays onto other camera views
     - Updating markers on visible camera widgets with appropriate colors
     - Updating ray visualization in the 3D viewer
-    - LOD-on-interaction: Hiding point cloud during rapid movement
     """
     
     def __init__(self, mvat_window: 'MVATWindow'):
@@ -91,23 +73,16 @@ class MousePositionBridge:
         self._last_update_time = 0
         self._pending_position = None
         
-        # Throttle timer for mouse position updates
+        # Throttle timer
         self._throttle_timer = QTimer()
         self._throttle_timer.setSingleShot(True)
         self._throttle_timer.timeout.connect(self._process_pending_position)
-        
-        # LOD-on-interaction: Timer to restore point cloud after mouse stops
-        self._point_cloud_restore_timer = QTimer()
-        self._point_cloud_restore_timer.setSingleShot(True)
-        self._point_cloud_restore_timer.timeout.connect(self._restore_point_cloud)
-        self._point_cloud_hidden = False
         
     def on_mouse_moved(self, x: int, y: int):
         """
         Handle mouse moved signal from AnnotationWindow.
         
         Throttles updates to prevent performance issues with rapid mouse movement.
-        Implements LOD-on-interaction by hiding point cloud during movement.
         
         Args:
             x: X pixel coordinate in image space.
@@ -115,15 +90,6 @@ class MousePositionBridge:
         """
         if not self.enabled:
             return
-        
-        # LOD-on-interaction: Hide point cloud during rapid movement
-        if self.mvat_window._show_point_cloud_enabled and not self._point_cloud_hidden:
-            self.mvat_window.viewer.set_point_cloud_visible(False)
-            self._point_cloud_hidden = True
-        
-        # Reset restore timer on each movement
-        self._point_cloud_restore_timer.stop()
-        self._point_cloud_restore_timer.start(POINT_CLOUD_RESTORE_DELAY_MS)
             
         # Store pending position
         self._pending_position = (x, y)
@@ -131,13 +97,6 @@ class MousePositionBridge:
         # Start throttle timer if not running
         if not self._throttle_timer.isActive():
             self._throttle_timer.start(MOUSE_THROTTLE_MS)
-    
-    def _restore_point_cloud(self):
-        """Restore point cloud visibility after mouse stops moving."""
-        if self._point_cloud_hidden and self.mvat_window._show_point_cloud_enabled:
-            self.mvat_window.viewer.set_point_cloud_visible(True)
-            self._point_cloud_hidden = False
-            self.mvat_window.viewer.plotter.render()
             
     def _process_pending_position(self):
         """Process the pending mouse position after throttle delay."""
@@ -274,16 +233,10 @@ class MousePositionBridge:
         if not enabled:
             self.clear_all_markers()
             self.mvat_window.viewer.clear_ray()
-            # Restore point cloud if disabled while hidden
-            if self._point_cloud_hidden:
-                self._restore_point_cloud()
             
     def cleanup(self):
         """Clean up resources."""
         self._throttle_timer.stop()
-        self._point_cloud_restore_timer.stop()
-        if self._point_cloud_hidden:
-            self._restore_point_cloud()
         self.clear_all_markers()
 
 
@@ -318,19 +271,12 @@ class MVATWindow(QMainWindow):
         # Camera management
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
-        self.selected_camera_path = None  # Track path for scalar updates
-        self.highlighted_paths = set()    # Track highlighted paths for scalar updates
         
-        # Merged mesh rendering infrastructure
-        self._merged_frustums_mesh = None   # Single PolyData for all wireframes
-        self._merged_frustums_actor = None  # Single actor for all wireframes
-        self._camera_id_map = {}            # image_path -> camera_id (index)
-        self._frustum_state_scalars = None  # State array for coloring
+        # Actor lists for efficient updates
+        self.wireframe_actors = []
+        self.thumbnail_actors = []
         
-        # Thumbnail actors (kept separate - lazy loaded for selected camera only)
-        self._selected_thumbnail_actor = None
-        
-        # Display settings
+        # Display status
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
@@ -679,15 +625,10 @@ class MVATWindow(QMainWindow):
         # Clear camera references
         self.cameras.clear()
         self.selected_camera = None
-        self.selected_camera_path = None
-        self.highlighted_paths.clear()
         
-        # Clear merged mesh references
-        self._merged_frustums_mesh = None
-        self._merged_frustums_actor = None
-        self._camera_id_map.clear()
-        self._frustum_state_scalars = None
-        self._selected_thumbnail_actor = None
+        # Clear actor lists
+        self.wireframe_actors.clear()
+        self.thumbnail_actors.clear()
         
         # Close the viewer
         if self.viewer:
@@ -754,9 +695,6 @@ class MVATWindow(QMainWindow):
         # Update stats
         self.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
         
-        # Pre-allocate ray arrays based on camera count
-        self.viewer.set_max_rays(valid_count)
-        
         # Populate camera grid
         self.camera_grid.set_cameras(self.cameras)
         
@@ -776,208 +714,54 @@ class MVATWindow(QMainWindow):
                 self.camera_grid.render_selection_from_path(current_path)
         
     def _render_frustums(self):
-        """
-        Render all camera frustums using merged mesh rendering.
-        
-        Creates a single merged PolyData mesh from all frustum geometries,
-        with per-vertex "State" scalars for efficient selection updates.
-        Uses a categorical LUT: 0=White, 1=Cyan (highlighted), 2=Lime (selected).
-        """
+        """Render all camera frustums in the 3D scene."""
         if not self.viewer or not self.viewer.plotter:
             return
             
-        # Clear existing scene
+        # Clear existing actors
         self.viewer.plotter.clear()
         
-        # Clear merged mesh references
-        self._merged_frustums_mesh = None
-        self._merged_frustums_actor = None
-        self._camera_id_map.clear()
-        self._selected_thumbnail_actor = None
+        # Clear actor lists
+        self.wireframe_actors.clear()
+        self.thumbnail_actors.clear()
         
-        # Clear frustum geometry caches to force regeneration at new scale
+        # Clear frustum actor dictionaries to allow recreation with new scale
         for camera in self.cameras.values():
-            camera.frustum.clear_cache()
+            camera.frustum.actors.clear()
+            camera.frustum.image_actors.clear()
         
         # Re-add point cloud
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
         self.viewer.set_point_cloud_visible(self._show_point_cloud_enabled)
         
-        # Add reference axes
+        # Add a reference grid
         self.viewer.plotter.add_axes()
-        
-        # Reinitialize ray visualization (was cleared with plotter.clear())
-        self.viewer._init_ray_visualization()
-        
-        if not self.cameras:
-            self.viewer.plotter.update()
-            return
-        
-        # --- Build merged frustum mesh ---
-        meshes_to_merge = []
-        camera_id = 0
         
         for path, camera in self.cameras.items():
             try:
-                # Get wireframe geometry
-                mesh = camera.frustum.get_mesh(scale=self.frustum_scale)
-                
-                # Convert UnstructuredGrid to PolyData for merging
-                # Extract surface as PolyData
-                mesh_poly = mesh.extract_surface()
-                
-                # Add CameraID scalar for this camera's vertices
-                # This allows us to update specific camera's state later
-                num_points = mesh_poly.n_points
-                camera_ids = np.full(num_points, camera_id, dtype=np.int32)
-                mesh_poly.point_data['CameraID'] = camera_ids
-                
-                # Initialize State to default (0 = white)
-                state = np.zeros(num_points, dtype=np.uint8)
-                mesh_poly.point_data['State'] = state
-                
-                # Store mapping
-                self._camera_id_map[path] = camera_id
-                
-                meshes_to_merge.append(mesh_poly)
-                camera_id += 1
-                
+                # Create wireframe actor
+                if self._show_wireframes_enabled:
+                    actor = camera.frustum.create_actor(self.viewer.plotter, scale=self.frustum_scale)
+                    self.wireframe_actors.append(actor)
+                    
+                # Create thumbnail actor
+                if self._show_thumbnails_enabled:
+                    actor = camera.frustum.create_image_plane_actor(
+                        self.viewer.plotter, 
+                        scale=self.frustum_scale,
+                        opacity=self.thumbnail_opacity
+                    )
+                    self.thumbnail_actors.append(actor)
+                    
+                # Re-apply selection if this camera is selected
+                if camera == self.selected_camera:
+                    camera.frustum.select()
             except Exception as e:
-                print(f"Failed to process frustum for {path}: {e}")
-        
-        if not meshes_to_merge:
-            self.viewer.plotter.update()
-            return
-        
-        # Merge all frustum meshes into one
-        if len(meshes_to_merge) == 1:
-            self._merged_frustums_mesh = meshes_to_merge[0]
-        else:
-            # Use pyvista merge
-            self._merged_frustums_mesh = meshes_to_merge[0].merge(meshes_to_merge[1:])
-        
-        # Initialize state scalars array for fast updates
-        self._frustum_state_scalars = self._merged_frustums_mesh.point_data['State']
-        
-        # Apply current selection/highlight state
-        self._apply_selection_state_to_mesh()
-        
-        # Add merged mesh to plotter with categorical LUT
-        if self._show_wireframes_enabled:
-            # Custom colormap: 0=light gray (default), 1=cyan (highlighted), 2=lime (selected)
-            self._merged_frustums_actor = self.viewer.plotter.add_mesh(
-                self._merged_frustums_mesh,
-                scalars='State',
-                cmap=['lightgray', 'cyan', 'lime'],
-                clim=[0, 2],
-                style='wireframe',
-                line_width=2,
-                show_scalar_bar=False,
-                pickable=True,
-                name='_merged_frustums'
-            )
-        
-        # Add thumbnail for selected camera if enabled
-        if self._show_thumbnails_enabled and self.selected_camera_path:
-            self._add_selected_thumbnail()
-        
+                print(f"Failed to render frustum for {path}: {e}")
+                
         # Update the render
         self.viewer.plotter.update()
-    
-    def _apply_selection_state_to_mesh(self):
-        """
-        Apply current selection/highlight state to the merged mesh scalars.
-        
-        Updates the 'State' scalar array based on selected_camera_path
-        and highlighted_paths. Called during initial render and after
-        selection changes.
-        """
-        if self._merged_frustums_mesh is None:
-            return
-        
-        # Get scalars array
-        state_array = self._merged_frustums_mesh.point_data['State']
-        camera_ids = self._merged_frustums_mesh.point_data['CameraID']
-        
-        # Reset all to default
-        state_array[:] = FRUSTUM_STATE_DEFAULT
-        
-        # Apply highlights (cyan)
-        for path in self.highlighted_paths:
-            if path in self._camera_id_map:
-                cam_id = self._camera_id_map[path]
-                mask = camera_ids == cam_id
-                state_array[mask] = FRUSTUM_STATE_HIGHLIGHTED
-        
-        # Apply selection (lime) - overrides highlight
-        if self.selected_camera_path and self.selected_camera_path in self._camera_id_map:
-            cam_id = self._camera_id_map[self.selected_camera_path]
-            mask = camera_ids == cam_id
-            state_array[mask] = FRUSTUM_STATE_SELECTED
-        
-        # Mark mesh as modified
-        self._merged_frustums_mesh.Modified()
-    
-    def _update_frustum_state(self, path: str, state: int):
-        """
-        Update the state of a single camera's frustum in the merged mesh.
-        
-        Args:
-            path: Image path of the camera to update.
-            state: New state value (FRUSTUM_STATE_DEFAULT/HIGHLIGHTED/SELECTED).
-        """
-        if self._merged_frustums_mesh is None or path not in self._camera_id_map:
-            return
-        
-        cam_id = self._camera_id_map[path]
-        camera_ids = self._merged_frustums_mesh.point_data['CameraID']
-        state_array = self._merged_frustums_mesh.point_data['State']
-        
-        # Update state for this camera's vertices
-        mask = camera_ids == cam_id
-        state_array[mask] = state
-        
-        # Mark mesh as modified for VTK
-        self._merged_frustums_mesh.Modified()
-    
-    def _add_selected_thumbnail(self):
-        """Add thumbnail actor for the currently selected camera."""
-        if not self._show_thumbnails_enabled:
-            return
-        
-        if not self.selected_camera_path or self.selected_camera_path not in self.cameras:
-            return
-        
-        # Remove existing thumbnail
-        if self._selected_thumbnail_actor is not None:
-            try:
-                self.viewer.plotter.remove_actor(self._selected_thumbnail_actor)
-            except:
-                pass
-            self._selected_thumbnail_actor = None
-        
-        camera = self.cameras[self.selected_camera_path]
-        
-        try:
-            mesh = camera.frustum.get_image_plane_mesh(scale=self.frustum_scale)
-            texture = camera.frustum.get_texture()
-            
-            self._selected_thumbnail_actor = self.viewer.plotter.add_mesh(
-                mesh,
-                texture=texture,
-                opacity=self.thumbnail_opacity,
-                show_edges=False,
-                pickable=False,
-                name='_selected_thumbnail'
-            )
-            
-            # Disable lighting for true colors
-            if self._selected_thumbnail_actor:
-                self._selected_thumbnail_actor.GetProperty().SetLighting(False)
-                
-        except Exception as e:
-            print(f"Failed to add thumbnail for {self.selected_camera_path}: {e}")
         
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
@@ -1003,9 +787,9 @@ class MVATWindow(QMainWindow):
         self.wireframe_checkbox.setChecked(checked)
         self.wireframe_checkbox.blockSignals(False)
         
-        # Update visibility of merged frustums actor
-        if self._merged_frustums_actor is not None:
-            self._merged_frustums_actor.SetVisibility(checked)
+        # Update visibility of existing actors
+        for actor in self.wireframe_actors:
+            actor.SetVisibility(checked)
         
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -1024,12 +808,9 @@ class MVATWindow(QMainWindow):
         self.thumbnail_checkbox.setChecked(checked)
         self.thumbnail_checkbox.blockSignals(False)
         
-        # Update visibility of selected thumbnail actor
-        if self._selected_thumbnail_actor is not None:
-            self._selected_thumbnail_actor.SetVisibility(checked)
-        elif checked and self.selected_camera_path:
-            # Add thumbnail if enabling and there's a selection
-            self._add_selected_thumbnail()
+        # Update visibility of existing actors
+        for actor in self.thumbnail_actors:
+            actor.SetVisibility(checked)
         
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -1070,9 +851,9 @@ class MVATWindow(QMainWindow):
         """Handle thumbnail opacity change."""
         self.thumbnail_opacity = value / 100.0
         
-        # Update opacity of selected thumbnail actor
-        if self._selected_thumbnail_actor is not None:
-            self._selected_thumbnail_actor.GetProperty().SetOpacity(self.thumbnail_opacity)
+        # Update opacity of existing thumbnail actors
+        for actor in self.thumbnail_actors:
+            actor.GetProperty().SetOpacity(self.thumbnail_opacity)
         
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -1122,16 +903,22 @@ class MVATWindow(QMainWindow):
             self._goto_selected_image()
             
     def _on_grid_cameras_highlighted(self, paths):
-        """
-        Handle camera highlighting changes from the grid.
-        
-        Uses scalar-based updates on the merged mesh for instant performance.
-        """
-        # Update highlighted paths set
-        self.highlighted_paths = set(paths)
-        
-        # Apply state to merged mesh (scalar updates)
-        self._apply_selection_state_to_mesh()
+        """Handle camera highlighting changes from the grid."""
+        # Update frustum appearance for highlighted cameras
+        for cam_path, camera in self.cameras.items():
+            # Check if this camera is selected (takes priority)
+            if self.selected_camera and cam_path == self.selected_camera.image_path:
+                # Selected camera stays lime (handled by select())
+                camera.frustum.select()
+            elif cam_path in paths:
+                # Highlighted camera gets cyan
+                camera.frustum.highlight()
+            else:
+                # Not selected or highlighted - reset to white
+                camera.frustum.unhighlight()
+                camera.frustum.deselect()
+            
+            camera.frustum.update_appearance(self.viewer.plotter)
             
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -1340,33 +1127,19 @@ class MVATWindow(QMainWindow):
                 self.camera_grid.clear_all_selections()
             
     def _select_camera(self, path, camera):
-        """
-        Select a camera and update UI using scalar-based mesh updates.
-        
-        Args:
-            path: Image path of the camera to select.
-            camera: Camera object to select.
-        """
-        # Store previous selection path for thumbnail cleanup
-        old_path = self.selected_camera_path
-        
-        # Update selection state
+        """Select a camera and update UI."""
+        # Deselect previous
+        if self.selected_camera:
+            self.selected_camera.frustum.deselect()
+            # Reset previous camera color to white (unless highlighted)
+            if hasattr(self, 'camera_grid') and path not in self.camera_grid.highlighted_paths:
+                self.selected_camera.frustum.color = 'white'
+                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
+            
+        # Select new
         self.selected_camera = camera
-        self.selected_camera_path = path
-        
-        # Update mesh scalars for old selection (reset to default or highlighted)
-        if old_path and old_path != path:
-            if old_path in self.highlighted_paths:
-                self._update_frustum_state(old_path, FRUSTUM_STATE_HIGHLIGHTED)
-            else:
-                self._update_frustum_state(old_path, FRUSTUM_STATE_DEFAULT)
-        
-        # Update mesh scalars for new selection
-        self._update_frustum_state(path, FRUSTUM_STATE_SELECTED)
-        
-        # Update thumbnail (lazy load for selected camera only)
-        if self._show_thumbnails_enabled:
-            self._add_selected_thumbnail()
+        camera.frustum.color = 'lime'
+        camera.frustum.select()
         
         # Update the plotter to show selection
         self.viewer.plotter.update()
@@ -1375,25 +1148,18 @@ class MVATWindow(QMainWindow):
         self.cameraSelectedInMVAT.emit(path)
         
     def _deselect_camera(self):
-        """Deselect the current camera using scalar-based mesh updates."""
-        if self.selected_camera_path:
-            # Reset state based on highlight status
-            if self.selected_camera_path in self.highlighted_paths:
-                self._update_frustum_state(self.selected_camera_path, FRUSTUM_STATE_HIGHLIGHTED)
-            else:
-                self._update_frustum_state(self.selected_camera_path, FRUSTUM_STATE_DEFAULT)
-        
-        # Clear selection state
-        self.selected_camera = None
-        self.selected_camera_path = None
-        
-        # Remove thumbnail actor
-        if self._selected_thumbnail_actor is not None:
-            try:
-                self.viewer.plotter.remove_actor(self._selected_thumbnail_actor)
-            except:
-                pass
-            self._selected_thumbnail_actor = None
+        """Deselect the current camera."""
+        if self.selected_camera:
+            self.selected_camera.frustum.deselect()
+            # Reset color to white (unless highlighted)
+            if hasattr(self, 'camera_grid'):
+                path = self.selected_camera.image_path
+                if path in self.camera_grid.highlighted_paths:
+                    self.selected_camera.frustum.color = 'cyan'
+                else:
+                    self.selected_camera.frustum.color = 'white'
+                self.selected_camera.frustum.update_appearance(self.viewer.plotter)
+            self.selected_camera = None
         
         # Clear ray visualization when camera is deselected
         if self.viewer:
@@ -1439,12 +1205,15 @@ class MVATWindow(QMainWindow):
         # Clear existing
         self.cameras.clear()
         self.selected_camera = None
-        self.selected_camera_path = None
-        self.highlighted_paths.clear()
         self._initialized = False
         
         # Reload
         self._load_cameras()
+        
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.camera_grid.recalculate_layout()
+        self.camera_grid._update_visible_widgets()
         
     def keyPressEvent(self, event):
         """Handle key press events."""

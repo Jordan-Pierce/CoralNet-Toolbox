@@ -266,3 +266,25 @@ class Camera:
             return False
         
         return False
+
+    # --------------------------------------------------------------------------
+    # Visualization Logic
+    # --------------------------------------------------------------------------
+
+    def create_actor(self, plotter, scale=0.1):
+        """Delegates creation of the Frustum actor to the Frustum class."""
+        return self.frustum.create_actor(plotter, scale)
+
+    def update_appearance(self, plotter=None):
+        """Update the Frustum appearance based on selection state."""
+        self.frustum.update_appearance(plotter)
+
+    def select(self):
+        """Mark as selected and update appearance."""
+        self.selected = True
+        self.frustum.select()
+
+    def deselect(self):
+        """Mark as deselected and update appearance."""
+        self.selected = False
+        self.frustum.deselect()

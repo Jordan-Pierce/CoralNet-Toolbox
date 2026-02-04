@@ -583,6 +583,7 @@ class CameraGrid(QWidget):
     def _clear_widgets(self):
         """Remove all widgets from the content widget."""
         for widget in self.widgets_by_path.values():
+            widget.hide()  # Immediately hide to prevent ghost widgets
             widget.setParent(None)
             widget.deleteLater()
             
@@ -648,7 +649,7 @@ class CameraGrid(QWidget):
         total_height = y + row_height + GRID_SPACING
         self.content_widget.setFixedHeight(total_height)
         
-        # Update visible widgets
+        # Update visible widgets to refresh viewport and clear stale references
         self._update_visible_widgets()
         
     def _update_visible_widgets(self):
