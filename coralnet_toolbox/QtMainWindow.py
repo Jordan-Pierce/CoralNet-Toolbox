@@ -1355,12 +1355,16 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure the explorer window and system monitor are closed when the main window closes."""
+        """Ensure special windows (explorer, mvat) and system monitor are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
             self.explorer_window.setParent(None)
             self.explorer_window.close()
+            
+        if self.mvat_window:
+            self.mvat_window.setParent(None)
+            self.mvat_window.close()
         
         # Close the system monitor if it exists
         if self.system_monitor:
@@ -3349,8 +3353,7 @@ class MainWindow(QMainWindow):
             # Re-enable everything if there was an error
             self.set_main_window_enabled_state()
     
-    # TODO
-    def explorer_closed(self):
+    def close_explorer_window(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
             # Remove the spacer that was added when explorer opened
@@ -3396,6 +3399,13 @@ class MainWindow(QMainWindow):
                                 "Install with: pip install pyvista pyvistaqt")
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
+            
+    def close_mvat_window(self):
+        """Handle the MVAT window being closed."""
+        if self.mvat_window:
+            self.mvat_window.setParent(None)
+            self.mvat_window.close()
+            self.mvat_window = None
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""

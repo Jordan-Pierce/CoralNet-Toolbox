@@ -28,6 +28,12 @@ STATE_COLORS = {
 }
 
 
+def _rgb_to_hex(rgb):
+    """Convert RGB tuple (0-1) to hex string."""
+    r, g, b = [int(c * 255) for c in rgb]
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -497,9 +503,9 @@ class BatchedFrustumManager:
             
         # Create custom colormap for states
         # Map: 0=default(gray), 1=highlighted(cyan), 2=selected(lime)
-        cmap = [STATE_COLORS[STATE_DEFAULT], 
-                STATE_COLORS[STATE_HIGHLIGHTED], 
-                STATE_COLORS[STATE_SELECTED]]
+        cmap = [_rgb_to_hex(STATE_COLORS[STATE_DEFAULT]), 
+                _rgb_to_hex(STATE_COLORS[STATE_HIGHLIGHTED]), 
+                _rgb_to_hex(STATE_COLORS[STATE_SELECTED])]
         
         self.wireframe_actor = plotter.add_mesh(
             self.merged_wireframe,

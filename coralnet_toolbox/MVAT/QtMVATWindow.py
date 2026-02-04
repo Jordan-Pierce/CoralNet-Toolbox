@@ -639,6 +639,13 @@ class MVATWindow(QMainWindow):
         # Close the viewer
         if self.viewer:
             self.viewer.close()
+            
+        # Close from the outside
+        if hasattr(self.main_window, 'close_mvat_window'):
+            self.main_window.close_mvat_window()
+
+        # Clear the reference in the main_window to allow garbage collection
+        self.main_window.mvat_window = None
                 
         event.accept()
         

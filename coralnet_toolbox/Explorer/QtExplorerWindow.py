@@ -168,9 +168,9 @@ class ExplorerWindow(QMainWindow):
         if self.main_window:
             self.main_window.setEnabled(True)
 
-        # Move the label_window back to the main_window
-        if hasattr(self.main_window, 'explorer_closed'):
-            self.main_window.explorer_closed()
+        # Close from the outside, move the label_window back to the main_window
+        if hasattr(self.main_window, 'close_explorer_window'):
+            self.main_window.close_explorer_window()
 
         # Clear the reference in the main_window to allow garbage collection
         self.main_window.explorer_window = None
