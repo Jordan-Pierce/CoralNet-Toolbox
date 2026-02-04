@@ -11,29 +11,33 @@ import numpy as np
 import torch
 
 from PyQt5 import sip
-from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
-from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
+from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
+from PyQt5.QtWidgets import (QListWidget, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
                              QGroupBox, QSpacerItem)
 
+# Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 from coralnet_toolbox.QtTimer import TimerGroupBox
 
+# Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
+# Special Windows
 from coralnet_toolbox.Explorer import ExplorerWindow
-
 from coralnet_toolbox.MVAT import MVATWindow
 
+# Other Dialogs
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
+from coralnet_toolbox.QtRugosity import RugosityDialog
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
 
@@ -45,6 +49,7 @@ from coralnet_toolbox.Tile import (
     TileManager as TileManagerDialog,
 )
 
+# Import Dialogs
 # TODO update IO classes to have dialogs
 from coralnet_toolbox.IO import (
     ImportImages,
@@ -73,6 +78,7 @@ from coralnet_toolbox.IO import (
     SaveProject
 )
 
+# Machine learning dialogs
 from coralnet_toolbox.MachineLearning import (
     TuneClassify as ClassifyTuneDialog,
     TuneDetect as DetectTuneDialog,
@@ -102,22 +108,26 @@ from coralnet_toolbox.MachineLearning import (
     Optimize as OptimizeModelDialog
 )
 
+# SAM dialogs
 from coralnet_toolbox.SAM import (
     DeployPredictorDialog as SAMDeployPredictorDialog,
     DeployGeneratorDialog as SAMDeployGeneratorDialog,
 )
 
+# See Anything dialogs
 from coralnet_toolbox.SeeAnything import (
     TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
 
+# CoralNet dialogs
 from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
 )
 
+# Z dialogs
 from coralnet_toolbox.Z import (
     DeployModelDialog as ZDeployModelDialog,
 )
@@ -126,6 +136,7 @@ from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
 
+# Game dialogs
 from coralnet_toolbox.BreakTime import (
     SnakeGame,
     BreakoutGame,
@@ -180,7 +191,6 @@ class MainWindow(QMainWindow):
         self.tile_icon = get_icon("tile.png")
         self.workarea_icon = get_icon("workarea.png")
         self.scale_icon = get_icon("scale.png")
-        self.rugosity_icon = get_icon("spatial.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -279,6 +289,7 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        self.rugosity_dialog = RugosityDialog(self)
 
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
@@ -560,6 +571,11 @@ class MainWindow(QMainWindow):
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.utilities_menu.addAction(self.annotation_sampling_action)
         
+        # Rugosity
+        self.rugosity_action = QAction("Rugosity", self)
+        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
+        self.utilities_menu.addAction(self.rugosity_action)
+
         # Add a separator
         self.utilities_menu.addSeparator()
         
@@ -593,14 +609,6 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
         
-        # Add a separator
-        self.utilities_menu.addSeparator()
-        
-        # Rugosity Tool
-        self.rugosity_action = QAction("Rugosity", self)
-        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
-        self.utilities_menu.addAction(self.rugosity_action)
-
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
         self.ai_assist_menu = self.menu_bar.addMenu("AI-Assist")
@@ -827,13 +835,6 @@ class MainWindow(QMainWindow):
                       "XY Scale Tab:\n"
                       "• Set pixel size by drawing a line across a known distance.\n"
                       "• Applies to highlighted images."),
-
-            "rugosity": ("Rugosity\n\n"
-                        "Requires scale to be set.\n\n"
-                        "Measure rugosity:\n"
-                        "• Draw lines to measure 2D/3D distances and rugosity.\n"
-                        "• Generate measurement grids for systematic sampling.\n"
-                        "• View elevation profiles and 3D metrics when Z-data available."),
 
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
@@ -1965,20 +1966,6 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(True)
-        
-        elif tool == "rugosity":
-            self.select_tool_action.setChecked(False)
-            self.patch_tool_action.setChecked(False)
-            self.rectangle_tool_action.setChecked(False)
-            self.polygon_tool_action.setChecked(False)
-            self.brush_tool_action.setChecked(False)
-            self.erase_tool_action.setChecked(False)
-            self.dropper_tool_action.setChecked(False)
-            self.fill_tool_action.setChecked(False)
-            self.sam_tool_action.setChecked(False)
-            self.see_anything_tool_action.setChecked(False)
-            self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
 
         else:
             self.select_tool_action.setChecked(False)
@@ -2784,9 +2771,9 @@ class MainWindow(QMainWindow):
             return
         
         try:
-            # Untoggle all tools and activate the rugosity tool
+            # Proceed to open the dialog if images are loaded and have scale
             self.untoggle_all_tools()
-            self.toolChanged.emit("rugosity")
+            self.rugosity_dialog.show()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

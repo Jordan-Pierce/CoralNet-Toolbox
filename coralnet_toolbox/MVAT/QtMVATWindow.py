@@ -6,6 +6,7 @@ Uses PyVista for 3D rendering and integrates with the main application's RasterM
 """
 
 import warnings
+
 import numpy as np
 
 from PyQt5.QtGui import QIcon
@@ -14,24 +15,19 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QToolBar, QAction, QLabel, QSlider, QCheckBox,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
-    QPushButton, QSizePolicy, QSpacerItem, QSpinBox
+    QSizePolicy, QSpinBox
 )
 
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
-from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
+from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
+
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
                                                   RAY_COLOR_SELECTED, 
                                                   RAY_COLOR_HIGHLIGHTED)
-from coralnet_toolbox.MVAT.core.utils import (
-    BatchedFrustumManager,
-    BatchedRayManager,
-    STATE_DEFAULT,
-    STATE_HIGHLIGHTED,
-    STATE_SELECTED
-)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 

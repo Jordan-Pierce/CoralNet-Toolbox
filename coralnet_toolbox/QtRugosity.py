@@ -28,278 +28,87 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Helper Class for Elevation Profile Plot
+# Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ProfilePlotDialog(QDialog):
+# Dialog
+class RugosityDialog(QDialog):
     """
-    A pop-up dialog to display a scrollable list of elevation profile plots
-    using pyqtgraph.
+    A modeless dialog for Rugosity, allowing measurements and spatial analysis.
     """
-    def __init__(self, profiles_list, parent=None):
+
+
+    def __init__(self, tool, main_window, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Elevation Profile")
-        self.setWindowIcon(get_icon("spatial.png"))
-        self.setMinimumSize(800, 700)
-
-        # Set a white background for plots
-        pg.setConfigOption('background', 'w')
-        pg.setConfigOption('foreground', 'k')
-
-        self.main_layout = QVBoxLayout(self)
-        
-        # --- Scroll Area Setup ---
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        
-        self.plot_container_widget = QWidget()
-        self.plot_layout = QVBoxLayout(self.plot_container_widget)
-        
-        self.scroll_area.setWidget(self.plot_container_widget)
-        self.main_layout.addWidget(self.scroll_area)
-        
-        # --- Plot Items Storage ---
-        self.plot_widgets = []
-
-        # Initial build
-        self.rebuild_plots(profiles_list)
-
-        # --- Close Button ---
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
-        button_box.rejected.connect(self.reject)
-        self.main_layout.addWidget(button_box)
-        
-    def rebuild_plots(self, profiles_list):
-        """Clears and rebuilds all plots in the scroll area."""
-        
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # 1. Clear all old plot widgets
-            for widget in self.plot_widgets:
-                widget.deleteLater()
-            self.plot_widgets = []
-            
-            if not profiles_list:
-                no_data_label = QLabel("No profile data available.")
-                no_data_label.setAlignment(Qt.AlignCenter)
-                self.plot_layout.addWidget(no_data_label)
-                self.plot_widgets.append(no_data_label)
-                return
-
-            # 2. --- Plot 1: Combined (Non-Normalized) ---
-            if len(profiles_list) > 0:
-                combined_plot_widget = pg.PlotWidget(title="All Profiles (Combined)")
-                combined_plot_widget.setMinimumHeight(300)
-                combined_plot = combined_plot_widget.getPlotItem()
-                combined_plot.setLabel('left', 'Z')
-                combined_plot.showGrid(x=True, y=True, alpha=0.3)
-
-                for profile in profiles_list:
-                    x_data = profile.get('x_data', [])
-                    y_data = profile.get('y_data', [])
-                    name = profile.get('name', 'Profile')
-                    color = profile.get('color', (0, 0, 255))  # Default blue
-
-                    pen = pg.mkPen(color=color, width=2)
-                    combined_plot.plot(
-                        x_data, y_data, pen=pen, name=name
-                    )
-                    
-                    # Add start point marker (white dot)
-                    if x_data and y_data:
-                        start_scatter = pg.ScatterPlotItem(
-                            [x_data[0]], [y_data[0]],
-                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
-                        )
-                        combined_plot.addItem(start_scatter)
-                        
-                        # Add end point marker (black dot)
-                        end_scatter = pg.ScatterPlotItem(
-                            [x_data[-1]], [y_data[-1]],
-                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
-                        )
-                        combined_plot.addItem(end_scatter)
-                
-                self.plot_layout.addWidget(combined_plot_widget)
-                self.plot_widgets.append(combined_plot_widget)
-
-            # 3. --- Separator ---
-            separator_label = QLabel("Individual Profiles")
-            separator_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-            separator_label.setAlignment(Qt.AlignCenter)
-            self.plot_layout.addWidget(separator_label)
-            self.plot_widgets.append(separator_label)
-            
-            separator_line = QFrame()
-            separator_line.setFrameShape(QFrame.HLine)
-            separator_line.setFrameShadow(QFrame.Sunken)
-            self.plot_layout.addWidget(separator_line)
-            self.plot_widgets.append(separator_line)
-
-            # 4. --- Plots 2...N: Individual Plots ---
-            for profile in profiles_list:
-                x_data = profile.get('x_data', [])
-                y_data = profile.get('y_data', [])
-                name = profile.get('name', 'Profile')
-                color = profile.get('color', (0, 0, 255))
-                stats = profile.get('stats', {})
-
-                # Create a plot widget for this profile
-                plot_widget = pg.PlotWidget(title=name)
-                plot_widget.setMinimumHeight(250)
-                plot = plot_widget.getPlotItem()
-                plot.setLabel('left', 'Z')
-                plot.showGrid(x=True, y=True, alpha=0.3)
-
-                # Plot the data
-                pen = pg.mkPen(color=color, width=2)
-                plot.plot(x_data, y_data, pen=pen)
-                
-                # Add start point marker (white dot)
-                if x_data and y_data:
-                    start_scatter = pg.ScatterPlotItem(
-                        [x_data[0]], [y_data[0]],
-                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
-                    )
-                    plot.addItem(start_scatter)
-                    
-                    # Add end point marker (black dot)
-                    end_scatter = pg.ScatterPlotItem(
-                        [x_data[-1]], [y_data[-1]],
-                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
-                    )
-                    plot.addItem(end_scatter)
-
-                # Add statistics as text if available
-                if stats:
-                    length_3d = stats.get('length_3d', 0)
-                    delta_z = stats.get('delta_z', 0)
-                    rugosity = stats.get('rugosity', 0)
-                    
-                    stats_text = (
-                        f"3D-Length: {length_3d:.3f}\n"
-                        f"ΔZ: {delta_z:.3f}\n"
-                        f"Rugosity: {rugosity:.3f}"
-                    )
-                    text_item = pg.TextItem(text=stats_text, anchor=(1, 0), color=(0, 0, 0))
-                    text_item.setPos(max(x_data) if x_data else 0, max(y_data) if y_data else 0)
-                    plot.addItem(text_item)
-
-                self.plot_layout.addWidget(plot_widget)
-                self.plot_widgets.append(plot_widget)
-                    
-            # Add a spacer at the bottom
-            spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
-            self.plot_layout.addSpacerItem(spacer)
-        finally:
-            QApplication.restoreOverrideCursor()
-
-    def update_plot(self, profiles_list):
-        """Clears and rebuilds all plots with new data."""
-        try:
-            self.rebuild_plots(profiles_list)
-        except Exception as e:
-            print(f"Error updating profile plot: {e}")
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# RugosityToolDialog Class
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class RugosityToolDialog(QDialog):
-    """
-    A modeless dialog for the RugosityTool, allowing measurements and spatial analysis.
-    """
-    def __init__(self, tool, parent=None):
-        super().__init__(parent)
-        # Get references from the tool
         self.tool = tool
-        self.annotation_window = self.tool.annotation_window
-        self.main_window = self.annotation_window.main_window
-        
+        self.main_window = main_window
+        self.annotation_window = self.main_window.annotation_window
+
         self.setWindowTitle("Rugosity")
         self.setWindowIcon(get_icon("spatial.png"))
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.resize(450, 300)
-        
-        # This dialog is modeless
-        self.setModal(False) 
+        self.setModal(False)
 
-        self.main_layout = QVBoxLayout(self)
+        self.layout = QVBoxLayout(self)
 
-        # --- Tab Widget ---
-        self.tab_widget = QTabWidget()
-        self.rugosity_tab = QWidget()
-        self.setup_rugosity_tab(self.rugosity_tab)
-        self.tab_widget.addTab(self.rugosity_tab, "Rugosity")
-        self.main_layout.addWidget(self.tab_widget)
+        self.setup_info_layout()
+        self.setup_rugosity_params_layout()
+        self.setup_2d_measurements_layout()
+        self.setup_grid_settings_layout()
+        self.setup_3d_zmetrics_layout()
+        self.setup_status_label()
+        self.setup_buttons_layout()
+        self.layout.addStretch()
 
-    def setup_rugosity_tab(self, tab_widget):
-        """Setup the Rugosity measurement tab"""
-        layout = QVBoxLayout(tab_widget)
-        
-        # --- Information GroupBox ---
+    def setup_info_layout(self):
         info_group = QGroupBox("Information")
-        info_layout = QVBoxLayout(info_group)
+        info_layout = QVBoxLayout()
         instructions = QLabel("Draw lines to measure rugosity and surface complexity")
+        instructions.setWordWrap(True)
         info_layout.addWidget(instructions)
-        layout.addWidget(info_group)
-        
-        # --- Rugosity Parameters Group ---
+        info_group.setLayout(info_layout)
+        self.layout.addWidget(info_group)
+
+    def setup_rugosity_params_layout(self):
         group_params = QGroupBox("Rugosity Parameters")
         form_params = QFormLayout()
-        
-        # Chain Length Input (Standardizes the measurement step)
         chain_layout = QHBoxLayout()
         self.chain_length_spin = QDoubleSpinBox()
         self.chain_length_spin.setRange(0.001, 10000.0)
-        self.chain_length_spin.setValue(1.0)  # Default
+        self.chain_length_spin.setValue(1.0)
         self.chain_length_spin.setSingleStep(0.1)
         self.chain_length_spin.setToolTip(
             "The step size used to sample the 3D surface (simulates a physical chain link)."
         )
-        
         self.chain_unit_combo = QComboBox()
         self.chain_unit_combo.addItems(['mm', 'cm', 'm', 'in', 'ft', 'yd'])
         self.chain_unit_combo.setCurrentText('cm')
-        
         chain_layout.addWidget(self.chain_length_spin)
         chain_layout.addWidget(self.chain_unit_combo)
-        
         form_params.addRow("Chain Length:", chain_layout)
-                
         group_params.setLayout(form_params)
-        layout.addWidget(group_params)
-        
-        # --- 2D Measurements Group ---
+        self.layout.addWidget(group_params)
+
+    def setup_2d_measurements_layout(self):
         group_2d = QGroupBox("2D Measurements")
         form_2d = QFormLayout()
-        
         self.line_length_2d_label = QLabel("---")
         form_2d.addRow("Distance:", self.line_length_2d_label)
-        
-        # Units dropdown
         self.line_units_combo = QComboBox()
         self.line_units_combo.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.line_units_combo.setCurrentText('m')
         form_2d.addRow("Display Units:", self.line_units_combo)
-        
         group_2d.setLayout(form_2d)
-        layout.addWidget(group_2d)
-        
-        # --- Grid Settings Group ---
+        self.layout.addWidget(group_2d)
+
+    def setup_grid_settings_layout(self):
         grid_group = QGroupBox("Grid Settings")
         grid_layout = QVBoxLayout()
-        
-        # Margin input
         self.margin_input = MarginInput()
         grid_layout.addWidget(self.margin_input)
-        
-        # Grid parameters
         grid_params_layout = QFormLayout()
-        
-        # Row and Column settings in a single horizontal layout
         rowcol_layout = QHBoxLayout()
         self.rows_spin = QSpinBox()
         self.rows_spin.setRange(0, 100)
@@ -313,10 +122,7 @@ class RugosityToolDialog(QDialog):
         rowcol_layout.addWidget(QLabel("Columns:"))
         rowcol_layout.addWidget(self.cols_spin)
         grid_params_layout.addRow(rowcol_layout)
-
         grid_layout.addLayout(grid_params_layout)
-
-        # Grid buttons
         grid_btn_layout = QHBoxLayout()
         self.generate_grid_button = QPushButton("Preview Grid")
         self.generate_grid_button.clicked.connect(self.tool.generate_grid)
@@ -325,44 +131,48 @@ class RugosityToolDialog(QDialog):
         grid_btn_layout.addWidget(self.generate_grid_button)
         grid_btn_layout.addWidget(self.clear_grid_button)
         grid_layout.addLayout(grid_btn_layout)
-
         grid_group.setLayout(grid_layout)
-        layout.addWidget(grid_group)
+        self.layout.addWidget(grid_group)
 
-        # --- 3D Z-Metrics Group ---
+    def setup_3d_zmetrics_layout(self):
         self.line_3d_group = QGroupBox("3D Z-Metrics")
-        self.line_3d_group.setEnabled(False)  # Disabled until Z-data available
-
+        self.line_3d_group.setEnabled(False)
         form_3d = QFormLayout()
-
         self.line_length_3d_label = QLabel("---")
         self.line_delta_z_label = QLabel("---")
         self.line_slope_label = QLabel("---")
-
-        # Rugosity label with some styling to indicate it's the main metric
         self.line_rugosity_label = QLabel("---")
         self.line_rugosity_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-
         form_3d.addRow("3D Length:", self.line_length_3d_label)
         form_3d.addRow("ΔZ:", self.line_delta_z_label)
         form_3d.addRow("Slope/Grade:", self.line_slope_label)
         form_3d.addRow("Rugosity:", self.line_rugosity_label)
-
-        # Profile button
         self.line_profile_button = QPushButton("Show Elevation Profile")
         self.line_profile_button.clicked.connect(self.tool._show_elevation_profile)
         self.line_profile_button.setEnabled(False)
         form_3d.addRow("", self.line_profile_button)
-
         self.line_3d_group.setLayout(form_3d)
-        layout.addWidget(self.line_3d_group)
+        self.layout.addWidget(self.line_3d_group)
 
-        # Clear button
+    def setup_status_label(self):
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignLeft)
+        self.layout.addWidget(self.status_label)
+
+    def setup_buttons_layout(self):
+        button_layout = QHBoxLayout()
         self.clear_button = QPushButton("Clear All Measurements")
         self.clear_button.clicked.connect(self.tool.clear_all_measurements)
-        layout.addWidget(self.clear_button)
+        button_layout.addWidget(self.clear_button)
+        button_layout.addStretch()
+        self.layout.addLayout(button_layout)
 
-        layout.addStretch()
+    # Optionally, add a method to update the status label
+    def set_status(self, text):
+        self.status_label.setText(text)
+
+
+    # setup_rugosity_tab is now obsolete and removed
 
     def closeEvent(self, event):
         """Handle dialog close"""
@@ -370,12 +180,7 @@ class RugosityToolDialog(QDialog):
         self.tool.deactivate()
         event.accept()
 
-
-# ----------------------------------------------------------------------------------------------------------------------
-# RugosityTool Class  
-# ----------------------------------------------------------------------------------------------------------------------
-
-
+# Tool 
 class RugosityTool(Tool):
     """
     Tool for measuring distances, areas, perimeters, and performing spatial analysis.
@@ -563,7 +368,7 @@ class RugosityTool(Tool):
         
         # Create dialog if it doesn't exist
         if self.dialog is None:
-            self.dialog = RugosityToolDialog(self, self.annotation_window.main_window)
+            self.dialog = RugosityDialog(self, self.annotation_window.main_window)
         
         self.dialog.show()
         self.dialog.raise_()
@@ -1189,3 +994,175 @@ class RugosityTool(Tool):
             self.dialog.line_delta_z_label.setText("---")
             self.dialog.line_slope_label.setText("---")
             self.dialog.line_rugosity_label.setText("---")
+            
+
+# Popup Dialog        
+class ProfilePlotDialog(QDialog):
+    """
+    A pop-up dialog to display a scrollable list of elevation profile plots
+    using pyqtgraph.
+    """
+    def __init__(self, profiles_list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Elevation Profile")
+        self.setWindowIcon(get_icon("spatial.png"))
+        self.setMinimumSize(800, 700)
+
+        # Set a white background for plots
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', 'k')
+
+        self.main_layout = QVBoxLayout(self)
+        
+        # --- Scroll Area Setup ---
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        
+        self.plot_container_widget = QWidget()
+        self.plot_layout = QVBoxLayout(self.plot_container_widget)
+        
+        self.scroll_area.setWidget(self.plot_container_widget)
+        self.main_layout.addWidget(self.scroll_area)
+        
+        # --- Plot Items Storage ---
+        self.plot_widgets = []
+
+        # Initial build
+        self.rebuild_plots(profiles_list)
+
+        # --- Close Button ---
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        self.main_layout.addWidget(button_box)
+        
+    def rebuild_plots(self, profiles_list):
+        """Clears and rebuilds all plots in the scroll area."""
+        
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # 1. Clear all old plot widgets
+            for widget in self.plot_widgets:
+                widget.deleteLater()
+            self.plot_widgets = []
+            
+            if not profiles_list:
+                no_data_label = QLabel("No profile data available.")
+                no_data_label.setAlignment(Qt.AlignCenter)
+                self.plot_layout.addWidget(no_data_label)
+                self.plot_widgets.append(no_data_label)
+                return
+
+            # 2. --- Plot 1: Combined (Non-Normalized) ---
+            if len(profiles_list) > 0:
+                combined_plot_widget = pg.PlotWidget(title="All Profiles (Combined)")
+                combined_plot_widget.setMinimumHeight(300)
+                combined_plot = combined_plot_widget.getPlotItem()
+                combined_plot.setLabel('left', 'Z')
+                combined_plot.showGrid(x=True, y=True, alpha=0.3)
+
+                for profile in profiles_list:
+                    x_data = profile.get('x_data', [])
+                    y_data = profile.get('y_data', [])
+                    name = profile.get('name', 'Profile')
+                    color = profile.get('color', (0, 0, 255))  # Default blue
+
+                    pen = pg.mkPen(color=color, width=2)
+                    combined_plot.plot(
+                        x_data, y_data, pen=pen, name=name
+                    )
+                    
+                    # Add start point marker (white dot)
+                    if x_data and y_data:
+                        start_scatter = pg.ScatterPlotItem(
+                            [x_data[0]], [y_data[0]],
+                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
+                        )
+                        combined_plot.addItem(start_scatter)
+                        
+                        # Add end point marker (black dot)
+                        end_scatter = pg.ScatterPlotItem(
+                            [x_data[-1]], [y_data[-1]],
+                            size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
+                        )
+                        combined_plot.addItem(end_scatter)
+                
+                self.plot_layout.addWidget(combined_plot_widget)
+                self.plot_widgets.append(combined_plot_widget)
+
+            # 3. --- Separator ---
+            separator_label = QLabel("Individual Profiles")
+            separator_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+            separator_label.setAlignment(Qt.AlignCenter)
+            self.plot_layout.addWidget(separator_label)
+            self.plot_widgets.append(separator_label)
+            
+            separator_line = QFrame()
+            separator_line.setFrameShape(QFrame.HLine)
+            separator_line.setFrameShadow(QFrame.Sunken)
+            self.plot_layout.addWidget(separator_line)
+            self.plot_widgets.append(separator_line)
+
+            # 4. --- Plots 2...N: Individual Plots ---
+            for profile in profiles_list:
+                x_data = profile.get('x_data', [])
+                y_data = profile.get('y_data', [])
+                name = profile.get('name', 'Profile')
+                color = profile.get('color', (0, 0, 255))
+                stats = profile.get('stats', {})
+
+                # Create a plot widget for this profile
+                plot_widget = pg.PlotWidget(title=name)
+                plot_widget.setMinimumHeight(250)
+                plot = plot_widget.getPlotItem()
+                plot.setLabel('left', 'Z')
+                plot.showGrid(x=True, y=True, alpha=0.3)
+
+                # Plot the data
+                pen = pg.mkPen(color=color, width=2)
+                plot.plot(x_data, y_data, pen=pen)
+                
+                # Add start point marker (white dot)
+                if x_data and y_data:
+                    start_scatter = pg.ScatterPlotItem(
+                        [x_data[0]], [y_data[0]],
+                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('w')
+                    )
+                    plot.addItem(start_scatter)
+                    
+                    # Add end point marker (black dot)
+                    end_scatter = pg.ScatterPlotItem(
+                        [x_data[-1]], [y_data[-1]],
+                        size=10, pen=pg.mkPen('k', width=1), brush=pg.mkBrush('k')
+                    )
+                    plot.addItem(end_scatter)
+
+                # Add statistics as text if available
+                if stats:
+                    length_3d = stats.get('length_3d', 0)
+                    delta_z = stats.get('delta_z', 0)
+                    rugosity = stats.get('rugosity', 0)
+                    
+                    stats_text = (
+                        f"3D-Length: {length_3d:.3f}\n"
+                        f"ΔZ: {delta_z:.3f}\n"
+                        f"Rugosity: {rugosity:.3f}"
+                    )
+                    text_item = pg.TextItem(text=stats_text, anchor=(1, 0), color=(0, 0, 0))
+                    text_item.setPos(max(x_data) if x_data else 0, max(y_data) if y_data else 0)
+                    plot.addItem(text_item)
+
+                self.plot_layout.addWidget(plot_widget)
+                self.plot_widgets.append(plot_widget)
+                    
+            # Add a spacer at the bottom
+            spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+            self.plot_layout.addSpacerItem(spacer)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def update_plot(self, profiles_list):
+        """Clears and rebuilds all plots with new data."""
+        try:
+            self.rebuild_plots(profiles_list)
+        except Exception as e:
+            print(f"Error updating profile plot: {e}")

@@ -5,14 +5,36 @@ Provides ray casting functionality for projecting 2D pixel coordinates through
 camera frustums into 3D space and back onto other camera views.
 Uses PyVista for 3D ray-mesh intersection when available.
 """
-
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 
 import numpy as np
 
 import pyvista as pv
 
 from coralnet_toolbox.MVAT.core.Camera import Camera
+
+
+from coralnet_toolbox.MVAT.core.constants import (
+    SELECT_COLOR_RGB,
+    HIGHLIGHT_COLOR_RGB,
+)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
+
+# State constants for scalar-based coloring
+STATE_DEFAULT = 0
+STATE_HIGHLIGHTED = 1
+STATE_SELECTED = 2
+
+# Colors for each state (RGB normalized 0-1)
+STATE_COLORS = {
+    STATE_DEFAULT: (0.8, 0.8, 0.8),      # Light gray/white
+    STATE_HIGHLIGHTED: tuple(c / 255 for c in HIGHLIGHT_COLOR_RGB),  # Cyan
+    STATE_SELECTED: tuple(c / 255 for c in SELECT_COLOR_RGB),        # Lime green
+}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -133,8 +155,8 @@ class CameraRay:
     
     @classmethod
     def from_world_point_and_camera(cls, 
-                                     world_point: np.ndarray, 
-                                     camera: 'Camera') -> 'CameraRay':
+                                    world_point: np.ndarray, 
+                                    camera: 'Camera') -> 'CameraRay':
         """
         Create a ray from a camera's origin to a known 3D world point.
         
@@ -306,3 +328,211 @@ class CameraRay:
         return (f"CameraRay(origin={self.origin}, "
                 f"terminal={self.terminal_point}, "
                 f"depth={depth_str})")
+        
+
+class BatchedRayManager:
+    """
+    Manages batched rendering of camera rays for efficient visualization.
+    
+    Instead of creating individual line and sphere actors per ray (2*N draw calls),
+    this class maintains a single PolyData mesh containing all ray lines and updates
+    point coordinates in-place when the mouse moves.
+    
+    Attributes:
+        ray_mesh: PolyData containing all ray line segments
+        sphere_mesh: PolyData containing terminal point spheres
+        ray_actor: Single actor for all ray lines
+        sphere_actor: Single actor for terminal spheres
+    """
+    
+    def __init__(self):
+        """Initialize the BatchedRayManager."""
+        self.ray_mesh: Optional[pv.PolyData] = None
+        self.sphere_mesh: Optional[pv.PolyData] = None
+        self.ray_actor = None
+        self.sphere_actor = None
+        
+        # Ray colors stored per ray
+        self._ray_colors: Optional[np.ndarray] = None
+        self._num_rays = 0
+        
+    def build_ray_batch(self, 
+                        rays_with_colors: List[Tuple['CameraRay', tuple]]) -> Tuple[Optional[pv.PolyData], 
+                                                                                    Optional[pv.PolyData]]:
+        """
+        Build merged meshes for multiple rays.
+        
+        Args:
+            rays_with_colors: List of (CameraRay, color_rgb) tuples
+                             Colors should be RGB tuples (0-255)
+            
+        Returns:
+            Tuple of (ray_lines_mesh, sphere_mesh)
+        """
+        if not rays_with_colors:
+            self.ray_mesh = None
+            self.sphere_mesh = None
+            self._num_rays = 0
+            return None, None
+        
+        self._num_rays = len(rays_with_colors)
+        
+        # Build line segments
+        points = []
+        lines = []
+        colors = []
+        
+        for i, (ray, color) in enumerate(rays_with_colors):
+            if ray is None:
+                continue
+                
+            # Add origin and terminal points
+            pt_idx = len(points)
+            points.append(ray.origin.tolist())
+            points.append(ray.terminal_point.tolist())
+            
+            # Add line connectivity
+            lines.extend([2, pt_idx, pt_idx + 1])
+            
+            # Add colors for both endpoints (same color per line)
+            # Normalize to 0-1 if needed
+            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
+                norm_color = tuple(c / 255 for c in color[:3])
+            else:
+                norm_color = color[:3] if len(color) >= 3 else color
+            colors.append(norm_color)
+            colors.append(norm_color)
+        
+        if not points:
+            self.ray_mesh = None
+            self.sphere_mesh = None
+            return None, None
+        
+        # Create lines mesh
+        self.ray_mesh = pv.PolyData(np.array(points), lines=np.array(lines))
+        self._ray_colors = np.array(colors)
+        self.ray_mesh['RGB'] = (self._ray_colors * 255).astype(np.uint8)
+        
+        # Build spheres at terminal points
+        first_ray = rays_with_colors[0][0]
+        if first_ray is not None:
+            base_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.005
+            base_radius = max(base_radius, 0.01)
+        else:
+            base_radius = 0.05
+        
+        spheres = []
+        for i, (ray, color) in enumerate(rays_with_colors):
+            if ray is None:
+                continue
+            # Primary ray gets larger sphere
+            radius = base_radius if i == 0 else base_radius * 0.6
+            sphere = pv.Sphere(radius=radius, center=ray.terminal_point.tolist())
+            
+            # Add color to sphere
+            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
+                norm_color = tuple(c / 255 for c in color[:3])
+            else:
+                norm_color = color[:3] if len(color) >= 3 else color
+            sphere['RGB'] = np.tile(np.array(norm_color) * 255, (sphere.n_points, 1)).astype(np.uint8)
+            spheres.append(sphere)
+        
+        if spheres:
+            self.sphere_mesh = pv.merge(spheres) if len(spheres) > 1 else spheres[0]
+        else:
+            self.sphere_mesh = None
+        
+        return self.ray_mesh, self.sphere_mesh
+    
+    def add_to_plotter(self, plotter, line_width: float = 3) -> Tuple[Optional['vtkActor'], Optional['vtkActor']]:
+        """
+        Add the batched ray meshes to a plotter.
+        
+        Args:
+            plotter: PyVista plotter instance
+            line_width: Width of ray lines
+            
+        Returns:
+            Tuple of (ray_actor, sphere_actor)
+        """
+        # Remove existing actors
+        self.remove_from_plotter(plotter)
+        
+        if self.ray_mesh is not None:
+            self.ray_actor = plotter.add_mesh(
+                self.ray_mesh,
+                scalars='RGB',
+                rgb=True,
+                line_width=line_width,
+                render_lines_as_tubes=False,
+                name='_batched_rays',
+                pickable=False
+            )
+        
+        if self.sphere_mesh is not None:
+            self.sphere_actor = plotter.add_mesh(
+                self.sphere_mesh,
+                scalars='RGB',
+                rgb=True,
+                name='_batched_ray_spheres',
+                pickable=False
+            )
+        
+        return self.ray_actor, self.sphere_actor
+    
+    def update_ray_endpoints(self, 
+                             rays_with_colors: List[Tuple['CameraRay', tuple]]):
+        """
+        Update ray endpoints in-place (more efficient than rebuilding).
+        
+        Only works if the number of rays hasn't changed.
+        
+        Args:
+            rays_with_colors: List of (CameraRay, color_rgb) tuples
+        """
+        if self.ray_mesh is None or len(rays_with_colors) != self._num_rays:
+            # Need to rebuild - ray count changed
+            self.build_ray_batch(rays_with_colors)
+            return
+        
+        # Update points in-place
+        points = self.ray_mesh.points
+        for i, (ray, _) in enumerate(rays_with_colors):
+            if ray is not None:
+                pt_idx = i * 2
+                points[pt_idx] = ray.origin
+                points[pt_idx + 1] = ray.terminal_point
+        
+        self.ray_mesh.Modified()
+    
+    def set_visibility(self, visible: bool):
+        """Set visibility of ray actors."""
+        if self.ray_actor is not None:
+            self.ray_actor.SetVisibility(visible)
+        if self.sphere_actor is not None:
+            self.sphere_actor.SetVisibility(visible)
+    
+    def remove_from_plotter(self, plotter):
+        """Remove ray actors from plotter."""
+        if self.ray_actor is not None:
+            try:
+                plotter.remove_actor(self.ray_actor)
+            except:
+                pass
+            self.ray_actor = None
+            
+        if self.sphere_actor is not None:
+            try:
+                plotter.remove_actor(self.sphere_actor)
+            except:
+                pass
+            self.sphere_actor = None
+    
+    def clear(self):
+        """Clear all cached data."""
+        self.ray_mesh = None
+        self.sphere_mesh = None
+        self.ray_actor = None
+        self.sphere_actor = None
+        self._ray_colors = None
+        self._num_rays = 0

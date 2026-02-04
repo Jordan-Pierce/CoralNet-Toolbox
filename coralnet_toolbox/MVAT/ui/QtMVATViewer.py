@@ -1,5 +1,5 @@
 import numpy as np
-import pyvista as pv
+
 from pyvistaqt import QtInteractor
 
 from PyQt5.QtWidgets import QFrame, QVBoxLayout
@@ -8,8 +8,8 @@ from PyQt5.QtCore import Qt
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.Model import PointCloud
-from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED, RAY_COLOR_HIGHLIGHTED
-from coralnet_toolbox.MVAT.core.utils import BatchedRayManager
+from coralnet_toolbox.MVAT.core.Ray import BatchedRayManager
+from coralnet_toolbox.MVAT.core.constants import (RAY_COLOR_SELECTED)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

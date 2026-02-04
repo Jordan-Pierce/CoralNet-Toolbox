@@ -1,7 +1,9 @@
 import os
+
 import struct
 
 import numpy as np
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Helper Functions for COLMAP parsing
