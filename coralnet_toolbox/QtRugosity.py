@@ -6,19 +6,17 @@ from random import randint
 
 import pyqtgraph as pg
 
-from PyQt5.QtCore import Qt, QLineF, QRectF, QPoint, QPointF
-from PyQt5.QtGui import QMouseEvent, QPen, QColor, QPixmap, QPainter, QBrush, QFontMetrics, QPolygonF
-from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout, QTabWidget,
-                             QFormLayout, QDoubleSpinBox, QComboBox, QLabel,
-                             QDialogButtonBox, QMessageBox, QGraphicsLineItem,
-                             QGroupBox, QCheckBox, QButtonGroup, QPushButton,
-                             QGraphicsRectItem, QGraphicsItemGroup, QGraphicsEllipseItem, QSpacerItem,
+from PyQt5.QtCore import Qt, QLineF, QRectF, QPointF
+from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
+from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout,
+                             QFormLayout, QDoubleSpinBox, QComboBox, 
+                             QDialogButtonBox, QMessageBox, QLabel,
+                             QGroupBox, QPushButton, QSpacerItem,
                              QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
 from coralnet_toolbox.QtWorkArea import WorkArea
-
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.Icons import get_icon
@@ -37,43 +35,56 @@ class RugosityDialog(QDialog):
     """
     A modeless dialog for Rugosity, allowing measurements and spatial analysis.
     """
-
-
-    def __init__(self, tool, main_window, parent=None):
+    def __init__(self, main_window, parent=None):
         super().__init__(parent)
-        self.tool = tool
         self.main_window = main_window
         self.annotation_window = self.main_window.annotation_window
+        
+        # Properties of a tool 
+        self.tool = RugosityTool(self.annotation_window)
 
         self.setWindowTitle("Rugosity")
-        self.setWindowIcon(get_icon("spatial.png"))
+        self.setWindowIcon(get_icon("spatial.png"))  # use the spatial icon
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.resize(450, 300)
         self.setModal(False)
 
         self.layout = QVBoxLayout(self)
 
+        # Set up the information layout
         self.setup_info_layout()
+        # Set up the rugosity parameters layout
         self.setup_rugosity_params_layout()
+        # Set up the 2D measurements layout
         self.setup_2d_measurements_layout()
+        # Set up the grid settings layout
         self.setup_grid_settings_layout()
+        # Set up the 3D Z-metrics layout
         self.setup_3d_zmetrics_layout()
+        # Set up the status label
         self.setup_status_label()
+        # Set up the buttons layout
         self.setup_buttons_layout()
+        
         self.layout.addStretch()
 
     def setup_info_layout(self):
-        info_group = QGroupBox("Information")
-        info_layout = QVBoxLayout()
+        """Set up the information layout with explanatory text."""
+        groupbox = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
         instructions = QLabel("Draw lines to measure rugosity and surface complexity")
         instructions.setWordWrap(True)
-        info_layout.addWidget(instructions)
-        info_group.setLayout(info_layout)
-        self.layout.addWidget(info_group)
+        layout.addWidget(instructions)
+        
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
 
     def setup_rugosity_params_layout(self):
-        group_params = QGroupBox("Rugosity Parameters")
-        form_params = QFormLayout()
+        """Set up the rugosity parameters layout."""
+        groupbox = QGroupBox("Rugosity Parameters")
+        layout = QFormLayout()
+        
         chain_layout = QHBoxLayout()
         self.chain_length_spin = QDoubleSpinBox()
         self.chain_length_spin.setRange(0.001, 10000.0)
@@ -85,29 +96,37 @@ class RugosityDialog(QDialog):
         self.chain_unit_combo = QComboBox()
         self.chain_unit_combo.addItems(['mm', 'cm', 'm', 'in', 'ft', 'yd'])
         self.chain_unit_combo.setCurrentText('cm')
+        self.chain_unit_combo.setToolTip("The unit of measurement for the chain length.")
         chain_layout.addWidget(self.chain_length_spin)
         chain_layout.addWidget(self.chain_unit_combo)
-        form_params.addRow("Chain Length:", chain_layout)
-        group_params.setLayout(form_params)
-        self.layout.addWidget(group_params)
+        layout.addRow("Chain Length:", chain_layout)
+        
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
 
     def setup_2d_measurements_layout(self):
-        group_2d = QGroupBox("2D Measurements")
-        form_2d = QFormLayout()
+        """Set up the 2D measurements layout."""
+        groupbox = QGroupBox("2D Measurements")
+        layout = QFormLayout()
+        
         self.line_length_2d_label = QLabel("---")
-        form_2d.addRow("Distance:", self.line_length_2d_label)
+        layout.addRow("Distance:", self.line_length_2d_label)
         self.line_units_combo = QComboBox()
         self.line_units_combo.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.line_units_combo.setCurrentText('m')
-        form_2d.addRow("Display Units:", self.line_units_combo)
-        group_2d.setLayout(form_2d)
-        self.layout.addWidget(group_2d)
+        self.line_units_combo.setToolTip("The unit of measurement for the 2D distance.")
+        
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
 
     def setup_grid_settings_layout(self):
-        grid_group = QGroupBox("Grid Settings")
-        grid_layout = QVBoxLayout()
+        """Set up the grid settings layout."""
+        groupbox = QGroupBox("Grid Settings")
+        layout = QVBoxLayout()
+        
         self.margin_input = MarginInput()
-        grid_layout.addWidget(self.margin_input)
+        layout.addWidget(self.margin_input)
+        
         grid_params_layout = QFormLayout()
         rowcol_layout = QHBoxLayout()
         self.rows_spin = QSpinBox()
@@ -122,7 +141,8 @@ class RugosityDialog(QDialog):
         rowcol_layout.addWidget(QLabel("Columns:"))
         rowcol_layout.addWidget(self.cols_spin)
         grid_params_layout.addRow(rowcol_layout)
-        grid_layout.addLayout(grid_params_layout)
+        layout.addLayout(grid_params_layout)
+        
         grid_btn_layout = QHBoxLayout()
         self.generate_grid_button = QPushButton("Preview Grid")
         self.generate_grid_button.clicked.connect(self.tool.generate_grid)
@@ -130,55 +150,66 @@ class RugosityDialog(QDialog):
         self.clear_grid_button.clicked.connect(self.tool.clear_grid)
         grid_btn_layout.addWidget(self.generate_grid_button)
         grid_btn_layout.addWidget(self.clear_grid_button)
-        grid_layout.addLayout(grid_btn_layout)
-        grid_group.setLayout(grid_layout)
-        self.layout.addWidget(grid_group)
+        layout.addLayout(grid_btn_layout)
+        
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
 
     def setup_3d_zmetrics_layout(self):
-        self.line_3d_group = QGroupBox("3D Z-Metrics")
-        self.line_3d_group.setEnabled(False)
-        form_3d = QFormLayout()
+        """Set up the 3D Z-metrics layout."""
+        groupbox = QGroupBox("3D Z-Metrics")
+        groupbox.setEnabled(False)
+        layout = QFormLayout()
+        
         self.line_length_3d_label = QLabel("---")
         self.line_delta_z_label = QLabel("---")
         self.line_slope_label = QLabel("---")
         self.line_rugosity_label = QLabel("---")
         self.line_rugosity_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        form_3d.addRow("3D Length:", self.line_length_3d_label)
-        form_3d.addRow("ΔZ:", self.line_delta_z_label)
-        form_3d.addRow("Slope/Grade:", self.line_slope_label)
-        form_3d.addRow("Rugosity:", self.line_rugosity_label)
+        layout.addRow("3D Length:", self.line_length_3d_label)
+        layout.addRow("ΔZ:", self.line_delta_z_label)
+        layout.addRow("Slope / Grade:", self.line_slope_label)
+        layout.addRow("Rugosity:", self.line_rugosity_label)
+        self.line_rugosity_label.setToolTip("The rugosity value calculated from the 3D line.")
+        
         self.line_profile_button = QPushButton("Show Elevation Profile")
         self.line_profile_button.clicked.connect(self.tool._show_elevation_profile)
         self.line_profile_button.setEnabled(False)
-        form_3d.addRow("", self.line_profile_button)
-        self.line_3d_group.setLayout(form_3d)
-        self.layout.addWidget(self.line_3d_group)
+        layout.addRow("", self.line_profile_button)
+        self.line_profile_button.setToolTip("Show the elevation profile for the 3D line.")
+        
+        groupbox.setLayout(layout)
+        self.line_3d_group = groupbox
+        self.layout.addWidget(groupbox)
 
     def setup_status_label(self):
+        """Set up the status label."""
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignLeft)
         self.layout.addWidget(self.status_label)
 
     def setup_buttons_layout(self):
+        """Set up the buttons layout."""
         button_layout = QHBoxLayout()
+        
         self.clear_button = QPushButton("Clear All Measurements")
         self.clear_button.clicked.connect(self.tool.clear_all_measurements)
         button_layout.addWidget(self.clear_button)
+        
         button_layout.addStretch()
+        
         self.layout.addLayout(button_layout)
 
     # Optionally, add a method to update the status label
     def set_status(self, text):
         self.status_label.setText(text)
 
-
-    # setup_rugosity_tab is now obsolete and removed
-
     def closeEvent(self, event):
         """Handle dialog close"""
         self.tool.stop_current_drawing()
         self.tool.deactivate()
         event.accept()
+
 
 # Tool 
 class RugosityTool(Tool):

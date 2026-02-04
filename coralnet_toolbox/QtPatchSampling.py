@@ -1,6 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import random
 import numpy as np
@@ -8,8 +7,8 @@ import numpy as np
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
-                             QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox, QLabel)
+                             QPushButton, QComboBox, QSpinBox, QMessageBox, QLabel,
+                             QFormLayout, QGroupBox, QGraphicsRectItem)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -21,6 +20,8 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -118,7 +119,7 @@ class PatchGraphic(QGraphicsRectItem):
         """Clean up when the graphic is deleted."""
         if hasattr(self, 'is_animating') and self.is_animating:
             self.deanimate()
-        if hasattr(self, 'animation_timer') and self.animation_timer: # Keep for old instances
+        if hasattr(self, 'animation_timer') and self.animation_timer:  # Keep for old instances
             self.animation_timer.stop()
 
 
