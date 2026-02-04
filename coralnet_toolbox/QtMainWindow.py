@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         self.save_project_dialog = SaveProject(self)
 
         # Create dialogs (Sample)
-        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        self.patch_sampling_dialog_dialog = PatchSamplingDialog(self)
         self.rugosity_dialog = RugosityDialog(self)
 
         # Create dialogs (CoralNet)
@@ -389,6 +389,9 @@ class MainWindow(QMainWindow):
         self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
         # Connect imageChanged signal to update Z-Inference deploy button state
         self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
+        
+        # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
+        self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
 
         # ----------------------------------------
         # Create the menu bar
@@ -568,7 +571,7 @@ class MainWindow(QMainWindow):
         
         # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample", self)
-        self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
+        self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
         self.utilities_menu.addAction(self.annotation_sampling_action)
         
         # Rugosity
@@ -2633,109 +2636,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_explorer_window(self):
-        """Open the Explorer window, moving the LabelWindow into it."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening Explorer.")
-            return
-
-        # Check if there are any annotations
-        if not self.annotation_window.annotations_dict:
-            QMessageBox.warning(self,
-                                "Explorer",
-                                "No annotations are present in the project.")
-            return
-        
-        try:
-            self.untoggle_all_tools()
-
-            # Recreate the explorer window, passing the main window instance
-            self.explorer_window = ExplorerWindow(self)
-            
-            # Move the label_window from the main layout to the explorer
-            self.label_layout.removeWidget(self.label_window)
-            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
-            
-            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
-            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
-            self.label_layout.insertItem(0, self.explorer_spacer)
-                
-            # Disable all main window widgets except select few
-            self.set_main_window_enabled_state(
-                enable_list=[self.annotation_window, 
-                             self.label_window,
-                             self.transparency_widget],
-                disable_list=[self.toolbar, 
-                              self.menu_bar, 
-                              self.image_window, 
-                              self.confidence_window]
-            )
-            
-            self.explorer_window.showMaximized()
-            self.explorer_window.activateWindow()
-            self.explorer_window.raise_()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            if self.explorer_window:
-                self.explorer_window.close()  # Ensure cleanup
-                
-            self.explorer_window = None
-            # Re-enable everything if there was an error
-            self.set_main_window_enabled_state()
-        
-    def open_mvat_window(self):
-        """Open the Multi-View Annotation Tool (MVAT) window."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening MVAT.")
-            return
-        
-        try:
-            # Create and show the MVAT window (modeless - doesn't block main window)
-            # Create a new instance each time to ensure fresh state
-            self.mvat_window = MVATWindow(self)
-            self.mvat_window.show()
-            self.mvat_window.activateWindow()
-            self.mvat_window.raise_()
-            
-        except ImportError as e:
-            QMessageBox.warning(self,
-                                "MVAT Unavailable",
-                                "MVAT requires PyVista and PyVistaQt.\n\n"
-                                "Install with: pip install pyvista pyvistaqt")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
-
-    def explorer_closed(self):
-        """Handle the explorer window being closed."""
-        if self.explorer_window:
-            # Remove the spacer that was added when explorer opened
-            if hasattr(self, 'explorer_spacer'):
-                self.label_layout.removeItem(self.explorer_spacer)
-                del self.explorer_spacer
-            
-            # Move the label_window back to the main window's layout
-            self.label_window.setParent(self.central_widget)  # Re-parent back
-            # Insert at index 0 to maintain original order: label_window first, timer_group second
-            self.label_layout.insertWidget(0, self.label_window)
-            self.label_window.show()
-            self.label_window.resizeEvent(None)
-            self.resizeEvent(None)
-            
-            # Re-enable all main window widgets
-            self.set_main_window_enabled_state()
-            
-            # Clean up reference
-            self.explorer_window = None
-
-    def open_patch_annotation_sampling_dialog(self):
+    def open_patch_sampling_dialog_dialog(self):
         """Open the Patch Annotation Sampling dialog to sample annotations from images"""
         # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
@@ -2747,7 +2648,7 @@ class MainWindow(QMainWindow):
         try:
             # Proceed to open the dialog if images are loaded
             self.untoggle_all_tools()
-            self.patch_annotation_sampling_dialog.show()
+            self.patch_sampling_dialog_dialog.show()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -3390,6 +3291,121 @@ class MainWindow(QMainWindow):
             self.lightcycle_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+    
+    # Special Windows
+    
+    def open_explorer_window(self):
+        """Open the Explorer window, moving the LabelWindow into it."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening Explorer.")
+            return
+
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Explorer",
+                                "No annotations are present in the project.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+
+            # Recreate the explorer window, passing the main window instance
+            self.explorer_window = ExplorerWindow(self)
+            
+            # Move the label_window from the main layout to the explorer
+            self.label_layout.removeWidget(self.label_window)
+            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            
+            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
+            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
+            self.label_layout.insertItem(0, self.explorer_spacer)
+                
+            # Disable all main window widgets except select few
+            self.set_main_window_enabled_state(
+                enable_list=[self.annotation_window, 
+                             self.label_window,
+                             self.transparency_widget],
+                disable_list=[self.toolbar, 
+                              self.menu_bar, 
+                              self.image_window, 
+                              self.confidence_window]
+            )
+            
+            self.explorer_window.showMaximized()
+            self.explorer_window.activateWindow()
+            self.explorer_window.raise_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            if self.explorer_window:
+                self.explorer_window.close()  # Ensure cleanup
+                
+            self.explorer_window = None
+            # Re-enable everything if there was an error
+            self.set_main_window_enabled_state()
+    
+    # TODO
+    def explorer_closed(self):
+        """Handle the explorer window being closed."""
+        if self.explorer_window:
+            # Remove the spacer that was added when explorer opened
+            if hasattr(self, 'explorer_spacer'):
+                self.label_layout.removeItem(self.explorer_spacer)
+                del self.explorer_spacer
+            
+            # Move the label_window back to the main window's layout
+            self.label_window.setParent(self.central_widget)  # Re-parent back
+            # Insert at index 0 to maintain original order: label_window first, timer_group second
+            self.label_layout.insertWidget(0, self.label_window)
+            self.label_window.show()
+            self.label_window.resizeEvent(None)
+            self.resizeEvent(None)
+            
+            # Re-enable all main window widgets
+            self.set_main_window_enabled_state()
+            
+            # Clean up reference
+            self.explorer_window = None
+        
+    def open_mvat_window(self):
+        """Open the Multi-View Annotation Tool (MVAT) window."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening MVAT.")
+            return
+        
+        try:
+            # Create and show the MVAT window (modeless - doesn't block main window)
+            # Create a new instance each time to ensure fresh state
+            self.mvat_window = MVATWindow(self)
+            self.mvat_window.show()
+            self.mvat_window.activateWindow()
+            self.mvat_window.raise_()
+            
+        except ImportError as e:
+            QMessageBox.warning(self,
+                                "MVAT Unavailable",
+                                "MVAT requires PyVista and PyVistaQt.\n\n"
+                                "Install with: pip install pyvista pyvistaqt")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
+            
+    def close_image_specific_dialogs(self):
+        """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
+        # Close PatchSamplingDialog if open
+        if hasattr(self, 'patch_sampling_dialog') and self.patch_sampling_dialog.isVisible():
+            self.patch_sampling_dialog.close()
+        
+        # Close RugosityDialog if open
+        if hasattr(self, 'rugosity_dialog') and self.rugosity_dialog.isVisible():
+            self.rugosity_dialog.close()
 
 
 class DeviceSelectionDialog(QDialog):
