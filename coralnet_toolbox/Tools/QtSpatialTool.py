@@ -204,13 +204,13 @@ class ProfilePlotDialog(QDialog):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# SpatialToolDialog Class
+# RugosityToolDialog Class
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SpatialToolDialog(QDialog):
+class RugosityToolDialog(QDialog):
     """
-    A modeless dialog for the SpatialTool, allowing measurements and spatial analysis.
+    A modeless dialog for the RugosityTool, allowing measurements and spatial analysis.
     """
     def __init__(self, tool, parent=None):
         super().__init__(parent)
@@ -219,7 +219,7 @@ class SpatialToolDialog(QDialog):
         self.annotation_window = self.tool.annotation_window
         self.main_window = self.annotation_window.main_window
         
-        self.setWindowTitle("Spatial Tool")
+        self.setWindowTitle("Rugosity")
         self.setWindowIcon(get_icon("spatial.png"))
         self.resize(450, 300)
         
@@ -372,17 +372,17 @@ class SpatialToolDialog(QDialog):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# SpatialTool Class  
+# RugosityTool Class  
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SpatialTool(Tool):
+class RugosityTool(Tool):
     """
     Tool for measuring distances, areas, perimeters, and performing spatial analysis.
     """
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
-        self.name = "spatial"
+        self.name = "rugosity"
         self.cursor = Qt.CrossCursor  # Show crosshair cursor
         
         self.animation_manager = self.annotation_window.animation_manager
@@ -558,12 +558,12 @@ class SpatialTool(Tool):
             return (r, g, b)
 
     def activate(self):
-        """Activate the spatial measurement tool"""
+        """Activate the rugosity measurement tool"""
         super().activate()
         
         # Create dialog if it doesn't exist
         if self.dialog is None:
-            self.dialog = SpatialToolDialog(self, self.annotation_window.main_window)
+            self.dialog = RugosityToolDialog(self, self.annotation_window.main_window)
         
         self.dialog.show()
         self.dialog.raise_()
@@ -573,7 +573,7 @@ class SpatialTool(Tool):
         self.update_z_controls()
 
     def deactivate(self):
-        """Deactivate the spatial measurement tool"""
+        """Deactivate the rugosity measurement tool"""
         if not self.active:
             return
         super().deactivate()

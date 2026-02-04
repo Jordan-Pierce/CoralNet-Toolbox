@@ -34,7 +34,7 @@ from coralnet_toolbox.Tools import (
     ZoomTool,
     WorkAreaTool,
     ScaleTool,
-    SpatialTool
+    RugosityTool
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -194,7 +194,7 @@ class AnnotationWindow(QGraphicsView):
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
             "scale": ScaleTool(self),
-            "spatial": SpatialTool(self),
+            "rugosity": RugosityTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self),
@@ -687,7 +687,7 @@ class AnnotationWindow(QGraphicsView):
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
-            if self.selected_tool in ["scale", "spatial"]:
+            if self.selected_tool in ["scale", "rugosity"]:
                 self.main_window.untoggle_all_tools()
                     
         # Clean up (This is the ONLY scene clear)

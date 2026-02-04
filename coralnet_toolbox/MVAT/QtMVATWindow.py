@@ -27,7 +27,10 @@ from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED,
                                                   RAY_COLOR_HIGHLIGHTED)
 from coralnet_toolbox.MVAT.core.utils import (
     BatchedFrustumManager,
-    BatchedRayManager
+    BatchedRayManager,
+    STATE_DEFAULT,
+    STATE_HIGHLIGHTED,
+    STATE_SELECTED
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
