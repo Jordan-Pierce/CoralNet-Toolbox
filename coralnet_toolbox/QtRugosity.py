@@ -6,15 +6,13 @@ from random import randint
 
 import pyqtgraph as pg
 
-from PyQt5.QtCore import Qt, QLineF, QRectF, QPointF
+from PyQt5.QtCore import Qt, QLineF, QRectF, QPointF, QEvent
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout,
                              QFormLayout, QDoubleSpinBox, QComboBox, 
                              QDialogButtonBox, QMessageBox, QLabel,
                              QGroupBox, QPushButton, QSpacerItem,
                              QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout)
-
-from coralnet_toolbox.Tools.QtTool import Tool
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
@@ -40,9 +38,36 @@ class RugosityDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = self.main_window.annotation_window
         
-        # Properties of a tool 
-        self.tool = RugosityTool(self.annotation_window)
-        self.tool.dialog = self
+        # Tool properties (merged from RugosityTool)
+        self.name = "rugosity"
+        self.cursor = Qt.CrossCursor
+        
+        self.animation_manager = self.annotation_window.animation_manager
+        
+        # Drawing state
+        self.is_drawing = False
+        self.start_point = None
+        self.end_point = None
+        
+        # Graphics items
+        self.line_graphic = None
+        self.wireframe_graphic = None  # For 3D visualization
+        self.endpoint_dots = []  # Store endpoint circles (white and black dots)
+        
+        # Recorded measurements with color info
+        self.recorded_line_measurements = []  # List of dicts with line data and color
+        
+        # Grid settings
+        self.working_area = None  # Visual representation of working area
+        self.grid_lines = []  # List of grid line measurements
+        self.grid_enabled = False
+        
+        # Profile data for plotting
+        self.current_profiles = []
+        self.profile_dialog = None
+        
+        # Last calculated color for measurements
+        self.last_calculated_color = (128, 128, 128)  # Default to gray for grid lines
 
         self.setWindowTitle("Rugosity")
         self.setWindowIcon(get_icon("spatial.png"))  # use the spatial icon
@@ -146,9 +171,9 @@ class RugosityDialog(QDialog):
         
         grid_btn_layout = QHBoxLayout()
         self.generate_grid_button = QPushButton("Preview Grid")
-        self.generate_grid_button.clicked.connect(self.tool.generate_grid)
+        self.generate_grid_button.clicked.connect(self.generate_grid)
         self.clear_grid_button = QPushButton("Clear Grid")
-        self.clear_grid_button.clicked.connect(self.tool.clear_grid)
+        self.clear_grid_button.clicked.connect(self.clear_grid)
         grid_btn_layout.addWidget(self.generate_grid_button)
         grid_btn_layout.addWidget(self.clear_grid_button)
         layout.addLayout(grid_btn_layout)
@@ -174,7 +199,7 @@ class RugosityDialog(QDialog):
         self.line_rugosity_label.setToolTip("The rugosity value calculated from the 3D line.")
         
         self.line_profile_button = QPushButton("Show Elevation Profile")
-        self.line_profile_button.clicked.connect(self.tool._show_elevation_profile)
+        self.line_profile_button.clicked.connect(self._show_elevation_profile)
         self.line_profile_button.setEnabled(False)
         layout.addRow("", self.line_profile_button)
         self.line_profile_button.setToolTip("Show the elevation profile for the 3D line.")
@@ -194,7 +219,7 @@ class RugosityDialog(QDialog):
         button_layout = QHBoxLayout()
         
         self.clear_button = QPushButton("Clear All Measurements")
-        self.clear_button.clicked.connect(self.tool.clear_all_measurements)
+        self.clear_button.clicked.connect(self.clear_all_measurements)
         button_layout.addWidget(self.clear_button)
         
         button_layout.addStretch()
@@ -206,57 +231,50 @@ class RugosityDialog(QDialog):
         self.status_label.setText(text)
 
     def showEvent(self, event):
-        """Handle dialog show"""
+        """Handle dialog show - install event filter to capture mouse events"""
         super().showEvent(event)
-        self.annotation_window.set_selected_tool(self.tool)
+        
+        # Install event filter on annotation window to capture mouse events
+        self.annotation_window.installEventFilter(self)
+        
+        # Set the cursor
+        self.annotation_window.setCursor(self.cursor)
+        
+        # Update UI based on available data
+        self.update_z_controls()
 
     def closeEvent(self, event):
-        """Handle dialog close"""
-        self.tool.stop_current_drawing()
-        self.tool.deactivate()
+        """Handle dialog close - remove event filter and clean up graphics"""
+        # Remove event filter
+        self.annotation_window.removeEventFilter(self)
+        
+        # Restore default cursor
+        self.annotation_window.setCursor(Qt.ArrowCursor)
+        
+        # Stop any current drawing
+        self.stop_current_drawing()
+        
+        # Clear all graphics
+        self.clear_all_graphics()
+        
         event.accept()
-
-
-# Tool 
-class RugosityTool(Tool):
-    """
-    Tool for measuring distances, areas, perimeters, and performing spatial analysis.
-    """
-    def __init__(self, annotation_window):
-        super().__init__(annotation_window)
-        self.name = "rugosity"
-        self.cursor = Qt.CrossCursor  # Show crosshair cursor
-        
-        self.animation_manager = self.annotation_window.animation_manager
-        
-        # Drawing state
-        self.is_drawing = False
-        self.start_point = None
-        self.end_point = None
-        
-        # Graphics items
-        self.line_graphic = None
-        self.wireframe_graphic = None  # For 3D visualization
-        self.endpoint_dots = []  # Store endpoint circles (white and black dots)
-        
-        # Recorded measurements with color info
-        self.recorded_line_measurements = []  # List of dicts with line data and color
-        
-        # Grid settings
-        self.working_area = None  # Visual representation of working area
-        self.grid_lines = []  # List of grid line measurements
-        self.grid_enabled = False
-        
-        # Profile data for plotting
-        self.current_profiles = []
-        self.profile_dialog = None
-        
-        # Last calculated color for measurements
-        self.last_calculated_color = (128, 128, 128)  # Default to gray for grid lines
-        
-        # Dialog
-        self.dialog = None
-        
+    
+    def eventFilter(self, obj, event):
+        """Filter events from annotation window to capture mouse events"""
+        if obj == self.annotation_window:
+            if event.type() == QEvent.MouseButtonPress:
+                self.handle_mouse_press(event)
+                return True
+            elif event.type() == QEvent.MouseMove:
+                self.handle_mouse_move(event)
+                return True
+            elif event.type() == QEvent.MouseButtonRelease:
+                self.handle_mouse_release(event)
+                return True
+        return super().eventFilter(obj, event)
+    
+    # --- Tool Methods (merged from RugosityTool) ---
+    
     def get_current_scale(self):
         """Get current scale information from raster"""
         image_path = self.annotation_window.current_image_path
@@ -399,6 +417,718 @@ class RugosityTool(Tool):
             b = 0
             return (r, g, b)
 
+    def stop_current_drawing(self):
+        """Stop any active drawing and clear graphics"""
+        self.is_drawing = False
+        self.start_point = None
+        self.end_point = None
+        
+        # Remove graphics
+        scene = self.annotation_window.scene
+        if self.line_graphic and self.line_graphic.scene():
+            scene.removeItem(self.line_graphic)
+            self.line_graphic = None
+        if self.wireframe_graphic and self.wireframe_graphic.scene():
+            scene.removeItem(self.wireframe_graphic)
+            self.wireframe_graphic = None
+
+    def clear_all_graphics(self):
+        """Clear all graphics including recorded measurements from the scene"""
+        scene = self.annotation_window.scene
+        
+        # Clear current drawing graphics
+        self.stop_current_drawing()
+        
+        # Clear all recorded line measurements
+        for measurement in self.recorded_line_measurements:
+            for key in ['line', 'start_dot', 'end_dot']:
+                if key in measurement and measurement[key]:
+                    if measurement[key].scene() == scene:
+                        scene.removeItem(measurement[key])
+        self.recorded_line_measurements.clear()
+        
+        # Clear grid
+        self.clear_grid()
+        
+        # Close profile dialog if open
+        if self.profile_dialog:
+            self.profile_dialog.close()
+            self.profile_dialog = None
+        
+        # Clear profile data
+        self.current_profiles.clear()
+
+    def clear_all_measurements(self):
+        """Clear all measurements and reset UI"""
+        self.clear_all_graphics()
+        self.line_length_2d_label.setText("---")
+        self._reset_line_3d_labels()
+        self.line_profile_button.setEnabled(False)
+        # Reset chain length and unit
+        self.chain_length_spin.setValue(1.0)
+        self.chain_unit_combo.setCurrentText('cm')
+        # Reset margin input to defaults (block signals to prevent triggering generate_grid)
+        self.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
+        self.margin_input.value_type.setCurrentIndex(0)  # Pixels
+        for spin in self.margin_input.margin_spins:
+            spin.setValue(0)
+        self.margin_input.single_spin.setValue(0)
+        self.margin_input.single_double.setValue(0.0)
+        self.margin_input.update_input_mode(0)
+        # Recalculate grid spinbox values to auto-calculated defaults
+        self.calculate_spacing()
+
+    def calculate_spacing(self):
+        """Calculate and store row and column spacing as attributes based on image dimensions and current spinbox
+        values."""
+        if not self.annotation_window.current_image_path:
+            self.row_spacing = None
+            self.col_spacing = None
+            return
+        image_width, image_height = self.annotation_window.get_image_dimensions()
+        if not image_width or not image_height:
+            self.row_spacing = None
+            self.col_spacing = None
+            return
+        num_rows = self.rows_spin.value()
+        num_cols = self.cols_spin.value()
+        self.row_spacing = image_height / (num_rows - 1) if num_rows > 1 else image_height
+        self.col_spacing = image_width / (num_cols - 1) if num_cols > 1 else image_width
+
+    def generate_grid(self):
+        """Generate grid lines based on margin and spacing settings with Rugosity Coloring"""
+        # Get image dimensions
+        if not self.annotation_window.current_image_path:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
+
+        image_width, image_height = self.annotation_window.get_image_dimensions()
+        if not image_width or not image_height:
+            return
+
+        # Get margins in pixels
+        margins = self.margin_input.get_margins(image_width, image_height, validate=True)
+        if margins is None:
+            return
+
+        left, top, right, bottom = margins
+
+        # Calculate ROI bounds
+        roi_left = left
+        roi_top = top
+        roi_right = image_width - right
+        roi_bottom = image_height - bottom
+
+        if roi_right <= roi_left or roi_bottom <= roi_top:
+            QMessageBox.warning(self, "Invalid Working Area", "Margins result in invalid working area.")
+            return
+
+        # Calculate and update spacing attributes
+        self.calculate_spacing()
+        row_spacing = self.row_spacing
+        col_spacing = self.col_spacing
+        num_rows = self.rows_spin.value()
+        num_cols = self.cols_spin.value()
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            bounds = QRectF(roi_left, roi_top, roi_right - roi_left, roi_bottom - roi_top)
+            self.grid_enabled = True
+
+            # Draw working area rectangle
+            self._draw_working_area_graphic(bounds)
+
+            # Clear existing grid lines first
+            self.clear_grid()
+
+            # --- Helper to process a grid line ---
+            def process_grid_line(p1, p2):
+                # 1. Set points for calculation
+                self.start_point = p1
+                self.end_point = p2
+
+                # 2. Calculate measurement (color=None enables auto-coloring)
+                # This adds the profile to self.current_profiles and updates self.last_calculated_color
+                self.calculate_line_measurement(final_calc=True, color=None)
+
+                # 3. Tag the last added profile as a "grid" line so we can clear it later
+                if self.current_profiles:
+                    self.current_profiles[-1]['is_grid'] = True
+                    # Rename it to be distinct in the legend
+                    self.current_profiles[-1]['name'] = f"Grid Line {len(self.current_profiles)}"
+
+                # 4. Retrieve the calculated color (Jet/Grey based on rugosity)
+                final_color = self.last_calculated_color
+
+                # 5. Create the graphic with this specific color
+                measurement = self._create_colored_line(p1, p2, final_color)
+                self.grid_lines.append(measurement)
+
+                # Reset points
+                self.start_point = None
+                self.end_point = None
+
+            # --- Generate Rows ---
+            current_y = roi_top
+            row_count = 0
+            while current_y <= roi_bottom and (num_rows == 0 or row_count < num_rows):
+                if current_y >= roi_top:
+                    start = QPointF(roi_left, current_y)
+                    end = QPointF(roi_right, current_y)
+                    process_grid_line(start, end)
+                current_y += row_spacing
+                row_count += 1
+
+            # --- Generate Columns ---
+            current_x = roi_left
+            col_count = 0
+            while current_x <= roi_right and (num_cols == 0 or col_count < num_cols):
+                if current_x >= roi_left:
+                    start = QPointF(current_x, roi_top)
+                    end = QPointF(current_x, roi_bottom)
+                    process_grid_line(start, end)
+                current_x += col_spacing
+                col_count += 1
+
+            # Update profile button state
+            self.update_profile_button_state()
+
+            # Update profile dialog if it's already open
+            if self.profile_dialog and self.profile_dialog.isVisible():
+                self.profile_dialog.update_plot(self.current_profiles)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def clear_grid(self):
+        """Clear all grid lines, ROI, and remove grid profiles from plot"""
+        scene = self.annotation_window.scene
+        
+        # Remove all grid line graphics
+        for measurement in self.grid_lines:
+            for key in ['line', 'start_dot', 'end_dot']:
+                if key in measurement and measurement[key]:
+                    if measurement[key].scene() == scene:
+                        scene.removeItem(measurement[key])
+        self.grid_lines.clear()
+        
+        # Remove working area
+        if self.working_area:
+            self.working_area.remove_from_scene()
+            self.working_area = None
+            
+        self.grid_enabled = False
+        
+        # Clear grid profiles from current_profiles
+        # We now filter based on the 'is_grid' tag we added in generate_grid
+        self.current_profiles = [p for p in self.current_profiles if not p.get('is_grid', False)]
+        
+        # Update profile button and dialog
+        self.update_profile_button_state()
+        if self.profile_dialog and self.profile_dialog.isVisible():
+            self.profile_dialog.update_plot(self.current_profiles)
+
+    def _draw_working_area_graphic(self, bounds):
+        """Create working area on the scene with shadow"""
+        if not bounds:
+            return
+            
+        # Remove old working area if exists
+        if self.working_area:
+            self.working_area.remove_from_scene()
+            self.working_area = None
+            
+        # Create WorkArea for working area
+        image_path = self.annotation_window.current_image_path
+        self.working_area = WorkArea(
+            bounds.x(), 
+            bounds.y(), 
+            bounds.width(), 
+            bounds.height(), 
+            image_path
+        )
+        
+        # Set the animation manager
+        self.working_area.set_animation_manager(self.animation_manager)
+        
+        # Create graphics with shadow and animation
+        self.working_area.create_graphics(
+            self.annotation_window.scene, 
+            include_shadow=True, 
+            animate=True
+        )
+        
+        # Set ZValues to match original (below measurements but above image)
+        if self.working_area.graphics_item:
+            self.working_area.graphics_item.setZValue(999)
+        if self.working_area.shadow_area:
+            self.working_area.shadow_area.setZValue(998)
+    
+        # Force scene to update and render the new graphics
+        self.annotation_window.scene.update()
+
+    def _is_point_in_working_area(self, point):
+        """Check if a point is within the working area"""
+        if not self.grid_enabled or not self.working_area:
+            return True
+        rect = QRectF(self.working_area.x(), 
+                      self.working_area.y(), 
+                      self.working_area.width(), 
+                      self.working_area.height())
+        return rect.contains(point)
+
+    def _clamp_point_to_working_area(self, point):
+        """Clamp a point to working area bounds"""
+        if not self.grid_enabled or not self.working_area:
+            return point
+            
+        rect = QRectF(self.working_area.x(), 
+                      self.working_area.y(),
+                      self.working_area.width(), 
+                      self.working_area.height())
+        x = max(rect.left(), min(point.x(), rect.right()))
+        y = max(rect.top(), min(point.y(), rect.bottom()))
+        return QPointF(x, y)
+
+    def update_z_controls(self):
+        """Enable/disable Z-controls based on data availability"""
+        z_data, z_unit = self.get_current_z_data()
+        has_z = z_data is not None
+        
+        self.line_3d_group.setEnabled(has_z)
+        self.line_profile_button.setEnabled(False)  # Enable after line drawn
+
+    def handle_mouse_press(self, event: QMouseEvent):
+        """Handle mouse press for starting measurements"""
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            
+            # Check if point is within working area when grid is enabled
+            if self.grid_enabled and not self._is_point_in_working_area(scene_pos):
+                return
+            
+            # Only start new drawing if not already drawing
+            if not self.is_drawing:
+                # Clear previous graphics
+                self.stop_current_drawing()
+                
+                # Start new measurement
+                self.start_point = scene_pos
+                self.end_point = scene_pos
+                self.is_drawing = True
+            else:
+                # Second click finishes the measurement
+                self.end_point = self._clamp_point_to_working_area(scene_pos)
+                self.is_drawing = False
+                
+                # 1. Final Calculation 
+                # Pass color=None so it calculates rugosity color automatically based on session max
+                self.calculate_line_measurement(final_calc=True, color=None)
+                
+                # 2. Get the calculated color (Grey for flat, Jet for rugose)
+                final_color = self.last_calculated_color
+                
+                # 3. Create and record the permanent graphic with this color
+                measurement = self._create_colored_line(self.start_point, self.end_point, final_color)
+                self.recorded_line_measurements.append(measurement)
+                
+                # 4. Updates
+                self._update_wireframe_graphic()  # Add 3D wireframe if available
+                self.update_profile_button_state()
+
+    def handle_mouse_move(self, event: QMouseEvent):
+        """Handle mouse move for drawing measurements"""
+        if self.is_drawing and self.start_point:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.end_point = self._clamp_point_to_working_area(scene_pos)
+            
+            # Update graphics and measurements
+            self._update_line_graphic()
+            self.calculate_line_measurement(final_calc=False)
+
+    def handle_mouse_release(self, event: QMouseEvent):
+        """Handle mouse release - measurement is finalized on second click"""
+        pass
+    
+    def _update_line_graphic(self):
+        """Update or create line graphic with cosmetic pen (visible at all zoom levels)"""
+        if not self.start_point or not self.end_point:
+            return
+            
+        scene = self.annotation_window.scene
+        
+        # Remove old graphic
+        if self.line_graphic and self.line_graphic.scene():
+            scene.removeItem(self.line_graphic)
+        
+        # Create new line with cosmetic pen (doesn't scale with zoom)
+        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)
+        pen.setCosmetic(True)  # Make pen width independent of zoom level
+        line = QLineF(self.start_point, self.end_point)
+        self.line_graphic = scene.addLine(line, pen)
+        self.line_graphic.setZValue(1000)  # Draw on top
+        
+        # Force scene update for real-time visibility
+        scene.update()
+
+    def _update_wireframe_graphic(self):
+        """Create 3D wireframe visualization for line measurement"""
+        # This will be implemented in the next part
+        # For now, just a placeholder
+        pass
+
+    def _show_elevation_profile(self):
+        """Show elevation profile plot dialog"""
+        if not self.current_profiles:
+            QMessageBox.warning(self, "No Data", "No profile data available to display.")
+            return
+        
+        if self.profile_dialog is None or not self.profile_dialog.isVisible():
+            self.profile_dialog = ProfilePlotDialog(self.current_profiles, self)
+        else:
+            self.profile_dialog.update_plot(self.current_profiles)
+        
+        self.profile_dialog.show()
+        self.profile_dialog.raise_()
+
+    def update_profile_button_state(self):
+        """Enable/disable profile button based on data availability"""
+        has_data = len(self.current_profiles) > 0
+        self.line_profile_button.setEnabled(has_data)
+
+    # Calculation methods - adapted to use transform pipeline
+    
+    def calculate_line_measurement(self, final_calc=False, color=None):
+        """Calculate line measurements (2D and 3D) using transform pipeline"""
+        if not self.start_point or not self.end_point:
+            return
+            
+        # Initialize default color (Grey) in case of early exit
+        self.last_calculated_color = (128, 128, 128)
+            
+        # --- 1. Get Data ---
+        scale_x, scale_y, scale_units = self.get_current_scale()
+        
+        # Check for invalid scale
+        if scale_x is None or scale_y is None:
+            self.line_length_2d_label.setText("Scale Not Set")
+            self._reset_line_3d_labels()
+            return
+
+        display_units = self.line_units_combo.currentText()
+        
+        # --- 2. Calculate 2D Length ---
+        line = QLineF(self.start_point, self.end_point)
+        pixel_length = line.length()
+        length_2d_meters = pixel_length * scale_x  # Assume square pixels
+        
+        # Convert to display units
+        if display_units != "m":
+            length_2d_display = convert_scale_units(length_2d_meters, 'metre', display_units)
+        else:
+            length_2d_display = length_2d_meters
+        
+        self.line_length_2d_label.setText(f"{length_2d_display:.3f} {display_units}")
+
+        # --- 3. 3D Calculations (if Z-data available) ---
+        z_data, z_unit = self.get_current_z_data()
+        
+        if z_data is None:
+            self._reset_line_3d_labels()
+            return
+        
+        try:
+            image_path = self.annotation_window.current_image_path
+            raster_manager = self.annotation_window.main_window.image_window.raster_manager
+            raster = raster_manager.get_raster(image_path)
+            
+            h, w = z_data.shape
+            z_unit_str = z_unit if z_unit else 'px'
+            
+            # Convert z_unit to meters for 3D calculations
+            z_to_meters_factor = convert_scale_units(1.0, z_unit, 'metre') if z_unit else 1.0
+
+            # Get raw Z values at start/end
+            p1_x = int(max(0, min(self.start_point.x(), w - 1)))
+            p1_y = int(max(0, min(self.start_point.y(), h - 1)))
+            p2_x = int(max(0, min(self.end_point.x(), w - 1)))
+            p2_y = int(max(0, min(self.end_point.y(), h - 1)))
+            
+            z_start = raster.get_z_value(p1_x, p1_y)
+            z_end = raster.get_z_value(p2_x, p2_y)
+            
+            if z_start is None or z_end is None:
+                self._reset_line_3d_labels()
+                return
+            
+            delta_z = z_end - z_start
+            self.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
+            
+            # Calculate Slope
+            if length_2d_meters > 0:
+                delta_z_meters = delta_z * z_to_meters_factor
+                slope = (delta_z_meters / length_2d_meters) * 100.0
+                self.line_slope_label.setText(f"{slope:.2f} %")
+            else:
+                self.line_slope_label.setText("N/A")
+
+            # --- Calculate 3D Length with Chain Resolution ---
+            
+            # 1. Determine Sampling Step (Chain Length)
+            chain_len_val = self.chain_length_spin.value()
+            chain_len_unit = self.chain_unit_combo.currentText()
+            # Convert chain length to meters, then to pixels
+            chain_len_meters = convert_scale_units(chain_len_val, chain_len_unit, 'metre')
+            
+            # Convert physical chain length to pixel steps
+            if scale_x > 0:
+                step_pixels = chain_len_meters / scale_x
+            else:
+                step_pixels = 1.0
+                
+            # Ensure we don't go smaller than 1 pixel (Aliasing check)
+            step_pixels = max(1.0, step_pixels)
+            
+            num_steps = int(pixel_length / step_pixels)
+            num_samples = max(2, num_steps + 1)  # Ensure at least start and end
+
+            x_samples = np.linspace(self.start_point.x(), self.end_point.x(), num_samples)
+            y_samples = np.linspace(self.start_point.y(), self.end_point.y(), num_samples)
+            
+            # Get raw Z-values along the line (no transform)
+            z_samples = []
+            for i in range(num_samples):
+                x_idx = int(max(0, min(x_samples[i], w - 1)))
+                y_idx = int(max(0, min(y_samples[i], h - 1)))
+                z_samples.append(z_data[y_idx, x_idx])
+            
+            z_array = np.array(z_samples)
+            
+            # Calculate 3D length
+            profile_data_x = []
+            profile_data_y = []
+            total_3d_length = 0.0
+            dist_2d_so_far = 0.0
+            
+            profile_data_x.append(0.0)
+            profile_data_y.append(z_array[0])
+            
+            for i in range(num_samples - 1):
+                x_a, y_a = x_samples[i], y_samples[i]
+                x_b, y_b = x_samples[i + 1], y_samples[i + 1]
+                z_a = z_array[i]
+                z_b = z_array[i + 1]
+                
+                dx_m = (x_b - x_a) * scale_x
+                dy_m = (y_b - y_a) * scale_y
+                dz_meters = (z_b - z_a) * z_to_meters_factor
+                
+                total_3d_length += math.sqrt(dx_m**2 + dy_m**2 + dz_meters**2)
+                
+                dist_2d_so_far += math.sqrt(dx_m**2 + dy_m**2)
+                profile_data_x.append(dist_2d_so_far)
+                profile_data_y.append(z_b)
+
+            # Convert 3D length to display units
+            if display_units != "m":
+                length_3d_display = convert_scale_units(total_3d_length, 'metre', display_units)
+                conv_factor = convert_scale_units(1.0, 'metre', display_units)
+                plot_x_data = [x * conv_factor for x in profile_data_x]
+            else:
+                length_3d_display = total_3d_length
+                plot_x_data = profile_data_x
+            
+            self.line_length_3d_label.setText(f"{length_3d_display:.3f} {display_units}")
+
+            # --- Calculate Linear Rugosity & Color ---
+            linear_rugosity = 1.0  # Default
+            if length_2d_meters > 0:
+                linear_rugosity = total_3d_length / length_2d_meters
+                self.line_rugosity_label.setText(f"{linear_rugosity:.3f}")
+            else:
+                self.line_rugosity_label.setText("N/A")
+            
+            # Determine Color based on Rugosity and Session Max
+            # If a specific color is forced (like Grey for grid lines), use it.
+            # Otherwise, calculate color based on rugosity.
+            rugosity_color = self._get_rugosity_color(linear_rugosity)
+            final_color_to_save = color if color else rugosity_color
+            
+            # Store calculated color for use in handle_mouse_press (visual feedback)
+            self.last_calculated_color = final_color_to_save
+
+            # Store profile data
+            if final_calc:
+                profile_data = {
+                    'name': f'Line {len(self.current_profiles) + 1}',
+                    'color': final_color_to_save, 
+                    'x_data': plot_x_data,
+                    'y_data': profile_data_y,
+                    'start_point': self.start_point,
+                    'end_point': self.end_point,
+                    'stats': {
+                        'length_3d': length_3d_display,
+                        'delta_z': delta_z,
+                        'rugosity': linear_rugosity if length_2d_meters > 0 else 0
+                    }
+                }
+                
+                self.current_profiles.append(profile_data)
+                self.update_profile_button_state()
+                
+                if self.profile_dialog and self.profile_dialog.isVisible():
+                    self.profile_dialog.update_plot(self.current_profiles)
+                
+        except Exception as e:
+            print(f"Error in 3D line calculation: {e}")
+            import traceback
+            traceback.print_exc()
+            self._reset_line_3d_labels()
+
+    def _reset_line_3d_labels(self):
+        """Reset all 3D line labels"""
+        self.line_length_3d_label.setText("---")
+        self.line_delta_z_label.setText("---")
+        self.line_slope_label.setText("---")
+        self.line_rugosity_label.setText("---")
+
+
+# Popup Dialog        
+class ProfilePlotDialog(QDialog):
+    """
+    A pop-up dialog to display a scrollable list of elevation profile plots
+    using pyqtgraph.
+    """
+    def __init__(self, profiles_list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Elevation Profile")
+        """Get current Z-channel data from raster (raw values)"""
+        image_path = self.annotation_window.current_image_path
+        if not image_path:
+            return None, None
+            
+        raster_manager = self.annotation_window.main_window.image_window.raster_manager
+        raster = raster_manager.get_raster(image_path)
+        
+        # Check if scale exists (required for measurements)
+        scale_x, scale_y, scale_units = self.get_current_scale()
+        if scale_x is None:
+            return None, None
+        
+        # Get Z-channel data using lazy loading
+        if raster and raster.z_channel_lazy is not None:
+            z_data = raster.z_channel_lazy
+            z_unit = raster.z_unit or 'px'
+            
+            return z_data, z_unit
+        
+        return None, None
+
+    def _generate_random_color(self):
+        """Generate a random RGB color tuple"""
+        return (randint(0, 255), randint(0, 255), randint(0, 255))
+    
+    def _create_colored_line(self, start, end, color_rgb):
+        """Create a solid colored line with endpoint dots"""
+        scene = self.annotation_window.scene
+        
+        # Create solid line in the random color
+        pen = QPen(QColor(*color_rgb), 3, Qt.SolidLine)
+        pen.setCosmetic(True)
+        line = QLineF(start, end)
+        line_graphic = scene.addLine(line, pen)
+        line_graphic.setZValue(1000)
+        
+        # Create white dot at start point
+        start_dot = scene.addEllipse(
+            start.x() - 3, start.y() - 3, 6, 6,
+            QPen(QColor(255, 255, 255), 3),
+            QBrush(QColor(255, 255, 255))
+        )
+        start_dot.setZValue(1001)
+        
+        # Create black dot at end point
+        end_dot = scene.addEllipse(
+            end.x() - 3, end.y() - 3, 6, 6,
+            QPen(QColor(0, 0, 0), 3),
+            QBrush(QColor(0, 0, 0))
+        )
+        end_dot.setZValue(1001)
+        
+        return {
+            'line': line_graphic,
+            'start_dot': start_dot,
+            'end_dot': end_dot,
+            'start_point': QPointF(start),
+            'end_point': QPointF(end),
+            'color': color_rgb
+        }
+        
+    def _get_rugosity_color(self, rugosity):
+        """
+        Map a rugosity value to an RGB color based on SESSION MAXIMUM.
+        1.0 -> Grey (Flat)
+        Higher values map through Blue -> Green -> Orange -> Red (Scaled to session max)
+        """
+        # Strictly Grey for flat surfaces (allowing for tiny floating point noise)
+        if rugosity <= 1.001: 
+            return (128, 128, 128)
+            
+        # 1. Determine the Max Rugosity for Scaling (Auto-Scaling)
+        # Start with a sensible default ceiling (e.g. 1.2) so slight bumps don't turn bright red immediately
+        current_max = 1.2 
+        
+        # Check all existing profiles to find the true session max
+        for profile in self.current_profiles:
+            stats = profile.get('stats', {})
+            r = stats.get('rugosity', 1.0)
+            if r > current_max:
+                current_max = r
+        
+        # Also check the current value being calculated
+        if rugosity > current_max:
+            current_max = rugosity
+            
+        # 2. Normalize: 0.0 at R=1, 1.0 at R=current_max
+        norm = (rugosity - 1.0) / (current_max - 1.0)
+        norm = max(0.0, min(1.0, norm))
+        
+        # 3. Heatmap Gradient Logic (Jet-like: Blue -> Green -> Orange -> Red)
+        if norm < 0.25:
+            # Blue Range (Low complexity)
+            local_t = norm / 0.25
+            r = int(0 * (1 - local_t) + 0 * local_t)
+            g = int(0 * (1 - local_t) + 255 * local_t)  # Ramping up green? No, Blue to Cyan usually.
+            # Let's stick to standard Jet-like ramp:
+            # 0.0: Blue (0,0,255) -> 0.25: Cyan (0,255,255)
+            r = 0
+            g = int(0 * (1 - local_t) + 255 * local_t)
+            b = 255
+            return (r, g, b)
+        
+        elif norm < 0.5:
+            # Cyan -> Green
+            local_t = (norm - 0.25) / 0.25
+            r = 0
+            g = 255
+            b = int(255 * (1 - local_t) + 0 * local_t)
+            return (r, g, b)
+        
+        elif norm < 0.75:
+            # Green -> Yellow/Orange
+            local_t = (norm - 0.5) / 0.25
+            r = int(0 * (1 - local_t) + 255 * local_t)
+            g = 255
+            b = 0
+            return (r, g, b)
+        
+        else:
+            # Yellow -> Red
+            local_t = (norm - 0.75) / 0.25
+            r = 255
+            g = int(255 * (1 - local_t) + 0 * local_t)
+            b = 0
+            return (r, g, b)
+
     def activate(self):
         """Activate the rugosity measurement tool"""
         super().activate()
@@ -408,10 +1138,10 @@ class RugosityTool(Tool):
             self.dialog = RugosityDialog(self.annotation_window.main_window, self)
         
         # Only show the dialog if it's not already visible
-        if not self.dialog.isVisible():
-            self.dialog.show()
-            self.dialog.raise_()
-            self.dialog.activateWindow()
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+            self.activateWindow()
 
         # Update UI based on available data
         self.update_z_controls()
@@ -422,7 +1152,7 @@ class RugosityTool(Tool):
             return
         super().deactivate()
         if self.dialog:
-            self.dialog.hide()
+            self.hide()
         self.clear_all_graphics()
         self.is_drawing = False
         self.main_window.untoggle_all_tools()
@@ -472,20 +1202,20 @@ class RugosityTool(Tool):
         """Clear all measurements and reset UI"""
         self.clear_all_graphics()
         if self.dialog:
-            self.dialog.line_length_2d_label.setText("---")
+            self.line_length_2d_label.setText("---")
             self._reset_line_3d_labels()
-            self.dialog.line_profile_button.setEnabled(False)
+            self.line_profile_button.setEnabled(False)
             # Reset chain length and unit
-            self.dialog.chain_length_spin.setValue(1.0)
-            self.dialog.chain_unit_combo.setCurrentText('cm')
+            self.chain_length_spin.setValue(1.0)
+            self.chain_unit_combo.setCurrentText('cm')
             # Reset margin input to defaults (block signals to prevent triggering generate_grid)
-            self.dialog.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
-            self.dialog.margin_input.value_type.setCurrentIndex(0)  # Pixels
-            for spin in self.dialog.margin_input.margin_spins:
+            self.margin_input.type_combo.setCurrentIndex(1)  # Multiple Values
+            self.margin_input.value_type.setCurrentIndex(0)  # Pixels
+            for spin in self.margin_input.margin_spins:
                 spin.setValue(0)
-            self.dialog.margin_input.single_spin.setValue(0)
-            self.dialog.margin_input.single_double.setValue(0.0)
-            self.dialog.margin_input.update_input_mode(0)
+            self.margin_input.single_spin.setValue(0)
+            self.margin_input.single_double.setValue(0.0)
+            self.margin_input.update_input_mode(0)
             # Recalculate grid spinbox values to auto-calculated defaults
             self.calculate_spacing()
 
@@ -501,8 +1231,8 @@ class RugosityTool(Tool):
             self.row_spacing = None
             self.col_spacing = None
             return
-        num_rows = self.dialog.rows_spin.value()
-        num_cols = self.dialog.cols_spin.value()
+        num_rows = self.rows_spin.value()
+        num_cols = self.cols_spin.value()
         self.row_spacing = image_height / (num_rows - 1) if num_rows > 1 else image_height
         self.col_spacing = image_width / (num_cols - 1) if num_cols > 1 else image_width
 
@@ -521,7 +1251,7 @@ class RugosityTool(Tool):
             return
 
         # Get margins in pixels
-        margins = self.dialog.margin_input.get_margins(image_width, image_height, validate=True)
+        margins = self.margin_input.get_margins(image_width, image_height, validate=True)
         if margins is None:
             return
 
@@ -541,8 +1271,8 @@ class RugosityTool(Tool):
         self.calculate_spacing()
         row_spacing = self.row_spacing
         col_spacing = self.col_spacing
-        num_rows = self.dialog.rows_spin.value()
-        num_cols = self.dialog.cols_spin.value()
+        num_rows = self.rows_spin.value()
+        num_cols = self.cols_spin.value()
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -709,8 +1439,8 @@ class RugosityTool(Tool):
         has_z = z_data is not None
         
         if self.dialog:
-            self.dialog.line_3d_group.setEnabled(has_z)
-            self.dialog.line_profile_button.setEnabled(False)  # Enable after line drawn
+            self.line_3d_group.setEnabled(has_z)
+            self.line_profile_button.setEnabled(False)  # Enable after line drawn
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press for starting measurements"""
@@ -821,7 +1551,7 @@ class RugosityTool(Tool):
         """Enable/disable profile button based on data availability"""
         has_data = len(self.current_profiles) > 0
         if self.dialog:
-            self.dialog.line_profile_button.setEnabled(has_data)
+            self.line_profile_button.setEnabled(has_data)
 
     # Calculation methods - adapted to use transform pipeline
     
@@ -839,11 +1569,11 @@ class RugosityTool(Tool):
         # Check for invalid scale
         if scale_x is None or scale_y is None:
             if self.dialog:
-                self.dialog.line_length_2d_label.setText("Scale Not Set")
+                self.line_length_2d_label.setText("Scale Not Set")
                 self._reset_line_3d_labels()
             return
 
-        display_units = self.dialog.line_units_combo.currentText() if self.dialog else 'm'
+        display_units = self.line_units_combo.currentText() if self.dialog else 'm'
         
         # --- 2. Calculate 2D Length ---
         line = QLineF(self.start_point, self.end_point)
@@ -857,7 +1587,7 @@ class RugosityTool(Tool):
             length_2d_display = length_2d_meters
         
         if self.dialog:
-            self.dialog.line_length_2d_label.setText(f"{length_2d_display:.3f} {display_units}")
+            self.line_length_2d_label.setText(f"{length_2d_display:.3f} {display_units}")
 
         # --- 3. 3D Calculations (if Z-data available) ---
         z_data, z_unit = self.get_current_z_data()
@@ -894,24 +1624,24 @@ class RugosityTool(Tool):
             
             delta_z = z_end - z_start
             if self.dialog:
-                self.dialog.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
+                self.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
             
             # Calculate Slope
             if length_2d_meters > 0:
                 delta_z_meters = delta_z * z_to_meters_factor
                 slope = (delta_z_meters / length_2d_meters) * 100.0
                 if self.dialog:
-                    self.dialog.line_slope_label.setText(f"{slope:.2f} %")
+                    self.line_slope_label.setText(f"{slope:.2f} %")
             else:
                 if self.dialog:
-                    self.dialog.line_slope_label.setText("N/A")
+                    self.line_slope_label.setText("N/A")
 
             # --- Calculate 3D Length with Chain Resolution ---
             
             # 1. Determine Sampling Step (Chain Length)
             if self.dialog:
-                chain_len_val = self.dialog.chain_length_spin.value()
-                chain_len_unit = self.dialog.chain_unit_combo.currentText()
+                chain_len_val = self.chain_length_spin.value()
+                chain_len_unit = self.chain_unit_combo.currentText()
                 # Convert chain length to meters, then to pixels
                 chain_len_meters = convert_scale_units(chain_len_val, chain_len_unit, 'metre')
                 
@@ -976,17 +1706,17 @@ class RugosityTool(Tool):
                 plot_x_data = profile_data_x
             
             if self.dialog:
-                self.dialog.line_length_3d_label.setText(f"{length_3d_display:.3f} {display_units}")
+                self.line_length_3d_label.setText(f"{length_3d_display:.3f} {display_units}")
 
             # --- Calculate Linear Rugosity & Color ---
             linear_rugosity = 1.0  # Default
             if length_2d_meters > 0:
                 linear_rugosity = total_3d_length / length_2d_meters
                 if self.dialog:
-                    self.dialog.line_rugosity_label.setText(f"{linear_rugosity:.3f}")
+                    self.line_rugosity_label.setText(f"{linear_rugosity:.3f}")
             else:
                 if self.dialog:
-                    self.dialog.line_rugosity_label.setText("N/A")
+                    self.line_rugosity_label.setText("N/A")
             
             # Determine Color based on Rugosity and Session Max
             # If a specific color is forced (like Grey for grid lines), use it.
@@ -1029,10 +1759,10 @@ class RugosityTool(Tool):
     def _reset_line_3d_labels(self):
         """Reset all 3D line labels"""
         if self.dialog:
-            self.dialog.line_length_3d_label.setText("---")
-            self.dialog.line_delta_z_label.setText("---")
-            self.dialog.line_slope_label.setText("---")
-            self.dialog.line_rugosity_label.setText("---")
+            self.line_length_3d_label.setText("---")
+            self.line_delta_z_label.setText("---")
+            self.line_slope_label.setText("---")
+            self.line_rugosity_label.setText("---")
             
 
 # Popup Dialog        
