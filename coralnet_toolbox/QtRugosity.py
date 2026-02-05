@@ -867,15 +867,18 @@ class RugosityDialog(QDialog):
         if self.v_crosshair_line:
             scene.removeItem(self.v_crosshair_line)
         
-        # Create horizontal line
-        h_line = QLineF(-10000, pos.y(), 10000, pos.y())
+        # FIX: Get the actual scene bounds (usually the image size)
+        rect = scene.sceneRect()
+        
+        # Create horizontal line constrained to image width
+        h_line = QLineF(rect.left(), pos.y(), rect.right(), pos.y())
         pen = QPen(Qt.gray, 1, Qt.DotLine)
         pen.setCosmetic(True)
         self.h_crosshair_line = scene.addLine(h_line, pen)
         self.h_crosshair_line.setZValue(999)
         
-        # Create vertical line
-        v_line = QLineF(pos.x(), -10000, pos.x(), 10000)
+        # Create vertical line constrained to image height
+        v_line = QLineF(pos.x(), rect.top(), pos.x(), rect.bottom())
         self.v_crosshair_line = scene.addLine(v_line, pen)
         self.v_crosshair_line.setZValue(999)
     
