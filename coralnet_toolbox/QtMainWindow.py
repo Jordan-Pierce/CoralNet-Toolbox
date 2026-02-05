@@ -3429,9 +3429,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'patch_sampling_dialog') and self.patch_sampling_dialog.isVisible():
             self.patch_sampling_dialog.close()
         
-        # Close RugosityDialog if open
-        if hasattr(self, 'rugosity_dialog') and self.rugosity_dialog.isVisible():
-            self.rugosity_dialog.close()
+        # Deactivate rugosity tool if active
+        if self.annotation_window.selected_tool == "rugosity":
+            self.annotation_window.set_selected_tool("select")
 
 
 class DeviceSelectionDialog(QDialog):
