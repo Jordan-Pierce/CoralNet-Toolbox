@@ -1226,9 +1226,6 @@ class RugosityTool(Tool):
         
         # Clear all graphics
         self.dialog.clear_all_graphics()
-        
-        # # Untoggle all tools
-        # self.main_window.untoggle_all_tools()
 
     def stop_current_drawing(self):
         """Stop any active drawing and clear graphics"""

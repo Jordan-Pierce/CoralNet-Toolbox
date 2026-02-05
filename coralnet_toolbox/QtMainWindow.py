@@ -1974,6 +1974,21 @@ class MainWindow(QMainWindow):
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(True)
 
+        elif tool == "rugosity":
+            # Rugosity has no toolbar button - uncheck all toolbar buttons
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
+
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -2676,6 +2691,8 @@ class MainWindow(QMainWindow):
             return
         
         try:
+            # Deactivate other tools
+            self.untoggle_all_tools()
             # Activate the rugosity tool
             self.annotation_window.set_selected_tool("rugosity")
         except Exception as e:
