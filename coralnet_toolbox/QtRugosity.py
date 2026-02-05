@@ -109,7 +109,11 @@ class RugosityDialog(QDialog):
         groupbox = QGroupBox("Information")
         layout = QVBoxLayout()
         
-        instructions = QLabel("Draw lines to measure rugosity and surface complexity")
+        instructions = QLabel(
+            "Draw lines to measure rugosity and surface complexity. "
+            "Use the grid automatically to sample specified area. "
+            "Color corresponds to rugosity (red: high, blue: low)."
+        )
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
         
@@ -248,7 +252,8 @@ class RugosityDialog(QDialog):
         """Handle dialog show - install event filter to capture mouse events"""
         super().showEvent(event)
         
-        # Install event filter on annotation window to capture mouse events
+        # Install event filter on viewport for mouse events and on window for key events
+        self.annotation_window.viewport().installEventFilter(self)
         self.annotation_window.installEventFilter(self)
         
         # Set the cursor
@@ -259,7 +264,8 @@ class RugosityDialog(QDialog):
 
     def closeEvent(self, event):
         """Handle dialog close - remove event filter and clean up graphics"""
-        # Remove event filter
+        # Remove event filters
+        self.annotation_window.viewport().removeEventFilter(self)
         self.annotation_window.removeEventFilter(self)
         
         # Restore default cursor
@@ -277,16 +283,31 @@ class RugosityDialog(QDialog):
     
     def eventFilter(self, obj, event):
         """Filter events from annotation window to capture mouse events"""
-        if obj == self.annotation_window:
+        if obj == self.annotation_window.viewport():
             if event.type() == QEvent.MouseButtonPress:
-                self.handle_mouse_press(event)
-                return True
+                # Check if cursor is within the image bounds
+                cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+                if cursor_in_window and event.button() == Qt.LeftButton:
+                    self.handle_mouse_press(event)
+                # Never consume - let normal panning/zooming work
+                return False
             elif event.type() == QEvent.MouseMove:
-                self.handle_mouse_move(event)
-                return True
+                cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+                if cursor_in_window:
+                    self.handle_mouse_move(event)
+                # Never consume - let normal panning/zooming work
+                return False
             elif event.type() == QEvent.MouseButtonRelease:
-                self.handle_mouse_release(event)
-                return True
+                cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+                if cursor_in_window:
+                    self.handle_mouse_release(event)
+                return False
+        elif obj == self.annotation_window and event.type() == QEvent.KeyPress:
+            # Handle key events for canceling drawing
+            if event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
+                if self.is_drawing:
+                    self.stop_current_drawing()
+                    return True
         return super().eventFilter(obj, event)
     
     # --- Tool Methods (merged from RugosityTool) ---
