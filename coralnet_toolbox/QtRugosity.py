@@ -1,5 +1,8 @@
 import warnings
 
+import os
+import csv
+
 import math
 import numpy as np
 from random import randint
@@ -12,7 +15,8 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QWidget, QVBoxLayout,
                              QFormLayout, QDoubleSpinBox, QComboBox, 
                              QDialogButtonBox, QMessageBox, QLabel,
                              QGroupBox, QPushButton, QSpacerItem,
-                             QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout)
+                             QSizePolicy, QScrollArea, QFrame, QSpinBox, QHBoxLayout,
+                             QGraphicsLineItem, QFileDialog)
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
@@ -41,6 +45,7 @@ class RugosityDialog(QDialog):
         # Tool properties (merged from RugosityTool)
         self.name = "rugosity"
         self.cursor = Qt.CrossCursor
+        self.active = False
         
         self.animation_manager = self.annotation_window.animation_manager
         
@@ -53,6 +58,11 @@ class RugosityDialog(QDialog):
         self.line_graphic = None
         self.wireframe_graphic = None  # For 3D visualization
         self.endpoint_dots = []  # Store endpoint circles (white and black dots)
+        
+        # Crosshair settings
+        self.show_crosshair = True
+        self.h_crosshair_line = None
+        self.v_crosshair_line = None
         
         # Recorded measurements with color info
         self.recorded_line_measurements = []  # List of dicts with line data and color
@@ -224,6 +234,10 @@ class RugosityDialog(QDialog):
         
         button_layout.addStretch()
         
+        self.export_button = QPushButton("Export Measurements")
+        self.export_button.clicked.connect(self.export_measurements_csv)
+        button_layout.addWidget(self.export_button)
+        
         self.layout.addLayout(button_layout)
 
     def set_status(self, text):
@@ -256,6 +270,8 @@ class RugosityDialog(QDialog):
         
         # Clear all graphics
         self.clear_all_graphics()
+        
+        self.clear_crosshair()
         
         event.accept()
     
@@ -477,6 +493,63 @@ class RugosityDialog(QDialog):
         self.margin_input.update_input_mode(0)
         # Recalculate grid spinbox values to auto-calculated defaults
         self.calculate_spacing()
+
+    def export_measurements_csv(self):
+        """Export all current rugosity measurements to a CSV file."""
+        if not self.current_profiles:
+            QMessageBox.warning(self, "No Data", "No measurements to export.")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV Files (*.csv)")
+        if not file_path:
+            return
+        
+        image_path = self.annotation_window.current_image_path or ""
+        image_name = os.path.basename(image_path) if image_path else ""
+        display_units = self.line_units_combo.currentText()
+        chain_length = self.chain_length_spin.value()
+        
+        try:
+            with open(file_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow([
+                    "Image Name", "Image Path", "Line Name", "Start X", "Start Y", "End X", "End Y",
+                    "Start Z", "End Z", "Min Z", "Max Z", "2D Length", "3D Length", "Delta Z",
+                    "Rugosity", "Slope", "Color (RGB)", "Units", "Chain Length"
+                ])
+                
+                for profile in self.current_profiles:
+                    stats = profile.get('stats', {})
+                    start_point = profile.get('start_point', QPointF(0, 0))
+                    end_point = profile.get('end_point', QPointF(0, 0))
+                    color = profile.get('color', (0, 0, 0))
+                    color_str = f"{color[0]},{color[1]},{color[2]}"
+                    
+                    writer.writerow([
+                        image_name,
+                        image_path,
+                        profile.get('name', ''),
+                        f"{start_point.x():.3f}",
+                        f"{start_point.y():.3f}",
+                        f"{end_point.x():.3f}",
+                        f"{end_point.y():.3f}",
+                        f"{stats.get('start_z', 0):.3f}",
+                        f"{stats.get('end_z', 0):.3f}",
+                        f"{stats.get('min_z', 0):.3f}",
+                        f"{stats.get('max_z', 0):.3f}",
+                        f"{stats.get('length_2d', 0):.3f} {display_units}",
+                        f"{stats.get('length_3d', 0):.3f} {display_units}",
+                        f"{stats.get('delta_z', 0):.3f}",
+                        f"{stats.get('rugosity', 0):.3f}",
+                        f"{stats.get('slope', 0):.2f}",
+                        color_str,
+                        display_units,
+                        f"{chain_length} {self.chain_unit_combo.currentText()}"
+                    ])
+            
+            QMessageBox.information(self, "Export Complete", f"Measurements exported to {file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export CSV: {str(e)}")
 
     def calculate_spacing(self):
         """Calculate and store row and column spacing as attributes based on image dimensions and current spinbox
@@ -737,17 +810,67 @@ class RugosityDialog(QDialog):
 
     def handle_mouse_move(self, event: QMouseEvent):
         """Handle mouse move for drawing measurements"""
+        scene_pos = self.annotation_window.mapToScene(event.pos())
         if self.is_drawing and self.start_point:
-            scene_pos = self.annotation_window.mapToScene(event.pos())
             self.end_point = self._clamp_point_to_working_area(scene_pos)
             
-            # Update graphics and measurements
+            # 1. Update the visual line first
             self._update_line_graphic()
+            
+            # 2. Force the app to process the paint event immediately 
+            # (keeps the line smooth even if calculation below is slow)
+            QApplication.processEvents() 
+            
+            # 3. Perform the heavy calculation
             self.calculate_line_measurement(final_calc=False)
+            
+            self.clear_crosshair()
+        else:
+            # Update crosshair
+            if self.show_crosshair:
+                self.update_crosshair(scene_pos)
+            else:
+                self.clear_crosshair()
 
     def handle_mouse_release(self, event: QMouseEvent):
         """Handle mouse release - measurement is finalized on second click"""
         pass
+    
+    def draw_crosshair(self, pos):
+        """Draw crosshair lines at the given position"""
+        scene = self.annotation_window.scene
+        
+        # Remove existing crosshair
+        if self.h_crosshair_line:
+            scene.removeItem(self.h_crosshair_line)
+        if self.v_crosshair_line:
+            scene.removeItem(self.v_crosshair_line)
+        
+        # Create horizontal line
+        h_line = QLineF(-10000, pos.y(), 10000, pos.y())
+        pen = QPen(Qt.gray, 1, Qt.DotLine)
+        pen.setCosmetic(True)
+        self.h_crosshair_line = scene.addLine(h_line, pen)
+        self.h_crosshair_line.setZValue(999)
+        
+        # Create vertical line
+        v_line = QLineF(pos.x(), -10000, pos.x(), 10000)
+        self.v_crosshair_line = scene.addLine(v_line, pen)
+        self.v_crosshair_line.setZValue(999)
+    
+    def clear_crosshair(self):
+        """Clear the crosshair lines"""
+        scene = self.annotation_window.scene
+        if self.h_crosshair_line:
+            scene.removeItem(self.h_crosshair_line)
+            self.h_crosshair_line = None
+        if self.v_crosshair_line:
+            scene.removeItem(self.v_crosshair_line)
+            self.v_crosshair_line = None
+    
+    def update_crosshair(self, pos):
+        """Update crosshair position"""
+        self.draw_crosshair(pos)
     
     def _update_line_graphic(self):
         """Update or create line graphic with cosmetic pen (visible at all zoom levels)"""
@@ -756,16 +879,29 @@ class RugosityDialog(QDialog):
             
         scene = self.annotation_window.scene
         
-        # Remove old graphic
-        if self.line_graphic and self.line_graphic.scene():
-            scene.removeItem(self.line_graphic)
-        
-        # Create new line with cosmetic pen (doesn't scale with zoom)
-        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)
+        # Determine the color and pen style
+        if self.is_drawing:
+            color = QColor(*self.last_calculated_color)
+        else:
+            color = QColor(230, 62, 0)
+            
+        pen = QPen(color, 3, Qt.DashLine)
         pen.setCosmetic(True)  # Make pen width independent of zoom level
         line = QLineF(self.start_point, self.end_point)
-        self.line_graphic = scene.addLine(line, pen)
-        self.line_graphic.setZValue(1000)  # Draw on top
+        
+        # Check if the graphic already exists and is currently in the scene
+        if self.line_graphic and self.line_graphic.scene() == scene:
+            # Update the existing item properties
+            self.line_graphic.setLine(line)
+            self.line_graphic.setPen(pen)
+        else:
+            # Only create a new item if it doesn't exist
+            # (Remove old one from a different scene if strictly necessary, though unlikely here)
+            if self.line_graphic and self.line_graphic.scene():
+                self.line_graphic.scene().removeItem(self.line_graphic)
+
+            self.line_graphic = scene.addLine(line, pen)
+            self.line_graphic.setZValue(1000)  # Draw on top
         
         # Force scene update for real-time visibility
         scene.update()
@@ -864,6 +1000,7 @@ class RugosityDialog(QDialog):
             self.line_delta_z_label.setText(f"{delta_z:.3f} {z_unit_str}")
             
             # Calculate Slope
+            slope = 0.0
             if length_2d_meters > 0:
                 delta_z_meters = delta_z * z_to_meters_factor
                 slope = (delta_z_meters / length_2d_meters) * 100.0
@@ -966,9 +1103,15 @@ class RugosityDialog(QDialog):
                     'start_point': self.start_point,
                     'end_point': self.end_point,
                     'stats': {
+                        'length_2d': length_2d_display,
                         'length_3d': length_3d_display,
                         'delta_z': delta_z,
-                        'rugosity': linear_rugosity if length_2d_meters > 0 else 0
+                        'rugosity': linear_rugosity if length_2d_meters > 0 else 0,
+                        'slope': slope if length_2d_meters > 0 else 0,
+                        'start_z': z_start,
+                        'end_z': z_end,
+                        'min_z': np.min(z_array),
+                        'max_z': np.max(z_array)
                     }
                 }
                 
@@ -1489,6 +1632,8 @@ class ProfilePlotDialog(QDialog):
             # Update graphics and measurements
             self._update_line_graphic()
             self.calculate_line_measurement(final_calc=False)
+            # Force scene update to show the temporary line
+            self.annotation_window.scene.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release - measurement is finalized on second click"""

@@ -258,6 +258,8 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)
         
         self.explorer_window = None  # Initialized in open_explorer_window
+        self.mvat_window = None  # Initialized in open_mvat_window
+        
         self.system_monitor = None  # Initialized in open_system_monitor
 
         # TODO update IO classes to have dialogs
