@@ -37,7 +37,6 @@ from coralnet_toolbox.MVAT import MVATWindow
 
 # Other Dialogs
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
-from coralnet_toolbox.QtRugosity import RugosityDialog
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
 
@@ -291,7 +290,6 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_sampling_dialog_dialog = PatchSamplingDialog(self)
-        self.rugosity_dialog = RugosityDialog(self)
 
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
@@ -2659,7 +2657,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_rugosity_dialog(self):
-        """Open the Rugosity dialog for measuring rugosity and spatial analysis"""
+        """Open the Rugosity tool for measuring rugosity and spatial analysis"""
         # Check if there is an image loaded
         image_path = self.annotation_window.current_image_path
         if not image_path:
@@ -2678,9 +2676,8 @@ class MainWindow(QMainWindow):
             return
         
         try:
-            # Proceed to open the dialog if images are loaded and have scale
-            self.untoggle_all_tools()
-            self.rugosity_dialog.show()
+            # Activate the rugosity tool
+            self.annotation_window.set_selected_tool("rugosity")
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
