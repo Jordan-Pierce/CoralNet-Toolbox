@@ -35,6 +35,7 @@ from coralnet_toolbox.Tools import (
     WorkAreaTool,
     ScaleTool,
     RugosityTool,
+    PatchSamplingTool,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -183,6 +184,14 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
+        self.tools = {}
+        self.mask_tools = {}
+
+        # Initialize the action stack for undo/redo
+        self.action_stack = ActionStack()
+        
+    def initialize_tools(self):
+        """Initialize tools"""
         self.tools = {
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
@@ -195,17 +204,15 @@ class AnnotationWindow(QGraphicsView):
             "work_area": WorkAreaTool(self),
             "scale": ScaleTool(self),
             "rugosity": RugosityTool(self),
+            "patch_sampling": PatchSamplingTool(self),
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self),
             "dropper": DropperTool(self)
         }
-
+        
         # Defines which tools trigger mask mode
         self.mask_tools = {"brush", "fill", "erase", "dropper"}
-
-        # Initialize the action stack for undo/redo
-        self.action_stack = ActionStack()
         
     def set_animation_manager(self, manager):
         """

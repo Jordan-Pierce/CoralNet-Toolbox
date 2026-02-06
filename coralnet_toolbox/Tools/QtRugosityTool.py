@@ -41,6 +41,7 @@ class RugosityDialog(QDialog):
         super().__init__(parent)
         # Get references from the tool
         self.tool = tool
+        
         self.annotation_window = self.tool.annotation_window
         self.main_window = self.annotation_window.main_window
         
@@ -242,8 +243,38 @@ class RugosityDialog(QDialog):
 
     def closeEvent(self, event):
         """Handle dialog close - deactivate tool"""
-        self.tool.deactivate()
+        self.cleanup()
         event.accept()
+    
+    def reject(self):
+        """Handle dialog rejection."""
+        self.cleanup()
+        super().reject()
+        
+    def cleanup(self):
+        """Clean up temporary graphics, reset UI to defaults, and deactivate tool."""
+        # Clear temporary graphics and measurements, reset UI
+        self.clear_all_measurements()
+        
+        # Reset grid settings to defaults
+        self.rows_spin.setValue(10)
+        self.cols_spin.setValue(10)
+        
+        # Reset additional state variables
+        self.recorded_line_measurements = []
+        self.grid_lines = []
+        self.grid_enabled = False
+        self.current_profiles = []
+        if self.profile_dialog:
+            self.profile_dialog.close()
+            self.profile_dialog = None
+        self.last_calculated_color = (128, 128, 128)
+        
+        # Deactivate the tool
+        self.tool.deactivate()
+        
+        # Untoggle all tools in the main window
+        self.main_window.untoggle_all_tools()
     
     # --- Helper Methods ---
     
@@ -1234,11 +1265,19 @@ class RugosityTool(Tool):
 
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press - delegate to dialog"""
+        # Return early if tool is not active or dialog is not visible
+        if not self.active or not self.dialog.isVisible():
+            return
+            
         if self.dialog:
             self.dialog.handle_mouse_press(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move - delegate to dialog and update crosshair"""
+        # Return early if tool is not active or dialog is not visible
+        if not self.active or not self.dialog.isVisible():
+            return
+            
         # Call parent for crosshair handling
         super().mouseMoveEvent(event)
         

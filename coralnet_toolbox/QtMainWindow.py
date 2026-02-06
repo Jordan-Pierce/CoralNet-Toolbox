@@ -36,7 +36,6 @@ from coralnet_toolbox.Explorer import ExplorerWindow
 from coralnet_toolbox.MVAT import MVATWindow
 
 # Other Dialogs
-from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
 
@@ -250,16 +249,20 @@ class MainWindow(QMainWindow):
         self.current_mouse_x = 0
         self.current_mouse_y = 0
 
-        # Create windows
+        # Create main windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
-        self.confidence_window = ConfidenceWindow(self)
+        self.confidence_window = ConfidenceWindow(self)        
+        # Initialized in open_explorer_window
+        self.explorer_window = None  
+        # Initialized in open_mvat_window
+        self.mvat_window = None  
+        # Initialized in open_system_monitor
+        self.system_monitor = None  
         
-        self.explorer_window = None  # Initialized in open_explorer_window
-        self.mvat_window = None  # Initialized in open_mvat_window
-        
-        self.system_monitor = None  # Initialized in open_system_monitor
+        # Initialize after main windows are created
+        self.annotation_window.initialize_tools()
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -287,9 +290,6 @@ class MainWindow(QMainWindow):
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
-
-        # Create dialogs (Sample)
-        self.patch_sampling_dialog_dialog = PatchSamplingDialog(self)
 
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
@@ -570,12 +570,12 @@ class MainWindow(QMainWindow):
         self.utilities_menu = self.menu_bar.addMenu("Utilities")
         
         # Sampling Annotations
-        self.annotation_sampling_action = QAction("Sample", self)
+        self.annotation_sampling_action = QAction("Sample Patches", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
         self.utilities_menu.addAction(self.annotation_sampling_action)
         
         # Rugosity
-        self.rugosity_action = QAction("Rugosity", self)
+        self.rugosity_action = QAction("Measure Rugosity", self)
         self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
         self.utilities_menu.addAction(self.rugosity_action)
 
@@ -1973,7 +1973,22 @@ class MainWindow(QMainWindow):
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
             self.scale_tool_action.setChecked(True)
-
+                    
+        elif tool == "patch_sampling":
+            # Patch Sampling has no toolbar button - uncheck all toolbar buttons
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
+            self.scale_tool_action.setChecked(False)
+            
         elif tool == "rugosity":
             # Rugosity has no toolbar button - uncheck all toolbar buttons
             self.select_tool_action.setChecked(False)
@@ -2656,7 +2671,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_patch_sampling_dialog_dialog(self):
-        """Open the Patch Annotation Sampling dialog to sample annotations from images"""
+        """Open the Patch Sampling tool to sample annotations from images"""
         # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -2665,9 +2680,10 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # Proceed to open the dialog if images are loaded
+            # Deactivate other tools
             self.untoggle_all_tools()
-            self.patch_sampling_dialog_dialog.show()
+            # Activate the patch sampling tool
+            self.annotation_window.set_selected_tool("patch_sampling")
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -3425,9 +3441,9 @@ class MainWindow(QMainWindow):
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
-        # Close PatchSamplingDialog if open
-        if hasattr(self, 'patch_sampling_dialog') and self.patch_sampling_dialog.isVisible():
-            self.patch_sampling_dialog.close()
+        # Deactivate patch sampling tool if active
+        if self.annotation_window.selected_tool == "patch_sampling":
+            self.annotation_window.set_selected_tool("select")
         
         # Deactivate rugosity tool if active
         if self.annotation_window.selected_tool == "rugosity":
