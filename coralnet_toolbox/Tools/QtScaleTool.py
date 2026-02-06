@@ -149,14 +149,43 @@ class ScaleToolDialog(QDialog):
         # Don't reset scale label - keep showing current scale
 
     def clear_scale_line(self):
+        """Clears the current scale line."""
         self.tool.stop_current_drawing()
         self.reset_fields()
         self.tool.load_existing_scale()
 
+    def showEvent(self, event):
+        """Handles the show event."""
+        super().showEvent(event)
+        self.update_status_label()
+
     def closeEvent(self, event):
-        self.tool.stop_current_drawing()
-        self.tool.deactivate()
+        """Handles the close event."""
+        self.cleanup()
         event.accept()
+
+    def reject(self):
+        """Handles the reject event."""
+        self.cleanup()
+        super().reject()
+
+    def cleanup(self):
+        """Clean up temporary graphics, reset UI to defaults, and deactivate tool."""
+        self.tool.stop_current_drawing()
+        
+        self.reset_fields()
+        self.tool.load_existing_scale()
+        # Clear preview line
+        if self.tool.preview_line.scene():
+            self.annotation_window.scene.removeItem(self.tool.preview_line)
+        
+        self.tool.is_drawing = False
+        self.tool.start_point = None
+        self.tool.end_point = None
+        self.tool.pixel_length = 0.0
+        
+        self.main_window.untoggle_all_tools()
+        self.tool.deactivate()
 
 
 class ScaleTool(Tool):
@@ -232,7 +261,6 @@ class ScaleTool(Tool):
         self.dialog.hide()
         self.preview_line.hide()
         self.is_drawing = False
-        self.main_window.untoggle_all_tools()
 
     def stop_current_drawing(self):
         """Stop any active drawing and clear graphics."""
