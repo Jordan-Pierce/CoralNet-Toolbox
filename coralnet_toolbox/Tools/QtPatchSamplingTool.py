@@ -548,7 +548,9 @@ class PatchSamplingDialog(QDialog):
         self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Create graphics using the WorkArea's own method
-        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, include_shadow=True)
+        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
+                                                                include_shadow=True, 
+                                                                image_rect=self.annotation_window.get_image_rect())
         self.annotation_graphics.append(margin_graphics)
     
         # Prepare polygons to exclude if needed

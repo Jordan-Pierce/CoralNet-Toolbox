@@ -398,7 +398,8 @@ class TileManager(QDialog):
         # Create graphics with shadow to highlight the working area
         margin_graphics = self.margin_work_area.create_graphics(
             self.annotation_window.scene, 
-            include_shadow=True  # Add shadow to highlight the usable area
+            include_shadow=True,  # Add shadow to highlight the usable area
+            image_rect=self.annotation_window.get_image_rect()
         )
         
         self.all_graphics.append(margin_graphics)

@@ -2,7 +2,8 @@ import warnings
 
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt, pyqtProperty
-from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem)
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
+                             QGraphicsPixmapItem)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -210,7 +211,7 @@ class WorkArea(QObject):
             'image_path': self.image_path
         }
         
-    def create_graphics(self, scene, pen_width=3, include_shadow=False, animate=True):
+    def create_graphics(self, scene, pen_width=3, include_shadow=False, animate=True, image_rect=None):
         """
         Create and return the graphics representation of this work area.
         
@@ -219,6 +220,7 @@ class WorkArea(QObject):
             pen_width: Width of the pen for the rectangle
             include_shadow: Whether to include a shadow effect
             animate: Whether to start the pulsing animation
+            image_rect: QRectF of the image bounds; if None, uses scene.sceneRect()
             
         Returns:
             QGraphicsRectItem: The created rectangle item
@@ -248,11 +250,20 @@ class WorkArea(QObject):
         
         # Add shadow if requested
         if include_shadow:
+            # Find the image rect to base the shadow on
+            if image_rect is None:
+                image_rect = scene.sceneRect()  # Default to scene rect
+                for item in scene.items():
+                    if isinstance(item, QGraphicsPixmapItem):
+                        image_rect = item.boundingRect()
+                        break
+            
             # Create a semi-transparent overlay for the shadow
             shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
             shadow_path = QPainterPath()
-            shadow_path.addRect(scene.sceneRect())  # Cover the entire scene
-            shadow_path.addRect(self.rect)  # Add the work area rect
+            shadow_path.setFillRule(Qt.OddEvenFill)  # Enable odd-even fill for holes
+            shadow_path.addRect(image_rect)   # Outer rect (image)
+            shadow_path.addRect(self.rect)           # Inner rect (work area) - creates the hole
             # Subtract the work area from the overlay
             shadow_path = shadow_path.simplified()
 

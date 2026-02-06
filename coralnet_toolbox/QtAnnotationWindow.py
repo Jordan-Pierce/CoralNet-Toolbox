@@ -1278,6 +1278,12 @@ class AnnotationWindow(QGraphicsView):
             return self.pixmap_image.size().width(), self.pixmap_image.size().height()
         return 0, 0
     
+    def get_image_rect(self):
+        """Get the bounding rectangle of the currently loaded image in scene coordinates."""
+        if self.pixmap_image:
+            return QRectF(0, 0, self.pixmap_image.width(), self.pixmap_image.height())
+        return QRectF()
+    
     def center_on_work_area(self, work_area):
         """Center the view on the specified work area."""
         # Create graphics item if it doesn't exist

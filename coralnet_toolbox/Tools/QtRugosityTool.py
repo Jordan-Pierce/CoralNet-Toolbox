@@ -707,7 +707,8 @@ class RugosityDialog(QDialog):
         self.working_area.create_graphics(
             self.annotation_window.scene, 
             include_shadow=True, 
-            animate=True
+            animate=True,
+            image_rect=self.annotation_window.get_image_rect()
         )
         
         # Set ZValues to match original (below measurements but above image)

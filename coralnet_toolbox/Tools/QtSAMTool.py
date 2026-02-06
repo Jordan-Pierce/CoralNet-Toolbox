@@ -146,7 +146,9 @@ class SAMTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
+        self.working_area.create_graphics(self.annotation_window.scene, 
+                                          include_shadow=True, 
+                                          image_rect=self.annotation_window.get_image_rect())
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
 
@@ -195,7 +197,9 @@ class SAMTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
+        self.working_area.create_graphics(self.annotation_window.scene, 
+                                          include_shadow=True, 
+                                          image_rect=self.annotation_window.get_image_rect())
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
         
