@@ -2706,6 +2706,14 @@ class MainWindow(QMainWindow):
                                 "Please use the Scale Tool to set the scale first.")
             return
         
+        # Check the z-channel existing for the current image
+        if not raster.has_z_channel():
+            QMessageBox.warning(self,
+                                "Z-Channel Not Found",
+                                "The Rugosity tool requires a z-channel in the current image.\n\n"
+                                "Please ensure the image has a z-channel before using the Rugosity tool.")
+            return
+        
         try:
             # Deactivate other tools
             self.untoggle_all_tools()
@@ -3441,13 +3449,19 @@ class MainWindow(QMainWindow):
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
-        # Deactivate patch sampling tool if active
-        if self.annotation_window.selected_tool == "patch_sampling":
-            self.annotation_window.set_selected_tool("select")
-        
-        # Deactivate rugosity tool if active
-        if self.annotation_window.selected_tool == "rugosity":
-            self.annotation_window.set_selected_tool("select")
+        # Check if there is a dialog tool selected, if so, get the tool
+        if self.annotation_window.selected_tool:
+            selected_tool = self.annotation_window.selected_tool
+            
+            # Deactivate patch sampling tool if active
+            if selected_tool == "patch_sampling":
+                self.annotation_window.tools[selected_tool].dialog.cleanup()
+                self.annotation_window.set_selected_tool(None)
+            
+            # Deactivate rugosity tool if active
+            if selected_tool == "rugosity":
+                self.annotation_window.tools[selected_tool].dialog.cleanup()
+                self.annotation_window.set_selected_tool(None)
 
 
 class DeviceSelectionDialog(QDialog):

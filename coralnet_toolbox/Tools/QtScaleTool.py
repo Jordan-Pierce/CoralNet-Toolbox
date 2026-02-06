@@ -17,6 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class ScaleToolDialog(QDialog):
     """
     A modeless dialog for the ScaleTool, allowing user input for scale calculation.

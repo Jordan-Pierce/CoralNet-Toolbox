@@ -193,8 +193,10 @@ class AnnotationWindow(QGraphicsView):
     def initialize_tools(self):
         """Initialize tools"""
         self.tools = {
+            # Constant tools
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
+            # Selectable annotation tools
             "select": SelectTool(self),
             "patch": PatchTool(self),
             "rectangle": RectangleTool(self),
@@ -202,13 +204,15 @@ class AnnotationWindow(QGraphicsView):
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
-            "scale": ScaleTool(self),
-            "rugosity": RugosityTool(self),
-            "patch_sampling": PatchSamplingTool(self),
+            # Selectable mask tools
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self),
-            "dropper": DropperTool(self)
+            "dropper": DropperTool(self),
+            # Dialog tools
+            "scale": ScaleTool(self),
+            "rugosity": RugosityTool(self),
+            "patch_sampling": PatchSamplingTool(self),
         }
         
         # Defines which tools trigger mask mode
