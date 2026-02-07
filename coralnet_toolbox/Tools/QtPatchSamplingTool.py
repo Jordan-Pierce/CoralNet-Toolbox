@@ -1,15 +1,16 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import random
 import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
-from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
+from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF, QMouseEvent
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
-                             QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox, QLabel)
+                             QPushButton, QComboBox, QSpinBox, QMessageBox, QLabel,
+                             QFormLayout, QGroupBox, QGraphicsRectItem)
+
+from coralnet_toolbox.Tools.QtTool import Tool
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -21,6 +22,8 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -113,24 +116,34 @@ class PatchGraphic(QGraphicsRectItem):
             self.animation_manager.unregister_animating_object(self)
         self._pulse_alpha = 128
         self.setPen(self._create_pen())
+    
+    def itemChange(self, change, value):
+        """Handle item changes to ensure cleanup when removed from scene."""
+        if change == QGraphicsRectItem.ItemSceneChange and value is None:
+            # The item is being removed from the scene, stop animation immediately
+            # to release the reference held by the AnimationManager.
+            self.deanimate()
+        return super().itemChange(change, value)
             
     def __del__(self):
         """Clean up when the graphic is deleted."""
         if hasattr(self, 'is_animating') and self.is_animating:
             self.deanimate()
-        if hasattr(self, 'animation_timer') and self.animation_timer: # Keep for old instances
+        if hasattr(self, 'animation_timer') and self.animation_timer:  # Keep for old instances
             self.animation_timer.stop()
 
 
 class PatchSamplingDialog(QDialog):
     annotationsSampled = pyqtSignal(list, bool)
 
-    def __init__(self, main_window, parent=None):
+    def __init__(self, tool, parent=None):
         super().__init__(parent)
-        self.main_window = main_window
-        self.annotation_window = main_window.annotation_window
-        self.label_window = main_window.label_window
-        self.image_window = main_window.image_window
+        self.tool = tool
+        
+        self.annotation_window = tool.annotation_window
+        self.main_window = tool.annotation_window.main_window
+        self.label_window = tool.annotation_window.main_window.label_window
+        self.image_window = tool.annotation_window.main_window.image_window
         
         self.animation_manager = self.annotation_window.animation_manager
 
@@ -166,9 +179,6 @@ class PatchSamplingDialog(QDialog):
         # Connect to table model signals to update highlighted count when rows are highlighted
         self.image_window.table_model.rowsChanged.connect(self.update_status_label)
         
-        # Connect to image selection changes to update preview when user switches images
-        self.image_window.imageSelected.connect(self.on_image_changed)
-        
     def setup_info_layout(self):
         """
         Set up the info layout with explanatory text.
@@ -177,7 +187,8 @@ class PatchSamplingDialog(QDialog):
         layout = QVBoxLayout()
 
         info_label = QLabel(
-            "Specify your sampling parameters below and highlight rows within the ImageWindow to sample."
+            "Specify your sampling parameters below and highlight rows within the ImageWindow to sample.\n"
+            "Draw a rectangle to select the area for sampling."
         )
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -301,13 +312,50 @@ class PatchSamplingDialog(QDialog):
 
     def closeEvent(self, event):
         """Handle dialog close event."""
-        self.clear_annotation_graphics()
+        self.cleanup()
         event.accept()
 
     def reject(self):
         """Handle dialog rejection."""
-        self.clear_annotation_graphics()
+        self.cleanup()
         super().reject()
+        
+    def cleanup(self):
+        """Clean up temporary graphics, reset UI to defaults, and deactivate tool."""
+        # Reset spinboxes and combos to default values
+        self.method_combo.setCurrentIndex(0)  # Random
+        self.num_annotations_spinbox.setValue(10)
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.label_combo.setCurrentIndex(0)
+        self.propagate_labels_combo.setCurrentIndex(0)  # False
+        self.exclude_regions_combo.setCurrentIndex(0)  # False
+        
+        # Temporarily disconnect margin input signals to prevent triggering preview during reset
+        for spin in self.margin_input.margin_spins:
+            try:
+                spin.valueChanged.disconnect(self.preview_annotations)
+            except TypeError:
+                pass  # Already disconnected
+        for double in self.margin_input.margin_doubles:
+            try:
+                double.valueChanged.disconnect(self.preview_annotations)
+            except TypeError:
+                pass  # Already disconnected
+        
+        # Reset margin inputs to 0
+        for spin in self.margin_input.margin_spins:
+            spin.setValue(0)
+        for double in self.margin_input.margin_doubles:
+            double.setValue(0.0)
+            
+        # Clear temporary graphics
+        self.clear_graphics()
+        
+        # Deactivate the tool
+        self.tool.deactivate()
+        
+        # Untoggle all tools in the main window
+        self.main_window.untoggle_all_tools()
         
     def update_label_combo(self):
         """Update the label combo box with the current labels."""
@@ -326,24 +374,6 @@ class PatchSamplingDialog(QDialog):
             self.status_label.setText("1 image highlighted")
         else:
             self.status_label.setText(f"{count} images highlighted")
-    
-    def on_image_changed(self, image_path):
-        """Handle when the user changes the selected image in the ImageWindow.
-        
-        When annotation_window.set_image() is called, it clears the scene, which removes
-        all graphics. We need to clear our stale references and then regenerate the preview
-        if one was being shown.
-        """
-        # Store whether we had preview graphics before the image changed
-        had_preview = len(self.annotation_graphics) > 0
-        
-        # Clear stale graphics references since annotation window just cleared its scene
-        self.annotation_graphics = []
-        self.margin_work_area = None
-        
-        # Only regenerate preview if we had one shown and new image is valid
-        if had_preview and image_path and self.annotation_window.active_image:
-            self.preview_annotations()
         
     def on_propagate_labels_changed(self, idx):
         """Handle changes to the propagate labels combo box."""
@@ -475,12 +505,7 @@ class PatchSamplingDialog(QDialog):
 
     def update_annotation_graphics(self):
         """Create and display annotation preview graphics, including margin visualization."""
-        self.clear_annotation_graphics()
-
-        # Remove previous margin work area and its graphics if present
-        if self.margin_work_area is not None:
-            self.margin_work_area.remove_from_scene()
-            self.margin_work_area = None
+        self.clear_graphics()
     
         # Get current parameters
         method = self.method_combo.currentText()
@@ -523,9 +548,9 @@ class PatchSamplingDialog(QDialog):
         self.margin_work_area.set_animation_manager(self.animation_manager)
         
         # Create graphics using the WorkArea's own method
-        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, include_shadow=True)
-        
-        # Don't show remove button for margin visualization
+        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
+                                                                include_shadow=True, 
+                                                                image_rect=self.annotation_window.get_image_rect())
         self.annotation_graphics.append(margin_graphics)
     
         # Prepare polygons to exclude if needed
@@ -594,6 +619,8 @@ class PatchSamplingDialog(QDialog):
         self.add_sampled_annotations(self.method_combo.currentText(),
                                      self.num_annotations_spinbox.value(),
                                      self.annotation_size_spinbox.value())
+        self.cleanup()
+        self.accept()
 
     def add_sampled_annotations(self, method, num_annotations, annotation_size):
         """Add the sampled annotations to the current image."""
@@ -601,7 +628,7 @@ class PatchSamplingDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Clear the graphics
-        self.clear_annotation_graphics()
+        self.clear_graphics()
 
         # Gets the label from LabelWindow
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
@@ -726,17 +753,214 @@ class PatchSamplingDialog(QDialog):
             progress_bar.close()
             QApplication.restoreOverrideCursor()
 
-        self.accept()
+    def update_margins_from_rectangle(self, rect):
+        """Update margin inputs based on a drawn rectangle.
+        
+        Args:
+            rect (QRectF): Rectangle drawn by the user in scene coordinates
+        """
+        if not self.annotation_window.pixmap_image:
+            return
+            
+        # Get image dimensions
+        image_width = self.annotation_window.pixmap_image.width()
+        image_height = self.annotation_window.pixmap_image.height()
+        
+        # Calculate margins from rectangle bounds
+        left = int(rect.left())
+        top = int(rect.top())
+        right = int(image_width - rect.right())
+        bottom = int(image_height - rect.bottom())
+        
+        # Clamp to valid ranges
+        left = max(0, min(left, image_width))
+        top = max(0, min(top, image_height))
+        right = max(0, min(right, image_width))
+        bottom = max(0, min(bottom, image_height))
+        
+        # Switch to Multiple Values mode if not already
+        if self.margin_input.type_combo.currentIndex() != 1:
+            self.margin_input.type_combo.setCurrentIndex(1)
+            
+        # Switch to Pixels mode if not already
+        if self.margin_input.value_type.currentIndex() != 0:
+            self.margin_input.value_type.setCurrentIndex(0)
+        
+        # Update margin values (order: Top, Right, Bottom, Left)
+        self.margin_input.margin_spins[0].setValue(top)     # Top
+        self.margin_input.margin_spins[1].setValue(right)   # Right
+        self.margin_input.margin_spins[2].setValue(bottom)  # Bottom
+        self.margin_input.margin_spins[3].setValue(left)    # Left
+        
+        # Automatically trigger preview
+        self.preview_annotations()
 
-    def clear_annotation_graphics(self):
+    def clear_graphics(self):
         """Remove all annotation preview graphics, including margin visualizations."""
         for graphic in self.annotation_graphics:
+            # Stop animation if it has the method
             if hasattr(graphic, 'deanimate'):
                 graphic.deanimate()
-            self.annotation_window.scene.removeItem(graphic)
+            # Remove from scene if it belongs to one
+            if graphic.scene():
+                graphic.scene().removeItem(graphic)
+        self.annotation_graphics.clear()
         self.annotation_graphics = []
 
         if self.margin_work_area is not None:
             self.margin_work_area.remove_from_scene()
             self.margin_work_area = None
         self.annotation_window.viewport().update()
+        
+        self.sampled_annotations = []
+
+
+class PatchSamplingTool(Tool):
+    """
+    Tool for sampling patch annotations with interactive rectangle drawing to define margins.
+    """
+    def __init__(self, annotation_window):
+        super().__init__(annotation_window)
+        self.cursor = Qt.CrossCursor
+        self.show_crosshair = True
+        
+        # Create the dialog (owned by the tool)
+        self.dialog = PatchSamplingDialog(self, annotation_window)
+        
+        # Drawing state
+        self.is_drawing = False
+        self.start_point = None
+        self.end_point = None
+        self.rectangle_graphic = None
+
+    def activate(self):
+        """Activate the patch sampling tool"""
+        super().activate()
+        
+        # Show the dialog
+        self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()
+
+    def deactivate(self):
+        """Deactivate the patch sampling tool"""
+        if not self.active:
+            return
+            
+        # Stop any current drawing
+        self.stop_current_drawing()
+        
+        super().deactivate()
+        
+        # Hide the dialog
+        self.dialog.hide()
+        
+        # Clear all graphics
+        self.dialog.clear_graphics()
+
+    def stop_current_drawing(self):
+        """Stop current rectangle drawing operation"""
+        if self.is_drawing:
+            self.is_drawing = False
+            self.start_point = None
+            self.end_point = None
+            
+            # Remove rectangle graphic if exists
+            if self.rectangle_graphic:
+                if self.rectangle_graphic.scene():
+                    self.annotation_window.scene.removeItem(self.rectangle_graphic)
+                self.rectangle_graphic = None
+
+    def mousePressEvent(self, event: QMouseEvent):
+        """Handle mouse press - start drawing rectangle"""
+        # Return early if tool is not active or dialog is not visible
+        if not self.active or not self.dialog.isVisible():
+            return
+            
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            
+            # Check if cursor is in the image bounds
+            if not self.annotation_window.cursorInWindow(event.pos()):
+                return
+                
+            if not self.is_drawing:
+                # Start drawing
+                self.is_drawing = True
+                self.start_point = scene_pos
+                self.end_point = scene_pos
+                
+                # Create rectangle graphic
+                self._create_rectangle_graphic()
+            else:
+                # Finish drawing
+                self.end_point = scene_pos
+                self._finalize_rectangle()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle mouse move - update rectangle preview and crosshair"""
+        # Return early if tool is not active or dialog is not visible
+        if not self.active or not self.dialog.isVisible():
+            return
+            
+        # Call parent to handle crosshair
+        super().mouseMoveEvent(event)
+        
+        if self.is_drawing:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.end_point = scene_pos
+            self._update_rectangle_graphic()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Handle mouse release"""
+        pass
+
+    def _create_rectangle_graphic(self):
+        """Create the rectangle graphic for visual feedback"""
+        if self.rectangle_graphic:
+            if self.rectangle_graphic.scene():
+                self.annotation_window.scene.removeItem(self.rectangle_graphic)
+                
+        # Create a semi-transparent rectangle
+        rect = QRectF(self.start_point, self.end_point).normalized()
+        self.rectangle_graphic = QGraphicsRectItem(rect)
+        
+        # Style the rectangle
+        pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
+        pen.setCosmetic(True)
+        brush = QBrush(QColor(0, 168, 230, 30))
+        
+        self.rectangle_graphic.setPen(pen)
+        self.rectangle_graphic.setBrush(brush)
+        self.rectangle_graphic.setZValue(1000)
+        
+        self.annotation_window.scene.addItem(self.rectangle_graphic)
+
+    def _update_rectangle_graphic(self):
+        """Update the rectangle graphic as user drags"""
+        if self.rectangle_graphic and self.start_point and self.end_point:
+            rect = QRectF(self.start_point, self.end_point).normalized()
+            self.rectangle_graphic.setRect(rect)
+
+    def _finalize_rectangle(self):
+        """Finalize the drawn rectangle and update dialog margins"""
+        if not self.start_point or not self.end_point:
+            self.stop_current_drawing()
+            return
+            
+        # Get the normalized rectangle
+        rect = QRectF(self.start_point, self.end_point).normalized()
+        
+        # Remove the drawing graphic
+        if self.rectangle_graphic:
+            if self.rectangle_graphic.scene():
+                self.annotation_window.scene.removeItem(self.rectangle_graphic)
+            self.rectangle_graphic = None
+        
+        # Reset drawing state
+        self.is_drawing = False
+        self.start_point = None
+        self.end_point = None
+        
+        # Update dialog margins from the drawn rectangle
+        self.dialog.update_margins_from_rectangle(rect)

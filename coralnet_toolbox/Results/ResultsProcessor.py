@@ -6,8 +6,6 @@ from ultralytics.utils.nms import TorchNMS
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
-from coralnet_toolbox.utilities import simplify_polygon
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -233,7 +231,8 @@ class ResultsProcessor:
                         annotation = self.create_rectangle_annotation(xmin, ymin, xmax, ymax, label, image_path)
                     
                     elif original_detection['model_type'] == 'segmentation' and original_detection['polygon_points']:
-                        points = simplify_polygon(original_detection['polygon_points'], 0.1) 
+                        # No automatic simplification - preserve full precision
+                        points = original_detection['polygon_points']
                         annotation = self.create_polygon_annotation(points, label, image_path)
 
                     if annotation:

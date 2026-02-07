@@ -11,29 +11,31 @@ import numpy as np
 import torch
 
 from PyQt5 import sip
-from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
-from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
+from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
+from PyQt5.QtWidgets import (QListWidget, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
                              QGroupBox, QSpacerItem)
 
+# Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
 from coralnet_toolbox.QtTimer import TimerGroupBox
 
+# Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
+# Special Windows
 from coralnet_toolbox.Explorer import ExplorerWindow
-
 from coralnet_toolbox.MVAT import MVATWindow
 
-from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
+# Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
 
 
@@ -45,6 +47,7 @@ from coralnet_toolbox.Tile import (
     TileManager as TileManagerDialog,
 )
 
+# Import Dialogs
 # TODO update IO classes to have dialogs
 from coralnet_toolbox.IO import (
     ImportImages,
@@ -73,6 +76,7 @@ from coralnet_toolbox.IO import (
     SaveProject
 )
 
+# Machine learning dialogs
 from coralnet_toolbox.MachineLearning import (
     TuneClassify as ClassifyTuneDialog,
     TuneDetect as DetectTuneDialog,
@@ -102,22 +106,26 @@ from coralnet_toolbox.MachineLearning import (
     Optimize as OptimizeModelDialog
 )
 
+# SAM dialogs
 from coralnet_toolbox.SAM import (
     DeployPredictorDialog as SAMDeployPredictorDialog,
     DeployGeneratorDialog as SAMDeployGeneratorDialog,
 )
 
+# See Anything dialogs
 from coralnet_toolbox.SeeAnything import (
     TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
 
+# CoralNet dialogs
 from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
 )
 
+# Z dialogs
 from coralnet_toolbox.Z import (
     DeployModelDialog as ZDeployModelDialog,
 )
@@ -126,6 +134,7 @@ from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
 
+# Game dialogs
 from coralnet_toolbox.BreakTime import (
     SnakeGame,
     BreakoutGame,
@@ -180,7 +189,6 @@ class MainWindow(QMainWindow):
         self.tile_icon = get_icon("tile.png")
         self.workarea_icon = get_icon("workarea.png")
         self.scale_icon = get_icon("scale.png")
-        self.spatial_icon = get_icon("spatial.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -241,14 +249,20 @@ class MainWindow(QMainWindow):
         self.current_mouse_x = 0
         self.current_mouse_y = 0
 
-        # Create windows
+        # Create main windows
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
-        self.confidence_window = ConfidenceWindow(self)
+        self.confidence_window = ConfidenceWindow(self)        
+        # Initialized in open_explorer_window
+        self.explorer_window = None  
+        # Initialized in open_mvat_window
+        self.mvat_window = None  
+        # Initialized in open_system_monitor
+        self.system_monitor = None  
         
-        self.explorer_window = None  # Initialized in open_explorer_window
-        self.system_monitor = None  # Initialized in open_system_monitor
+        # Initialize after main windows are created
+        self.annotation_window.initialize_tools()
 
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
@@ -276,9 +290,6 @@ class MainWindow(QMainWindow):
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
-
-        # Create dialogs (Sample)
-        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
@@ -378,6 +389,9 @@ class MainWindow(QMainWindow):
         self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
         # Connect imageChanged signal to update Z-Inference deploy button state
         self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
+        
+        # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
+        self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
 
         # ----------------------------------------
         # Create the menu bar
@@ -408,10 +422,10 @@ class MainWindow(QMainWindow):
         self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras
-        self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
-        self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
-        self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
+        # Import Metashape Cameras  TODO re-enable when implemented correctly
+        # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
+        # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
+        # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -556,10 +570,20 @@ class MainWindow(QMainWindow):
         self.utilities_menu = self.menu_bar.addMenu("Utilities")
         
         # Sampling Annotations
-        self.annotation_sampling_action = QAction("Sample", self)
-        self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
+        self.annotation_sampling_action = QAction("Sample Patches", self)
+        self.annotation_sampling_action.triggered.connect(self.open_patch_sampling_dialog_dialog)
         self.utilities_menu.addAction(self.annotation_sampling_action)
         
+        # Rugosity
+        self.rugosity_action = QAction("Measure Rugosity", self)
+        self.rugosity_action.triggered.connect(self.open_rugosity_dialog)
+        self.utilities_menu.addAction(self.rugosity_action)
+
+        # Scale
+        self.scale_action = QAction("Set Scale", self)
+        self.scale_action.triggered.connect(self.open_scale_dialog)
+        self.utilities_menu.addAction(self.scale_action)
+
         # Add a separator
         self.utilities_menu.addSeparator()
         
@@ -592,7 +616,7 @@ class MainWindow(QMainWindow):
         self.semantic_tile_dataset_action = QAction("Semantic", self)
         self.semantic_tile_dataset_action.triggered.connect(self.open_semantic_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.semantic_tile_dataset_action)
-
+        
         # ========== AI-ASSIST MENU ==========
         # AI-Assist menu
         self.ai_assist_menu = self.menu_bar.addMenu("AI-Assist")
@@ -814,19 +838,6 @@ class MainWindow(QMainWindow):
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
             
-            "scale": ("Scale Tool\n\n"
-                      "Calibrate spatial measurements.\n\n"
-                      "XY Scale Tab:\n"
-                      "• Set pixel size by drawing a line across a known distance.\n"
-                      "• Applies to highlighted images."),
-
-            "spatial": ("Spatial Tool\n\n"
-                        "Requires scale to be set.\n\n"
-                        "Measure rugosity:\n"
-                        "• Draw lines to measure 2D/3D distances and rugosity.\n"
-                        "• Generate measurement grids for systematic sampling.\n"
-                        "• View elevation profiles and 3D metrics when Z-data available."),
-
             "patch": ("Patch Tool\n\n"
                       "Create point (patch) annotations centered at the cursor.\n"
                       "• Left-click to place a patch at the mouse location.\n"
@@ -931,20 +942,6 @@ class MainWindow(QMainWindow):
         self.select_tool_action.setToolTip(self.tool_descriptions["select"])
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
-
-        self.toolbar.addSeparator()
-
-        self.scale_tool_action = QAction(self.scale_icon, "Scale", self)
-        self.scale_tool_action.setCheckable(True)
-        self.scale_tool_action.setToolTip(self.tool_descriptions["scale"])
-        self.scale_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.scale_tool_action)
-
-        self.spatial_tool_action = QAction(self.spatial_icon, "Spatial", self)
-        self.spatial_tool_action.setCheckable(True)
-        self.spatial_tool_action.setToolTip(self.tool_descriptions["spatial"])
-        self.spatial_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.spatial_tool_action)
 
         self.toolbar.addSeparator()
         
@@ -1349,12 +1346,16 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure the explorer window and system monitor are closed when the main window closes."""
+        """Ensure special windows (explorer, mvat) and system monitor are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
             self.explorer_window.setParent(None)
             self.explorer_window.close()
+            
+        if self.mvat_window:
+            self.mvat_window.setParent(None)
+            self.mvat_window.close()
         
         # Close the system monitor if it exists
         if self.system_monitor:
@@ -1552,7 +1553,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("select")
             else:
@@ -1570,7 +1570,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("patch")
             else:
@@ -1588,7 +1587,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("rectangle")
             else:
@@ -1606,7 +1604,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("polygon")
             else:
@@ -1624,7 +1621,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("brush")
             else:
@@ -1642,7 +1638,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("erase")
             else:
@@ -1660,7 +1655,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("dropper")
             else:
@@ -1678,7 +1672,6 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("fill")
             else:
@@ -1702,7 +1695,6 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
 
                 self.toolChanged.emit("sam")
             else:
@@ -1726,8 +1718,6 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
-                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("see_anything")
             else:
@@ -1745,66 +1735,8 @@ class MainWindow(QMainWindow):
                 self.fill_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
-                self.spatial_tool_action.setChecked(False)
 
                 self.toolChanged.emit("work_area")
-            else:
-                self.toolChanged.emit(None)
-                
-        elif action == self.scale_tool_action:
-            if state:
-                self.select_tool_action.setChecked(False)
-                self.patch_tool_action.setChecked(False)
-                self.rectangle_tool_action.setChecked(False)
-                self.polygon_tool_action.setChecked(False)
-                self.brush_tool_action.setChecked(False)
-                self.erase_tool_action.setChecked(False)
-                self.dropper_tool_action.setChecked(False)
-                self.fill_tool_action.setChecked(False)
-                self.sam_tool_action.setChecked(False)
-                self.see_anything_tool_action.setChecked(False)
-                self.work_area_tool_action.setChecked(False)
-                self.spatial_tool_action.setChecked(False)
-
-                self.toolChanged.emit("scale")
-            else:
-                self.toolChanged.emit(None)
-
-        elif action == self.spatial_tool_action:
-            # Check if scale is set on current image
-            image_path = self.annotation_window.current_image_path
-            if not image_path:
-                self.spatial_tool_action.setChecked(False)
-                QMessageBox.warning(self,
-                                    "No Image Loaded",
-                                    "Please load an image before using the Spatial Tool.")
-                return
-            
-            raster = self.image_window.raster_manager.get_raster(image_path)
-            if not raster or not raster.scale_x or not raster.scale_y:
-                self.spatial_tool_action.setChecked(False)
-                QMessageBox.warning(self,
-                                    "Scale Not Set",
-                                    "The Spatial Tool requires scale to be set on the current image.\n\n"
-                                    "Please use the Scale Tool to set the scale first.")
-                return
-            
-            if state:
-                self.select_tool_action.setChecked(False)
-                self.patch_tool_action.setChecked(False)
-                self.rectangle_tool_action.setChecked(False)
-                self.polygon_tool_action.setChecked(False)
-                self.brush_tool_action.setChecked(False)
-                self.erase_tool_action.setChecked(False)
-                self.dropper_tool_action.setChecked(False)
-                self.fill_tool_action.setChecked(False)
-                self.sam_tool_action.setChecked(False)
-                self.see_anything_tool_action.setChecked(False)
-                self.work_area_tool_action.setChecked(False)
-                self.scale_tool_action.setChecked(False)
-
-                self.toolChanged.emit("spatial")
             else:
                 self.toolChanged.emit(None)
 
@@ -1818,7 +1750,6 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
-        self.spatial_tool_action.setChecked(False)
         self.brush_tool_action.setChecked(False)
         self.erase_tool_action.setChecked(False)
         self.dropper_tool_action.setChecked(False)
@@ -1826,7 +1757,6 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
         self.work_area_tool_action.setChecked(False)
-        self.scale_tool_action.setChecked(False)
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
@@ -1848,8 +1778,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
@@ -1863,8 +1791,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -1879,8 +1805,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -1894,8 +1818,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "brush":
             self.select_tool_action.setChecked(False)
@@ -1909,8 +1831,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "erase":
             self.select_tool_action.setChecked(False)
@@ -1924,8 +1844,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "dropper":
             self.select_tool_action.setChecked(False)
@@ -1939,8 +1857,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "fill":
             self.select_tool_action.setChecked(False)
@@ -1954,8 +1870,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -1969,8 +1883,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
@@ -1984,8 +1896,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
 
         elif tool == "work_area":
             self.select_tool_action.setChecked(False)
@@ -1999,8 +1909,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(True)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
             
         elif tool == "scale":
             self.select_tool_action.setChecked(False)
@@ -2014,10 +1922,9 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(True)
-            self.spatial_tool_action.setChecked(False)
-        
-        elif tool == "spatial":
+                    
+        elif tool == "patch_sampling":
+            # Patch Sampling has no toolbar button - uncheck all toolbar buttons
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
@@ -2029,8 +1936,20 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(True)
+            
+        elif tool == "rugosity":
+            # Rugosity has no toolbar button - uncheck all toolbar buttons
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.brush_tool_action.setChecked(False)
+            self.erase_tool_action.setChecked(False)
+            self.dropper_tool_action.setChecked(False)
+            self.fill_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
 
         else:
             self.select_tool_action.setChecked(False)
@@ -2044,8 +1963,6 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            self.scale_tool_action.setChecked(False)
-            self.spatial_tool_action.setChecked(False)
     
     def get_available_devices(self):
         """Get a list of available devices for PyTorch."""
@@ -2699,110 +2616,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_explorer_window(self):
-        """Open the Explorer window, moving the LabelWindow into it."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening Explorer.")
-            return
-
-        # Check if there are any annotations
-        if not self.annotation_window.annotations_dict:
-            QMessageBox.warning(self,
-                                "Explorer",
-                                "No annotations are present in the project.")
-            return
-        
-        try:
-            self.untoggle_all_tools()
-
-            # Recreate the explorer window, passing the main window instance
-            self.explorer_window = ExplorerWindow(self)
-            
-            # Move the label_window from the main layout to the explorer
-            self.label_layout.removeWidget(self.label_window)
-            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
-            
-            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
-            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
-            self.label_layout.insertItem(0, self.explorer_spacer)
-                
-            # Disable all main window widgets except select few
-            self.set_main_window_enabled_state(
-                enable_list=[self.annotation_window, 
-                             self.label_window,
-                             self.transparency_widget],
-                disable_list=[self.toolbar, 
-                              self.menu_bar, 
-                              self.image_window, 
-                              self.confidence_window]
-            )
-            
-            self.explorer_window.showMaximized()
-            self.explorer_window.activateWindow()
-            self.explorer_window.raise_()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            if self.explorer_window:
-                self.explorer_window.close()  # Ensure cleanup
-                
-            self.explorer_window = None
-            # Re-enable everything if there was an error
-            self.set_main_window_enabled_state()
-        
-    def open_mvat_window(self):
-        """Open the Multi-View Annotation Tool (MVAT) window."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening MVAT.")
-            return
-        
-        try:
-            # Create and show the MVAT window (modeless - doesn't block main window)
-            # Create a new instance each time to ensure fresh state
-            self.mvat_window = MVATWindow(self)
-            self.mvat_window.show()
-            self.mvat_window.activateWindow()
-            self.mvat_window.raise_()
-            
-        except ImportError as e:
-            QMessageBox.warning(self,
-                                "MVAT Unavailable",
-                                "MVAT requires PyVista and PyVistaQt.\n\n"
-                                "Install with: pip install pyvista pyvistaqt")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
-
-    def explorer_closed(self):
-        """Handle the explorer window being closed."""
-        if self.explorer_window:
-            # Remove the spacer that was added when explorer opened
-            if hasattr(self, 'explorer_spacer'):
-                self.label_layout.removeItem(self.explorer_spacer)
-                del self.explorer_spacer
-            
-            # Move the label_window back to the main window's layout
-            self.label_window.setParent(self.central_widget)  # Re-parent back
-            # Insert at index 0 to maintain original order: label_window first, timer_group second
-            self.label_layout.insertWidget(0, self.label_window)
-            self.label_window.show()
-            self.label_window.resizeEvent(None)
-            self.resizeEvent(None)
-            
-            # Re-enable all main window widgets
-            self.set_main_window_enabled_state()
-            
-            # Clean up reference
-            self.explorer_window = None
-
-    def open_patch_annotation_sampling_dialog(self):
-        """Open the Patch Annotation Sampling dialog to sample annotations from images"""
+    def open_patch_sampling_dialog_dialog(self):
+        """Open the Patch Sampling tool to sample annotations from images"""
         # Check if there are any images in the project
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -2811,9 +2626,62 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # Proceed to open the dialog if images are loaded
+            # Deactivate other tools
             self.untoggle_all_tools()
-            self.patch_annotation_sampling_dialog.show()
+            # Activate the patch sampling tool
+            self.annotation_window.set_selected_tool("patch_sampling")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_rugosity_dialog(self):
+        """Open the Rugosity tool for measuring rugosity and spatial analysis"""
+        # Check if there is an image loaded
+        image_path = self.annotation_window.current_image_path
+        if not image_path:
+            QMessageBox.warning(self,
+                                "No Image Loaded",
+                                "Please load an image before using the Rugosity tool.")
+            return
+        
+        # Check if scale is set on current image
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        if not raster or not raster.scale_x or not raster.scale_y:
+            QMessageBox.warning(self,
+                                "Scale Not Set",
+                                "The Rugosity tool requires scale to be set on the current image.\n\n"
+                                "Please use the Scale Tool to set the scale first.")
+            return
+        
+        # Check the z-channel existing for the current image
+        if not raster.has_z_channel():
+            QMessageBox.warning(self,
+                                "Z-Channel Not Found",
+                                "The Rugosity tool requires a z-channel in the current image.\n\n"
+                                "Please ensure the image has a z-channel before using the Rugosity tool.")
+            return
+        
+        try:
+            # Deactivate other tools
+            self.untoggle_all_tools()
+            # Activate the rugosity tool
+            self.annotation_window.set_selected_tool("rugosity")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_scale_dialog(self):
+        """Open the Scale tool to set spatial scale on images"""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before setting scale.")
+            return
+
+        try:
+            # Deactivate other tools
+            self.untoggle_all_tools()
+            # Activate the scale tool
+            self.annotation_window.set_selected_tool("scale")
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -3430,6 +3298,138 @@ class MainWindow(QMainWindow):
             self.lightcycle_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+    
+    # Special Windows
+    
+    def open_explorer_window(self):
+        """Open the Explorer window, moving the LabelWindow into it."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening Explorer.")
+            return
+
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Explorer",
+                                "No annotations are present in the project.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+
+            # Recreate the explorer window, passing the main window instance
+            self.explorer_window = ExplorerWindow(self)
+            
+            # Move the label_window from the main layout to the explorer
+            self.label_layout.removeWidget(self.label_window)
+            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
+            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            
+            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
+            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
+            self.label_layout.insertItem(0, self.explorer_spacer)
+                
+            # Disable all main window widgets except select few
+            self.set_main_window_enabled_state(
+                enable_list=[self.annotation_window, 
+                             self.label_window,
+                             self.transparency_widget],
+                disable_list=[self.toolbar, 
+                              self.menu_bar, 
+                              self.image_window, 
+                              self.confidence_window]
+            )
+            
+            self.explorer_window.showMaximized()
+            self.explorer_window.activateWindow()
+            self.explorer_window.raise_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            if self.explorer_window:
+                self.explorer_window.close()  # Ensure cleanup
+                
+            self.explorer_window = None
+            # Re-enable everything if there was an error
+            self.set_main_window_enabled_state()
+    
+    def close_explorer_window(self):
+        """Handle the explorer window being closed."""
+        if self.explorer_window:
+            # Remove the spacer that was added when explorer opened
+            if hasattr(self, 'explorer_spacer'):
+                self.label_layout.removeItem(self.explorer_spacer)
+                del self.explorer_spacer
+            
+            # Move the label_window back to the main window's layout
+            self.label_window.setParent(self.central_widget)  # Re-parent back
+            # Insert at index 0 to maintain original order: label_window first, timer_group second
+            self.label_layout.insertWidget(0, self.label_window)
+            self.label_window.show()
+            self.label_window.resizeEvent(None)
+            self.resizeEvent(None)
+            
+            # Re-enable all main window widgets
+            self.set_main_window_enabled_state()
+            
+            # Clean up reference
+            self.explorer_window = None
+        
+    def open_mvat_window(self):
+        """Open the Multi-View Annotation Tool (MVAT) window."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before opening MVAT.")
+            return
+        
+        try:
+            # Create and show the MVAT window (modeless - doesn't block main window)
+            # Create a new instance each time to ensure fresh state
+            self.mvat_window = MVATWindow(self)
+            self.mvat_window.show()
+            self.mvat_window.activateWindow()
+            self.mvat_window.raise_()
+            
+        except ImportError as e:
+            QMessageBox.warning(self,
+                                "MVAT Unavailable",
+                                "MVAT requires PyVista and PyVistaQt.\n\n"
+                                "Install with: pip install pyvista pyvistaqt")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
+            
+    def close_mvat_window(self):
+        """Handle the MVAT window being closed."""
+        if self.mvat_window:
+            self.mvat_window.setParent(None)
+            self.mvat_window.close()
+            self.mvat_window = None
+            
+    def close_image_specific_dialogs(self):
+        """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
+        # Check if there is a dialog tool selected, if so, get the tool
+        if self.annotation_window.selected_tool:
+            selected_tool = self.annotation_window.selected_tool
+            
+            # Deactivate scale tool if active
+            if selected_tool == "scale":
+                self.annotation_window.tools[selected_tool].dialog.cleanup()
+                self.annotation_window.set_selected_tool(None)
+            
+            # Deactivate patch sampling tool if active
+            if selected_tool == "patch_sampling":
+                self.annotation_window.tools[selected_tool].dialog.cleanup()
+                self.annotation_window.set_selected_tool(None)
+            
+            # Deactivate rugosity tool if active
+            if selected_tool == "rugosity":
+                self.annotation_window.tools[selected_tool].dialog.cleanup()
+                self.annotation_window.set_selected_tool(None)
 
 
 class DeviceSelectionDialog(QDialog):

@@ -387,6 +387,10 @@ class Raster(QObject):
                 self.load_z_channel_from_file(z_path)
             except Exception as e:
                 print(f"Warning: Could not auto-load z-channel from {z_path}: {str(e)}")
+                
+    def has_z_channel(self) -> bool:
+        """Check if the raster currently has a z-channel loaded."""
+        return self.z_channel is not None
         
     def remove_z_channel(self):
         """Remove the depth/elevation channel data and path."""

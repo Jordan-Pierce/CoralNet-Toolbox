@@ -21,7 +21,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import simplify_polygon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -142,7 +141,9 @@ class SeeAnythingTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
 
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
+        self.working_area.create_graphics(self.annotation_window.scene, 
+                                          include_shadow=True, 
+                                          image_rect=self.annotation_window.get_image_rect())
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
 
@@ -195,7 +196,9 @@ class SeeAnythingTool(Tool):
         self.working_area.set_animation_manager(self.animation_manager)
         
         # Create and add the working area graphics
-        self.working_area.create_graphics(self.annotation_window.scene, include_shadow=True)
+        self.working_area.create_graphics(self.annotation_window.scene, 
+                                          include_shadow=True, 
+                                          image_rect=self.annotation_window.get_image_rect())
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
         
@@ -578,7 +581,7 @@ class SeeAnythingTool(Tool):
                     polygon_abs[:, 0] = polygon_abs[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
                     polygon_abs[:, 1] = polygon_abs[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
 
-                    polygon_abs = simplify_polygon(polygon_abs, 0.1)
+                    # No automatic simplification - preserve full precision
                     self.create_polygon_annotation(polygon_abs, confidence)
                     
         else:  # Task is 'detect'

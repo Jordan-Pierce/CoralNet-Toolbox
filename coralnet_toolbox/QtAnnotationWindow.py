@@ -34,7 +34,8 @@ from coralnet_toolbox.Tools import (
     ZoomTool,
     WorkAreaTool,
     ScaleTool,
-    SpatialTool
+    RugosityTool,
+    PatchSamplingTool,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -183,9 +184,19 @@ class AnnotationWindow(QGraphicsView):
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
+        self.tools = {}
+        self.mask_tools = {}
+
+        # Initialize the action stack for undo/redo
+        self.action_stack = ActionStack()
+        
+    def initialize_tools(self):
+        """Initialize tools"""
         self.tools = {
+            # Constant tools
             "pan": PanTool(self),
             "zoom": ZoomTool(self),
+            # Selectable annotation tools
             "select": SelectTool(self),
             "patch": PatchTool(self),
             "rectangle": RectangleTool(self),
@@ -193,19 +204,19 @@ class AnnotationWindow(QGraphicsView):
             "sam": SAMTool(self),
             "see_anything": SeeAnythingTool(self),
             "work_area": WorkAreaTool(self),
-            "scale": ScaleTool(self),
-            "spatial": SpatialTool(self),
+            # Selectable mask tools
             "brush": BrushTool(self),
             "fill": FillTool(self),
             "erase": EraseTool(self),
-            "dropper": DropperTool(self)
+            "dropper": DropperTool(self),
+            # Dialog tools
+            "scale": ScaleTool(self),
+            "rugosity": RugosityTool(self),
+            "patch_sampling": PatchSamplingTool(self),
         }
-
+        
         # Defines which tools trigger mask mode
         self.mask_tools = {"brush", "fill", "erase", "dropper"}
-
-        # Initialize the action stack for undo/redo
-        self.action_stack = ActionStack()
         
     def set_animation_manager(self, manager):
         """
@@ -687,7 +698,7 @@ class AnnotationWindow(QGraphicsView):
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
-            if self.selected_tool in ["scale", "spatial"]:
+            if self.selected_tool in ["scale"]:
                 self.main_window.untoggle_all_tools()
                     
         # Clean up (This is the ONLY scene clear)
@@ -1266,6 +1277,12 @@ class AnnotationWindow(QGraphicsView):
         if self.pixmap_image:
             return self.pixmap_image.size().width(), self.pixmap_image.size().height()
         return 0, 0
+    
+    def get_image_rect(self):
+        """Get the bounding rectangle of the currently loaded image in scene coordinates."""
+        if self.pixmap_image:
+            return QRectF(0, 0, self.pixmap_image.width(), self.pixmap_image.height())
+        return QRectF()
     
     def center_on_work_area(self, work_area):
         """Center the view on the specified work area."""

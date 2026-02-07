@@ -120,7 +120,7 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
     """Extract intrinsics and extrinsics from Metashape sensors and cameras dicts.
     
     Handles sensor calibration extraction and camera-to-world transform inversion.
-    Extrinsics are inverted from c2w to w2c (world-to-camera) transformations.
+    Corrects coordinate system from Metashape to COLMAP/OpenCV (flips Y and Z).
     
     Args:
         sensors: Dictionary of Sensor objects from Metashape
@@ -135,6 +135,16 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
     intrinsics_list = []
     extrinsics_list = []
     camera_labels = []
+    
+    # Transformation matrix to flip Y and Z axes (Metashape -> OpenCV/COLMAP)
+    # This corresponds to a 180-degree rotation around the X-axis
+    # Multiplied on the right of the c2w matrix to transform the camera basis
+    T_metashape_to_opencv = np.array([
+        [1,  0,  0,  0],
+        [0, -1,  0,  0],
+        [0,  0, -1,  0],
+        [0,  0,  0,  1]
+    ])
     
     for cam_id, cam in cameras.items():
         # Skip cameras without transforms
@@ -157,8 +167,7 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
         else:
             continue  # No focal length available
         
-        # Extract principal point - Metashape stores cx/cy as offsets from image center
-        # Convert to absolute pixel coordinates by adding to image center
+        # Extract principal point
         image_center_x = sensor.width / 2.0
         image_center_y = sensor.height / 2.0
         
@@ -167,7 +176,6 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
             cx = image_center_x + calib.cx
             cy = image_center_y + calib.cy
         else:
-            # Fallback to image center
             cx = image_center_x
             cy = image_center_y
         
@@ -179,16 +187,21 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
         ])
         intrinsics_list.append(K)
         
-        # Invert camera-to-world transform to get world-to-camera
-        # Metashape stores camera-to-world (c2w), but we need world-to-camera (w2c)
-        # Note: The actual values will differ from COLMAP due to different world coordinate
-        # frame definitions and bundle adjustment algorithms, but the format is correct
+        # Calculate Extrinsics
         try:
-            c2w = cam.transform
-            w2c = np.linalg.inv(c2w)
+            # 1. Get Camera-to-World (c2w) from Metashape
+            c2w_metashape = cam.transform
+            
+            # 2. Apply coordinate conversion: c2w_opencv = c2w_metashape @ T_flip
+            # We multiply on the right to transform the camera's local axes 
+            # relative to the world, preserving the camera center position.
+            c2w_opencv = c2w_metashape @ T_metashape_to_opencv
+            
+            # 3. Invert to get World-to-Camera (w2c)
+            w2c = np.linalg.inv(c2w_opencv)
             extrinsics_list.append(w2c)
+            
         except np.linalg.LinAlgError:
-            # Singular matrix, skip this camera
             intrinsics_list.pop()  # Remove the intrinsics we just added
             continue
         

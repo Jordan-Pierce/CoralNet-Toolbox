@@ -1,0 +1,538 @@
+"""
+Camera Ray Module for MVAT
+
+Provides ray casting functionality for projecting 2D pixel coordinates through
+camera frustums into 3D space and back onto other camera views.
+Uses PyVista for 3D ray-mesh intersection when available.
+"""
+from typing import Optional, Dict, Tuple, List
+
+import numpy as np
+
+import pyvista as pv
+
+from coralnet_toolbox.MVAT.core.Camera import Camera
+
+
+from coralnet_toolbox.MVAT.core.constants import (
+    SELECT_COLOR_RGB,
+    HIGHLIGHT_COLOR_RGB,
+)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
+
+# State constants for scalar-based coloring
+STATE_DEFAULT = 0
+STATE_HIGHLIGHTED = 1
+STATE_SELECTED = 2
+
+# Colors for each state (RGB normalized 0-1)
+STATE_COLORS = {
+    STATE_DEFAULT: (0.8, 0.8, 0.8),      # Light gray/white
+    STATE_HIGHLIGHTED: tuple(c / 255 for c in HIGHLIGHT_COLOR_RGB),  # Cyan
+    STATE_SELECTED: tuple(c / 255 for c in SELECT_COLOR_RGB),        # Lime green
+}
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class CameraRay:
+    """
+    Represents a ray cast from a camera through a pixel coordinate into 3D space.
+    
+    The ray consists of:
+    - An origin point (camera position in world coordinates)
+    - A direction vector (normalized ray direction from camera through pixel)
+    - A terminal point (3D point where the ray "ends" - either from depth or estimated)
+    - A flag indicating if the depth is accurate (from z-channel) or estimated
+    
+    Attributes:
+        origin (np.ndarray): 3D camera position in world coordinates.
+        direction (np.ndarray): Normalized direction vector of the ray.
+        terminal_point (np.ndarray): 3D endpoint of the ray in world coordinates.
+        has_accurate_depth (bool): True if terminal point calculated from actual depth data.
+        pixel_coord (tuple): Original 2D pixel coordinate (u, v).
+        source_camera (Camera): Reference to the camera that originated this ray.
+    """
+    
+    def __init__(self, 
+                 origin: np.ndarray, 
+                 direction: np.ndarray, 
+                 terminal_point: np.ndarray,
+                 has_accurate_depth: bool = False,
+                 pixel_coord: Optional[Tuple[int, int]] = None,
+                 source_camera: Optional['Camera'] = None):
+        """
+        Initialize a CameraRay.
+        
+        Args:
+            origin: 3D camera position in world coordinates.
+            direction: Normalized direction vector of the ray.
+            terminal_point: 3D endpoint of the ray in world coordinates.
+            has_accurate_depth: Whether terminal_point is from actual depth data.
+            pixel_coord: Original 2D pixel coordinate (u, v).
+            source_camera: Reference to the originating camera.
+        """
+        self.origin = np.asarray(origin, dtype=np.float64)
+        self.direction = np.asarray(direction, dtype=np.float64)
+        # Ensure direction is normalized
+        norm = np.linalg.norm(self.direction)
+        if norm > 0:
+            self.direction = self.direction / norm
+        self.terminal_point = np.asarray(terminal_point, dtype=np.float64)
+        self.has_accurate_depth = has_accurate_depth
+        self.pixel_coord = pixel_coord
+        self.source_camera = source_camera
+        
+    @classmethod
+    def from_pixel_and_camera(cls, 
+                              pixel_xy: Tuple[int, int], 
+                              camera: 'Camera', 
+                              depth: Optional[float] = None,
+                              default_depth: float = 10.0) -> 'CameraRay':
+        """
+        Create a ray from a 2D pixel coordinate through a camera.
+        
+        If depth is provided (e.g., from z-channel), the terminal point is calculated
+        precisely using camera.unproject(). Otherwise, a default depth is used to
+        estimate the terminal point.
+        
+        Args:
+            pixel_xy: 2D pixel coordinate (u, v) in image space.
+            camera: Camera object with intrinsics and extrinsics.
+            depth: Optional depth value at this pixel (from z-channel).
+            default_depth: Fallback depth to use if depth is None.
+            
+        Returns:
+            CameraRay: A new ray object.
+        """
+        # Camera origin is the optical center in world coordinates
+        origin = camera.position.copy()
+        
+        # Check if we have valid depth
+        has_accurate_depth = False
+        actual_depth = default_depth
+        
+        if depth is not None and depth > 0 and not np.isnan(depth):
+            actual_depth = depth
+            has_accurate_depth = True
+        
+        # Calculate the 3D point by unprojecting the pixel with known depth
+        # We need to manually unproject since camera.unproject() reads from raster
+        pixel_hom = np.array([pixel_xy[0], pixel_xy[1], 1.0])
+        
+        # Transform to Camera Coordinate System (Back-projection)
+        # X_cam = Z * K^{-1} * x_pix
+        point_cam = actual_depth * (camera.K_inv @ pixel_hom)
+        
+        # Transform to World Coordinate System
+        # X_world = R^T * (X_cam - t)
+        terminal_point = camera.R.T @ (point_cam - camera.t)
+        
+        # Calculate direction (from camera position to terminal point)
+        direction = terminal_point - origin
+        norm = np.linalg.norm(direction)
+        if norm > 0:
+            direction = direction / norm
+        else:
+            # Fallback to camera's forward direction
+            direction = camera.R.T @ np.array([0, 0, 1])
+            
+        return cls(
+            origin=origin,
+            direction=direction,
+            terminal_point=terminal_point,
+            has_accurate_depth=has_accurate_depth,
+            pixel_coord=pixel_xy,
+            source_camera=camera
+        )
+    
+    @classmethod
+    def from_world_point_and_camera(cls, 
+                                    world_point: np.ndarray, 
+                                    camera: 'Camera') -> 'CameraRay':
+        """
+        Create a ray from a camera's origin to a known 3D world point.
+        
+        This is used to visualize rays from highlighted cameras to a point
+        determined by another camera's ray (e.g., the selected camera).
+        
+        Args:
+            world_point: 3D point in world coordinates (the target).
+            camera: Camera object from which to cast the ray.
+            
+        Returns:
+            CameraRay: A new ray from the camera to the world point.
+            
+        # TODO: When depth is fully incorporated, re-evaluate whether rays
+        # from highlighted cameras should use solid or dashed line styling
+        # based on depth accuracy at the projected point.
+        """
+        origin = camera.position.copy()
+        world_point = np.asarray(world_point, dtype=np.float64)
+        
+        # Calculate direction from camera to world point
+        direction = world_point - origin
+        norm = np.linalg.norm(direction)
+        if norm > 0:
+            direction = direction / norm
+        else:
+            # Fallback to camera's forward direction
+            direction = camera.R.T @ np.array([0, 0, 1])
+            
+        return cls(
+            origin=origin,
+            direction=direction,
+            terminal_point=world_point,
+            has_accurate_depth=True,  # World point is known precisely
+            pixel_coord=None,  # Not originating from a pixel
+            source_camera=camera
+        )
+    
+    def cast_on_mesh(self, mesh) -> Optional[np.ndarray]:
+        """
+        Cast this ray onto a PyVista mesh to find intersection point.
+        
+        Uses PyVista's ray_trace method to find where the ray intersects
+        the mesh surface.
+        
+        Args:
+            mesh: A PyVista PolyData mesh to intersect with.
+            
+        Returns:
+            np.ndarray or None: Intersection point if hit, None otherwise.
+            
+        # TODO: Add mesh intersection refinement when point cloud mesh is available
+        # This can improve accuracy when z-channel is not available
+        """
+        if mesh is None:
+            return None
+            
+        try:
+            # Calculate a far end point for the ray
+            ray_length = 1000.0  # Large distance to ensure we hit the mesh
+            end_point = self.origin + self.direction * ray_length
+            
+            # Perform ray trace
+            intersection_points, cell_ids = mesh.ray_trace(
+                self.origin.tolist(), 
+                end_point.tolist(),
+                first_point=True
+            )
+            
+            if len(intersection_points) > 0:
+                # Update terminal point to intersection
+                self.terminal_point = intersection_points[0]
+                self.has_accurate_depth = True  # Mesh intersection provides accurate depth
+                return self.terminal_point.copy()
+                
+        except Exception as e:
+            print(f"Ray-mesh intersection error: {e}")
+            
+        return None
+    
+    def project_to_cameras(self, cameras: Dict[str, 'Camera']) -> Dict[str, Tuple[float, float, bool]]:
+        """
+        Project this ray's terminal point onto multiple camera views.
+        
+        For each camera, calculates the 2D pixel coordinate where the
+        ray's terminal point would appear.
+        
+        Args:
+            cameras: Dictionary mapping image_path to Camera objects.
+            
+        Returns:
+            Dict mapping image_path to (pixel_x, pixel_y, is_valid) tuples.
+            is_valid indicates if the projection is within the camera's FOV.
+            
+        # TODO: Add occlusion check here - skip cameras where point is occluded
+        # Could use camera.is_point_occluded_depth_based() if z-channel available
+        # or camera.is_point_occluded_ray_casting() if mesh available
+        """
+        projections = {}
+        
+        for path, camera in cameras.items():
+            # Include all cameras including source camera
+            # Source camera will show marker at cursor position
+            try:
+                # Project 3D point to 2D pixel
+                pixel_coord = camera.project(self.terminal_point)
+                
+                if not np.isnan(pixel_coord).any():
+                    # Check if within image bounds
+                    is_valid = (0 <= pixel_coord[0] < camera.width and 
+                                0 <= pixel_coord[1] < camera.height)
+                    
+                    projections[path] = (float(pixel_coord[0]), 
+                                         float(pixel_coord[1]), 
+                                         is_valid)
+                                        
+            except Exception as e:
+                # Silently skip cameras that fail projection
+                pass
+                
+        return projections
+    
+    def get_distance_from_camera(self) -> float:
+        """
+        Get the distance from the camera to the terminal point.
+        
+        Returns:
+            float: Distance in world units.
+        """
+        return float(np.linalg.norm(self.terminal_point - self.origin))
+    
+    def to_line_segment(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get the ray as a line segment for visualization.
+        
+        Returns:
+            Tuple of (start_point, end_point) as numpy arrays.
+        """
+        return (self.origin.copy(), self.terminal_point.copy())
+    
+    def to_pyvista_line(self):
+        """
+        Create a PyVista Line mesh for visualization.
+        
+        Returns:
+            pyvista.Line or None: Line mesh if PyVista available.
+        """            
+        return pv.Line(self.origin.tolist(), self.terminal_point.tolist())
+    
+    def to_pyvista_arrow(self, scale: float = 0.1):
+        """
+        Create a PyVista Arrow mesh for direction visualization.
+        
+        Args:
+            scale: Scale factor for the arrow size.
+            
+        Returns:
+            pyvista.Arrow or None: Arrow mesh if PyVista available.
+        """
+        return pv.Arrow(
+            start=self.origin.tolist(),
+            direction=self.direction.tolist(),
+            scale=scale
+        )
+    
+    def __repr__(self) -> str:
+        """String representation of the ray."""
+        depth_str = "accurate" if self.has_accurate_depth else "estimated"
+        return (f"CameraRay(origin={self.origin}, "
+                f"terminal={self.terminal_point}, "
+                f"depth={depth_str})")
+        
+
+class BatchedRayManager:
+    """
+    Manages batched rendering of camera rays for efficient visualization.
+    
+    Instead of creating individual line and sphere actors per ray (2*N draw calls),
+    this class maintains a single PolyData mesh containing all ray lines and updates
+    point coordinates in-place when the mouse moves.
+    
+    Attributes:
+        ray_mesh: PolyData containing all ray line segments
+        sphere_mesh: PolyData containing terminal point spheres
+        ray_actor: Single actor for all ray lines
+        sphere_actor: Single actor for terminal spheres
+    """
+    
+    def __init__(self):
+        """Initialize the BatchedRayManager."""
+        self.ray_mesh: Optional[pv.PolyData] = None
+        self.sphere_mesh: Optional[pv.PolyData] = None
+        self.ray_actor = None
+        self.sphere_actor = None
+        
+        # Ray colors stored per ray
+        self._ray_colors: Optional[np.ndarray] = None
+        self._num_rays = 0
+        
+    def build_ray_batch(self, 
+                        rays_with_colors: List[Tuple['CameraRay', tuple]]) -> Tuple[Optional[pv.PolyData], 
+                                                                                    Optional[pv.PolyData]]:
+        """
+        Build merged meshes for multiple rays.
+        
+        Args:
+            rays_with_colors: List of (CameraRay, color_rgb) tuples
+                             Colors should be RGB tuples (0-255)
+            
+        Returns:
+            Tuple of (ray_lines_mesh, sphere_mesh)
+        """
+        if not rays_with_colors:
+            self.ray_mesh = None
+            self.sphere_mesh = None
+            self._num_rays = 0
+            return None, None
+        
+        self._num_rays = len(rays_with_colors)
+        
+        # Build line segments
+        points = []
+        lines = []
+        colors = []
+        
+        for i, (ray, color) in enumerate(rays_with_colors):
+            if ray is None:
+                continue
+                
+            # Add origin and terminal points
+            pt_idx = len(points)
+            points.append(ray.origin.tolist())
+            points.append(ray.terminal_point.tolist())
+            
+            # Add line connectivity
+            lines.extend([2, pt_idx, pt_idx + 1])
+            
+            # Add colors for both endpoints (same color per line)
+            # Normalize to 0-1 if needed
+            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
+                norm_color = tuple(c / 255 for c in color[:3])
+            else:
+                norm_color = color[:3] if len(color) >= 3 else color
+            colors.append(norm_color)
+            colors.append(norm_color)
+        
+        if not points:
+            self.ray_mesh = None
+            self.sphere_mesh = None
+            return None, None
+        
+        # Create lines mesh
+        self.ray_mesh = pv.PolyData(np.array(points), lines=np.array(lines))
+        self._ray_colors = np.array(colors)
+        self.ray_mesh['RGB'] = (self._ray_colors * 255).astype(np.uint8)
+        
+        # Build spheres at terminal points
+        first_ray = rays_with_colors[0][0]
+        if first_ray is not None:
+            base_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.005
+            base_radius = max(base_radius, 0.01)
+        else:
+            base_radius = 0.05
+        
+        spheres = []
+        for i, (ray, color) in enumerate(rays_with_colors):
+            if ray is None:
+                continue
+            # Primary ray gets larger sphere
+            radius = base_radius if i == 0 else base_radius * 0.6
+            sphere = pv.Sphere(radius=radius, center=ray.terminal_point.tolist())
+            
+            # Add color to sphere
+            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
+                norm_color = tuple(c / 255 for c in color[:3])
+            else:
+                norm_color = color[:3] if len(color) >= 3 else color
+            sphere['RGB'] = np.tile(np.array(norm_color) * 255, (sphere.n_points, 1)).astype(np.uint8)
+            spheres.append(sphere)
+        
+        if spheres:
+            self.sphere_mesh = pv.merge(spheres) if len(spheres) > 1 else spheres[0]
+        else:
+            self.sphere_mesh = None
+        
+        return self.ray_mesh, self.sphere_mesh
+    
+    def add_to_plotter(self, plotter, line_width: float = 3) -> Tuple[Optional['vtkActor'], Optional['vtkActor']]:
+        """
+        Add the batched ray meshes to a plotter.
+        
+        Args:
+            plotter: PyVista plotter instance
+            line_width: Width of ray lines
+            
+        Returns:
+            Tuple of (ray_actor, sphere_actor)
+        """
+        # Remove existing actors
+        self.remove_from_plotter(plotter)
+        
+        if self.ray_mesh is not None:
+            self.ray_actor = plotter.add_mesh(
+                self.ray_mesh,
+                scalars='RGB',
+                rgb=True,
+                line_width=line_width,
+                render_lines_as_tubes=False,
+                name='_batched_rays',
+                pickable=False
+            )
+        
+        if self.sphere_mesh is not None:
+            self.sphere_actor = plotter.add_mesh(
+                self.sphere_mesh,
+                scalars='RGB',
+                rgb=True,
+                name='_batched_ray_spheres',
+                pickable=False
+            )
+        
+        return self.ray_actor, self.sphere_actor
+    
+    def update_ray_endpoints(self, 
+                             rays_with_colors: List[Tuple['CameraRay', tuple]]):
+        """
+        Update ray endpoints in-place (more efficient than rebuilding).
+        
+        Only works if the number of rays hasn't changed.
+        
+        Args:
+            rays_with_colors: List of (CameraRay, color_rgb) tuples
+        """
+        if self.ray_mesh is None or len(rays_with_colors) != self._num_rays:
+            # Need to rebuild - ray count changed
+            self.build_ray_batch(rays_with_colors)
+            return
+        
+        # Update points in-place
+        points = self.ray_mesh.points
+        for i, (ray, _) in enumerate(rays_with_colors):
+            if ray is not None:
+                pt_idx = i * 2
+                points[pt_idx] = ray.origin
+                points[pt_idx + 1] = ray.terminal_point
+        
+        self.ray_mesh.Modified()
+    
+    def set_visibility(self, visible: bool):
+        """Set visibility of ray actors."""
+        if self.ray_actor is not None:
+            self.ray_actor.SetVisibility(visible)
+        if self.sphere_actor is not None:
+            self.sphere_actor.SetVisibility(visible)
+    
+    def remove_from_plotter(self, plotter):
+        """Remove ray actors from plotter."""
+        if self.ray_actor is not None:
+            try:
+                plotter.remove_actor(self.ray_actor)
+            except:
+                pass
+            self.ray_actor = None
+            
+        if self.sphere_actor is not None:
+            try:
+                plotter.remove_actor(self.sphere_actor)
+            except:
+                pass
+            self.sphere_actor = None
+    
+    def clear(self):
+        """Clear all cached data."""
+        self.ray_mesh = None
+        self.sphere_mesh = None
+        self.ray_actor = None
+        self.sphere_actor = None
+        self._ray_colors = None
+        self._num_rays = 0
