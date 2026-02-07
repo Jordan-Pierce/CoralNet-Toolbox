@@ -422,7 +422,7 @@ class MainWindow(QMainWindow):
         self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
         self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras  TODO re-enable when implemented corectly
+        # Import Metashape Cameras  TODO re-enable when implemented correctly
         # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
         # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
         # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
