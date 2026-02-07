@@ -382,11 +382,10 @@ class ExportGeoJSONAnnotations(QDialog):
         return []
 
     def transform_coordinates(self, coords, src_transform, src_crs):
-        """
-        Transform pixel coordinates to Geographic coordinates.
-        1. Apply Affine transform (Pixels -> Image CRS)
-        2. If WGS84 requested, Apply Warp (Image CRS -> EPSG:4326)
-        """
+        """Transform coordinates from pixel space to geographic coordinates."""
+        if not src_crs and self.pixel_checkbox.isChecked():
+            return coords
+
         # 1. Pixels to Source CRS
         projected_coords = []
         for x, y in coords:
@@ -409,9 +408,6 @@ class ExportGeoJSONAnnotations(QDialog):
                 return list(zip(txs, tys))
             except Exception as e:
                 raise ValueError(f"Reprojection failed: {str(e)}")
-        
-        if not src_crs and self.pixel_checkbox.isChecked():
-            return coords
         
         return projected_coords
 
