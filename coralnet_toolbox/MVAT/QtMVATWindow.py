@@ -147,21 +147,36 @@ class MousePositionBridge:
         # Get highlighted cameras and create rays from them to the world point
         highlighted_cameras = self.mvat_window.camera_grid.get_highlighted_cameras()
         
-        # Build list of rays with colors for visualization
-        # Selected camera ray is lime, highlighted camera rays are cyan
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]  # Selected camera ray first
+        # List to store rays for 3D viewer: [(Ray, Color), ...]
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]
         
-        for highlighted_camera in highlighted_cameras:
-            # Skip the selected camera if it's also highlighted
-            if highlighted_camera.image_path == camera.image_path:
+        # Dictionary to store visibility status for 2D markers: {image_path: is_occluded}
+        visibility_status = {}
+        
+        for target_cam in highlighted_cameras:
+            # Skip self
+            if target_cam.image_path == camera.image_path:
                 continue
             
-            # Create ray from highlighted camera to the same world point
-            highlighted_ray = CameraRay.from_world_point_and_camera(
+            # --- OCCLUSION CHECK ---
+            # TODO: Handle case where target_cam does not have z-channel data.
+            # Currently assumes visible, but consider user warning or alternative occlusion method (e.g., mesh-based).
+            is_occluded = target_cam.is_point_occluded_depth_based(ray.terminal_point, depth_threshold=0.15)
+            visibility_status[target_cam.image_path] = is_occluded
+            
+            # Create ray from target camera to the world point
+            target_ray = CameraRay.from_world_point_and_camera(
                 world_point=ray.terminal_point,
-                camera=highlighted_camera
+                camera=target_cam
             )
-            rays_with_colors.append((highlighted_ray, RAY_COLOR_HIGHLIGHTED))
+            
+            # Color coding: Red if blocked, Cyan if visible
+            if is_occluded:
+                ray_color = (255, 0, 0)  # Red
+            else:
+                ray_color = RAY_COLOR_HIGHLIGHTED  # Cyan
+                
+            rays_with_colors.append((target_ray, ray_color))
         
         # Update 3D ray visualization with all rays
         self.mvat_window.viewer.show_rays(rays_with_colors)
@@ -170,9 +185,10 @@ class MousePositionBridge:
         projections = ray.project_to_cameras(self.mvat_window.cameras)
         
         # Update markers on visible camera widgets with appropriate colors
-        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras)
+        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras, visibility_status)
         
-    def _update_camera_markers(self, projections: dict, accurate: bool, highlighted_cameras: list):
+    def _update_camera_markers(self, projections: dict, accurate: bool, 
+                               highlighted_cameras: list, visibility_status: dict):
         """
         Update marker positions on visible camera widgets.
         
@@ -184,6 +200,7 @@ class MousePositionBridge:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
             accurate: Whether the depth used was accurate.
             highlighted_cameras: List of highlighted Camera objects.
+            visibility_status: Dict mapping image_path to is_occluded bool.
         """        
         camera_grid = self.mvat_window.camera_grid
         selected_camera = self.mvat_window.selected_camera
@@ -199,18 +216,30 @@ class MousePositionBridge:
         
         # Update each visible widget
         for path, widget in visible_widgets.items():
+            # Only draw markers on selected or highlighted cameras
+            if path not in (highlighted_paths | {selected_path} if selected_path else highlighted_paths):
+                widget.clear_marker()
+                continue
+                
             if path in projections:
                 px, py, is_valid = projections[path]
+                
                 if is_valid:
-                    # Determine marker color based on camera state
-                    if path == selected_path:
-                        color = MARKER_COLOR_SELECTED  # Lime for selected
-                    elif path in highlighted_paths:
-                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for highlighted
-                    else:
-                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for other projections
+                    # Check occlusion status (Default to False if not in dict)
+                    is_occluded = visibility_status.get(path, False)
                     
-                    widget.set_marker_position(px, py, accurate=accurate, color=color)
+                    # Determine color
+                    if path == selected_path:
+                        color = MARKER_COLOR_SELECTED
+                        is_occluded = False # Selected camera is never occluded from itself
+                    elif path in highlighted_paths:
+                        color = MARKER_COLOR_HIGHLIGHTED
+                    else:
+                        color = MARKER_COLOR_HIGHLIGHTED
+                    
+                    # Pass is_occluded to the widget
+                    widget.set_marker_position(px, py, accurate=accurate, 
+                                               color=color, is_occluded=is_occluded)
                 else:
                     widget.clear_marker()
             else:
