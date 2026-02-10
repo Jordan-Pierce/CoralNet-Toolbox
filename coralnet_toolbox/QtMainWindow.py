@@ -1244,7 +1244,6 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
         self.status_bar_layout.addWidget(self.z_transparency_widget)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
