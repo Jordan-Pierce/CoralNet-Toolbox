@@ -667,7 +667,9 @@ class MVATWindow(QMainWindow):
             self.close()
             return
             
-        # Show progress bar
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Start progress
         progress = ProgressBar(self, title="Loading Cameras")
         progress.show()
         progress.start_progress(len(all_paths))
@@ -692,10 +694,14 @@ class MVATWindow(QMainWindow):
                         print(f"Failed to create camera for {path}: {e}")
                         
                 progress.update_progress()
-                QApplication.processEvents()
                 
         finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Close progress
+            progress.finish_progress()
             progress.close()
+            progress = None
             
         # Check if any cameras were loaded
         if valid_count == 0:

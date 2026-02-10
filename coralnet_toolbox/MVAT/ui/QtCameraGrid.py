@@ -12,7 +12,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, 
-    QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton
+    QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton,
+    QApplication
 )
 
 from coralnet_toolbox.MVAT.core.constants import (
@@ -26,6 +27,8 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_SIZE,
     MARKER_LINE_WIDTH,
 )
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -575,16 +578,39 @@ class CameraGrid(QWidget):
         self.highlighted_paths.clear()
         self.last_clicked_index = -1
         
-        # Create data items and widgets
-        for path, camera in cameras.items():
-            data_item = CameraDataItem(camera)
-            self.data_items.append(data_item)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Start progress for loading camera / thumbnails        
+        progress = ProgressBar(self, title="Setting Cameras")
+        progress.show()
+        progress.start_progress(len(cameras))
+        
+        try:
+        
+            # Create data items and widgets
+            for path, camera in cameras.items():
+                data_item = CameraDataItem(camera)
+                self.data_items.append(data_item)
+                
+                widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
+                widget.clicked.connect(self._on_widget_clicked)
+                widget.double_clicked.connect(self._on_widget_double_clicked)
+                self.widgets_by_path[path] = widget
+                
+                # Load the thumbnail immediately for progress tracking
+                widget.load_image()
+                
+        except Exception as e:
+            print(f"Error loading camera thumbnails: {e}")
             
-            widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
-            widget.clicked.connect(self._on_widget_clicked)
-            widget.double_clicked.connect(self._on_widget_double_clicked)
-            self.widgets_by_path[path] = widget
-            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Close progress
+            progress.finish_progress()
+            progress.close()
+            progress = None
+        
         # Calculate layout
         self.recalculate_layout()
         
