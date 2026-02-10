@@ -377,10 +377,6 @@ class MainWindow(QMainWindow):
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
         # Connect the imageLoaded signal from ImageWindow to check z-channel status
         self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)        
-        # Connect image signals to update Z-Inference deploy button state
-        self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
-        # Connect imageChanged signal to update Z-Inference deploy button state
-        self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
         
         # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
