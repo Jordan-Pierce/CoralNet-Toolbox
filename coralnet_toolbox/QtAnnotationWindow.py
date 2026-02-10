@@ -342,9 +342,14 @@ class AnnotationWindow(QGraphicsView):
         self.schedule_dynamic_range_update()
         
         super().mouseReleaseEvent(event)
-
+        
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
+        # Handle Ctrl+H to reset the scene view
+        if event.key() == Qt.Key_H and event.modifiers() == Qt.ControlModifier:
+            self.reset_scene_view()
+            return
+        
         # Handle Ctrl+A for select/unselect all annotations
         if event.key() == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
             current_annotations = self.get_image_annotations()
@@ -668,6 +673,17 @@ class AnnotationWindow(QGraphicsView):
             self.scene.deleteLater()
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
+        
+    def reset_scene_view(self):
+        """Resets the scene view"""
+        # Update the zoom tool's state
+        self.tools["zoom"].reset_zoom()
+        self.tools["zoom"].calculate_min_zoom()
+        # Re-fit the view to the new, full-res pixmap
+        self.fitInView(self.get_image_rect(), Qt.KeepAspectRatio)
+        self.viewChanged.emit(*self.get_image_dimensions())
+        # Process events
+        QApplication.processEvents()
 
     def display_image(self, q_image):
         """Display a QImage in the annotation window without setting it."""
@@ -782,15 +798,12 @@ class AnnotationWindow(QGraphicsView):
         # Automatically mark this image as checked when viewed
         raster.checkbox_state = True
         self.main_window.image_window.table_model.update_raster_data(image_path)
-        
-        # Update the zoom tool's state
-        self.tools["zoom"].reset_zoom()
-        # Re-fit the view to the new, full-res pixmap
-        self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-        self.tools["zoom"].calculate_min_zoom()
 
         # Toggle the cursor annotation
         self.toggle_cursor_annotation()
+        
+        # Re-fit the view to the new, full-res pixmap
+        self.reset_scene_view()
 
         # Load all associated annotations
         self.load_annotations()
