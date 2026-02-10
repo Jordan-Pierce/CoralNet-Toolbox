@@ -13,7 +13,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QToolBar, QAction, QLabel, QSlider, QCheckBox,
+    QToolBar, QAction, QLabel, QSlider,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
     QSizePolicy, QSpinBox
 )
@@ -147,21 +147,36 @@ class MousePositionBridge:
         # Get highlighted cameras and create rays from them to the world point
         highlighted_cameras = self.mvat_window.camera_grid.get_highlighted_cameras()
         
-        # Build list of rays with colors for visualization
-        # Selected camera ray is lime, highlighted camera rays are cyan
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]  # Selected camera ray first
+        # List to store rays for 3D viewer: [(Ray, Color), ...]
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]
         
-        for highlighted_camera in highlighted_cameras:
-            # Skip the selected camera if it's also highlighted
-            if highlighted_camera.image_path == camera.image_path:
+        # Dictionary to store visibility status for 2D markers: {image_path: is_occluded}
+        visibility_status = {}
+        
+        for target_cam in highlighted_cameras:
+            # Skip self
+            if target_cam.image_path == camera.image_path:
                 continue
             
-            # Create ray from highlighted camera to the same world point
-            highlighted_ray = CameraRay.from_world_point_and_camera(
+            # --- OCCLUSION CHECK ---
+            # TODO: Handle case where target_cam does not have z-channel data.
+            # Currently assumes visible, but consider user warning or alternative occlusion method (e.g., mesh-based).
+            is_occluded = target_cam.is_point_occluded_depth_based(ray.terminal_point, depth_threshold=0.15)
+            visibility_status[target_cam.image_path] = is_occluded
+            
+            # Create ray from target camera to the world point
+            target_ray = CameraRay.from_world_point_and_camera(
                 world_point=ray.terminal_point,
-                camera=highlighted_camera
+                camera=target_cam
             )
-            rays_with_colors.append((highlighted_ray, RAY_COLOR_HIGHLIGHTED))
+            
+            # Color coding: Red if blocked, Cyan if visible
+            if is_occluded:
+                ray_color = (255, 0, 0)  # Red
+            else:
+                ray_color = RAY_COLOR_HIGHLIGHTED  # Cyan
+                
+            rays_with_colors.append((target_ray, ray_color))
         
         # Update 3D ray visualization with all rays
         self.mvat_window.viewer.show_rays(rays_with_colors)
@@ -170,9 +185,10 @@ class MousePositionBridge:
         projections = ray.project_to_cameras(self.mvat_window.cameras)
         
         # Update markers on visible camera widgets with appropriate colors
-        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras)
+        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras, visibility_status)
         
-    def _update_camera_markers(self, projections: dict, accurate: bool, highlighted_cameras: list):
+    def _update_camera_markers(self, projections: dict, accurate: bool, 
+                               highlighted_cameras: list, visibility_status: dict):
         """
         Update marker positions on visible camera widgets.
         
@@ -184,6 +200,7 @@ class MousePositionBridge:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
             accurate: Whether the depth used was accurate.
             highlighted_cameras: List of highlighted Camera objects.
+            visibility_status: Dict mapping image_path to is_occluded bool.
         """        
         camera_grid = self.mvat_window.camera_grid
         selected_camera = self.mvat_window.selected_camera
@@ -199,18 +216,30 @@ class MousePositionBridge:
         
         # Update each visible widget
         for path, widget in visible_widgets.items():
+            # Only draw markers on selected or highlighted cameras
+            if path not in (highlighted_paths | {selected_path} if selected_path else highlighted_paths):
+                widget.clear_marker()
+                continue
+                
             if path in projections:
                 px, py, is_valid = projections[path]
+                
                 if is_valid:
-                    # Determine marker color based on camera state
-                    if path == selected_path:
-                        color = MARKER_COLOR_SELECTED  # Lime for selected
-                    elif path in highlighted_paths:
-                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for highlighted
-                    else:
-                        color = MARKER_COLOR_HIGHLIGHTED  # Cyan for other projections
+                    # Check occlusion status (Default to False if not in dict)
+                    is_occluded = visibility_status.get(path, False)
                     
-                    widget.set_marker_position(px, py, accurate=accurate, color=color)
+                    # Determine color
+                    if path == selected_path:
+                        color = MARKER_COLOR_SELECTED
+                        is_occluded = False # Selected camera is never occluded from itself
+                    elif path in highlighted_paths:
+                        color = MARKER_COLOR_HIGHLIGHTED
+                    else:
+                        color = MARKER_COLOR_HIGHLIGHTED
+                    
+                    # Pass is_occluded to the widget
+                    widget.set_marker_position(px, py, accurate=accurate, 
+                                               color=color, is_occluded=is_occluded)
                 else:
                     widget.clear_marker()
             else:
@@ -330,21 +359,24 @@ class MVATWindow(QMainWindow):
         # Toggle Wireframes
         self.toggle_wireframes_action = QAction("Show Wireframes", self)
         self.toggle_wireframes_action.setCheckable(True)
-        self.toggle_wireframes_action.setChecked(True)
         self.toggle_wireframes_action.triggered.connect(self._toggle_wireframes)
         self.view_menu.addAction(self.toggle_wireframes_action)
         
         # Toggle Thumbnails
         self.toggle_thumbnails_action = QAction("Show Thumbnails", self)
         self.toggle_thumbnails_action.setCheckable(True)
-        self.toggle_thumbnails_action.setChecked(True)
         self.toggle_thumbnails_action.triggered.connect(self._toggle_thumbnails)
         self.view_menu.addAction(self.toggle_thumbnails_action)
+        
+        # Toggle Point Cloud
+        self.toggle_point_cloud_action = QAction("Show Point Cloud", self)
+        self.toggle_point_cloud_action.setCheckable(True)
+        self.toggle_point_cloud_action.triggered.connect(self._toggle_point_cloud)
+        self.view_menu.addAction(self.toggle_point_cloud_action)
         
         # Toggle Rays
         self.toggle_rays_action = QAction("Show Rays", self)
         self.toggle_rays_action.setCheckable(True)
-        self.toggle_rays_action.setChecked(True)
         self.toggle_rays_action.triggered.connect(self._toggle_rays)
         self.view_menu.addAction(self.toggle_rays_action)
         
@@ -404,17 +436,6 @@ class MVATWindow(QMainWindow):
         # Vertical Separator
         self.horizontal_layout.addWidget(self._create_v_line())
         
-        # --- Widget: Frustum Scale ---
-        scale_label = QLabel("Scale:")
-        self.scale_spinbox = QDoubleSpinBox()
-        self.scale_spinbox.setRange(0.01, 10.0)
-        self.scale_spinbox.setSingleStep(0.1)
-        self.scale_spinbox.setValue(self.frustum_scale)
-        self.scale_spinbox.setToolTip("Adjust camera frustum size")
-        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)  
-        self.horizontal_layout.addWidget(scale_label)
-        self.horizontal_layout.addWidget(self.scale_spinbox)
-        
         # --- Widget: Opacity Slider ---
         opacity_label = QLabel("Opacity:")
         self.opacity_slider = QSlider(Qt.Horizontal)
@@ -426,36 +447,19 @@ class MVATWindow(QMainWindow):
         self.horizontal_layout.addWidget(opacity_label)
         self.horizontal_layout.addWidget(self.opacity_slider)
         
+        # Vertical Separator
+        self.horizontal_layout.addWidget(self._create_v_line())
+        
         # --- Widget: Point Size ---
         point_size_label = QLabel("Point Size:")
         self.point_size_spinbox = QSpinBox()
         self.point_size_spinbox.setRange(1, 20)
+        self.point_size_spinbox.setSingleStep(1)
         self.point_size_spinbox.setValue(self.point_size)
         self.point_size_spinbox.setToolTip("Adjust point cloud point size")
         self.point_size_spinbox.valueChanged.connect(self._on_point_size_changed)
         self.horizontal_layout.addWidget(point_size_label)
         self.horizontal_layout.addWidget(self.point_size_spinbox)
-        
-        # --- Widget: Checkboxes ---
-        self.wireframe_checkbox = QCheckBox("Wireframes")
-        self.wireframe_checkbox.setChecked(self._show_wireframes_enabled)
-        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)  
-        self.horizontal_layout.addWidget(self.wireframe_checkbox)
-        
-        self.thumbnail_checkbox = QCheckBox("Thumbnails")
-        self.thumbnail_checkbox.setChecked(self._show_thumbnails_enabled)
-        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)  
-        self.horizontal_layout.addWidget(self.thumbnail_checkbox)
-        
-        self.point_cloud_checkbox = QCheckBox("Point cloud")
-        self.point_cloud_checkbox.setChecked(self._show_point_cloud_enabled)
-        self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)  
-        self.horizontal_layout.addWidget(self.point_cloud_checkbox)
-        
-        self.rays_checkbox = QCheckBox("Rays")
-        self.rays_checkbox.setChecked(self._show_rays_enabled)
-        self.rays_checkbox.toggled.connect(self._toggle_rays)  
-        self.horizontal_layout.addWidget(self.rays_checkbox)
         
         # Push everything to the left
         self.horizontal_layout.addStretch()
@@ -663,7 +667,9 @@ class MVATWindow(QMainWindow):
             self.close()
             return
             
-        # Show progress bar
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Start progress
         progress = ProgressBar(self, title="Loading Cameras")
         progress.show()
         progress.start_progress(len(all_paths))
@@ -688,10 +694,14 @@ class MVATWindow(QMainWindow):
                         print(f"Failed to create camera for {path}: {e}")
                         
                 progress.update_progress()
-                QApplication.processEvents()
                 
         finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Close progress
+            progress.finish_progress()
             progress.close()
+            progress = None
             
         # Check if any cameras were loaded
         if valid_count == 0:
@@ -716,15 +726,6 @@ class MVATWindow(QMainWindow):
         
         # Fit view to show all cameras
         self._fit_to_view()
-        
-        # Auto-select the current image if it exists in the loaded cameras
-        if hasattr(self.annotation_window, 'current_image_path') and self.annotation_window.current_image_path:
-            current_path = self.annotation_window.current_image_path
-            if current_path in self.cameras:
-                # Select the camera corresponding to the current image
-                self._select_camera(current_path, self.cameras[current_path])
-                # Update camera grid selection
-                self.camera_grid.render_selection_from_path(current_path)
         
     def _render_frustums(self):
         """Render all camera frustums in the 3D scene using batched geometry."""
@@ -822,9 +823,6 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_wireframes_action.setChecked(checked)
-        self.wireframe_checkbox.blockSignals(True)
-        self.wireframe_checkbox.setChecked(checked)
-        self.wireframe_checkbox.blockSignals(False)
         
         # Update visibility of batched wireframe actor
         self.frustum_manager.set_visibility(checked)
@@ -842,9 +840,6 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_thumbnails_action.setChecked(checked)
-        self.thumbnail_checkbox.blockSignals(True)
-        self.thumbnail_checkbox.setChecked(checked)
-        self.thumbnail_checkbox.blockSignals(False)
         
         # Update visibility of existing actors
         for actor in self.thumbnail_actors:
@@ -869,21 +864,10 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_rays_action.setChecked(checked)
-        self.rays_checkbox.blockSignals(True)
-        self.rays_checkbox.setChecked(checked)
-        self.rays_checkbox.blockSignals(False)
         
         # Clear rays if disabling
         if not checked and self.viewer:
             self.viewer.clear_ray()
-        
-    def _on_scale_changed(self, value):
-        """Handle frustum scale change."""
-        self.frustum_scale = value
-        
-        # Regenerate all frustums with new scale
-        # This creates new geometry at the correct size rather than transforming existing geometry
-        self._render_frustums()
         
     def _on_opacity_changed(self, value):
         """Handle thumbnail opacity change."""
@@ -1211,6 +1195,13 @@ class MVATWindow(QMainWindow):
             
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.render()
+            
+    def _auto_select_first_camera(self):
+        """Auto-select the first camera if none is selected."""
+        if self.selected_camera is None and self.cameras:
+            first_path = next(iter(self.cameras))
+            self._select_camera(first_path, self.cameras[first_path])
+            self.camera_grid.render_selection_from_path(first_path)
         
     def _goto_selected_image(self):
         """Navigate to the selected camera's image in the main window."""
@@ -1237,10 +1228,10 @@ class MVATWindow(QMainWindow):
         self.point_size = self.point_size_spinbox.value()
         
         # Update show flags
-        self._show_wireframes_enabled = self.wireframe_checkbox.isChecked()
-        self._show_thumbnails_enabled = self.thumbnail_checkbox.isChecked()
-        self._show_point_cloud_enabled = self.point_cloud_checkbox.isChecked()
-        self._show_rays_enabled = self.rays_checkbox.isChecked()
+        self._show_wireframes_enabled = self.toggle_wireframes_action.isChecked()
+        self._show_thumbnails_enabled = self.toggle_thumbnails_action.isChecked()
+        self._show_point_cloud_enabled = self.toggle_point_cloud_action.isChecked()
+        self._show_rays_enabled = self.toggle_rays_action.isChecked()
         
         # Clear existing
         self.cameras.clear()

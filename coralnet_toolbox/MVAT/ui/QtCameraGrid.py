@@ -12,7 +12,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QRect, QTimer
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, 
-    QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton
+    QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton,
+    QApplication
 )
 
 from coralnet_toolbox.MVAT.core.constants import (
@@ -26,6 +27,8 @@ from coralnet_toolbox.MVAT.core.constants import (
     MARKER_SIZE,
     MARKER_LINE_WIDTH,
 )
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -217,6 +220,7 @@ class CameraImageWidget(QWidget):
         self._marker_position = None  # (x, y) in image pixel coordinates or None
         self._marker_accurate = True  # True = solid marker, False = dashed marker
         self._marker_color = MARKER_COLOR_DEFAULT  # Color for the marker
+        self._is_occluded = False  # True if the point is blocked by geometry
         
     def _update_size(self):
         """Update widget size based on aspect ratio and target size."""
@@ -260,7 +264,8 @@ class CameraImageWidget(QWidget):
         self.is_loaded = False
         # Don't clear the data_item cache - it may be reused
     
-    def set_marker_position(self, x: float, y: float, accurate: bool = True, color: QColor = None):
+    def set_marker_position(self, x: float, y: float, accurate: bool = True, 
+                            color: QColor = None, is_occluded: bool = False):
         """
         Set a marker position to display on the thumbnail.
         
@@ -275,6 +280,7 @@ class CameraImageWidget(QWidget):
             color: QColor for the marker. If None, uses MARKER_COLOR_DEFAULT.
                    Use MARKER_COLOR_SELECTED (lime) for selected camera,
                    MARKER_COLOR_HIGHLIGHTED (cyan) for highlighted cameras.
+            is_occluded (bool): If True, the point is blocked by geometry (draw differently).
         
         # TODO: When depth is fully incorporated, re-evaluate solid vs dashed
         # styling based on depth accuracy at the projected point.
@@ -282,6 +288,7 @@ class CameraImageWidget(QWidget):
         self._marker_position = (x, y)
         self._marker_accurate = accurate
         self._marker_color = color if color is not None else MARKER_COLOR_DEFAULT
+        self._is_occluded = is_occluded  # Store the new state
         self.update()  # Trigger repaint
         
     def clear_marker(self):
@@ -289,6 +296,7 @@ class CameraImageWidget(QWidget):
         if self._marker_position is not None:
             self._marker_position = None
             self._marker_color = MARKER_COLOR_DEFAULT
+            self._is_occluded = False
             self.update()  # Trigger repaint
         
     def update_selection_visuals(self):
@@ -378,15 +386,20 @@ class CameraImageWidget(QWidget):
         if not (0 <= marker_x < rect.width() and 0 <= marker_y < rect.height()):
             return  # Don't draw marker outside widget
         
-        # Configure pen with marker color (lime for selected, cyan for highlighted)
+        # Configure pen based on occlusion state
         pen = QPen(self._marker_color, MARKER_LINE_WIDTH)
-        # TODO: Re-evaluate solid vs dashed styling when depth is fully incorporated
-        if self._marker_accurate:
-            pen.setStyle(Qt.SolidLine)
-        else:
+        
+        if self._is_occluded:
+            # Occluded style: Dashed line, Hollow center
             pen.setStyle(Qt.DashLine)
+            painter.setBrush(Qt.NoBrush)
+        else:
+            # Visible style: Solid line
+            pen.setStyle(Qt.SolidLine)
+            # Use solid brush if depth is accurate, otherwise hollow
+            painter.setBrush(self._marker_color if self._marker_accurate else Qt.NoBrush)
+
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
         
         # Draw circle
         half_size = MARKER_SIZE // 2
@@ -394,18 +407,19 @@ class CameraImageWidget(QWidget):
                             marker_y - half_size, 
                             MARKER_SIZE, MARKER_SIZE)
         
-        # Draw crosshairs extending from circle
-        crosshair_extend = half_size + 4  # Extend beyond circle
-        # Horizontal line
-        painter.drawLine(marker_x - crosshair_extend, marker_y,
-                         marker_x - half_size - 1, marker_y)
-        painter.drawLine(marker_x + half_size + 1, marker_y,
-                         marker_x + crosshair_extend, marker_y)
-        # Vertical line
-        painter.drawLine(marker_x, marker_y - crosshair_extend,
-                         marker_x, marker_y - half_size - 1)
-        painter.drawLine(marker_x, marker_y + half_size + 1,
-                         marker_x, marker_y + crosshair_extend)
+        # Only draw crosshairs if point is visible (cleaner look)
+        if not self._is_occluded:
+            crosshair_extend = half_size + 4
+            # Horizontal
+            painter.drawLine(marker_x - crosshair_extend, marker_y,
+                             marker_x - half_size - 1, marker_y)
+            painter.drawLine(marker_x + half_size + 1, marker_y,
+                             marker_x + crosshair_extend, marker_y)
+            # Vertical
+            painter.drawLine(marker_x, marker_y - crosshair_extend,
+                             marker_x, marker_y - half_size - 1)
+            painter.drawLine(marker_x, marker_y + half_size + 1,
+                             marker_x, marker_y + crosshair_extend)
             
     def mousePressEvent(self, event):
         """Handle mouse press for selection."""
@@ -564,16 +578,39 @@ class CameraGrid(QWidget):
         self.highlighted_paths.clear()
         self.last_clicked_index = -1
         
-        # Create data items and widgets
-        for path, camera in cameras.items():
-            data_item = CameraDataItem(camera)
-            self.data_items.append(data_item)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Start progress for loading camera / thumbnails        
+        progress = ProgressBar(self, title="Setting Cameras")
+        progress.show()
+        progress.start_progress(len(cameras))
+        
+        try:
+        
+            # Create data items and widgets
+            for path, camera in cameras.items():
+                data_item = CameraDataItem(camera)
+                self.data_items.append(data_item)
+                
+                widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
+                widget.clicked.connect(self._on_widget_clicked)
+                widget.double_clicked.connect(self._on_widget_double_clicked)
+                self.widgets_by_path[path] = widget
+                
+                # Load the thumbnail immediately for progress tracking
+                widget.load_image()
+                
+        except Exception as e:
+            print(f"Error loading camera thumbnails: {e}")
             
-            widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
-            widget.clicked.connect(self._on_widget_clicked)
-            widget.double_clicked.connect(self._on_widget_double_clicked)
-            self.widgets_by_path[path] = widget
-            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Close progress
+            progress.finish_progress()
+            progress.close()
+            progress = None
+        
         # Calculate layout
         self.recalculate_layout()
         

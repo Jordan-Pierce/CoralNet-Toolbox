@@ -125,11 +125,6 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
-# Z dialogs
-from coralnet_toolbox.Z import (
-    DeployModelDialog as ZDeployModelDialog,
-)
-
 from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
@@ -331,9 +326,6 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-        
-        # Create dialogs (Z-Inference)
-        self.z_deploy_model_dialog = ZDeployModelDialog(self)
 
         # Create dialogs (Batch Inference - Consolidated)
         # This is accessed via ImageWindow right-click context menu
@@ -385,10 +377,6 @@ class MainWindow(QMainWindow):
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
         # Connect the imageLoaded signal from ImageWindow to check z-channel status
         self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)        
-        # Connect image signals to update Z-Inference deploy button state
-        self.image_window.imageLoaded.connect(self.z_deploy_model_dialog.update_deploy_button_state)
-        # Connect imageChanged signal to update Z-Inference deploy button state
-        self.image_window.imageChanged.connect(self.z_deploy_model_dialog.update_deploy_button_state)
         
         # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
@@ -1151,11 +1139,6 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
-        
-        # ----------------------------------------
-        # Z Inference section
-        # ----------------------------------------
-        # Created with Z Deploy Model Dialog
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
@@ -1261,7 +1244,6 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.z_colormap_dropdown)
         self.status_bar_layout.addWidget(self.z_transparency_widget)
         self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addWidget(self.z_deploy_model_dialog)
         self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 

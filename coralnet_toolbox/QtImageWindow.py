@@ -1166,25 +1166,30 @@ class ImageWindow(QWidget):
         
         context_menu.addSeparator()
 
+        # Create Z-Channel sub-menu
+        z_channel_menu = context_menu.addMenu("Z-Channel...")
+
         # Add import z-channel action
-        import_z_channel_action = context_menu.addAction(
-            f"Import Z-Channel for {count} Highlighted Image{'s' if count > 1 else ''}"
+        import_z_channel_action = z_channel_menu.addAction(
+            f"Import for {count} Highlighted Image{'s' if count > 1 else ''}"
         )
         import_z_channel_action.triggered.connect(
             lambda: self.import_z_channel_highlighted_images()
         )
 
         # Add export z-channel action
-        export_z_channel_action = context_menu.addAction(
-            f"Export Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
+        export_z_channel_action = z_channel_menu.addAction(
+            f"Export for {count} Highlighted Image{'s' if count > 1 else ''}"
         )
         export_z_channel_action.triggered.connect(
             lambda: self.export_z_channel_highlighted_images()
         )
 
+        z_channel_menu.addSeparator()
+
         # Add remove z-channel action
-        remove_z_channel_action = context_menu.addAction(
-            f"Remove Z-Channel from {count} Highlighted Image{'s' if count > 1 else ''}"
+        remove_z_channel_action = z_channel_menu.addAction(
+            f"Remove from {count} Highlighted Image{'s' if count > 1 else ''}"
         )
         remove_z_channel_action.triggered.connect(
             lambda: self.remove_z_channel_highlighted_images()
