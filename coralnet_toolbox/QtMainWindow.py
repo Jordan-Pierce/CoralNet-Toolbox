@@ -125,11 +125,6 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
-# Z dialogs
-from coralnet_toolbox.Z import (
-    DeployModelDialog as ZDeployModelDialog,
-)
-
 from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
@@ -331,9 +326,6 @@ class MainWindow(QMainWindow):
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
-        
-        # Create dialogs (Z-Inference)
-        self.z_deploy_model_dialog = ZDeployModelDialog(self)
 
         # Create dialogs (Batch Inference - Consolidated)
         # This is accessed via ImageWindow right-click context menu
@@ -1151,11 +1143,6 @@ class MainWindow(QMainWindow):
         self.z_dynamic_button.setIcon(self.dynamic_icon)
         self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
         self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
-        
-        # ----------------------------------------
-        # Z Inference section
-        # ----------------------------------------
-        # Created with Z Deploy Model Dialog
 
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
