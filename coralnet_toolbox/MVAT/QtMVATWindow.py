@@ -13,7 +13,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QToolBar, QAction, QLabel, QSlider, QCheckBox,
+    QToolBar, QAction, QLabel, QSlider,
     QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
     QSizePolicy, QSpinBox
 )
@@ -359,21 +359,24 @@ class MVATWindow(QMainWindow):
         # Toggle Wireframes
         self.toggle_wireframes_action = QAction("Show Wireframes", self)
         self.toggle_wireframes_action.setCheckable(True)
-        self.toggle_wireframes_action.setChecked(True)
         self.toggle_wireframes_action.triggered.connect(self._toggle_wireframes)
         self.view_menu.addAction(self.toggle_wireframes_action)
         
         # Toggle Thumbnails
         self.toggle_thumbnails_action = QAction("Show Thumbnails", self)
         self.toggle_thumbnails_action.setCheckable(True)
-        self.toggle_thumbnails_action.setChecked(True)
         self.toggle_thumbnails_action.triggered.connect(self._toggle_thumbnails)
         self.view_menu.addAction(self.toggle_thumbnails_action)
+        
+        # Toggle Point Cloud
+        self.toggle_point_cloud_action = QAction("Show Point Cloud", self)
+        self.toggle_point_cloud_action.setCheckable(True)
+        self.toggle_point_cloud_action.triggered.connect(self._toggle_point_cloud)
+        self.view_menu.addAction(self.toggle_point_cloud_action)
         
         # Toggle Rays
         self.toggle_rays_action = QAction("Show Rays", self)
         self.toggle_rays_action.setCheckable(True)
-        self.toggle_rays_action.setChecked(True)
         self.toggle_rays_action.triggered.connect(self._toggle_rays)
         self.view_menu.addAction(self.toggle_rays_action)
         
@@ -433,17 +436,6 @@ class MVATWindow(QMainWindow):
         # Vertical Separator
         self.horizontal_layout.addWidget(self._create_v_line())
         
-        # --- Widget: Frustum Scale ---
-        scale_label = QLabel("Scale:")
-        self.scale_spinbox = QDoubleSpinBox()
-        self.scale_spinbox.setRange(0.01, 10.0)
-        self.scale_spinbox.setSingleStep(0.1)
-        self.scale_spinbox.setValue(self.frustum_scale)
-        self.scale_spinbox.setToolTip("Adjust camera frustum size")
-        self.scale_spinbox.valueChanged.connect(self._on_scale_changed)  
-        self.horizontal_layout.addWidget(scale_label)
-        self.horizontal_layout.addWidget(self.scale_spinbox)
-        
         # --- Widget: Opacity Slider ---
         opacity_label = QLabel("Opacity:")
         self.opacity_slider = QSlider(Qt.Horizontal)
@@ -455,36 +447,19 @@ class MVATWindow(QMainWindow):
         self.horizontal_layout.addWidget(opacity_label)
         self.horizontal_layout.addWidget(self.opacity_slider)
         
+        # Vertical Separator
+        self.horizontal_layout.addWidget(self._create_v_line())
+        
         # --- Widget: Point Size ---
         point_size_label = QLabel("Point Size:")
         self.point_size_spinbox = QSpinBox()
         self.point_size_spinbox.setRange(1, 20)
+        self.point_size_spinbox.setSingleStep(1)
         self.point_size_spinbox.setValue(self.point_size)
         self.point_size_spinbox.setToolTip("Adjust point cloud point size")
         self.point_size_spinbox.valueChanged.connect(self._on_point_size_changed)
         self.horizontal_layout.addWidget(point_size_label)
         self.horizontal_layout.addWidget(self.point_size_spinbox)
-        
-        # --- Widget: Checkboxes ---
-        self.wireframe_checkbox = QCheckBox("Wireframes")
-        self.wireframe_checkbox.setChecked(self._show_wireframes_enabled)
-        self.wireframe_checkbox.toggled.connect(self._toggle_wireframes)  
-        self.horizontal_layout.addWidget(self.wireframe_checkbox)
-        
-        self.thumbnail_checkbox = QCheckBox("Thumbnails")
-        self.thumbnail_checkbox.setChecked(self._show_thumbnails_enabled)
-        self.thumbnail_checkbox.toggled.connect(self._toggle_thumbnails)  
-        self.horizontal_layout.addWidget(self.thumbnail_checkbox)
-        
-        self.point_cloud_checkbox = QCheckBox("Point cloud")
-        self.point_cloud_checkbox.setChecked(self._show_point_cloud_enabled)
-        self.point_cloud_checkbox.toggled.connect(self._toggle_point_cloud)  
-        self.horizontal_layout.addWidget(self.point_cloud_checkbox)
-        
-        self.rays_checkbox = QCheckBox("Rays")
-        self.rays_checkbox.setChecked(self._show_rays_enabled)
-        self.rays_checkbox.toggled.connect(self._toggle_rays)  
-        self.horizontal_layout.addWidget(self.rays_checkbox)
         
         # Push everything to the left
         self.horizontal_layout.addStretch()
@@ -746,15 +721,6 @@ class MVATWindow(QMainWindow):
         # Fit view to show all cameras
         self._fit_to_view()
         
-        # Auto-select the current image if it exists in the loaded cameras
-        if hasattr(self.annotation_window, 'current_image_path') and self.annotation_window.current_image_path:
-            current_path = self.annotation_window.current_image_path
-            if current_path in self.cameras:
-                # Select the camera corresponding to the current image
-                self._select_camera(current_path, self.cameras[current_path])
-                # Update camera grid selection
-                self.camera_grid.render_selection_from_path(current_path)
-        
     def _render_frustums(self):
         """Render all camera frustums in the 3D scene using batched geometry."""
         if not self.viewer or not self.viewer.plotter:
@@ -851,9 +817,6 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_wireframes_action.setChecked(checked)
-        self.wireframe_checkbox.blockSignals(True)
-        self.wireframe_checkbox.setChecked(checked)
-        self.wireframe_checkbox.blockSignals(False)
         
         # Update visibility of batched wireframe actor
         self.frustum_manager.set_visibility(checked)
@@ -871,9 +834,6 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_thumbnails_action.setChecked(checked)
-        self.thumbnail_checkbox.blockSignals(True)
-        self.thumbnail_checkbox.setChecked(checked)
-        self.thumbnail_checkbox.blockSignals(False)
         
         # Update visibility of existing actors
         for actor in self.thumbnail_actors:
@@ -898,21 +858,10 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_rays_action.setChecked(checked)
-        self.rays_checkbox.blockSignals(True)
-        self.rays_checkbox.setChecked(checked)
-        self.rays_checkbox.blockSignals(False)
         
         # Clear rays if disabling
         if not checked and self.viewer:
             self.viewer.clear_ray()
-        
-    def _on_scale_changed(self, value):
-        """Handle frustum scale change."""
-        self.frustum_scale = value
-        
-        # Regenerate all frustums with new scale
-        # This creates new geometry at the correct size rather than transforming existing geometry
-        self._render_frustums()
         
     def _on_opacity_changed(self, value):
         """Handle thumbnail opacity change."""
@@ -1240,6 +1189,13 @@ class MVATWindow(QMainWindow):
             
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.render()
+            
+    def _auto_select_first_camera(self):
+        """Auto-select the first camera if none is selected."""
+        if self.selected_camera is None and self.cameras:
+            first_path = next(iter(self.cameras))
+            self._select_camera(first_path, self.cameras[first_path])
+            self.camera_grid.render_selection_from_path(first_path)
         
     def _goto_selected_image(self):
         """Navigate to the selected camera's image in the main window."""
@@ -1266,10 +1222,10 @@ class MVATWindow(QMainWindow):
         self.point_size = self.point_size_spinbox.value()
         
         # Update show flags
-        self._show_wireframes_enabled = self.wireframe_checkbox.isChecked()
-        self._show_thumbnails_enabled = self.thumbnail_checkbox.isChecked()
-        self._show_point_cloud_enabled = self.point_cloud_checkbox.isChecked()
-        self._show_rays_enabled = self.rays_checkbox.isChecked()
+        self._show_wireframes_enabled = self.toggle_wireframes_action.isChecked()
+        self._show_thumbnails_enabled = self.toggle_thumbnails_action.isChecked()
+        self._show_point_cloud_enabled = self.toggle_point_cloud_action.isChecked()
+        self._show_rays_enabled = self.toggle_rays_action.isChecked()
         
         # Clear existing
         self.cameras.clear()

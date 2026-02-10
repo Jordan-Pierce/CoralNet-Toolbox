@@ -79,7 +79,10 @@ class MVATViewer(QFrame):
 
         # Point cloud and Ray management
         self.point_cloud = None
+        self._scene_actor = None
+        
         self.point_size = point_size
+        
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
@@ -108,13 +111,37 @@ class MVATViewer(QFrame):
         # to be a drag instead of a click.
 
     def _handle_double_click(self):
-        """Perform the pick and update focus."""
-        # Use PyVista's hardware picker to find the coordinate under cursor
-        picked_point = self.plotter.pick_mouse_position()
+        """
+        Perform a pick explicitly against the Scene Geometry.
+        Ignores frustums, rays, and other UI elements.
+        """
+        if self._scene_actor is None:
+            return
+
+        # 1. Temporarily disable pickability for everything EXCEPT the scene actor.
+        # This ensures the picking ray passes through frustums to hit the mesh/cloud behind.
+        restore_list = []
+        for actor in self.plotter.actors.values():
+            if actor != self._scene_actor and actor.GetPickable():
+                actor.SetPickable(False)
+                restore_list.append(actor)
         
-        if picked_point is not None:
-            self.set_focal_point(picked_point)
-            print(f"Focal point set to: {picked_point}")
+        try:
+            # 2. Perform the hardware pick at current mouse position
+            # Since only the scene is pickable, this will hit the scene or nothing.
+            picked_point = self.plotter.pick_mouse_position()
+            
+            # 3. Update focal point if we hit the scene
+            if picked_point is not None:
+                self.set_focal_point(picked_point)
+                
+        finally:
+            # 4. Restore pickability for all other actors
+            for actor in restore_list:
+                try:
+                    actor.SetPickable(True)
+                except:
+                    pass
 
     def _on_right_press(self, obj, event):
         """Force Right Click to Pan instead of Zoom."""
@@ -169,6 +196,9 @@ class MVATViewer(QFrame):
             self.add_point_cloud()
             self.plotter.reset_camera()
             event.acceptProposedAction()
+            # Auto-select first camera after point cloud import
+            if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
+                self.parent()._auto_select_first_camera()
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -176,11 +206,21 @@ class MVATViewer(QFrame):
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Re-add the stored point cloud to the plotter."""
+        """Add the point cloud to the plotter and capture its actor."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if self.point_cloud is not None:
+                # Capture the set of actors BEFORE adding
+                previous_actors = set(self.plotter.actors.values())
+                
                 self.point_cloud.add_to_plotter(self.plotter)
+                
+                # Identify the NEW actor (the scene geometry)
+                current_actors = set(self.plotter.actors.values())
+                new_actors = current_actors - previous_actors
+                
+                if new_actors:
+                    self._scene_actor = list(new_actors)[0]
         finally:
             QApplication.restoreOverrideCursor()
 
