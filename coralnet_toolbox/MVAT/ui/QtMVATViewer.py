@@ -1,5 +1,8 @@
+import time
+
 import numpy as np
 
+import vtk
 from pyvistaqt import QtInteractor
 
 from PyQt5.QtWidgets import QFrame, QVBoxLayout
@@ -17,15 +20,35 @@ from coralnet_toolbox.MVAT.core.constants import (RAY_COLOR_SELECTED)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class MVATInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
+    """
+    Custom VTK Interaction Style.
+    - Right Click: Pan (Overrides default Zoom)
+    - Left Click: Rotate (Inherited)
+    - Scroll: Zoom (Inherited)
+    """
+    def __init__(self, parent=None):
+        # We must initialize the parent class. 
+        # Note: We do NOT need to add observers here for RightButton.
+        # Overriding OnRightButtonDown/Up is sufficient.
+        pass
+
+    def OnRightButtonDown(self):
+        """Override the default Right Button behavior (Zoom) to Pan."""
+        self.StartPan()
+
+    def OnRightButtonUp(self):
+        """End the Pan interaction."""
+        self.EndPan()
+        
+
 class MVATViewer(QFrame):
     """
-    A dedicated widget for holding the PyVista 3D Interactor.
-    
-    Supports visualization of:
-    - Point clouds (drag & drop)
-    - Camera frustums (via BatchedFrustumManager in QtMVATWindow)
-    - Ray casting visualization with batched rendering
-    - Multiple simultaneous rays with distinct colors
+    3D Viewer with custom mouse interactions:
+    - Left Drag: Rotate (Default)
+    - Scroll: Zoom (Default)
+    - Right Drag: Pan (Custom Override)
+    - Double Left Click: Set Focal Point (Custom Observer)
     """
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -41,17 +64,84 @@ class MVATViewer(QFrame):
         self.plotter.set_background('white')
         self.plotter.enable_trackball_style()
         
-        # Point cloud management
+        # --- CUSTOM INTERACTION SETUP ---
+        
+        # 1. Apply Custom Style (Right Click = Pan)
+        # We replace the default style with our custom subclass
+        self.style = MVATInteractorStyle()
+        self.plotter.interactor.SetInteractorStyle(self.style)
+        
+        # 2. Double Click Handler (Observer)
+        # We listen to the raw VTK LeftButtonPressEvent to detect double clicks.
+        # This runs alongside the style's rotation logic.
+        self.plotter.interactor.AddObserver("LeftButtonPressEvent", self._on_left_press)
+        self._last_click_time = 0
+
+        # Point cloud and Ray management
         self.point_cloud = None
         self.point_size = point_size
-        
-        # Ray visualization management - use batched manager for efficiency
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
         
-        # Add to layout
         self.layout.addWidget(self.plotter.interactor)
+
+    # --------------------------------------------------------------------------
+    # Custom Interaction Logic
+    # --------------------------------------------------------------------------
+
+    def _on_left_press(self, obj, event):
+        """Handle Left Click to detect Double Clicks."""
+        # Get current time in milliseconds
+        current_time = time.time() * 1000
+        
+        # Get system double click interval (usually ~500ms)
+        dc_interval = QApplication.doubleClickInterval()
+        
+        # Check if this click happened close enough to the last one
+        if (current_time - self._last_click_time) < dc_interval:
+            self._handle_double_click()
+            
+        self._last_click_time = current_time
+        # Note: We do NOT abort the event here. We let it pass through so 
+        # VTK can still start the rotation (Left Drag) logic if this turns out 
+        # to be a drag instead of a click.
+
+    def _handle_double_click(self):
+        """Perform the pick and update focus."""
+        # Use PyVista's hardware picker to find the coordinate under cursor
+        picked_point = self.plotter.pick_mouse_position()
+        
+        if picked_point is not None:
+            self.set_focal_point(picked_point)
+            print(f"Focal point set to: {picked_point}")
+
+    def _on_right_press(self, obj, event):
+        """Force Right Click to Pan instead of Zoom."""
+        # Get the interactor style (TrackballCamera)
+        style = self.plotter.interactor.GetInteractorStyle()
+        
+        # Manually trigger the 'Pan' state on the style
+        style.StartPan()
+        
+        # ABORT the event so the default interaction (Zoom) doesn't fire
+        # This requires the observer to be added with high priority (1.0)
+        self.plotter.interactor.SetAbortRender(1) 
+        # Note: In some VTK bindings, you use event.AbortFlag = 1, 
+        # but in Python wrappers, stopping propagation can be tricky.
+        # If both Pan and Zoom happen, 'StartPan' usually overrides standard logic 
+        # if called explicitly.
+
+    def _on_right_release(self, obj, event):
+        """End the Pan state."""
+        style = self.plotter.interactor.GetInteractorStyle()
+        style.EndPan()
+
+    def set_focal_point(self, point):
+        """Sets the camera focal point and re-renders."""
+        # Animate the transition if desired, or just set it
+        self.plotter.camera.focal_point = point
+        self.plotter.render()
 
     def dragEnterEvent(self, event):
         """Accept drag if a single 3D file is being dragged."""
