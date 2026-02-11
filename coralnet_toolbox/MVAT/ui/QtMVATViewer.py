@@ -81,6 +81,7 @@ class MVATViewer(QFrame):
         self.point_cloud = None
         self._scene_actor = None
         self._filtered_actor = None  # Separate actor for filtered point cloud
+        self._filtered_mesh = None  # Persistent mesh for in-place updates
         self._filtered_mode = False  # Track if we're in filtered mode
         
         self.point_size = point_size
@@ -249,10 +250,9 @@ class MVATViewer(QFrame):
         """
         Update the viewer to show only a subset of points based on visibility indices.
         
-        This method:
-        - Hides the full point cloud actor
-        - Creates/updates a filtered mesh containing only visible points
-        - Preserves point size and color properties
+        Uses in-place mesh updates to avoid expensive actor teardown/rebuild cycles.
+        Only creates/destroys actors when switching between full/filtered modes or
+        when point count changes significantly.
         
         Args:
             indices (np.ndarray or None): Array of point indices to show. 
@@ -269,76 +269,114 @@ class MVATViewer(QFrame):
             # If indices is None or empty, show full cloud
             if indices is None or len(indices) == 0:
                 # Switch back to full cloud mode
-                self._filtered_mode = False
-                
-                # Remove filtered actor if it exists
-                if self._filtered_actor is not None:
-                    try:
-                        self.plotter.remove_actor(self._filtered_actor)
-                    except:
-                        pass
-                    self._filtered_actor = None
-                
-                # Show full cloud
-                self.set_point_cloud_visible(True)
-                self.plotter.render()
+                if self._filtered_mode:
+                    self._filtered_mode = False
+                    
+                    # Remove filtered actor
+                    if self._filtered_actor is not None:
+                        try:
+                            self.plotter.remove_actor(self._filtered_actor)
+                        except:
+                            pass
+                        self._filtered_actor = None
+                        self._filtered_mesh = None
+                    
+                    # Show full cloud
+                    self.set_point_cloud_visible(True)
+                    self.plotter.render()
                 return
-            
-            # We're in filtered mode
-            self._filtered_mode = True
-            
-            # Hide the full point cloud actor
-            self.set_point_cloud_visible(False)
             
             # Extract subset mesh
             subset_mesh = self.point_cloud.extract_subset(indices)
             
             if subset_mesh is None or subset_mesh.n_points == 0:
                 print("Warning: Filtered subset is empty")
-                # Remove filtered actor
                 if self._filtered_actor is not None:
                     try:
                         self.plotter.remove_actor(self._filtered_actor)
                     except:
                         pass
                     self._filtered_actor = None
+                    self._filtered_mesh = None
+                self._filtered_mode = False
                 self.plotter.render()
                 return
             
-            # Remove existing filtered actor if any
-            if self._filtered_actor is not None:
-                try:
-                    self.plotter.remove_actor(self._filtered_actor)
-                except:
-                    pass
+            # Hide the full point cloud actor (only once when entering filtered mode)
+            if not self._filtered_mode:
+                self.set_point_cloud_visible(False)
+                self._filtered_mode = True
             
-            # Add new filtered mesh
-            if 'RGB' in subset_mesh.point_data:
-                self._filtered_actor = self.plotter.add_mesh(
-                    subset_mesh,
-                    scalars='RGB',
-                    rgb=True,
-                    point_size=self.point_size
-                )
+            # Check if we need to create the filtered actor for the first time
+            # OR if the point count changed (can't reuse buffer)
+            need_rebuild = (
+                self._filtered_actor is None or 
+                self._filtered_mesh is None or
+                self._filtered_mesh.n_points != subset_mesh.n_points
+            )
+            
+            if need_rebuild:
+                # REBUILD PATH: Remove old actor and create new one
+                if self._filtered_actor is not None:
+                    try:
+                        self.plotter.remove_actor(self._filtered_actor)
+                    except:
+                        pass
+                
+                # Store reference to mesh for in-place updates
+                self._filtered_mesh = subset_mesh
+                
+                # Create new actor
+                if 'RGB' in subset_mesh.point_data:
+                    self._filtered_actor = self.plotter.add_mesh(
+                        subset_mesh,
+                        scalars='RGB',
+                        rgb=True,
+                        point_size=self.point_size,
+                        render=False  # Defer render until after LOD setup
+                    )
+                else:
+                    point_size = self.point_size if subset_mesh.n_cells == 0 else None
+                    self._filtered_actor = self.plotter.add_mesh(
+                        subset_mesh,
+                        color='black',
+                        point_size=point_size,
+                        render=False
+                    )
+                
+                # Apply LOD optimization
+                if self._filtered_actor:
+                    try:
+                        self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
+                    except AttributeError:
+                        pass
+                
+                render_time = time.time() - start_time
+                print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer (rebuild) in {render_time:.3f}s")
+            
             else:
-                point_size = self.point_size if subset_mesh.n_cells == 0 else None
-                self._filtered_actor = self.plotter.add_mesh(
-                    subset_mesh,
-                    color='black',
-                    point_size=point_size
-                )
+                # IN-PLACE UPDATE PATH (FAST!)
+                # Reuse existing actor, just swap the data
+                
+                # Update point coordinates
+                self._filtered_mesh.points = subset_mesh.points
+                
+                # Update colors if present
+                if 'RGB' in subset_mesh.point_data and 'RGB' in self._filtered_mesh.point_data:
+                    self._filtered_mesh['RGB'] = subset_mesh['RGB']
+                
+                # Mark geometry as modified so VTK knows to re-upload to GPU
+                self._filtered_mesh.GetPoints().Modified()
+                
+                # If we have color data, mark that as modified too
+                if 'RGB' in self._filtered_mesh.point_data:
+                    self._filtered_mesh.GetPointData().GetScalars().Modified()
+                
+                render_time = time.time() - start_time
+                print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer (in-place update) in {render_time:.3f}s")
             
-            # Apply LOD optimization if available
-            if self._filtered_actor:
-                try:
-                    self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
-                except AttributeError:
-                    pass
-            
+            # Single render call after all updates
             self.plotter.render()
-            
-            render_time = time.time() - start_time
-            print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer in {render_time:.3f}s")
             
         finally:
             QApplication.restoreOverrideCursor()
