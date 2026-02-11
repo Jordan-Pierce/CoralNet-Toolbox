@@ -1,6 +1,9 @@
 import time
-import pyvista as pv
+
+import torch
 import numpy as np
+
+import pyvista as pv
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -117,13 +120,15 @@ class PointCloud():
             return None
         return self.mesh.points
     
-    def extract_subset(self, indices):
+    def extract_subset(self, indices, use_torch=True):
         """
         Create a filtered point cloud containing only points with specified indices.
         Preserves all point data (RGB, scalars, etc.) from the original mesh.
         
         Args:
             indices (np.ndarray or list): 1D array/list of point indices to extract
+            use_torch (bool): If True, use PyTorch for extraction (GPU if available, else CPU).
+                              If False, use PyVista's extract_points (default).
             
         Returns:
             pv.PolyData: New PyVista mesh containing only the specified points
@@ -133,7 +138,7 @@ class PointCloud():
         
         start_time = time.time()
         
-        # Convert to numpy array if needed
+        # Convert indices to numpy array if needed
         if not isinstance(indices, np.ndarray):
             indices = np.array(indices, dtype=np.int32)
         
@@ -145,13 +150,49 @@ class PointCloud():
         # Ensure indices are within valid range
         indices = indices[indices < self.mesh.n_points]
         
-        # Use PyVista's extract_points method
-        # This preserves all point data arrays
-        try:
-            subset_mesh = self.mesh.extract_points(indices, adjacent_cells=False)
-            extract_time = time.time() - start_time
-            print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s")
-            return subset_mesh
-        except Exception as e:
-            print(f"Error extracting point subset: {e}")
-            return None
+        if use_torch:
+            # PyTorch-based extraction
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            
+            try:
+                # Convert points to torch tensor on device
+                points_tensor = torch.from_numpy(self.mesh.points).to(device)
+                indices_tensor = torch.from_numpy(indices).to(device)
+                
+                # Extract subset points
+                subset_points = points_tensor[indices_tensor].cpu().numpy()
+                
+                # Extract all point data arrays
+                subset_point_data = {}
+                for name, data in self.mesh.point_data.items():
+                    data_tensor = torch.from_numpy(data).to(device)
+                    subset_point_data[name] = data_tensor[indices_tensor].cpu().numpy()
+                
+                # Create new PolyData
+                subset_mesh = pv.PolyData(subset_points) 
+                
+                # Create new PolyData
+                subset_mesh = pv.PolyData(subset_points)
+                # Add point data
+                for name, data in subset_point_data.items():
+                    subset_mesh.point_data[name] = data
+                
+                extract_time = time.time() - start_time
+                print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyTorch on {device.upper()})")
+                return subset_mesh
+            
+            except Exception as e:
+                print(f"Error extracting point subset with PyTorch: {e}")
+                # Fallback to PyVista if PyTorch fails
+                use_torch = False
+        
+        if not use_torch:
+            # Original PyVista-based extraction
+            try:
+                subset_mesh = self.mesh.extract_points(indices, adjacent_cells=False)
+                extract_time = time.time() - start_time
+                print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyVista)")
+                return subset_mesh
+            except Exception as e:
+                print(f"Error extracting point subset: {e}")
+                return None
