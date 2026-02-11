@@ -1,3 +1,4 @@
+import os
 import time
 
 import torch
@@ -20,9 +21,9 @@ class PointCloud():
             file_path (str): Path to 3D file (.ply, .stl, .obj, .vtk, .pcd)
             point_size (int): Size of points when rendered
         """
-        import os
         self.file_path = file_path
         self.label = os.path.basename(file_path)
+        
         self.point_size = point_size
         self.mesh = None
         self.actor = None
@@ -34,7 +35,14 @@ class PointCloud():
         load_time = time.time() - start_time
         
         print(f"⏱️ Loaded PointCloud: {self.label} with {self.mesh.n_points:,} points in {load_time:.3f}s")
-    
+        
+        # Add a cache storage for GPU tensors
+        self.gpu_cache = None 
+        
+        # Pre-load to GPU if possible (Optional: can also be lazy)
+        if torch.cuda.is_available():
+            self._ensure_gpu_cache()
+        
     @classmethod
     def from_file(cls, file_path, point_size=1):
         """
@@ -55,6 +63,37 @@ class PointCloud():
     def get_mesh(self):
         """Returns the underlying PyVista mesh."""
         return self.mesh
+    
+    def _ensure_gpu_cache(self):
+        """
+        Uploads the entire point cloud to VRAM once.
+        """
+        if self.gpu_cache is not None:
+            return True
+            
+        try:
+            print("⚡ Uploading Point Cloud to GPU VRAM...")
+            start_time = time.time()
+            
+            # 1. Upload Points
+            points_tensor = torch.from_numpy(self.mesh.points).to('cuda')
+            
+            # 2. Upload Data (Colors, etc.)
+            data_cache = {}
+            for name, data in self.mesh.point_data.items():
+                data_cache[name] = torch.from_numpy(data).to('cuda')
+                
+            self.gpu_cache = {
+                'points': points_tensor,
+                'data': data_cache
+            }
+            
+            print(f"⚡ Upload complete in {time.time() - start_time:.3f}s")
+            return True
+        except Exception as e:
+            print(f"⚠️ GPU Upload Failed: {e}")
+            self.gpu_cache = None
+            return False
 
     def add_to_plotter(self, plotter):
         """
@@ -193,3 +232,75 @@ class PointCloud():
             except Exception as e:
                 print(f"Error extracting point subset: {e}")
                 return None
+            
+    def get_subset_data(self, indices, use_torch=True):
+        """
+        Hyper-optimized extraction using persistent GPU cache.
+        """
+        if self.mesh is None:
+            return None, None
+            
+        start_time = time.time()
+        
+        # --- 1. PRE-PROCESS INDICES (CPU Flattening) ---
+        # It's usually faster to flatten jagged lists on CPU than GPU
+        if indices is None:
+            return self.mesh.points, dict(self.mesh.point_data)
+            
+        if isinstance(indices, (list, tuple)):
+            if len(indices) > 0 and isinstance(indices[0], (np.ndarray, list)):
+                try:
+                    indices = np.concatenate(indices)
+                except:
+                    indices = np.hstack(indices)
+            else:
+                indices = np.array(indices, dtype=np.int32)
+        
+        if len(indices) == 0:
+            return np.empty((0, 3)), {}
+
+        # --- 2. GPU PATH (The Speedup) ---
+        # We check if cache exists or try to create it
+        if use_torch and torch.cuda.is_available() and self._ensure_gpu_cache():
+            try:
+                # A. Move Indices to GPU (Small transfer)
+                # Note: We use non_blocking=True if pinned memory is available, 
+                # but standard transfer is fine here.
+                indices_tensor = torch.from_numpy(indices).to('cuda')
+                
+                # B. GPU Unique (Faster than np.unique for large arrays)
+                # This performs the UNION and sorts
+                indices_tensor = torch.unique(indices_tensor)
+                
+                # C. GPU Bounds Check (Optional, but safe)
+                # indices_tensor = indices_tensor[indices_tensor < self.gpu_cache['points'].shape[0]]
+                
+                # D. Extract from CACHED tensors (Zero PCI-e transfer for the cloud itself)
+                subset_points_tensor = self.gpu_cache['points'][indices_tensor]
+                
+                subset_data = {}
+                for name, data_tensor in self.gpu_cache['data'].items():
+                    subset_data[name] = data_tensor[indices_tensor].cpu().numpy()
+                
+                # E. Download Points (The only big download)
+                subset_points = subset_points_tensor.cpu().numpy()
+                
+                extract_time = time.time() - start_time
+                print(f"⚡ GPU Extract: {len(indices_tensor):,} pts in {extract_time:.3f}s")
+                
+                return subset_points, subset_data
+                
+            except Exception as e:
+                print(f"GPU Error, falling back: {e}")
+                # Fall through to CPU implementation
+        
+        # --- 3. CPU FALLBACK (Original Robust Implementation) ---
+        indices = np.unique(indices)
+        indices = indices[indices < self.mesh.n_points]
+        
+        subset_points = self.mesh.points[indices]
+        subset_data = {n: d[indices] for n, d in self.mesh.point_data.items()}
+        
+        print (f"⏱️ CPU Extract: {len(indices):,} pts in {time.time() - start_time:.3f}s")
+        
+        return subset_points, subset_data
