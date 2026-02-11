@@ -31,30 +31,32 @@ def generate_mock_data_torch(n_points=1_000_000, width=3840, height=2160, device
 
 
 def run_torch_benchmark():
-    if not torch.cuda.is_available():
-        print("CUDA not found! This script requires a GPU.")
-        return
-
-    device = torch.device("cuda")
-    N_POINTS = 1_000_000
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    is_cuda = device.type == 'cuda'
+    N_POINTS = 24_000_000
     W, H = 3840, 2160
     
     # Prepare data on GPU
     points_c, p_ids, K, w, h = generate_mock_data_torch(N_POINTS, W, H, device)
 
-    # Warmup CUDA (kernels compile on first run)
-    print("\n--- Warming up CUDA kernels... ---")
-    # Perform a dummy run to ensure caching doesn't affect timing
-    z_buffer = torch.full((H * W,), float('inf'), device=device, dtype=torch.float32)
-    torch.cuda.synchronize()
+    # Warmup
+    if is_cuda:
+        print("\n--- Warming up CUDA kernels... ---")
+        z_buffer = torch.full((H * W,), float('inf'), device=device, dtype=torch.float32)
+        torch.cuda.synchronize()
+    else:
+        print("\n--- Warming up CPU... ---")
+        z_buffer = torch.full((H * W,), float('inf'), device=device, dtype=torch.float32)
     
     print(f"\n--- Starting Benchmark (Image: {W}x{H}) ---")
     
     # START TIMER
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
-    
-    start_event.record()
+    if is_cuda:
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+    else:
+        start_time = time.time()
 
     # --- STEP 1: PROJECTION ---
     x, y, z = points_c[:, 0], points_c[:, 1], points_c[:, 2]
@@ -99,13 +101,16 @@ def run_torch_benchmark():
     index_map[final_indices] = final_ids
     
     # STOP TIMER
-    end_event.record()
-    torch.cuda.synchronize()
+    if is_cuda:
+        end_event.record()
+        torch.cuda.synchronize()
+        elapsed_time_ms = start_event.elapsed_time(end_event)
+        elapsed_time_sec = elapsed_time_ms / 1000.0
+    else:
+        end_time = time.time()
+        elapsed_time_sec = end_time - start_time
     
     # REPORT
-    elapsed_time_ms = start_event.elapsed_time(end_event)
-    elapsed_time_sec = elapsed_time_ms / 1000.0
-    
     print(f"--- Benchmark Complete ---")
     print(f"Total Time: {elapsed_time_sec:.4f} seconds")
     print(f"Points Processed: {N_POINTS}")
@@ -147,7 +152,7 @@ def generate_mock_data(n_points=1_000_000, width=3840, height=2160):
 
 def run_projection_benchmark():
     # SETUP
-    N_POINTS = 1_000_000  # Size of your dense cloud
+    N_POINTS = 10_000_000  # Size of your dense cloud
     W, H = 3840, 2160     # 4K Resolution
     
     points_c, p_ids, K, w, h = generate_mock_data(N_POINTS, W, H)
@@ -208,3 +213,7 @@ def run_projection_benchmark():
     print(f"Points Processed: {N_POINTS}")
     print(f"Points Visible on Screen: {len(id_sorted)}")
     print(f"FPS Equivalent: {1.0/duration:.2f} Hz")
+    
+
+if __name__ == "__main__":
+    run_torch_benchmark()
