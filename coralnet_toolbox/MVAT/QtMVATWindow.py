@@ -145,7 +145,7 @@ class MousePositionBridge:
         )
         
         # Get highlighted cameras and create rays from them to the world point
-        highlighted_cameras = self.mvat_window.camera_grid.get_highlighted_cameras()
+        highlighted_cameras = self.mvat_window.highlighted_cameras
         
         # List to store rays for 3D viewer: [(Ray, Color), ...]
         rays_with_colors = [(ray, RAY_COLOR_SELECTED)]
@@ -302,6 +302,7 @@ class MVATWindow(QMainWindow):
         # Camera management
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
+        self.highlighted_cameras = []
         
         # Batched geometry managers for efficient rendering (O(1) draw calls)
         self.frustum_manager = BatchedFrustumManager()
@@ -604,6 +605,7 @@ class MVATWindow(QMainWindow):
         Args:
             highlighted_paths: List of currently highlighted camera paths.
         """
+        self.highlighted_cameras = [self.cameras.get(path) for path in highlighted_paths if path in self.cameras]
         self._clear_rays()
         
     def showEvent(self, event):
@@ -638,6 +640,7 @@ class MVATWindow(QMainWindow):
         # Clear camera references
         self.cameras.clear()
         self.selected_camera = None
+        self.highlighted_cameras.clear()
         
         # Clear batched geometry managers
         self.frustum_manager.clear()
@@ -1151,7 +1154,7 @@ class MVATWindow(QMainWindow):
         self.selected_camera = camera
         
         # Get highlighted paths
-        highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+        highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
         
         # Update batched frustum colors
         self.frustum_manager.update_camera_states(path, highlighted_paths)
@@ -1177,7 +1180,7 @@ class MVATWindow(QMainWindow):
         """Deselect the current camera."""
         if self.selected_camera:
             # Get highlighted paths
-            highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+            highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
             
             # Update batched frustum colors (no selection, keep highlights)
             self.frustum_manager.update_camera_states(None, highlighted_paths)
@@ -1237,6 +1240,7 @@ class MVATWindow(QMainWindow):
         # Clear existing
         self.cameras.clear()
         self.selected_camera = None
+        self.highlighted_cameras.clear()
         self._initialized = False
         
         # Reload
