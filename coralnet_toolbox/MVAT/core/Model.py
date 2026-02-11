@@ -1,4 +1,6 @@
+import time
 import pyvista as pv
+import numpy as np
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -22,11 +24,13 @@ class PointCloud():
         self.mesh = None
         self.actor = None
         
-        # Load from file
+        # Load from file with timing
+        start_time = time.time()
         self.mesh = pv.read(file_path)
         self.array_names = self.mesh.array_names
+        load_time = time.time() - start_time
         
-        print("Loaded PointCloud:", self.label, "with", self.mesh.n_points, "points")
+        print(f"⏱️ Loaded PointCloud: {self.label} with {self.mesh.n_points:,} points in {load_time:.3f}s")
     
     @classmethod
     def from_file(cls, file_path, point_size=1):
@@ -95,3 +99,53 @@ class PointCloud():
         """Returns the point cloud data as a PyVista PolyData object, ready to be added to a plotter."""
         # The "actor" for a point cloud is just the data itself, which add_points/add_mesh turns into an actor.
         return self.mesh
+    
+    def get_points_array(self):
+        """
+        Get the raw point coordinates as a numpy array for efficient processing.
+        
+        Returns:
+            np.ndarray: (N, 3) array of point coordinates, or None if no mesh
+        """
+        if self.mesh is None:
+            return None
+        return self.mesh.points
+    
+    def extract_subset(self, indices):
+        """
+        Create a filtered point cloud containing only points with specified indices.
+        Preserves all point data (RGB, scalars, etc.) from the original mesh.
+        
+        Args:
+            indices (np.ndarray or list): 1D array/list of point indices to extract
+            
+        Returns:
+            pv.PolyData: New PyVista mesh containing only the specified points
+        """
+        if self.mesh is None:
+            return None
+        
+        start_time = time.time()
+        
+        # Convert to numpy array if needed
+        if not isinstance(indices, np.ndarray):
+            indices = np.array(indices, dtype=np.int32)
+        
+        # Handle empty indices
+        if len(indices) == 0:
+            # Return empty PolyData
+            return pv.PolyData()
+        
+        # Ensure indices are within valid range
+        indices = indices[indices < self.mesh.n_points]
+        
+        # Use PyVista's extract_points method
+        # This preserves all point data arrays
+        try:
+            subset_mesh = self.mesh.extract_points(indices, adjacent_cells=False)
+            extract_time = time.time() - start_time
+            print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s")
+            return subset_mesh
+        except Exception as e:
+            print(f"Error extracting point subset: {e}")
+            return None

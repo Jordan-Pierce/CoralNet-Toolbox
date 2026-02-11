@@ -108,6 +108,31 @@ class Camera:
         return (self.width, self.height)
 
     # --------------------------------------------------------------------------
+    # Visibility / Index Map Properties (Delegated to Raster)
+    # --------------------------------------------------------------------------
+    
+    @property
+    def visible_indices(self):
+        """
+        Get the visible point indices for this camera.
+        
+        Returns:
+            np.ndarray or None: 1D array of visible point IDs, or None if not computed
+        """
+        return self._raster.visible_indices
+    
+    @property
+    def index_map(self):
+        """
+        Get the index map for this camera.
+        Uses lazy loading from Raster if available.
+        
+        Returns:
+            np.ndarray or None: 2D index map (H x W), or None if not computed
+        """
+        return self._raster.index_map_lazy
+
+    # --------------------------------------------------------------------------
     # Geometric Methods
     # --------------------------------------------------------------------------
     
@@ -266,6 +291,105 @@ class Camera:
             return False
         
         return False
+
+    # --------------------------------------------------------------------------
+    # Visibility Computation (Index Maps)
+    # --------------------------------------------------------------------------
+    
+    def ensure_visibility_data(self, point_cloud, cache_manager):
+        """
+        Ensure visibility data (index_map and visible_indices) is computed and cached.
+        
+        This method implements a three-tier loading strategy:
+        1. Check if data is already in memory (self._raster.visible_indices)
+        2. Try to load from disk cache
+        3. Compute using VisibilityManager and save to cache
+        
+        Args:
+            point_cloud: PointCloud object containing the 3D geometry
+            cache_manager: CacheManager instance for disk caching
+            
+        Returns:
+            bool: True if visibility data is available, False otherwise
+        """
+        # Step 1: Check if already in memory
+        if self._raster.visible_indices is not None:
+            return True
+        
+        # Step 2: Try to load from cache
+        if cache_manager is not None:
+            cached_data = cache_manager.load_visibility(
+                self._raster.extrinsics,
+                point_cloud.file_path
+            )
+            
+            if cached_data is not None:
+                # Store in Raster
+                cache_path = cache_manager.get_cache_path(
+                    self._raster.extrinsics,
+                    point_cloud.file_path
+                )
+                self._raster.add_index_map(
+                    cached_data['index_map'],
+                    cache_path,
+                    cached_data['visible_indices']
+                )
+                return True
+        
+        # Step 3: Compute visibility using VisibilityManager
+        # TODO: Implement frustum-based cone intersection as fallback when z_channel is None.
+        # Could use conservative rasterization of frustum volume.
+        
+        # Check if we have the required data for computation
+        if self._raster.extrinsics is None or self._raster.intrinsics is None:
+            print(f"Warning: Camera {self.label} missing calibration data for visibility computation")
+            return False
+        
+        try:
+            # Import here to avoid circular dependencies
+            from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
+            
+            # Get point cloud points
+            points_world = point_cloud.get_points_array()
+            
+            if points_world is None or len(points_world) == 0:
+                print(f"Warning: Point cloud is empty or invalid")
+                return False
+            
+            # Compute visibility
+            result = VisibilityManager.compute_visibility(
+                points_world=points_world,
+                K=self.K,
+                R=self.R,
+                t=self.t,
+                width=self.width,
+                height=self.height
+            )
+            
+            # Save to cache if manager is available
+            cache_path = None
+            if cache_manager is not None:
+                cache_path = cache_manager.save_visibility(
+                    self._raster.extrinsics,
+                    point_cloud.file_path,
+                    result['index_map'],
+                    result['visible_indices']
+                )
+            
+            # Store in Raster
+            self._raster.add_index_map(
+                result['index_map'],
+                cache_path,
+                result['visible_indices']
+            )
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error computing visibility for {self.label}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     # --------------------------------------------------------------------------
     # Visualization Logic

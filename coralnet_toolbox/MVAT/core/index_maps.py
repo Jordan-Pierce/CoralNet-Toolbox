@@ -33,7 +33,7 @@ def generate_mock_data_torch(n_points=1_000_000, width=3840, height=2160, device
 def run_torch_benchmark():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     is_cuda = device.type == 'cuda'
-    N_POINTS = 24_000_000
+    N_POINTS = 10_000_000
     W, H = 3840, 2160
     
     # Prepare data on GPU
@@ -216,4 +216,5 @@ def run_projection_benchmark():
     
 
 if __name__ == "__main__":
+    run_projection_benchmark()
     run_torch_benchmark()

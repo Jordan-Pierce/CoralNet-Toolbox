@@ -80,6 +80,8 @@ class MVATViewer(QFrame):
         # Point cloud and Ray management
         self.point_cloud = None
         self._scene_actor = None
+        self._filtered_actor = None  # Separate actor for filtered point cloud
+        self._filtered_mode = False  # Track if we're in filtered mode
         
         self.point_size = point_size
         
@@ -238,6 +240,108 @@ class MVATViewer(QFrame):
         if self.point_cloud is not None:
             self.point_cloud.set_point_size(size)
             self.plotter.render()  # Force re-render
+        # Also update filtered actor if in filtered mode
+        if self._filtered_actor is not None:
+            self._filtered_actor.GetProperty().SetPointSize(size)
+            self.plotter.render()
+    
+    def update_point_cloud_subset(self, indices):
+        """
+        Update the viewer to show only a subset of points based on visibility indices.
+        
+        This method:
+        - Hides the full point cloud actor
+        - Creates/updates a filtered mesh containing only visible points
+        - Preserves point size and color properties
+        
+        Args:
+            indices (np.ndarray or None): Array of point indices to show. 
+                                         If None or empty, shows full cloud.
+        """
+        if self.point_cloud is None:
+            return
+        
+        import time
+        start_time = time.time()
+        
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # If indices is None or empty, show full cloud
+            if indices is None or len(indices) == 0:
+                # Switch back to full cloud mode
+                self._filtered_mode = False
+                
+                # Remove filtered actor if it exists
+                if self._filtered_actor is not None:
+                    try:
+                        self.plotter.remove_actor(self._filtered_actor)
+                    except:
+                        pass
+                    self._filtered_actor = None
+                
+                # Show full cloud
+                self.set_point_cloud_visible(True)
+                self.plotter.render()
+                return
+            
+            # We're in filtered mode
+            self._filtered_mode = True
+            
+            # Hide the full point cloud actor
+            self.set_point_cloud_visible(False)
+            
+            # Extract subset mesh
+            subset_mesh = self.point_cloud.extract_subset(indices)
+            
+            if subset_mesh is None or subset_mesh.n_points == 0:
+                print("Warning: Filtered subset is empty")
+                # Remove filtered actor
+                if self._filtered_actor is not None:
+                    try:
+                        self.plotter.remove_actor(self._filtered_actor)
+                    except:
+                        pass
+                    self._filtered_actor = None
+                self.plotter.render()
+                return
+            
+            # Remove existing filtered actor if any
+            if self._filtered_actor is not None:
+                try:
+                    self.plotter.remove_actor(self._filtered_actor)
+                except:
+                    pass
+            
+            # Add new filtered mesh
+            if 'RGB' in subset_mesh.point_data:
+                self._filtered_actor = self.plotter.add_mesh(
+                    subset_mesh,
+                    scalars='RGB',
+                    rgb=True,
+                    point_size=self.point_size
+                )
+            else:
+                point_size = self.point_size if subset_mesh.n_cells == 0 else None
+                self._filtered_actor = self.plotter.add_mesh(
+                    subset_mesh,
+                    color='black',
+                    point_size=point_size
+                )
+            
+            # Apply LOD optimization if available
+            if self._filtered_actor:
+                try:
+                    self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
+                except AttributeError:
+                    pass
+            
+            self.plotter.render()
+            
+            render_time = time.time() - start_time
+            print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer in {render_time:.3f}s")
+            
+        finally:
+            QApplication.restoreOverrideCursor()
 
     # --------------------------------------------------------------------------
     # Ray Visualization Methods (Using BatchedRayManager)
