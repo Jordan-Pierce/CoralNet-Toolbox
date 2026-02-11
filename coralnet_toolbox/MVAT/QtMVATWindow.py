@@ -24,6 +24,7 @@ from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
 
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
@@ -1009,8 +1010,7 @@ class MVATWindow(QMainWindow):
         
         # Batch compute visibility for cameras that need it
         if cameras_needing_visibility:
-            from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
-            
+            # Prepare data for batch processing            
             points_world = self.viewer.point_cloud.get_points_array()
             camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
             
