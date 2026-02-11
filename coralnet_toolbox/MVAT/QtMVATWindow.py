@@ -1030,8 +1030,9 @@ class MVATWindow(QMainWindow):
         # Update status bar
         total_points = self.viewer.point_cloud.mesh.n_points
         visible_count = len(union_indices)
+        percentage = (visible_count / total_points * 100) if total_points > 0 else 0
         self.stats_label.setText(
-            f"Cameras: {len(self.cameras)} | Visible Points: {visible_count:,} / {total_points:,}"
+            f"Cameras: {len(self.cameras)} | Visible Points: {percentage:.2f}%"
         )
             
     def _match_camera_perspective(self, camera):
