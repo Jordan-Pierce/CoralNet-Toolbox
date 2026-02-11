@@ -1218,9 +1218,6 @@ class MVATWindow(QMainWindow):
             
     def _refresh_scene(self):
         """Apply changes and refresh the entire scene by reloading cameras."""
-        # Update scale
-        self.frustum_scale = self.scale_spinbox.value()
-        
         # Update opacity
         self.thumbnail_opacity = self.opacity_slider.value() / 100.0
         
