@@ -60,9 +60,16 @@ class MVATViewer(QFrame):
         self.layout.setContentsMargins(0, 0, 0, 0)
         
         # Create PyVista QtInteractor
-        self.plotter = QtInteractor(self)
+        self.plotter = QtInteractor(self, point_smoothing=False)
         self.plotter.set_background('white')
         self.plotter.enable_trackball_style()
+        
+        # Optimizations?
+        self.plotter.disable_anti_aliasing()  # Disable default AA for better performance with large point clouds
+        self.plotter.disable_eye_dome_lighting()  # Disable EDL (can cause issues with large clouds)
+        self.plotter.enable_parallel_projection()  # Optional: Parallel projection for architectural scenes
+        self.plotter.disable_shadows()  # Disable shadows for better performance (optional)      
+        self.plotter.disable_depth_peeling()  # Disable depth peeling (transparency) for better performance (optional) 
         
         # --- CUSTOM INTERACTION SETUP ---
         

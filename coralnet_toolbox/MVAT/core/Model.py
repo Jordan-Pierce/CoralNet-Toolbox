@@ -26,7 +26,7 @@ class PointCloud():
         
         # Load from file with timing
         start_time = time.time()
-        self.mesh = pv.read(file_path)
+        self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         load_time = time.time() - start_time
         
@@ -75,12 +75,18 @@ class PointCloud():
             self.actor = plotter.add_mesh(self.mesh, 
                                           scalars='RGB', 
                                           rgb=True, 
-                                          point_size=self.point_size)
+                                          point_size=self.point_size,
+                                          style='points',
+                                          render_points_as_spheres=False,
+                                          lighting=False)
         else:
             point_size = self.point_size if self.mesh.n_cells == 0 else None
             self.actor = plotter.add_mesh(self.mesh, 
                                           color='black', 
-                                          point_size=point_size)
+                                          point_size=point_size,
+                                          style='points',
+                                          render_points_as_spheres=False,
+                                          lighting=False)
         
         return self.actor
     
