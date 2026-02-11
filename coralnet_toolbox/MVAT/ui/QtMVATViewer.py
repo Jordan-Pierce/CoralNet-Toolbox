@@ -213,7 +213,7 @@ class MVATViewer(QFrame):
                 # 1. Capture the actor returned by add_to_plotter
                 actor = self.point_cloud.add_to_plotter(self.plotter)
                 
-                # 2. Add your LOD optimization here
+                # 2. Add LOD optimization here
                 if actor:
                     # Note: Ensure your VTK version supports this specific property method
                     # or use actor.SetEnableLOD(True) if using vtkLODActor
