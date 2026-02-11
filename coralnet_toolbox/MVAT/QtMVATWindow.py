@@ -359,24 +359,28 @@ class MVATWindow(QMainWindow):
         # Toggle Wireframes
         self.toggle_wireframes_action = QAction("Show Wireframes", self)
         self.toggle_wireframes_action.setCheckable(True)
+        self.toggle_wireframes_action.setChecked(True)  
         self.toggle_wireframes_action.triggered.connect(self._toggle_wireframes)
         self.view_menu.addAction(self.toggle_wireframes_action)
         
         # Toggle Thumbnails
         self.toggle_thumbnails_action = QAction("Show Thumbnails", self)
         self.toggle_thumbnails_action.setCheckable(True)
+        self.toggle_thumbnails_action.setChecked(True)  
         self.toggle_thumbnails_action.triggered.connect(self._toggle_thumbnails)
         self.view_menu.addAction(self.toggle_thumbnails_action)
         
         # Toggle Point Cloud
         self.toggle_point_cloud_action = QAction("Show Point Cloud", self)
         self.toggle_point_cloud_action.setCheckable(True)
+        self.toggle_point_cloud_action.setChecked(True)  
         self.toggle_point_cloud_action.triggered.connect(self._toggle_point_cloud)
         self.view_menu.addAction(self.toggle_point_cloud_action)
         
         # Toggle Rays
         self.toggle_rays_action = QAction("Show Rays", self)
         self.toggle_rays_action.setCheckable(True)
+        self.toggle_rays_action.setChecked(True)  
         self.toggle_rays_action.triggered.connect(self._toggle_rays)
         self.view_menu.addAction(self.toggle_rays_action)
         
