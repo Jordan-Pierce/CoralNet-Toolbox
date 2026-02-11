@@ -81,6 +81,149 @@ class VisibilityManager:
         
         return result
 
+    @classmethod
+    def compute_batch_visibility(cls, 
+                                 points_world: np.ndarray, 
+                                 camera_params_list: list,
+                                 point_ids: np.ndarray = None) -> list:
+        """
+        Compute visibility for multiple cameras in batch using GPU acceleration.
+        
+        Args:
+            points_world (np.ndarray): (N, 3) array of 3D points in World Coordinates.
+            camera_params_list (list): List of (K, R, t, width, height) tuples, where:
+                - K (np.ndarray): (3, 3) Intrinsic matrix.
+                - R (np.ndarray): (3, 3) Rotation matrix (World -> Camera).
+                - t (np.ndarray): (3,) Translation vector (World -> Camera).
+                - width (int): Image width.
+                - height (int): Image height.
+            point_ids (np.ndarray, optional): (N,) array of global IDs. 
+                                              If None, indices 0..N-1 are used.
+
+        Returns:
+            list: List of dicts, one per camera, each containing:
+                {
+                    'index_map': (H, W) int32 array. Pixel value is Point ID or -1.
+                    'visible_indices': (M,) int32 array. Unique IDs of visible points.
+                }
+        """
+        start_time = time.time()
+        
+        # Default point IDs if not provided
+        if point_ids is None:
+            point_ids = np.arange(len(points_world), dtype=np.int32)
+
+        if not HAS_TORCH:
+            # Fallback to sequential NumPy computation
+            results = []
+            for K, R, t, width, height in camera_params_list:
+                result = cls._compute_numpy(points_world, point_ids, K, R, t, width, height)
+                results.append(result)
+            compute_time = time.time() - start_time
+            print(f"⏱️ Computed batch visibility for {len(camera_params_list)} cameras, {len(points_world):,} points using NUMPY: {compute_time:.3f}s")
+            return results
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        # Transfer points to device once
+        points = torch.as_tensor(points_world, dtype=torch.float32, device=device)
+        p_ids = torch.as_tensor(point_ids, dtype=torch.int32, device=device)
+        
+        M = len(camera_params_list)
+        
+        # Extract and transfer camera parameters
+        K_list = [torch.as_tensor(K, dtype=torch.float32, device=device) for K, R, t, w, h in camera_params_list]
+        R_list = [torch.as_tensor(R, dtype=torch.float32, device=device) for K, R, t, w, h in camera_params_list]
+        t_list = [torch.as_tensor(t, dtype=torch.float32, device=device) for K, R, t, w, h in camera_params_list]
+        widths = [w for K, R, t, w, h in camera_params_list]
+        heights = [h for K, R, t, w, h in camera_params_list]
+        
+        # Batch camera parameters
+        R_batch = torch.stack(R_list)  # (M, 3, 3)
+        t_batch = torch.stack(t_list)  # (M, 3)
+        K_batch = torch.stack(K_list)  # (M, 3, 3)
+        
+        # Batch points for all cameras
+        points_batch = points.unsqueeze(0).expand(M, -1, -1)  # (M, N, 3)
+        
+        # Batch transform: World -> Camera for all cameras
+        # points_cam_batch = points_batch @ R_batch.transpose(1, 2) + t_batch.unsqueeze(1)
+        points_cam_batch = torch.einsum('mni,mij->mnj', points_batch, R_batch.transpose(1, 2)) + t_batch.unsqueeze(1)  # (M, N, 3)
+        
+        # Extract coordinates
+        x_batch = points_cam_batch[:, :, 0]
+        y_batch = points_cam_batch[:, :, 1]
+        z_batch = points_cam_batch[:, :, 2]
+        
+        # Batch projection
+        u_batch = (K_batch[:, 0, 0].unsqueeze(1) * x_batch / z_batch) + K_batch[:, 0, 2].unsqueeze(1)
+        v_batch = (K_batch[:, 1, 1].unsqueeze(1) * y_batch / z_batch) + K_batch[:, 1, 2].unsqueeze(1)
+        
+        # Process each camera (since widths/heights may differ, z-buffering is per-camera)
+        results = []
+        for i in range(M):
+            width = widths[i]
+            height = heights[i]
+            u = u_batch[i]
+            v = v_batch[i]
+            z = z_batch[i]
+            ids = p_ids
+            
+            # Bounds and depth check
+            u_idx = u.round().long()
+            v_idx = v.round().long()
+            valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height) & (z > 0)
+            
+            valid_u = u_idx[valid_mask]
+            valid_v = v_idx[valid_mask]
+            valid_z = z[valid_mask]
+            valid_ids = ids[valid_mask]
+            
+            if valid_ids.numel() == 0:
+                results.append({
+                    'index_map': np.full((height, width), -1, dtype=np.int32),
+                    'visible_indices': np.array([], dtype=np.int32)
+                })
+                continue
+            
+            # Z-buffering
+            flat_indices = valid_v * width + valid_u
+            z_buffer = torch.full((height * width,), float('inf'), device=device, dtype=torch.float32)
+            
+            try:
+                z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce="amin", include_self=True)
+            except AttributeError:
+                # Fallback for older PyTorch versions
+                warnings.warn("PyTorch version too old for scatter_reduce_. Using CPU fallback for this camera.")
+                result = cls._compute_numpy(points_world, point_ids, 
+                                            camera_params_list[i][0], camera_params_list[i][1], 
+                                            camera_params_list[i][2], width, height)
+                results.append(result)
+                continue
+            
+            min_z_at_pixel = z_buffer[flat_indices]
+            is_closest = torch.abs(valid_z - min_z_at_pixel) < 1e-4
+            
+            final_pixel_indices = flat_indices[is_closest]
+            final_ids = valid_ids[is_closest]
+            
+            # Construct index map
+            index_map_tensor = torch.full((height * width,), -1, device=device, dtype=torch.int32)
+            index_map_tensor[final_pixel_indices] = final_ids
+            index_map_2d = index_map_tensor.view(height, width)
+            
+            visible_indices = torch.unique(final_ids, sorted=True)
+            
+            results.append({
+                'index_map': index_map_2d.cpu().numpy(),
+                'visible_indices': visible_indices.cpu().numpy()
+            })
+        
+        compute_time = time.time() - start_time
+        print(f"⏱️ Computed batch visibility for {M} cameras, {len(points_world):,} points using {device.upper()}: {compute_time:.3f}s")
+        
+        return results
+
     # ------------------------------------------------------------------------------------------------------------------
     # PyTorch Implementation (CUDA & CPU)
     # ------------------------------------------------------------------------------------------------------------------

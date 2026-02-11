@@ -995,16 +995,47 @@ class MVATWindow(QMainWindow):
         
         # Collect visible_indices from all highlighted cameras
         all_visible_indices = []
+        cameras_needing_visibility = []
         
         for path in highlighted_paths:
             camera = self.cameras.get(path)
             if camera:
-                # Ensure visibility data is computed
-                camera.ensure_visibility_data(self.viewer.point_cloud, self.cache_manager)
-                
-                # Get visible indices
-                if camera.visible_indices is not None:
+                # Check if visibility data is already computed
+                if camera.visible_indices is None:
+                    cameras_needing_visibility.append(camera)
+                else:
+                    # Already have data
                     all_visible_indices.append(camera.visible_indices)
+        
+        # Batch compute visibility for cameras that need it
+        if cameras_needing_visibility:
+            from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
+            
+            points_world = self.viewer.point_cloud.get_points_array()
+            camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
+            
+            batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+            
+            # Store results back to cameras and collect visible indices
+            for camera, result in zip(cameras_needing_visibility, batch_results):
+                # Save to cache if manager is available
+                cache_path = None
+                if self.cache_manager is not None:
+                    cache_path = self.cache_manager.save_visibility(
+                        camera._raster.extrinsics,
+                        self.viewer.point_cloud.file_path,
+                        result['index_map'],
+                        result['visible_indices']
+                    )
+                
+                # Store in Raster
+                camera._raster.add_index_map(
+                    result['index_map'],
+                    cache_path,
+                    result['visible_indices']
+                )
+                
+                all_visible_indices.append(result['visible_indices'])
         
         # If no cameras have visibility data, show full cloud
         if not all_visible_indices:
