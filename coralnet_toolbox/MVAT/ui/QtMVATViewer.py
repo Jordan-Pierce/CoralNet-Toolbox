@@ -206,21 +206,23 @@ class MVATViewer(QFrame):
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Add the point cloud to the plotter and capture its actor."""
+        """Re-add the stored point cloud to the plotter."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if self.point_cloud is not None:
-                # Capture the set of actors BEFORE adding
-                previous_actors = set(self.plotter.actors.values())
+                # 1. Capture the actor returned by add_to_plotter
+                actor = self.point_cloud.add_to_plotter(self.plotter)
                 
-                self.point_cloud.add_to_plotter(self.plotter)
-                
-                # Identify the NEW actor (the scene geometry)
-                current_actors = set(self.plotter.actors.values())
-                new_actors = current_actors - previous_actors
-                
-                if new_actors:
-                    self._scene_actor = list(new_actors)[0]
+                # 2. Add your LOD optimization here
+                if actor:
+                    # Note: Ensure your VTK version supports this specific property method
+                    # or use actor.SetEnableLOD(True) if using vtkLODActor
+                    try:
+                        # Your specific snippet:
+                        actor.GetProperty().SetLODRenderThreshold(1000)  # ms
+                    except AttributeError:
+                        # Fallback for standard PyVista actors if property doesn't exist
+                        pass
         finally:
             QApplication.restoreOverrideCursor()
 
