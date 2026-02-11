@@ -391,15 +391,15 @@ class MVATViewer(QFrame):
             
     def update_point_cloud_subset(self, indices):
         """
-        Update the visible point cloud subset using in-place data replacement.
-        Includes timing profile for the viewer update/render.
+        Update the visible point cloud subset using optimized mapper swapping.
+        Fixes the "missing points" issue by correctly updating topology.
         """
         if self.point_cloud is None:
             return
 
         start_time = time.time()
             
-        # --- CASE 1: Reverting to Full Cloud ---
+        # --- CASE 1: Revert to Full Cloud ---
         if indices is None:
             if self._filtered_mode:
                 self._filtered_mode = False
@@ -409,12 +409,13 @@ class MVATViewer(QFrame):
                 self.plotter.render()
             return
 
-        # --- CASE 2: Switching to Filtered Mode ---
+        # --- CASE 2: Switch Mode ---
         if not self._filtered_mode:
             self.set_point_cloud_visible(False)
             self._filtered_mode = True
             
-        # Get raw data arrays (Timing for this is handled inside get_subset_data)
+        # --- EXTRACT DATA ---
+        # (This uses the robust get_subset_data from Model.py)
         points, point_data = self.point_cloud.get_subset_data(indices)
         
         if points is None or len(points) == 0:
@@ -425,64 +426,52 @@ class MVATViewer(QFrame):
 
         update_type = ""
 
-        # --- CASE 3: Initial Creation (Rebuild) ---
+        # --- CREATE NEW MESH WRAPPER (Fast) ---
+        # pv.PolyData(points) is very cheap. It just wraps the numpy array.
+        # It automatically generates the correct vertex cells (topology) for the new point count.
+        new_mesh = pv.PolyData(points)
+        for name, data in point_data.items():
+            new_mesh.point_data[name] = data
+
+        # --- CASE 3: Rebuild Actor (First Time) ---
         if self._filtered_actor is None:
             update_type = "Rebuild"
+            self._filtered_mesh = new_mesh
             
-            # Create mesh container
-            self._filtered_mesh = pv.PolyData(points)
-            for name, data in point_data.items():
-                self._filtered_mesh.point_data[name] = data
-            
-            # Create actor
+            # Create the heavy Actor object once
             if 'RGB' in point_data:
                 self._filtered_actor = self.plotter.add_mesh(
                     self._filtered_mesh, 
-                    scalars='RGB', 
-                    rgb=True, 
-                    style='points',
-                    point_size=self.point_size,
-                    render=False,
-                    render_points_as_spheres=False,
-                    lighting=False
+                    scalars='RGB', rgb=True, 
+                    style='points', point_size=self.point_size,
+                    render=False
                 )
             else:
                 self._filtered_actor = self.plotter.add_mesh(
                     self._filtered_mesh, 
                     color='black', 
-                    style='points',
-                    point_size=self.point_size,
-                    render=False,
-                    render_points_as_spheres=False,
-                    lighting=False
+                    style='points', point_size=self.point_size,
+                    render=False
                 )
-            
-            # LOD Optimization
-            try:
+            try: 
                 self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
-            except:
+            except: 
                 pass
 
-        # --- CASE 4: Fast In-Place Update ---
+        # --- CASE 4: Swap Mapper Input (The Fix) ---
         else:
-            update_type = "In-Place Update"
+            update_type = "Mapper Swap"
             self._filtered_actor.SetVisibility(True)
             
-            # 1. Update Geometry (Pointer Swap)
-            self._filtered_mesh.points = points
+            # CRITICAL FIX:
+            # Instead of self._filtered_mesh.points = points (which breaks topology),
+            # we tell the existing Actor to look at the NEW Mesh object.
+            # This updates points, colors, AND vertex count correctly.
+            self._filtered_actor.GetMapper().SetInputData(new_mesh)
             
-            # 2. Update Data
-            for name, data in point_data.items():
-                self._filtered_mesh.point_data[name] = data
-                
-            # 3. Mark Modified (Triggers GPU Upload)
-            self._filtered_mesh.GetPoints().Modified()
-            if hasattr(self._filtered_mesh.GetPointData(), "GetScalars"):
-                scalars = self._filtered_mesh.GetPointData().GetScalars()
-                if scalars: 
-                    scalars.Modified()
+            # Keep a reference so Python doesn't garbage collect the data
+            self._filtered_mesh = new_mesh
             
-        # Render
         self.plotter.render()
         
         render_time = time.time() - start_time
