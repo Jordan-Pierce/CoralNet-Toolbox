@@ -159,148 +159,132 @@ class PointCloud():
             return None
         return self.mesh.points
     
-    def extract_subset(self, indices, use_torch=True):
+    def get_subset_data(self, indices, use_torch=True, use_optimized=True):
         """
-        Create a filtered point cloud containing only points with specified indices.
-        Preserves all point data (RGB, scalars, etc.) from the original mesh.
+        Extract a subset of point cloud data.
         
         Args:
-            indices (np.ndarray or list): 1D array/list of point indices to extract
-            use_torch (bool): If True, use PyTorch for extraction (GPU if available, else CPU).
-                              If False, use PyVista's extract_points (default).
+            indices: Point indices to extract
+            use_torch: Whether to use PyTorch for extraction
+            use_optimized: If True, use optimized GPU caching version; if False, use PyVista-based version
             
         Returns:
-            pv.PolyData: New PyVista mesh containing only the specified points
+            If use_optimized=True: (points_array, point_data_dict)
+            If use_optimized=False: pv.PolyData mesh
         """
-        if self.mesh is None:
-            return None
-        
-        start_time = time.time()
-        
-        # Convert indices to numpy array if needed
-        if not isinstance(indices, np.ndarray):
-            indices = np.array(indices, dtype=np.int32)
-        
-        # Handle empty indices
-        if len(indices) == 0:
-            # Return empty PolyData
-            return pv.PolyData()
-        
-        # Ensure indices are within valid range
-        indices = indices[indices < self.mesh.n_points]
-        
-        if use_torch:
-            # PyTorch-based extraction
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            
-            try:
-                # Convert points to torch tensor on device
-                points_tensor = torch.from_numpy(self.mesh.points).to(device)
-                indices_tensor = torch.from_numpy(indices).to(device)
-                
-                # Extract subset points
-                subset_points = points_tensor[indices_tensor].cpu().numpy()
-                
-                # Extract all point data arrays
-                subset_point_data = {}
-                for name, data in self.mesh.point_data.items():
-                    data_tensor = torch.from_numpy(data).to(device)
-                    subset_point_data[name] = data_tensor[indices_tensor].cpu().numpy()
-                
-                # Create new PolyData
-                subset_mesh = pv.PolyData(subset_points)
-                # Add point data
-                for name, data in subset_point_data.items():
-                    subset_mesh.point_data[name] = data
-                
-                extract_time = time.time() - start_time
-                print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyTorch on {device.upper()})")
-                return subset_mesh
-            
-            except Exception as e:
-                print(f"Error extracting point subset with PyTorch: {e}")
-                # Fallback to PyVista if PyTorch fails
-                use_torch = False
-        
-        if not use_torch:
-            # Original PyVista-based extraction
-            try:
-                subset_mesh = self.mesh.extract_points(indices, adjacent_cells=False)
-                extract_time = time.time() - start_time
-                print(f"⏱️ Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyVista)")
-                return subset_mesh
-            except Exception as e:
-                print(f"Error extracting point subset: {e}")
+        if not use_optimized:
+            # Version 1: PyVista-based extraction returning PolyData
+            if self.mesh is None:
                 return None
             
-    def get_subset_data(self, indices, use_torch=True):
-        """
-        Hyper-optimized extraction using persistent GPU cache.
-        """
-        if self.mesh is None:
-            return None, None
+            start_time = time.time()
             
-        start_time = time.time()
-        
-        # --- 1. PRE-PROCESS INDICES (CPU Flattening) ---
-        # It's usually faster to flatten jagged lists on CPU than GPU
-        if indices is None:
-            return self.mesh.points, dict(self.mesh.point_data)
-            
-        if isinstance(indices, (list, tuple)):
-            if len(indices) > 0 and isinstance(indices[0], (np.ndarray, list)):
-                try:
-                    indices = np.concatenate(indices)
-                except:
-                    indices = np.hstack(indices)
-            else:
+            # Convert indices to numpy array if needed
+            if not isinstance(indices, np.ndarray):
                 indices = np.array(indices, dtype=np.int32)
-        
-        if len(indices) == 0:
-            return np.empty((0, 3)), {}
+            
+            # Handle empty indices
+            if len(indices) == 0:
+                return pv.PolyData()
+            
+            # Ensure indices are within valid range
+            indices = indices[indices < self.mesh.n_points]
+            
+            if use_torch:
+                # PyTorch-based extraction
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                
+                try:
+                    # Convert points to torch tensor on device
+                    points_tensor = torch.from_numpy(self.mesh.points).to(device)
+                    indices_tensor = torch.from_numpy(indices).to(device)
+                    
+                    # Extract subset points
+                    subset_points = points_tensor[indices_tensor].cpu().numpy()
+                    
+                    # Extract all point data arrays
+                    subset_point_data = {}
+                    for name, data in self.mesh.point_data.items():
+                        data_tensor = torch.from_numpy(data).to(device)
+                        subset_point_data[name] = data_tensor[indices_tensor].cpu().numpy()
+                    
+                    # Create new PolyData
+                    subset_mesh = pv.PolyData(subset_points)
+                    # Add point data
+                    for name, data in subset_point_data.items():
+                        subset_mesh.point_data[name] = data
+                    
+                    extract_time = time.time() - start_time
+                    print(f"⏱️ get_subset_data (PyVista): Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyTorch on {device.upper()})")
+                    return subset_mesh
+                
+                except Exception as e:
+                    print(f"Error extracting point subset with PyTorch: {e}")
+                    # Fallback to PyVista if PyTorch fails
+                    use_torch = False
+            
+            if not use_torch:
+                # Original PyVista-based extraction
+                try:
+                    subset_mesh = self.mesh.extract_points(indices, adjacent_cells=False)
+                    extract_time = time.time() - start_time
+                    print(f"⏱️ get_subset_data (PyVista): Extracted {len(indices):,} points from {self.mesh.n_points:,} total in {extract_time:.3f}s (using PyVista)")
+                    return subset_mesh
+                except Exception as e:
+                    print(f"Error extracting point subset: {e}")
+                    return None
+        else:
+            # Version 2: Optimized GPU caching version
+            if self.mesh is None:
+                return None, None
+                
+            start_time = time.time()
+            
+            # --- 1. PRE-PROCESS INDICES (CPU Flattening) ---
+            if indices is None:
+                return self.mesh.points, dict(self.mesh.point_data)
+                
+            if isinstance(indices, (list, tuple)):
+                if len(indices) > 0 and isinstance(indices[0], (np.ndarray, list)):
+                    try:
+                        indices = np.concatenate(indices)
+                    except:
+                        indices = np.hstack(indices)
+                else:
+                    indices = np.array(indices, dtype=np.int32)
+            
+            if len(indices) == 0:
+                return np.empty((0, 3)), {}
 
-        # --- 2. GPU PATH (The Speedup) ---
-        # We check if cache exists or try to create it
-        if use_torch and torch.cuda.is_available() and self._ensure_gpu_cache():
-            try:
-                # A. Move Indices to GPU (Small transfer)
-                # Note: We use non_blocking=True if pinned memory is available, 
-                # but standard transfer is fine here.
-                indices_tensor = torch.from_numpy(indices).to('cuda')
-                
-                # B. GPU Unique (Faster than np.unique for large arrays)
-                # This performs the UNION and sorts
-                indices_tensor = torch.unique(indices_tensor)
-                
-                # C. GPU Bounds Check (Optional, but safe)
-                # indices_tensor = indices_tensor[indices_tensor < self.gpu_cache['points'].shape[0]]
-                
-                # D. Extract from CACHED tensors (Zero PCI-e transfer for the cloud itself)
-                subset_points_tensor = self.gpu_cache['points'][indices_tensor]
-                
-                subset_data = {}
-                for name, data_tensor in self.gpu_cache['data'].items():
-                    subset_data[name] = data_tensor[indices_tensor].cpu().numpy()
-                
-                # E. Download Points (The only big download)
-                subset_points = subset_points_tensor.cpu().numpy()
-                
-                extract_time = time.time() - start_time
-                print(f"⚡ GPU Extract: {len(indices_tensor):,} pts in {extract_time:.3f}s")
-                
-                return subset_points, subset_data
-                
-            except Exception as e:
-                print(f"GPU Error, falling back: {e}")
-                # Fall through to CPU implementation
-        
-        # --- 3. CPU FALLBACK (Original Robust Implementation) ---
-        indices = np.unique(indices)
-        indices = indices[indices < self.mesh.n_points]
-        
-        subset_points = self.mesh.points[indices]
-        subset_data = {n: d[indices] for n, d in self.mesh.point_data.items()}
-        
-        print (f"⏱️ CPU Extract: {len(indices):,} pts in {time.time() - start_time:.3f}s")
-        
-        return subset_points, subset_data
+            # --- 2. GPU PATH (The Speedup) ---
+            if use_torch and torch.cuda.is_available() and self._ensure_gpu_cache():
+                try:
+                    indices_tensor = torch.from_numpy(indices).to('cuda')
+                    indices_tensor = torch.unique(indices_tensor)
+                    
+                    subset_points_tensor = self.gpu_cache['points'][indices_tensor]
+                    
+                    subset_data = {}
+                    for name, data_tensor in self.gpu_cache['data'].items():
+                        subset_data[name] = data_tensor[indices_tensor].cpu().numpy()
+                    
+                    subset_points = subset_points_tensor.cpu().numpy()
+                    
+                    extract_time = time.time() - start_time
+                    print(f"⚡ get_subset_data (Optimized GPU): {len(indices_tensor):,} pts in {extract_time:.3f}s")
+                    
+                    return subset_points, subset_data
+                    
+                except Exception as e:
+                    print(f"GPU Error, falling back: {e}")
+            
+            # --- 3. CPU FALLBACK ---
+            indices = np.unique(indices)
+            indices = indices[indices < self.mesh.n_points]
+            
+            subset_points = self.mesh.points[indices]
+            subset_data = {n: d[indices] for n, d in self.mesh.point_data.items()}
+            
+            print(f"⏱️ get_subset_data (Optimized CPU): {len(indices):,} pts in {time.time() - start_time:.3f}s")
+            
+            return subset_points, subset_data
