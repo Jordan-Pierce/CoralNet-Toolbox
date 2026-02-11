@@ -169,9 +169,6 @@ class PointCloud():
                     subset_point_data[name] = data_tensor[indices_tensor].cpu().numpy()
                 
                 # Create new PolyData
-                subset_mesh = pv.PolyData(subset_points) 
-                
-                # Create new PolyData
                 subset_mesh = pv.PolyData(subset_points)
                 # Add point data
                 for name, data in subset_point_data.items():
