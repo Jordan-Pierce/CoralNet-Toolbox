@@ -87,10 +87,7 @@ class MVATViewer(QFrame):
 
         # Point cloud and Ray management
         self.point_cloud = None
-        self._scene_actor = None
-        self._filtered_actor = None  # Separate actor for filtered point cloud
-        self._filtered_mesh = None  # Persistent mesh for in-place updates
-        self._filtered_mode = False  # Track if we're in filtered mode
+        self._filtered_actor = None  # Single actor for point cloud visualization
         
         self.point_size = point_size
         
@@ -126,20 +123,20 @@ class MVATViewer(QFrame):
         Perform a pick explicitly against the Scene Geometry.
         Ignores frustums, rays, and other UI elements.
         """
-        if self._scene_actor is None:
+        if self._filtered_actor is None:
             return
 
-        # 1. Temporarily disable pickability for everything EXCEPT the scene actor.
+        # 1. Temporarily disable pickability for everything EXCEPT the filtered actor.
         # This ensures the picking ray passes through frustums to hit the mesh/cloud behind.
         restore_list = []
         for actor in self.plotter.actors.values():
-            if actor != self._scene_actor and actor.GetPickable():
+            if actor != self._filtered_actor and actor.GetPickable():
                 actor.SetPickable(False)
                 restore_list.append(actor)
         
         try:
             # 2. Perform the hardware pick at current mouse position
-            # Since only the scene is pickable, this will hit the scene or nothing.
+            # Since only the filtered actor is pickable, this will hit the scene or nothing.
             picked_point = self.plotter.pick_mouse_position()
             
             # 3. Update focal point if we hit the scene
@@ -151,7 +148,7 @@ class MVATViewer(QFrame):
             for actor in restore_list:
                 try:
                     actor.SetPickable(True)
-                except:
+                except Exception:
                     pass
 
     def _on_right_press(self, obj, event):
@@ -203,20 +200,7 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
-<<<<<<< HEAD
-            # Add to plotter (now invisible by default)
-            self.add_point_cloud()
-            # **CHANGED: Do not reset camera view - keep user's current perspective**
-            # self.plotter.reset_camera()
-            event.acceptProposedAction()
-            # **CHANGED: Trigger visibility filter update for selected camera immediately**
-            if self.parent() and hasattr(self.parent(), '_update_visibility_filter') and self.parent().selected_camera:
-                self.parent()._update_visibility_filter([self.parent().selected_camera.image_path])
-            # **CHANGED: Do not auto-select first camera - let existing selection control filtering**
-            # if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
-            #     self.parent()._auto_select_first_camera()
-=======
-            # Add to plotter (will be hidden by default)
+            # Warm up GPU cache (no rendering yet)
             self.add_point_cloud()
             event.acceptProposedAction()
             
@@ -236,7 +220,6 @@ class MVATViewer(QFrame):
                     
                     # Trigger visibility filtering
                     mvat_window._update_visibility_filter(highlighted_paths)
->>>>>>> 8c25d13d75df5f51898cee3bed41e24bdee40f57
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -244,67 +227,42 @@ class MVATViewer(QFrame):
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Re-add the stored point cloud to the plotter.
+        """Warm up GPU cache for the point cloud.
         
-        By default, the full point cloud is added but hidden. It will be made
-        visible only through filtered subsets to prevent displaying the raw cloud.
+        Does NOT add any actors to the plotter. The cloud will only be
+        visualized through update_point_cloud_subset() which creates
+        the single _filtered_actor on demand.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if self.point_cloud is not None:
-                # 1. Capture the actor returned by add_to_plotter
-                actor = self.point_cloud.add_to_plotter(self.plotter)
-                
-                # **CHANGED: Set visibility to False initially - let filtering control visibility**
-                if actor:
-                    actor.SetVisibility(False)
-                
-                # 2. Add LOD optimization here
-                if actor:
-                    # Note: Ensure your VTK version supports this specific property method
-                    # or use actor.SetEnableLOD(True) if using vtkLODActor
-                    try:
-                        # Your specific snippet:
-                        actor.GetProperty().SetLODRenderThreshold(1000)  # ms
-                    except AttributeError:
-                        # Fallback for standard PyVista actors if property doesn't exist
-                        pass
-                    
-                    # 3. Store actor reference and hide it immediately
-                    # The cloud will only be shown through filtered subsets
-                    self._scene_actor = actor
-                    self._scene_actor.SetVisibility(False)
+                # Trigger GPU cache upload (Compute Space)
+                self.point_cloud._ensure_gpu_cache()
+                print("⚡ Point cloud GPU cache ready (no rendering yet)")
         finally:
             QApplication.restoreOverrideCursor()
-
-    def set_point_cloud_visible(self, visible):
-        """Set visibility of the point cloud actor."""
-        if self.point_cloud is not None:
-            self.point_cloud.set_visible(visible)
 
     def set_point_size(self, size):
         """Update the point size for point clouds."""
         self.point_size = size
-        # If point cloud is loaded, update it
-        if self.point_cloud is not None:
-            self.point_cloud.set_point_size(size)
-            self.plotter.render()  # Force re-render
-        # Also update filtered actor if in filtered mode
+        # Update filtered actor if it exists
         if self._filtered_actor is not None:
             self._filtered_actor.GetProperty().SetPointSize(size)
             self.plotter.render()
     
-    def update_point_cloud_subset(self, indices, use_optimized=True):
+    def update_point_cloud_subset(self, indices):
         """
-        Update the viewer to show only a subset of points based on visibility indices.
+        Update the viewer to show only a subset of points using GPU-accelerated extraction.
+        
+        Uses the hybrid \"Compute vs. Render\" architecture:
+        - GPU slicing happens in Model.py (fast CUDA indexing)
+        - Mapper swap happens here (minimal rendering overhead)
         
         Args:
             indices: Array of point indices to show. 
-                    - None: show full cloud (disable filtering)
+                    - None: show full cloud
                     - Empty list/array: hide cloud (show nothing)
-                    - Array with indices: show filtered subset
-            use_optimized: If True, use optimized GPU caching and mapper swapping.
-                          If False, use PyVista meshes with in-place updates.
+                    - Array: show filtered subset
         """
         if self.point_cloud is None:
             return
@@ -313,207 +271,62 @@ class MVATViewer(QFrame):
         
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # If indices is None, show full cloud (disable filtering)
-            if indices is None:
-                # Switch back to full cloud mode
-                if self._filtered_mode:
-                    self._filtered_mode = False
-                    
-                    # Remove filtered actor
-                    if self._filtered_actor is not None:
-                        try:
-                            self.plotter.remove_actor(self._filtered_actor)
-                        except:
-                            pass
-                        self._filtered_actor = None
-                        self._filtered_mesh = None
-                    
-                    # Show full cloud
-                    self.set_point_cloud_visible(True)
-                    self.plotter.render()
-                total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (revert to full): {total_time:.3f}s")
-                return
+            # Extract subset mesh using GPU-accelerated slicing
+            # This is where the magic happens - Model.py uses CUDA for fast indexing
+            subset_mesh = self.point_cloud.get_subset_data(indices)
             
-            # If indices is empty, hide everything (computing visibility or no data)
-            if len(indices) == 0:
-                # Enter filtered mode but with no points visible
-                if not self._filtered_mode:
-                    self.set_point_cloud_visible(False)
-                    self._filtered_mode = True
-                
-                # Remove any existing filtered actor
+            # Handle empty results
+            if subset_mesh is None or subset_mesh.n_points == 0:
                 if self._filtered_actor is not None:
-                    try:
-                        self.plotter.remove_actor(self._filtered_actor)
-                    except:
-                        pass
-                    self._filtered_actor = None
-                    self._filtered_mesh = None
-                
+                    self._filtered_actor.SetVisibility(False)
                 self.plotter.render()
                 total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (hide all): {total_time:.3f}s")
+                print(f"⏱️ update_point_cloud_subset: Hidden (empty subset) in {total_time:.3f}s")
                 return
             
-            if not use_optimized:
-                # Version 1: PyVista-based with in-place updates
-                # Extract subset mesh
-                subset_mesh = self.point_cloud.get_subset_data(indices, use_optimized=False)
-                
-                if subset_mesh is None or subset_mesh.n_points == 0:
-                    print("Warning: Filtered subset is empty")
-                    if self._filtered_actor is not None:
-                        try:
-                            self.plotter.remove_actor(self._filtered_actor)
-                        except:
-                            pass
-                        self._filtered_actor = None
-                        self._filtered_mesh = None
-                    self._filtered_mode = False
-                    self.plotter.render()
-                    return
-                
-                # Hide the full point cloud actor (only once when entering filtered mode)
-                if not self._filtered_mode:
-                    self.set_point_cloud_visible(False)
-                    self._filtered_mode = True
-                
-                # Check if we need to create the filtered actor for the first time
-                # OR if the point count changed (can't reuse buffer)
-                need_rebuild = (
-                    self._filtered_actor is None or 
-                    self._filtered_mesh is None or
-                    self._filtered_mesh.n_points != subset_mesh.n_points
-                )
-                
-                if need_rebuild:
-                    # REBUILD PATH: Remove old actor and create new one
-                    if self._filtered_actor is not None:
-                        try:
-                            self.plotter.remove_actor(self._filtered_actor)
-                        except:
-                            pass
-                    
-                    # Store reference to mesh for in-place updates
-                    self._filtered_mesh = subset_mesh
-                    
-                    # Create new actor
-                    if 'RGB' in subset_mesh.point_data:
-                        self._filtered_actor = self.plotter.add_mesh(
-                            subset_mesh,
-                            scalars='RGB',
-                            rgb=True,
-                            point_size=self.point_size,
-                            render=False  # Defer render until after LOD setup
-                        )
-                    else:
-                        point_size = self.point_size if subset_mesh.n_cells == 0 else None
-                        self._filtered_actor = self.plotter.add_mesh(
-                            subset_mesh,
-                            color='black',
-                            point_size=point_size,
-                            render=False
-                        )
-                    
-                    # Apply LOD optimization
-                    if self._filtered_actor:
-                        try:
-                            self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
-                        except AttributeError:
-                            pass
-                    
-                    render_time = time.time() - start_time
-                    print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer (rebuild) in {render_time:.3f}s")
-                
+            # First time: Create the actor
+            if self._filtered_actor is None:
+                if 'RGB' in subset_mesh.point_data:
+                    self._filtered_actor = self.plotter.add_mesh(
+                        subset_mesh,
+                        scalars='RGB',
+                        rgb=True,
+                        point_size=self.point_size,
+                        style='points',
+                        render_points_as_spheres=False,
+                        lighting=False,
+                        render=False
+                    )
                 else:
-                    # IN-PLACE UPDATE PATH (FAST!)
-                    # Reuse existing actor, just swap the data
-                    
-                    # Update point coordinates
-                    self._filtered_mesh.points = subset_mesh.points
-                    
-                    # Update colors if present
-                    if 'RGB' in subset_mesh.point_data and 'RGB' in self._filtered_mesh.point_data:
-                        self._filtered_mesh['RGB'] = subset_mesh['RGB']
-                    
-                    # Mark geometry as modified so VTK knows to re-upload to GPU
-                    self._filtered_mesh.GetPoints().Modified()
-                    
-                    # If we have color data, mark that as modified too
-                    if 'RGB' in self._filtered_mesh.point_data:
-                        self._filtered_mesh.GetPointData().GetScalars().Modified()
-                    
-                    render_time = time.time() - start_time
-                    print(f"⏱️ Rendered {subset_mesh.n_points:,} points in viewer (in-place update) in {render_time:.3f}s")
+                    self._filtered_actor = self.plotter.add_mesh(
+                        subset_mesh,
+                        color='black',
+                        point_size=self.point_size,
+                        style='points',
+                        render_points_as_spheres=False,
+                        lighting=False,
+                        render=False
+                    )
                 
-                # Single render call after all updates
-                self.plotter.render()
+                # Apply LOD optimization
+                try:
+                    self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
+                except AttributeError:
+                    pass
                 
-                total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (PyVista): {total_time:.3f}s")
+                update_type = "Initial Build"
             else:
-                # Version 2: Optimized GPU caching with mapper swapping
-                # --- CASE 2: Switch Mode ---
-                if not self._filtered_mode:
-                    self.set_point_cloud_visible(False)
-                    self._filtered_mode = True
-                    
-                # --- EXTRACT DATA ---
-                points, point_data = self.point_cloud.get_subset_data(indices, use_optimized=True)
-                
-                if points is None or len(points) == 0:
-                    if self._filtered_actor:
-                        self._filtered_actor.SetVisibility(False)
-                    self.plotter.render()
-                    return
-
-                update_type = ""
-
-                # --- CREATE NEW MESH WRAPPER (Fast) ---
-                new_mesh = pv.PolyData(points)
-                for name, data in point_data.items():
-                    new_mesh.point_data[name] = data
-
-                # --- CASE 3: Rebuild Actor (First Time) ---
-                if self._filtered_actor is None:
-                    update_type = "Rebuild"
-                    self._filtered_mesh = new_mesh
-                    
-                    # Create the heavy Actor object once
-                    if 'RGB' in point_data:
-                        self._filtered_actor = self.plotter.add_mesh(
-                            self._filtered_mesh, 
-                            scalars='RGB', rgb=True, 
-                            style='points', point_size=self.point_size,
-                            render=False
-                        )
-                    else:
-                        self._filtered_actor = self.plotter.add_mesh(
-                            self._filtered_mesh, 
-                            color='black', 
-                            style='points', point_size=self.point_size,
-                            render=False
-                        )
-                    try: 
-                        self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
-                    except: 
-                        pass
-
-                # --- CASE 4: Swap Mapper Input (The Fix) ---
-                else:
-                    update_type = "Mapper Swap"
-                    self._filtered_actor.SetVisibility(True)
-                    
-                    self._filtered_actor.GetMapper().SetInputData(new_mesh)
-                    
-                    # Keep a reference so Python doesn't garbage collect the data
-                    self._filtered_mesh = new_mesh
-                    
-                self.plotter.render()
-                
-                total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (Optimized {update_type}): {total_time:.3f}s")
+                # Subsequent times: Swap the mapper input (FAST!)
+                # This is the key optimization - no actor recreation
+                self._filtered_actor.GetMapper().SetInputData(subset_mesh)
+                self._filtered_actor.SetVisibility(True)
+                update_type = "Mapper Swap"
+            
+            # Render the updated scene
+            self.plotter.render()
+            
+            total_time = time.time() - start_time
+            print(f"⏱️ update_point_cloud_subset ({update_type}): {subset_mesh.n_points:,} pts in {total_time:.3f}s")
             
         finally:
             QApplication.restoreOverrideCursor()
