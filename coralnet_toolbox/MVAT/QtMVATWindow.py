@@ -591,7 +591,7 @@ class MVATWindow(QMainWindow):
             # Reorder cameras based on proximity to selected camera
             self._reorder_cameras(path, hide_distant_cameras=True)
             
-            # **NEW: Update visibility filtering for the new image**
+            # Update visibility filtering for the new image**
             self._update_visibility_filter([path])
     
     def _on_camera_selected_sync(self, path: str):
@@ -746,7 +746,7 @@ class MVATWindow(QMainWindow):
         # Fit view to show all cameras
         self._fit_to_view()
         
-        # **NEW: Fix Initial Synchronization**
+        # Fix Initial Synchronization**
         # Detect the active image from AnnotationWindow and select it immediately
         current_image_path = getattr(self.annotation_window, 'current_image_path', None)
         if current_image_path and current_image_path in self.cameras:
@@ -755,7 +755,7 @@ class MVATWindow(QMainWindow):
             self._select_camera(current_image_path, camera, emit_signal=False)
             self._match_camera_perspective(camera)
             self.camera_grid.render_selection_from_path(current_image_path)
-            # **NEW: Update visibility filtering for the selected camera if point cloud exists**
+            # Update visibility filtering for the selected camera if point cloud exists**
             if self.viewer.point_cloud:
                 self._update_visibility_filter([current_image_path])
         else:
