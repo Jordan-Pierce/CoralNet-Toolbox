@@ -932,16 +932,17 @@ class MVATWindow(QMainWindow):
                 )
         else:
             # Re-apply visibility filtering
-            # If there are highlighted cameras, use those
-            # Otherwise, use the selected camera
+            # Build list of paths to filter (always including selected camera)
             highlighted_paths = self.camera_grid.get_highlighted_cameras()
             
-            if not highlighted_paths and self.selected_camera:
-                # No highlights but we have a selected camera - show its point cloud
-                highlighted_paths = [self.selected_camera.image_path]
-                # Also update the grid to reflect this
-                self.camera_grid.render_highlight_from_paths(highlighted_paths)
-                self.highlighted_cameras = [self.selected_camera]
+            # Ensure selected camera is always included
+            if self.selected_camera:
+                selected_path = self.selected_camera.image_path
+                if selected_path not in highlighted_paths:
+                    highlighted_paths = list(highlighted_paths) + [selected_path]
+                    # Update grid to reflect that selected camera is highlighted
+                    self.camera_grid.render_highlight_from_paths(highlighted_paths)
+                    self.highlighted_cameras = [self.cameras[p] for p in highlighted_paths if p in self.cameras]
             
             self._update_visibility_filter(highlighted_paths)
         
@@ -1032,8 +1033,14 @@ class MVATWindow(QMainWindow):
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.render()
         
-        # Update visibility filtering based on highlighted cameras
-        self._update_visibility_filter(paths)
+        # ALWAYS include the selected camera in visibility filtering
+        # The selected camera (green) should always have its point cloud visible
+        paths_for_filtering = list(paths) if paths else []
+        if selected_path and selected_path not in paths_for_filtering:
+            paths_for_filtering.append(selected_path)
+        
+        # Update visibility filtering based on highlighted cameras (including selected)
+        self._update_visibility_filter(paths_for_filtering)
     
     def _update_visibility_filter(self, highlighted_paths):
         """
@@ -1043,7 +1050,8 @@ class MVATWindow(QMainWindow):
         to show only those points. Updates the status bar to show visibility stats.
         
         Args:
-            highlighted_paths (list): List of image paths for highlighted cameras
+            highlighted_paths (list): List of image paths for highlighted cameras.
+                                     Should always include the selected camera.
         """
         # TODO: Pre-compute visibility for all cameras using ThreadPoolExecutor on project load.
         # Shows progress bar, trades startup time for instant filtering.
@@ -1056,17 +1064,12 @@ class MVATWindow(QMainWindow):
         if self.toggle_full_cloud_action.isChecked():
             return
         
-        # If no cameras are highlighted, use the selected camera as fallback
+        # If no cameras provided, hide everything
         if not highlighted_paths:
-            if self.selected_camera:
-                # Use selected camera's point cloud instead of showing nothing
-                highlighted_paths = [self.selected_camera.image_path]
-            else:
-                # No selected camera either - hide everything
-                self.viewer.update_point_cloud_subset([])
-                total_points = self.viewer.point_cloud.mesh.n_points
-                self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
-                return
+            self.viewer.update_point_cloud_subset([])
+            total_points = self.viewer.point_cloud.mesh.n_points
+            self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+            return
         
         # Collect visible_indices from all highlighted cameras
         all_visible_indices = []
