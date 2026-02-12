@@ -588,6 +588,9 @@ class MVATWindow(QMainWindow):
             self._select_camera(path, camera, emit_signal=False)
             self._match_camera_perspective(camera)
             
+            # Reorder cameras based on proximity to selected camera
+            self._reorder_cameras(path, hide_distant_cameras=True)
+            
             # **NEW: Update visibility filtering for the new image**
             self._update_visibility_filter([path])
     
