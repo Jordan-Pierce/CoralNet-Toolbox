@@ -1056,12 +1056,17 @@ class MVATWindow(QMainWindow):
         if self.toggle_full_cloud_action.isChecked():
             return
         
-        # If no cameras are highlighted, show nothing (or full cloud based on toggle)
+        # If no cameras are highlighted, use the selected camera as fallback
         if not highlighted_paths:
-            self.viewer.update_point_cloud_subset(None)
-            total_points = self.viewer.point_cloud.mesh.n_points
-            self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
-            return
+            if self.selected_camera:
+                # Use selected camera's point cloud instead of showing nothing
+                highlighted_paths = [self.selected_camera.image_path]
+            else:
+                # No selected camera either - hide everything
+                self.viewer.update_point_cloud_subset([])
+                total_points = self.viewer.point_cloud.mesh.n_points
+                self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+                return
         
         # Collect visible_indices from all highlighted cameras
         all_visible_indices = []
