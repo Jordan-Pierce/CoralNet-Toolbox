@@ -756,7 +756,10 @@ class MVATWindow(QMainWindow):
             
             # Update selection state and frustum colors
             self.selected_camera = camera
-            self.frustum_manager.update_selection_state(current_image_path, self.cameras)
+            self.frustum_manager.update_camera_states(
+                selected_path=current_image_path,
+                highlighted_paths=[current_image_path]
+            )
             
             # Update camera grid selection (without emitting signals)
             self.camera_grid.render_selection_from_path(current_image_path)
@@ -777,7 +780,10 @@ class MVATWindow(QMainWindow):
             
             # Update selection state and frustum colors
             self.selected_camera = camera
-            self.frustum_manager.update_selection_state(first_path, self.cameras)
+            self.frustum_manager.update_camera_states(
+                selected_path=first_path,
+                highlighted_paths=[first_path]
+            )
             
             # Update camera grid selection
             self.camera_grid.render_selection_from_path(first_path)
