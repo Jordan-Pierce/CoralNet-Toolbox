@@ -212,10 +212,16 @@ class MVATViewer(QFrame):
             if self.parent() and hasattr(self.parent(), 'selected_camera'):
                 mvat_window = self.parent()
                 if mvat_window.selected_camera:
-                    # Get the highlighted cameras (should include selected camera)
+                    # Build list of paths for filtering (always include selected camera)
+                    selected_path = mvat_window.selected_camera.image_path
                     highlighted_paths = [cam.image_path for cam in mvat_window.highlighted_cameras]
-                    if highlighted_paths:
-                        mvat_window._update_visibility_filter(highlighted_paths)
+                    
+                    # Ensure selected camera is in the list
+                    if selected_path not in highlighted_paths:
+                        highlighted_paths.append(selected_path)
+                    
+                    # Trigger visibility filtering
+                    mvat_window._update_visibility_filter(highlighted_paths)
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
