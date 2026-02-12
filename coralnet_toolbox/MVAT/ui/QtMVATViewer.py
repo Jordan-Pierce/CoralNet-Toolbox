@@ -203,6 +203,7 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
+<<<<<<< HEAD
             # Add to plotter (now invisible by default)
             self.add_point_cloud()
             # **CHANGED: Do not reset camera view - keep user's current perspective**
@@ -214,6 +215,28 @@ class MVATViewer(QFrame):
             # **CHANGED: Do not auto-select first camera - let existing selection control filtering**
             # if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
             #     self.parent()._auto_select_first_camera()
+=======
+            # Add to plotter (will be hidden by default)
+            self.add_point_cloud()
+            event.acceptProposedAction()
+            
+            # Trigger visibility filtering for the selected camera
+            # This ensures the cloud transitions directly to filtered state
+            if self.parent() and hasattr(self.parent(), 'selected_camera'):
+                mvat_window = self.parent()
+                if mvat_window.selected_camera:
+                    # Always start with at least the selected camera
+                    selected_path = mvat_window.selected_camera.image_path
+                    highlighted_paths = [selected_path]
+                    
+                    # Add any other highlighted cameras
+                    for cam in mvat_window.highlighted_cameras:
+                        if cam.image_path not in highlighted_paths:
+                            highlighted_paths.append(cam.image_path)
+                    
+                    # Trigger visibility filtering
+                    mvat_window._update_visibility_filter(highlighted_paths)
+>>>>>>> 8c25d13d75df5f51898cee3bed41e24bdee40f57
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -221,7 +244,11 @@ class MVATViewer(QFrame):
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Re-add the stored point cloud to the plotter."""
+        """Re-add the stored point cloud to the plotter.
+        
+        By default, the full point cloud is added but hidden. It will be made
+        visible only through filtered subsets to prevent displaying the raw cloud.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if self.point_cloud is not None:
@@ -242,6 +269,11 @@ class MVATViewer(QFrame):
                     except AttributeError:
                         # Fallback for standard PyVista actors if property doesn't exist
                         pass
+                    
+                    # 3. Store actor reference and hide it immediately
+                    # The cloud will only be shown through filtered subsets
+                    self._scene_actor = actor
+                    self._scene_actor.SetVisibility(False)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -267,7 +299,10 @@ class MVATViewer(QFrame):
         Update the viewer to show only a subset of points based on visibility indices.
         
         Args:
-            indices: Array of point indices to show. If None or empty, shows full cloud.
+            indices: Array of point indices to show. 
+                    - None: show full cloud (disable filtering)
+                    - Empty list/array: hide cloud (show nothing)
+                    - Array with indices: show filtered subset
             use_optimized: If True, use optimized GPU caching and mapper swapping.
                           If False, use PyVista meshes with in-place updates.
         """
@@ -278,8 +313,8 @@ class MVATViewer(QFrame):
         
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # If indices is None or empty, show full cloud
-            if indices is None or len(indices) == 0:
+            # If indices is None, show full cloud (disable filtering)
+            if indices is None:
                 # Switch back to full cloud mode
                 if self._filtered_mode:
                     self._filtered_mode = False
@@ -297,7 +332,28 @@ class MVATViewer(QFrame):
                     self.set_point_cloud_visible(True)
                     self.plotter.render()
                 total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (revert): {total_time:.3f}s")
+                print(f"⏱️ Total update_point_cloud_subset time (revert to full): {total_time:.3f}s")
+                return
+            
+            # If indices is empty, hide everything (computing visibility or no data)
+            if len(indices) == 0:
+                # Enter filtered mode but with no points visible
+                if not self._filtered_mode:
+                    self.set_point_cloud_visible(False)
+                    self._filtered_mode = True
+                
+                # Remove any existing filtered actor
+                if self._filtered_actor is not None:
+                    try:
+                        self.plotter.remove_actor(self._filtered_actor)
+                    except:
+                        pass
+                    self._filtered_actor = None
+                    self._filtered_mesh = None
+                
+                self.plotter.render()
+                total_time = time.time() - start_time
+                print(f"⏱️ Total update_point_cloud_subset time (hide all): {total_time:.3f}s")
                 return
             
             if not use_optimized:
