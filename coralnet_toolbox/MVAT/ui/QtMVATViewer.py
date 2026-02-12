@@ -203,13 +203,19 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
-            # Add to plotter and reset camera
+            # Add to plotter (will be hidden by default)
             self.add_point_cloud()
-            self.plotter.reset_camera()
             event.acceptProposedAction()
-            # Auto-select first camera after point cloud import
-            if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
-                self.parent()._auto_select_first_camera()
+            
+            # Trigger visibility filtering for the selected camera
+            # This ensures the cloud transitions directly to filtered state
+            if self.parent() and hasattr(self.parent(), 'selected_camera'):
+                mvat_window = self.parent()
+                if mvat_window.selected_camera:
+                    # Get the highlighted cameras (should include selected camera)
+                    highlighted_paths = [cam.image_path for cam in mvat_window.highlighted_cameras]
+                    if highlighted_paths:
+                        mvat_window._update_visibility_filter(highlighted_paths)
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -217,7 +223,11 @@ class MVATViewer(QFrame):
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Re-add the stored point cloud to the plotter."""
+        """Re-add the stored point cloud to the plotter.
+        
+        By default, the full point cloud is added but hidden. It will be made
+        visible only through filtered subsets to prevent displaying the raw cloud.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if self.point_cloud is not None:
@@ -234,6 +244,11 @@ class MVATViewer(QFrame):
                     except AttributeError:
                         # Fallback for standard PyVista actors if property doesn't exist
                         pass
+                    
+                    # 3. Store actor reference and hide it immediately
+                    # The cloud will only be shown through filtered subsets
+                    self._scene_actor = actor
+                    self._scene_actor.SetVisibility(False)
         finally:
             QApplication.restoreOverrideCursor()
 
