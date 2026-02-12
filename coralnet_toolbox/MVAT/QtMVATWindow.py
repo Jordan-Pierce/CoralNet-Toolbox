@@ -1069,9 +1069,6 @@ class MVATWindow(QMainWindow):
         
         # Batch compute visibility for cameras that need it
         if cameras_needing_visibility:
-            # Hide the point cloud during computation
-            self.viewer.update_point_cloud_subset([])
-            
             # Show progress bar for visibility computation
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress = ProgressBar(self, title="Computing Visibility")

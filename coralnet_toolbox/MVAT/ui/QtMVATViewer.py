@@ -274,7 +274,10 @@ class MVATViewer(QFrame):
         Update the viewer to show only a subset of points based on visibility indices.
         
         Args:
-            indices: Array of point indices to show. If None or empty, shows full cloud.
+            indices: Array of point indices to show. 
+                    - None: show full cloud (disable filtering)
+                    - Empty list/array: hide cloud (show nothing)
+                    - Array with indices: show filtered subset
             use_optimized: If True, use optimized GPU caching and mapper swapping.
                           If False, use PyVista meshes with in-place updates.
         """
@@ -285,8 +288,8 @@ class MVATViewer(QFrame):
         
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # If indices is None or empty, show full cloud
-            if indices is None or len(indices) == 0:
+            # If indices is None, show full cloud (disable filtering)
+            if indices is None:
                 # Switch back to full cloud mode
                 if self._filtered_mode:
                     self._filtered_mode = False
@@ -304,7 +307,28 @@ class MVATViewer(QFrame):
                     self.set_point_cloud_visible(True)
                     self.plotter.render()
                 total_time = time.time() - start_time
-                print(f"⏱️ Total update_point_cloud_subset time (revert): {total_time:.3f}s")
+                print(f"⏱️ Total update_point_cloud_subset time (revert to full): {total_time:.3f}s")
+                return
+            
+            # If indices is empty, hide everything (computing visibility or no data)
+            if len(indices) == 0:
+                # Enter filtered mode but with no points visible
+                if not self._filtered_mode:
+                    self.set_point_cloud_visible(False)
+                    self._filtered_mode = True
+                
+                # Remove any existing filtered actor
+                if self._filtered_actor is not None:
+                    try:
+                        self.plotter.remove_actor(self._filtered_actor)
+                    except:
+                        pass
+                    self._filtered_actor = None
+                    self._filtered_mesh = None
+                
+                self.plotter.render()
+                total_time = time.time() - start_time
+                print(f"⏱️ Total update_point_cloud_subset time (hide all): {total_time:.3f}s")
                 return
             
             if not use_optimized:
