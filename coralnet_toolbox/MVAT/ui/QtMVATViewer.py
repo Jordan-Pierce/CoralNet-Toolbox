@@ -212,13 +212,14 @@ class MVATViewer(QFrame):
             if self.parent() and hasattr(self.parent(), 'selected_camera'):
                 mvat_window = self.parent()
                 if mvat_window.selected_camera:
-                    # Build list of paths for filtering (always include selected camera)
+                    # Always start with at least the selected camera
                     selected_path = mvat_window.selected_camera.image_path
-                    highlighted_paths = [cam.image_path for cam in mvat_window.highlighted_cameras]
+                    highlighted_paths = [selected_path]
                     
-                    # Ensure selected camera is in the list
-                    if selected_path not in highlighted_paths:
-                        highlighted_paths.append(selected_path)
+                    # Add any other highlighted cameras
+                    for cam in mvat_window.highlighted_cameras:
+                        if cam.image_path not in highlighted_paths:
+                            highlighted_paths.append(cam.image_path)
                     
                     # Trigger visibility filtering
                     mvat_window._update_visibility_filter(highlighted_paths)

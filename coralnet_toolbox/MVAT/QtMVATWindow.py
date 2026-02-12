@@ -933,16 +933,14 @@ class MVATWindow(QMainWindow):
         else:
             # Re-apply visibility filtering
             # Build list of paths to filter (always including selected camera)
-            highlighted_paths = self.camera_grid.get_highlighted_cameras()
+            highlighted_paths = list(self.camera_grid.get_highlighted_cameras())
             
-            # Ensure selected camera is always included
+            # Ensure selected camera is always included for filtering
+            # BUT don't modify the grid highlights - just use it for filtering
             if self.selected_camera:
                 selected_path = self.selected_camera.image_path
                 if selected_path not in highlighted_paths:
-                    highlighted_paths = list(highlighted_paths) + [selected_path]
-                    # Update grid to reflect that selected camera is highlighted
-                    self.camera_grid.render_highlight_from_paths(highlighted_paths)
-                    self.highlighted_cameras = [self.cameras[p] for p in highlighted_paths if p in self.cameras]
+                    highlighted_paths.append(selected_path)
             
             self._update_visibility_filter(highlighted_paths)
         
