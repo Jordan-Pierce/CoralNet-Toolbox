@@ -598,7 +598,7 @@ class CameraGrid(QWidget):
                 self.widgets_by_path[path] = widget
                 
                 # Load the thumbnail immediately for progress tracking
-                widget.load_image()
+                # widget.load_image()  # Might not be necessary
                 
         except Exception as e:
             print(f"Error loading camera thumbnails: {e}")
