@@ -931,8 +931,18 @@ class MVATWindow(QMainWindow):
                     f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (Full Cloud)"
                 )
         else:
-            # Re-apply visibility filtering based on current highlights
+            # Re-apply visibility filtering
+            # If there are highlighted cameras, use those
+            # Otherwise, use the selected camera
             highlighted_paths = self.camera_grid.get_highlighted_cameras()
+            
+            if not highlighted_paths and self.selected_camera:
+                # No highlights but we have a selected camera - show its point cloud
+                highlighted_paths = [self.selected_camera.image_path]
+                # Also update the grid to reflect this
+                self.camera_grid.render_highlight_from_paths(highlighted_paths)
+                self.highlighted_cameras = [self.selected_camera]
+            
             self._update_visibility_filter(highlighted_paths)
         
     def _toggle_rays(self, checked=None):

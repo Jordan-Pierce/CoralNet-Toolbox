@@ -903,14 +903,13 @@ class CameraGrid(QWidget):
         self._emit_highlight_changed()
         
     def clear_all_selections(self):
-        """Clear all selections and highlights."""
-        # Clear selection
-        if self.selected_path and self.selected_path in self.widgets_by_path:
-            self.widgets_by_path[self.selected_path].data_item.set_selected(False)
-            self.widgets_by_path[self.selected_path].update_selection_visuals()
-        self.selected_path = None
+        """Clear all highlights but preserve the selected camera.
         
-        # Clear highlights
+        The selected camera (green border) is never cleared - only highlighted
+        cameras (cyan borders) are cleared. This ensures there's always a
+        main camera with its point cloud subset visible.
+        """
+        # Clear highlights only (not selection)
         self._clear_highlights()
         
         self._emit_highlight_changed()
