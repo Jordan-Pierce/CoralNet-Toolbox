@@ -203,13 +203,17 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
-            # Add to plotter and reset camera
+            # Add to plotter (now invisible by default)
             self.add_point_cloud()
-            self.plotter.reset_camera()
+            # **CHANGED: Do not reset camera view - keep user's current perspective**
+            # self.plotter.reset_camera()
             event.acceptProposedAction()
-            # Auto-select first camera after point cloud import
-            if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
-                self.parent()._auto_select_first_camera()
+            # **CHANGED: Trigger visibility filter update for selected camera immediately**
+            if self.parent() and hasattr(self.parent(), '_update_visibility_filter') and self.parent().selected_camera:
+                self.parent()._update_visibility_filter([self.parent().selected_camera.image_path])
+            # **CHANGED: Do not auto-select first camera - let existing selection control filtering**
+            # if self.parent() and hasattr(self.parent(), '_auto_select_first_camera'):
+            #     self.parent()._auto_select_first_camera()
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -223,6 +227,10 @@ class MVATViewer(QFrame):
             if self.point_cloud is not None:
                 # 1. Capture the actor returned by add_to_plotter
                 actor = self.point_cloud.add_to_plotter(self.plotter)
+                
+                # **CHANGED: Set visibility to False initially - let filtering control visibility**
+                if actor:
+                    actor.SetVisibility(False)
                 
                 # 2. Add LOD optimization here
                 if actor:

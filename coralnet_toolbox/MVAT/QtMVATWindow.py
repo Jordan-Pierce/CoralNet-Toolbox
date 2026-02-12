@@ -585,8 +585,11 @@ class MVATWindow(QMainWindow):
             
             # Update 3D view selection
             camera = self.cameras[path]
-            self._select_camera(path, camera)
+            self._select_camera(path, camera, emit_signal=False)
             self._match_camera_perspective(camera)
+            
+            # **NEW: Update visibility filtering for the new image**
+            self._update_visibility_filter([path])
     
     def _on_camera_selected_sync(self, path: str):
         """
@@ -740,6 +743,22 @@ class MVATWindow(QMainWindow):
         # Fit view to show all cameras
         self._fit_to_view()
         
+        # **NEW: Fix Initial Synchronization**
+        # Detect the active image from AnnotationWindow and select it immediately
+        current_image_path = getattr(self.annotation_window, 'current_image_path', None)
+        if current_image_path and current_image_path in self.cameras:
+            # Select the active camera without emitting signals or navigating
+            camera = self.cameras[current_image_path]
+            self._select_camera(current_image_path, camera, emit_signal=False)
+            self._match_camera_perspective(camera)
+            self.camera_grid.render_selection_from_path(current_image_path)
+            # **NEW: Update visibility filtering for the selected camera if point cloud exists**
+            if self.viewer.point_cloud:
+                self._update_visibility_filter([current_image_path])
+        else:
+            # Fall back to auto-select first camera
+            self._auto_select_first_camera()
+        
     def _render_frustums(self):
         """Render all camera frustums in the 3D scene using batched geometry."""
         if not self.viewer or not self.viewer.plotter:
@@ -755,10 +774,11 @@ class MVATWindow(QMainWindow):
         self.frustum_manager.clear()
         self.ray_manager.clear()
         
-        # Re-add point cloud (always visible, filtering controlled by toggle_full_cloud_action)
+        # Re-add point cloud (always loaded in memory, but visibility controlled by filtering)
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
-        self.viewer.set_point_cloud_visible(True)
+        # **CHANGED: Do not set visible initially - let filtering control visibility**
+        # self.viewer.set_point_cloud_visible(True)
         
         # Add a reference grid
         self.viewer.plotter.add_axes()
@@ -1037,14 +1057,46 @@ class MVATWindow(QMainWindow):
                 
                 all_visible_indices.append(result['visible_indices'])
         
-        # If no cameras have visibility data, show full cloud
+        # If no cameras have visibility data, trigger computation or hide cloud
         if not all_visible_indices:
-            self.viewer.update_point_cloud_subset(None)
-            total_points = self.viewer.point_cloud.mesh.n_points
-            self.stats_label.setText(
-                f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (No visibility data)"
-            )
-            return
+            # **CHANGED: Trigger computation for cameras needing visibility data**
+            if cameras_needing_visibility:
+                # Compute visibility for cameras that need it
+                points_world = self.viewer.point_cloud.get_points_array()
+                camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
+                
+                batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+                
+                # Store results back to cameras and collect visible indices
+                for camera, result in zip(cameras_needing_visibility, batch_results):
+                    # Save to cache if manager is available
+                    cache_path = None
+                    if self.cache_manager is not None:
+                        cache_path = self.cache_manager.save_visibility(
+                            camera._raster.extrinsics,
+                            self.viewer.point_cloud.file_path,
+                            result['index_map'],
+                            result['visible_indices']
+                        )
+                    
+                    # Store in Raster
+                    camera._raster.add_index_map(
+                        result['index_map'],
+                        cache_path,
+                        result['visible_indices']
+                    )
+                    
+                    all_visible_indices.append(result['visible_indices'])
+            
+            # If still no visibility data after computation attempt, hide the cloud
+            if not all_visible_indices:
+                # **CHANGED: Hide cloud instead of showing full cloud**
+                self.viewer.update_point_cloud_subset([])  # Empty list hides the cloud
+                total_points = self.viewer.point_cloud.mesh.n_points
+                self.stats_label.setText(
+                    f"Cameras: {len(self.cameras)} | (No visibility data)"
+                )
+                return
         
         # Compute union of all visible indices
         # Use np.union1d or concatenate + unique
@@ -1268,7 +1320,7 @@ class MVATWindow(QMainWindow):
             if hasattr(self, 'camera_grid'):
                 self.camera_grid.clear_all_selections()
             
-    def _select_camera(self, path, camera):
+    def _select_camera(self, path, camera, emit_signal=True):
         """Select a camera and update UI."""
         previous_camera = self.selected_camera
         
@@ -1295,8 +1347,9 @@ class MVATWindow(QMainWindow):
         # Update the plotter to show selection
         self.viewer.plotter.render()
         
-        # Emit signal for bi-directional sync
-        self.cameraSelectedInMVAT.emit(path)
+        # Emit signal for bi-directional sync (unless suppressed)
+        if emit_signal:
+            self.cameraSelectedInMVAT.emit(path)
         
     def _deselect_camera(self):
         """Deselect the current camera."""
@@ -1329,7 +1382,7 @@ class MVATWindow(QMainWindow):
         """Auto-select the first camera if none is selected."""
         if self.selected_camera is None and self.cameras:
             first_path = next(iter(self.cameras))
-            self._select_camera(first_path, self.cameras[first_path])
+            self._select_camera(first_path, self.cameras[first_path], emit_signal=False)
             self.camera_grid.render_selection_from_path(first_path)
         
     def _goto_selected_image(self):
