@@ -5,6 +5,7 @@ A 3D viewer for visualizing camera frustums and navigating MultiView imagery.
 Uses PyVista for 3D rendering and integrates with the main application's RasterManager.
 """
 
+import os
 import warnings
 
 import numpy as np
@@ -23,6 +24,7 @@ from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
+from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
 
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
@@ -308,6 +310,10 @@ class MVATWindow(QMainWindow):
         self.frustum_manager = BatchedFrustumManager()
         self.ray_manager = BatchedRayManager()
         
+        # Cache manager for visibility data
+        from coralnet_toolbox.MVAT.core.CacheManager import CacheManager
+        self.cache_manager = CacheManager("")
+        
         # Actor lists for thumbnails (cannot be batched due to textures)
         self.thumbnail_actors = []
         
@@ -316,7 +322,6 @@ class MVATWindow(QMainWindow):
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
         self.thumbnail_opacity = 0.25
-        self._show_point_cloud_enabled = True
         self.point_size = 1
         self._show_rays_enabled = True
         
@@ -371,12 +376,13 @@ class MVATWindow(QMainWindow):
         self.toggle_thumbnails_action.triggered.connect(self._toggle_thumbnails)
         self.view_menu.addAction(self.toggle_thumbnails_action)
         
-        # Toggle Point Cloud
-        self.toggle_point_cloud_action = QAction("Show Point Cloud", self)
-        self.toggle_point_cloud_action.setCheckable(True)
-        self.toggle_point_cloud_action.setChecked(True)  
-        self.toggle_point_cloud_action.triggered.connect(self._toggle_point_cloud)
-        self.view_menu.addAction(self.toggle_point_cloud_action)
+        # Toggle Full Cloud (disable visibility filtering)
+        self.toggle_full_cloud_action = QAction("Show Full Point Cloud", self)
+        self.toggle_full_cloud_action.setCheckable(True)
+        self.toggle_full_cloud_action.setChecked(False)  # Default: filtering enabled
+        self.toggle_full_cloud_action.setToolTip("Bypass visibility filtering and show entire point cloud")
+        self.toggle_full_cloud_action.triggered.connect(self._toggle_full_cloud)
+        self.view_menu.addAction(self.toggle_full_cloud_action)
         
         # Toggle Rays
         self.toggle_rays_action = QAction("Show Rays", self)
@@ -749,10 +755,10 @@ class MVATWindow(QMainWindow):
         self.frustum_manager.clear()
         self.ray_manager.clear()
         
-        # Re-add point cloud
+        # Re-add point cloud (always visible, filtering controlled by toggle_full_cloud_action)
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
-        self.viewer.set_point_cloud_visible(self._show_point_cloud_enabled)
+        self.viewer.set_point_cloud_visible(True)
         
         # Add a reference grid
         self.viewer.plotter.add_axes()
@@ -855,11 +861,24 @@ class MVATWindow(QMainWindow):
         # Update the render
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.update()
-        
-    def _toggle_point_cloud(self, checked):
-        """Toggle point cloud visibility."""
-        self._show_point_cloud_enabled = checked
-        self.viewer.set_point_cloud_visible(checked)
+    
+    def _toggle_full_cloud(self, checked):
+        """Toggle between filtered and full point cloud view."""
+        # If checked, show full cloud and bypass filtering
+        if checked:
+            # Show entire point cloud
+            self.viewer.update_point_cloud_subset(None)
+            
+            # Update status bar
+            if self.viewer and self.viewer.point_cloud:
+                total_points = self.viewer.point_cloud.mesh.n_points
+                self.stats_label.setText(
+                    f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (Full Cloud)"
+                )
+        else:
+            # Re-apply visibility filtering based on current highlights
+            highlighted_paths = self.camera_grid.get_highlighted_cameras()
+            self._update_visibility_filter(highlighted_paths)
         
     def _toggle_rays(self, checked=None):
         """Toggle ray visibility."""
@@ -943,6 +962,109 @@ class MVATWindow(QMainWindow):
         # Update the render
         if self.viewer and self.viewer.plotter:
             self.viewer.plotter.render()
+        
+        # Update visibility filtering based on highlighted cameras
+        self._update_visibility_filter(paths)
+    
+    def _update_visibility_filter(self, highlighted_paths):
+        """
+        Update point cloud visibility filtering based on highlighted/selected cameras.
+        
+        Computes the union of visible_indices from all cameras and updates the viewer
+        to show only those points. Updates the status bar to show visibility stats.
+        
+        Args:
+            highlighted_paths (list): List of image paths for highlighted cameras
+        """
+        # TODO: Pre-compute visibility for all cameras using ThreadPoolExecutor on project load.
+        # Shows progress bar, trades startup time for instant filtering.
+        
+        # Skip if no point cloud is loaded
+        if not self.viewer or not self.viewer.point_cloud:
+            return
+        
+        # Check if "Show Full Point Cloud" is enabled - if so, bypass filtering
+        if self.toggle_full_cloud_action.isChecked():
+            return
+        
+        # If no cameras are highlighted, show nothing (or full cloud based on toggle)
+        if not highlighted_paths:
+            self.viewer.update_point_cloud_subset(None)
+            total_points = self.viewer.point_cloud.mesh.n_points
+            self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+            return
+        
+        # Collect visible_indices from all highlighted cameras
+        all_visible_indices = []
+        cameras_needing_visibility = []
+        
+        for path in highlighted_paths:
+            camera = self.cameras.get(path)
+            if camera:
+                # Check if visibility data is already computed
+                if camera.visible_indices is None:
+                    cameras_needing_visibility.append(camera)
+                else:
+                    # Already have data
+                    all_visible_indices.append(camera.visible_indices)
+        
+        # Batch compute visibility for cameras that need it
+        if cameras_needing_visibility:
+            # Prepare data for batch processing            
+            points_world = self.viewer.point_cloud.get_points_array()
+            camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
+            
+            batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+            
+            # Store results back to cameras and collect visible indices
+            for camera, result in zip(cameras_needing_visibility, batch_results):
+                # Save to cache if manager is available
+                cache_path = None
+                if self.cache_manager is not None:
+                    cache_path = self.cache_manager.save_visibility(
+                        camera._raster.extrinsics,
+                        self.viewer.point_cloud.file_path,
+                        result['index_map'],
+                        result['visible_indices']
+                    )
+                
+                # Store in Raster
+                camera._raster.add_index_map(
+                    result['index_map'],
+                    cache_path,
+                    result['visible_indices']
+                )
+                
+                all_visible_indices.append(result['visible_indices'])
+        
+        # If no cameras have visibility data, show full cloud
+        if not all_visible_indices:
+            self.viewer.update_point_cloud_subset(None)
+            total_points = self.viewer.point_cloud.mesh.n_points
+            self.stats_label.setText(
+                f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (No visibility data)"
+            )
+            return
+        
+        # Compute union of all visible indices
+        # Use np.union1d or concatenate + unique
+        if len(all_visible_indices) == 1:
+            union_indices = all_visible_indices[0]
+        else:
+            # Concatenate all arrays and get unique values
+            concatenated = np.concatenate(all_visible_indices)
+            union_indices = np.unique(concatenated)
+        
+        # Update the viewer to show only visible points
+        self.viewer.update_point_cloud_subset(union_indices)
+        
+        # Update status bar
+        total_points = self.viewer.point_cloud.mesh.n_points
+        visible_count = len(union_indices)
+        percentage = (visible_count / total_points * 100) if total_points > 0 else 0
+        self.stats_label.setText(
+            f"Cameras: {len(self.cameras)} | Visible Points: {percentage:.2f}%"
+        )
             
     def _match_camera_perspective(self, camera):
         """Match the 3D viewer perspective to a camera's viewpoint."""

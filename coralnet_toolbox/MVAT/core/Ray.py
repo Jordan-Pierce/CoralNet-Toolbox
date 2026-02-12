@@ -464,9 +464,11 @@ class BatchedRayManager:
                 scalars='RGB',
                 rgb=True,
                 line_width=line_width,
-                render_lines_as_tubes=False,
+                render_lines_as_tubes=True,
                 name='_batched_rays',
-                pickable=False
+                pickable=False,
+                smooth_shading=False,
+                reset_camera=False
             )
         
         if self.sphere_mesh is not None:
@@ -475,7 +477,9 @@ class BatchedRayManager:
                 scalars='RGB',
                 rgb=True,
                 name='_batched_ray_spheres',
-                pickable=False
+                pickable=False,
+                smooth_shading=False,
+                reset_camera=False
             )
         
         return self.ray_actor, self.sphere_actor

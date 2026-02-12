@@ -423,7 +423,7 @@ class BatchedFrustumManager:
         
         return self.merged_wireframe
     
-    def _frustum_to_wireframe_polydata(self, camera:'Camera', scale: float) -> Optional[pv.PolyData]:
+    def _frustum_to_wireframe_polydata(self, camera: 'Camera', scale: float) -> Optional[pv.PolyData]:
         """
         Convert a camera's frustum to wireframe PolyData (lines only).
         

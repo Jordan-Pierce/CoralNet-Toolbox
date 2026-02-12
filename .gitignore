@@ -135,5 +135,9 @@ data/
 *.faiss
 *.db
 
+# MVAT
+.mvat_cache/
+
 # Copilot
 .github/copilot-instructions.md
+

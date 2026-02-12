@@ -113,6 +113,11 @@ class Raster(QObject):
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
         self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
         
+        # Visibility/Index map information (for MultiView Annotation)
+        self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to point cloud IDs (H x W int32)
+        self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
+        self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible point IDs
+        
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
@@ -307,6 +312,110 @@ class Raster(QObject):
     def remove_extrinsics(self):
         """Remove all camera extrinsic parameters."""
         self.extrinsics = None
+    
+    def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
+                     visible_indices: Optional[np.ndarray] = None):
+        """
+        Add or update index map and visible indices data.
+        
+        Args:
+            index_map (np.ndarray): 2D array mapping pixels to point cloud IDs (H x W int32)
+            index_map_path (str, optional): Path to the index_map file if saved separately
+            visible_indices (np.ndarray, optional): 1D array of visible point IDs
+        """
+        if not isinstance(index_map, np.ndarray):
+            raise ValueError("Index map must be a numpy array")
+        if index_map.ndim != 2:
+            raise ValueError("Index map must be a 2D array")
+        if index_map.dtype != np.int32:
+            raise ValueError("Index map must be int32 dtype")
+        
+        # Resize index_map if dimensions don't match
+        if index_map.shape != (self.height, self.width):
+            index_map = cv2.resize(
+                index_map,
+                (self.width, self.height),
+                interpolation=cv2.INTER_NEAREST
+            )
+        
+        self.index_map = index_map.copy()
+        self.index_map_path = index_map_path
+        
+        # Set visible_indices if provided
+        if visible_indices is not None:
+            if not isinstance(visible_indices, np.ndarray):
+                raise ValueError("Visible indices must be a numpy array")
+            if visible_indices.ndim != 1:
+                raise ValueError("Visible indices must be a 1D array")
+            self.visible_indices = visible_indices.copy()
+    
+    def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
+                        visible_indices: Optional[np.ndarray] = None):
+        """
+        Update the index map and visible indices data.
+        
+        Args:
+            index_map (np.ndarray): 2D array mapping pixels to point cloud IDs
+            index_map_path (str, optional): Path to the index_map file if saved separately
+            visible_indices (np.ndarray, optional): 1D array of visible point IDs
+        """
+        # Same validation as add
+        self.add_index_map(index_map, index_map_path, visible_indices)
+    
+    def set_index_map_path(self, index_map_path: str, auto_load: bool = True):
+        """
+        Set the path to the index_map file and optionally auto-load it.
+        
+        Args:
+            index_map_path (str): Path to the index_map file
+            auto_load (bool): Whether to automatically attempt loading the index map data
+        """
+        self.index_map_path = index_map_path
+        
+        # Automatically attempt to load index map data if requested and file exists
+        if auto_load and index_map_path and os.path.exists(index_map_path):
+            try:
+                data = np.load(index_map_path)
+                self.add_index_map(data['index_map'], index_map_path, data.get('visible_indices'))
+            except Exception as e:
+                print(f"Warning: Failed to auto-load index map from {index_map_path}: {e}")
+    
+    def has_index_map(self) -> bool:
+        """Check if the raster currently has an index map loaded."""
+        return self.index_map is not None
+    
+    def remove_index_map(self):
+        """Remove the index map and visible indices data."""
+        self.index_map = None
+        self.index_map_path = None
+        self.visible_indices = None
+        
+    @property
+    def index_map_lazy(self):
+        """
+        Get the index_map with lazy loading.
+        If index_map is None but index_map_path exists, attempt to load it.
+        
+        Returns:
+            numpy.ndarray or None: The index map data, or None if not available
+        """
+        # If index_map is already loaded, return it
+        if self.index_map is not None:
+            return self.index_map
+            
+        # If we have a path but no loaded data, try to load it
+        if self.index_map_path and os.path.exists(self.index_map_path):
+            try:
+                data = np.load(self.index_map_path)
+                self.index_map = data['index_map']
+                if 'visible_indices' in data:
+                    self.visible_indices = data['visible_indices']
+                return self.index_map
+            except Exception as e:
+                print(f"Warning: Failed to lazy-load index map from {self.index_map_path}: {e}")
+        
+        # Return None if no index map is available
+        return None
         
     def add_z_channel(self, z_data: np.ndarray, z_path: Optional[str] = None, z_unit: Optional[str] = None, 
                       z_data_type: Optional[str] = None, z_nodata: Optional[float] = None):
@@ -951,6 +1060,13 @@ class Raster(QObject):
         if self.extrinsics is not None:
             raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
         
+        # Include index_map path and visible_indices if available
+        if self.index_map_path is not None:
+            raster_data['index_map_path'] = self.index_map_path
+        
+        if self.visible_indices is not None:
+            raster_data['visible_indices'] = self.visible_indices.tolist()  # Store for quick filtering
+        
         # Include z_channel path if available
         if self.z_channel_path is not None:
             raster_data['z_channel_path'] = self.z_channel_path
@@ -1105,6 +1221,19 @@ class Raster(QObject):
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
         
+        # Update index_map path and visible_indices if available
+        index_map_path = raster_dict.get('index_map_path')
+        if index_map_path:
+            self.index_map_path = index_map_path  # Store path but don't load yet (lazy loading)
+        
+        visible_indices_data = raster_dict.get('visible_indices')
+        if visible_indices_data:
+            try:
+                # Convert list back to numpy array
+                self.visible_indices = np.array(visible_indices_data, dtype=np.int32)
+            except Exception as e:
+                print(f"Error loading visible_indices for {self.image_path}: {str(e)}")
+        
         # Update z_channel path if available but don't load the data yet
         z_channel_path = raster_dict.get('z_channel_path')
         if z_channel_path:
@@ -1149,6 +1278,11 @@ class Raster(QObject):
         self.z_channel_path = None
         self.z_unit = None
         self.z_data_type = None
+        
+        # Clear index map and visibility data
+        self.index_map = None
+        self.index_map_path = None
+        self.visible_indices = None
         
         # Force garbage collection
         gc.collect()
