@@ -5,7 +5,7 @@ A PyVista-based 3D viewer for point clouds and camera frustums.
 Customized interaction style:
 - Left Double-Click: Set Focal Point (Pick)
 - Left Drag: Rotate
-- Right Drag: Pan (Strictly enforced, blocks Zoom and default Picking)
+- Right Drag: Pan (Strictly enforced via PyVista custom style)
 - Scroll Wheel: Zoom
 """
 
@@ -19,11 +19,6 @@ from PyQt5.QtWidgets import QApplication, QFrame, QVBoxLayout
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
 
 
 class MVATViewer(QFrame):
@@ -73,7 +68,7 @@ class MVATViewer(QFrame):
         
         self.plotter.interactor.installEventFilter(self)
 
-        # Enforce Interaction Rules (Delayed)
+        # Configure Interaction (Delayed)
         # We run this on a timer to ensure it happens AFTER the parent window
         # has run its setup (like enable_point_picking), so we can override it.
         QTimer.singleShot(100, self._configure_interaction)
@@ -85,36 +80,23 @@ class MVATViewer(QFrame):
     def _configure_interaction(self):
         """
         Configures the interaction style using PyVista's custom trackball API.
-        Also cleans up unwanted observers from the parent window.
         """
         interactor = self.plotter.interactor
         if not interactor:
             return
 
-        # 1. Clean Interactor Observers (The Fix for Single-Click Focus)
-        # We aggressively remove any Right Button observers attached directly to the 
-        # Interactor (e.g., by enable_point_picking). This prevents the "Focus Point"
-        # behavior on single clicks.
+        # 1. Clean Interactor Observers (CRITICAL)
+        # We MUST remove these specific observers because PyVista's enable_point_picking 
+        # attaches them directly to the interactor, bypassing the style mechanism.
+        # If we don't remove them, single right-click will still trigger 'Pick'.
         interactor.RemoveObservers("RightButtonPressEvent")
         interactor.RemoveObservers("RightButtonReleaseEvent")
         
-        # 2. Apply Custom Trackball Style (The Fix for Pan sticking)
-        # We use PyVista's native method to map Right Mouse -> Pan.
-        # This handles the state machine correctly so it won't "stick".
+        # 2. Apply Custom Trackball Style
+        # This cleanly maps Right Drag -> Pan without complex state management.
         # left='rotate' is implied default.
-        if hasattr(self.plotter, 'enable_custom_trackball_style'):
-            try:
-                self.plotter.enable_custom_trackball_style(right='pan')
-                print("MVATViewer: Custom trackball style enabled (Right=Pan).")
-            except AttributeError:
-                # Fallback for older PyVista versions or pyvistaqt wrappers causing issues
-                print("MVATViewer: Warning - enable_custom_trackball_style not found.")
-                style = vtk.vtkInteractorStyleTrackballCamera()
-                self.plotter.interactor.SetInteractorStyle(style)
-        else:
-            # Fallback
-            style = vtk.vtkInteractorStyleTrackballCamera()
-            self.plotter.interactor.SetInteractorStyle(style)
+        self.plotter.enable_custom_trackball_style(right='pan')
+        print("MVATViewer: Custom trackball style enabled (Right=Pan).")
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
