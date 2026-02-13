@@ -6,9 +6,9 @@ import vtk
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
-from PyQt5.QtWidgets import QFrame, QVBoxLayout
+from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QFrame, QVBoxLayout
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.core.Model import PointCloud
@@ -22,18 +22,6 @@ from coralnet_toolbox.MVAT.core.constants import (RAY_COLOR_SELECTED)
 
 
 class MVATInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
-    """
-    Custom VTK Interaction Style.
-    - Right Click: Pan (Overrides default Zoom)
-    - Left Click: Rotate (Inherited)
-    - Scroll: Zoom (Inherited)
-    """
-    def __init__(self, parent=None):
-        # We must initialize the parent class. 
-        # Note: We do NOT need to add observers here for RightButton.
-        # Overriding OnRightButtonDown/Up is sufficient.
-        pass
-
     def OnRightButtonDown(self):
         """Override the default Right Button behavior (Zoom) to Pan."""
         self.StartPan()
@@ -44,62 +32,66 @@ class MVATInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         
 
 class MVATViewer(QFrame):
-    """
-    3D Viewer with custom mouse interactions:
-    - Left Drag: Rotate (Default)
-    - Scroll: Zoom (Default)
-    - Right Drag: Pan (Custom Override)
-    - Double Left Click: Set Focal Point (Custom Observer)
-    """
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
-        
+
+        # Focus policy – important to receive key events
+        self.setFocusPolicy(Qt.StrongFocus)
+
         # Layout
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Create PyVista QtInteractor
         self.plotter = QtInteractor(self, point_smoothing=False)
         self.plotter.set_background('white')
         self.plotter.enable_trackball_style()
-        
-        # Optimizations?
-        self.plotter.disable_anti_aliasing()  # Disable default AA for better performance with large point clouds
-        self.plotter.disable_eye_dome_lighting()  # Disable EDL (can cause issues with large clouds)
-        self.plotter.enable_parallel_projection()  # Optional: Parallel projection for architectural scenes
-        self.plotter.disable_shadows()  # Disable shadows for better performance (optional)      
-        self.plotter.disable_depth_peeling()  # Disable depth peeling (transparency) for better performance (optional) 
-        
-        # --- CUSTOM INTERACTION SETUP ---
-        
-        # 1. Apply Custom Style (Right Click = Pan)
-        # We replace the default style with our custom subclass
+
+        # Optimizations TODO make these configurable
+        self.plotter.disable_anti_aliasing()
+        self.plotter.disable_eye_dome_lighting()
+        self.plotter.disable_shadows()
+        self.plotter.disable_depth_peeling()
+
+        # Custom mouse style
         self.style = MVATInteractorStyle()
         self.plotter.interactor.SetInteractorStyle(self.style)
-        
-        # 2. Double Click Handler (Observer)
-        # We listen to the raw VTK LeftButtonPressEvent to detect double clicks.
-        # This runs alongside the style's rotation logic.
         self.plotter.interactor.AddObserver("LeftButtonPressEvent", self._on_left_press)
         self._last_click_time = 0
 
-        # Point cloud and Ray management
+        # Point cloud and ray management
         self.point_cloud = None
-        self._filtered_actor = None  # Single actor for point cloud visualization
-        
+        self._filtered_actor = None
         self.point_size = point_size
-        
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
-        
+
         self.layout.addWidget(self.plotter.interactor)
+
+        # Navigation constants
+        self.move_speed = 0.01          # world units per key press
+        self.rotate_speed = 0.25        # degrees per key press
+        
+        self.plotter.interactor.installEventFilter(self)
 
     # --------------------------------------------------------------------------
     # Custom Interaction Logic
     # --------------------------------------------------------------------------
+    
+    def eventFilter(self, obj, event):
+        """Intercept key press events at the interactor level to ensure they 
+        trigger our custom keyPressEvent handler.
+        """
+        if event.type() == QEvent.KeyPress:
+            # Forward the key press to our keyPressEvent
+            self.keyPressEvent(event)
+            if event.isAccepted():
+                return True  # Stop further processing
+        # Pass all other events through
+        return super().eventFilter(obj, event)
 
     def _on_left_press(self, obj, event):
         """Handle Left Click to detect Double Clicks."""
@@ -171,12 +163,162 @@ class MVATViewer(QFrame):
         """End the Pan state."""
         style = self.plotter.interactor.GetInteractorStyle()
         style.EndPan()
+        
+    # ------------------------------------------------------------------
+    # Camera movement helpers
+    # ------------------------------------------------------------------
+    def _get_camera_vectors(self):
+        """Return current camera position, focal point, view direction (normalized),
+        right vector (normalized), and up vector (normalized)."""
+        cam = self.plotter.camera
+        pos = np.array(cam.position)
+        fp = np.array(cam.focal_point)
+        up = np.array(cam.up)
+        up = up / np.linalg.norm(up)
+
+        view_dir = fp - pos
+        dist = np.linalg.norm(view_dir)
+        if dist < 1e-6:
+            view_dir_norm = np.array([0, 0, 1])
+        else:
+            view_dir_norm = view_dir / dist
+
+        right = np.cross(view_dir_norm, up)
+        right_norm = right / (np.linalg.norm(right) + 1e-12)
+        return pos, fp, view_dir_norm, right_norm, up
+
+    def _update_clipping_range(self):
+        """Recompute near/far clipping planes based on current scene."""
+        self.plotter.camera.reset_clipping_range()
+        self.plotter.render()
+
+    # ------------------------------------------------------------------
+    # Movement methods (each updates clipping)
+    # ------------------------------------------------------------------
+    def move_forward(self, speed=None):
+        """Move camera forward along view direction."""
+        if speed is None:
+            speed = self.move_speed
+        pos, fp, view_dir, _, _ = self._get_camera_vectors()
+        delta = view_dir * speed
+        self.plotter.camera.position = pos + delta
+        self.plotter.camera.focal_point = fp + delta
+        self._update_clipping_range()
+
+    def move_backward(self, speed=None):
+        """Move camera backward along view direction."""
+        if speed is None:
+            speed = self.move_speed
+        self.move_forward(-speed)
+
+    def strafe_left(self, speed=None):
+        """Move camera left (perpendicular to view direction)."""
+        if speed is None:
+            speed = self.move_speed
+        pos, fp, _, right, _ = self._get_camera_vectors()
+        delta = -right * speed
+        self.plotter.camera.position = pos + delta
+        self.plotter.camera.focal_point = fp + delta
+        self._update_clipping_range()
+
+    def strafe_right(self, speed=None):
+        """Move camera right."""
+        if speed is None:
+            speed = self.move_speed
+        pos, fp, _, right, _ = self._get_camera_vectors()
+        delta = right * speed
+        self.plotter.camera.position = pos + delta
+        self.plotter.camera.focal_point = fp + delta
+        self._update_clipping_range()
+
+    def rotate_left(self, angle_deg=None):
+        """Orbit left (counter‑clockwise) around the focal point."""
+        if angle_deg is None:
+            angle_deg = self.rotate_speed
+        self._orbit_yaw(np.radians(angle_deg))
+
+    def rotate_right(self, angle_deg=None):
+        """Orbit right (clockwise) around the focal point."""
+        if angle_deg is None:
+            angle_deg = self.rotate_speed
+        self._orbit_yaw(-np.radians(angle_deg))
+
+    def _orbit_yaw(self, angle_rad):
+        """
+        Rotate the camera position around the focal point,
+        keeping the up vector fixed.
+        """
+        cam = self.plotter.camera
+        pos = np.array(cam.position)
+        fp = np.array(cam.focal_point)
+        up = np.array(cam.up)
+        up = up / np.linalg.norm(up)
+
+        # Vector from focal point to camera
+        vec = pos - fp
+        dist = np.linalg.norm(vec)
+        if dist < 1e-6:
+            return
+
+        # Decompose into parallel and perpendicular components relative to up
+        v_parallel = np.dot(vec, up) * up
+        v_perp = vec - v_parallel
+        perp_len = np.linalg.norm(v_perp)
+        if perp_len < 1e-6:
+            return  # Camera is directly above/below focal point – no yaw
+
+        v_perp_norm = v_perp / perp_len
+
+        # Rotate the perpendicular component around up
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        v_perp_rot = cos_a * v_perp_norm + sin_a * np.cross(up, v_perp_norm)
+
+        # New camera position
+        new_pos = fp + v_parallel + v_perp_rot * perp_len
+
+        # Update camera
+        cam.position = new_pos.tolist()
+        # Focal point and up remain unchanged
+        self._update_clipping_range()
+
+    # ------------------------------------------------------------------
+    # Key event handling
+    # ------------------------------------------------------------------
+    def keyPressEvent(self, event):
+        """Handle key presses for WASD movement and QE rotation."""
+        key = event.key()
+        if key == Qt.Key_W:
+            self.move_forward()
+            event.accept()
+        elif key == Qt.Key_S:
+            self.move_backward()
+            event.accept()
+        elif key == Qt.Key_A:
+            self.strafe_left()
+            event.accept()
+        elif key == Qt.Key_D:
+            self.strafe_right()
+            event.accept()
+        elif key == Qt.Key_Q:
+            self.rotate_right()
+            event.accept()
+        elif key == Qt.Key_E:
+            self.rotate_left()
+            event.accept()
+        else:
+            # Let the parent widget handle keys like R, F, Escape, etc.
+            event.ignore()
 
     def set_focal_point(self, point):
         """Sets the camera focal point and re-renders."""
         # Animate the transition if desired, or just set it
         self.plotter.camera.focal_point = point
         self.plotter.render()
+        
+    # --------------------------------------------------------------------------
+    # Point Cloud Loading and Subsetting
+    # --------------------------------------------------------------------------
 
     def dragEnterEvent(self, event):
         """Accept drag if a single 3D file is being dragged."""
