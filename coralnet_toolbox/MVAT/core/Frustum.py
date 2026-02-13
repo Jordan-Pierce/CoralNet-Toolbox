@@ -9,24 +9,12 @@ from PyQt5.QtGui import QImage
 from coralnet_toolbox.MVAT.core.constants import (
     SELECT_COLOR_RGB,
     HIGHLIGHT_COLOR_RGB,
+    STATE_DEFAULT,
+    STATE_HIGHLIGHTED,
+    STATE_SELECTED,
+    STATE_HOVER,
+    STATE_COLORS,
 )
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------------------------------------------------
-
-# State constants for scalar-based coloring
-STATE_DEFAULT = 0
-STATE_HIGHLIGHTED = 1
-STATE_SELECTED = 2
-
-# Colors for each state (RGB normalized 0-1)
-STATE_COLORS = {
-    STATE_DEFAULT: (0.8, 0.8, 0.8),      # Light gray/white
-    STATE_HIGHLIGHTED: tuple(c / 255 for c in HIGHLIGHT_COLOR_RGB),  # Cyan
-    STATE_SELECTED: tuple(c / 255 for c in SELECT_COLOR_RGB),        # Lime green
-}
-
 
 def _rgb_to_hex(rgb):
     """Convert RGB tuple (0-1) to hex string."""
@@ -247,12 +235,13 @@ class Frustum:
             
         return self.image_actors[plotter]
 
-    def update_appearance(self, plotter=None):
+    def update_appearance(self, plotter=None, opacity=0.8):
         """
         Update the frustum appearance based on selection state and color.
         
         Args:
             plotter: Specific plotter to update, or None to update all
+            opacity: Opacity for the image plane (0.0 to 1.0)
         """
         # Update visual properties based on selection and highlight
         if self.selected:
@@ -285,9 +274,14 @@ class Frustum:
                 
                 prop.SetLineWidth(self.line_width)
 
-            # Update image plane selection highlight (Optional)
-            if p in self.image_actors:
-                pass 
+            # Update image plane visibility based on selection/highlight
+            if self.selected or self.highlighted:
+                if p not in self.image_actors:
+                    self.create_image_plane_actor(p, opacity=opacity)
+            else:
+                if p in self.image_actors:
+                    p.remove_actor(self.image_actors[p])
+                    del self.image_actors[p] 
 
     def select(self):
         """Mark this frustum as selected and update appearance."""
@@ -502,16 +496,17 @@ class BatchedFrustumManager:
                 pass
             
         # Create custom colormap for states
-        # Map: 0=default(gray), 1=highlighted(cyan), 2=selected(lime)
+        # Map: 0=default(gray), 1=highlighted(cyan), 2=selected(lime), 3=hovered(red)
         cmap = [_rgb_to_hex(STATE_COLORS[STATE_DEFAULT]), 
                 _rgb_to_hex(STATE_COLORS[STATE_HIGHLIGHTED]), 
-                _rgb_to_hex(STATE_COLORS[STATE_SELECTED])]
+                _rgb_to_hex(STATE_COLORS[STATE_SELECTED]),
+                _rgb_to_hex(STATE_COLORS[STATE_HOVER])]
         
         self.wireframe_actor = plotter.add_mesh(
             self.merged_wireframe,
             scalars='state',
             cmap=cmap,
-            clim=[0, 2],
+            clim=[0, 3],
             show_scalar_bar=False,
             line_width=line_width,
             render_lines_as_tubes=False,
@@ -545,7 +540,8 @@ class BatchedFrustumManager:
     
     def update_camera_states(self, 
                              selected_path: Optional[str] = None,
-                             highlighted_paths: Optional[List[str]] = None):
+                             highlighted_paths: Optional[List[str]] = None,
+                             hovered_path: Optional[str] = None):
         """
         Batch update visual states for all cameras.
         
@@ -554,6 +550,7 @@ class BatchedFrustumManager:
         Args:
             selected_path: Path of the selected camera (lime green)
             highlighted_paths: List of highlighted camera paths (cyan)
+            hovered_path: Path of the hovered camera (red, with Ctrl)
         """
         if self.merged_wireframe is None:
             return
@@ -565,7 +562,7 @@ class BatchedFrustumManager:
         
         # Set highlighted cameras
         for path in highlighted_paths:
-            if path in self.camera_indices and path != selected_path:
+            if path in self.camera_indices and path != selected_path and path != hovered_path:
                 idx = self.camera_indices[path]
                 if idx < len(self.point_ranges):
                     start, end = self.point_ranges[idx]
@@ -573,12 +570,20 @@ class BatchedFrustumManager:
                         self.merged_wireframe['state'][start:end] = STATE_HIGHLIGHTED
         
         # Set selected camera (overrides highlight)
-        if selected_path and selected_path in self.camera_indices:
+        if selected_path and selected_path in self.camera_indices and selected_path != hovered_path:
             idx = self.camera_indices[selected_path]
             if idx < len(self.point_ranges):
                 start, end = self.point_ranges[idx]
                 if start < end:
                     self.merged_wireframe['state'][start:end] = STATE_SELECTED
+        
+        # Set hovered camera (overrides all)
+        if hovered_path and hovered_path in self.camera_indices:
+            idx = self.camera_indices[hovered_path]
+            if idx < len(self.point_ranges):
+                start, end = self.point_ranges[idx]
+                if start < end:
+                    self.merged_wireframe['state'][start:end] = STATE_HOVER
     
     def mark_modified(self):
         """

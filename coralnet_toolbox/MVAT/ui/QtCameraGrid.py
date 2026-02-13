@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.MVAT.core.constants import (
     HIGHLIGHT_COLOR,
     SELECT_COLOR,
+    HOVER_COLOR,
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_HIGHLIGHTED,
     MARKER_COLOR_DEFAULT,
@@ -26,22 +27,16 @@ from coralnet_toolbox.MVAT.core.constants import (
     SELECT_WIDTH,
     MARKER_SIZE,
     MARKER_LINE_WIDTH,
+    DEFAULT_THUMBNAIL_SIZE,
+    MIN_THUMBNAIL_SIZE,
+    MAX_THUMBNAIL_SIZE,
+    GRID_SPACING,
+    BUFFER_ROWS,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Constants (non-color, kept local)
-# ----------------------------------------------------------------------------------------------------------------------
-
-DEFAULT_THUMBNAIL_SIZE = 256
-MIN_THUMBNAIL_SIZE = 256
-MAX_THUMBNAIL_SIZE = 1024
-GRID_SPACING = 5
-BUFFER_ROWS = 1  # Extra rows to load above/below viewport
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -65,6 +60,7 @@ class CameraDataItem:
         self.camera = camera
         self._is_highlighted = False
         self._is_selected = False
+        self._is_hovered = False
         self._thumbnail_pixmap = None
         self._thumbnail_size = None
         
@@ -105,6 +101,15 @@ class CameraDataItem:
     def set_selected(self, selected):
         """Set the selection state."""
         self._is_selected = selected
+        
+    @property
+    def is_hovered(self):
+        """Check if this camera is hovered (with Ctrl)."""
+        return self._is_hovered
+    
+    def set_hovered(self, hovered):
+        """Set the hover state."""
+        self._is_hovered = hovered
         
     def get_thumbnail(self, longest_edge=256):
         """
@@ -185,6 +190,8 @@ class CameraImageWidget(QWidget):
     
     clicked = pyqtSignal(object, object)  # (widget, QMouseEvent)
     double_clicked = pyqtSignal(object)   # (widget)
+    hovered = pyqtSignal(str)             # (image_path)
+    unhovered = pyqtSignal(str)           # (image_path)
     
     def __init__(self, data_item, widget_size=256, parent=None):
         """
@@ -325,16 +332,19 @@ class CameraImageWidget(QWidget):
             painter.setPen(QColor(100, 100, 100))
             painter.drawText(rect, Qt.AlignCenter, "Loading...")
             
-        # Draw selection border (Lime Green, 4px) - takes priority
-        if self.data_item.is_selected:
+        # Draw borders with priority: hover > select > highlight
+        if self.data_item.is_hovered:
+            pen = QPen(HOVER_COLOR, SELECT_WIDTH)
+            pen.setJoinStyle(Qt.MiterJoin)
+            painter.setPen(pen)
+            inset = SELECT_WIDTH // 2
+            painter.drawRect(rect.adjusted(inset, inset, -inset, -inset))
+        elif self.data_item.is_selected:
             pen = QPen(SELECT_COLOR, SELECT_WIDTH)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
-            # Inset the rect by half the pen width to draw inside
             inset = SELECT_WIDTH // 2
             painter.drawRect(rect.adjusted(inset, inset, -inset, -inset))
-            
-        # Draw highlight border (Cyan, 2px)
         elif self.data_item.is_highlighted:
             pen = QPen(HIGHLIGHT_COLOR, HIGHLIGHT_WIDTH)
             pen.setJoinStyle(Qt.MiterJoin)
@@ -428,6 +438,21 @@ class CameraImageWidget(QWidget):
     def mouseDoubleClickEvent(self, event):
         """Handle double-click for single selection."""
         self.double_clicked.emit(self)
+        
+    def enterEvent(self, event):
+        """Handle mouse enter for hover detection."""
+        if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            self.data_item.set_hovered(True)
+            self.update_selection_visuals()
+            self.hovered.emit(self.data_item.camera.image_path)
+        super().enterEvent(event)
+        
+    def leaveEvent(self, event):
+        """Handle mouse leave for hover detection."""
+        self.data_item.set_hovered(False)
+        self.update_selection_visuals()
+        self.unhovered.emit(self.data_item.camera.image_path)
+        super().leaveEvent(event)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -444,12 +469,16 @@ class CameraGrid(QWidget):
         camera_highlighted_single: Emitted when single camera is highlighted (single-click) - changes 3D view
         cameras_highlighted: Emitted when highlight selection changes
         selection_changed: Emitted when any selection state changes
+        camera_hovered: Emitted when a camera is hovered with Ctrl
+        camera_unhovered: Emitted when hover ends
     """
     
     camera_selected = pyqtSignal(str)              # image_path when double-clicked (loads image)
     camera_highlighted_single = pyqtSignal(str)    # image_path when single-clicked (changes 3D view)
     cameras_highlighted = pyqtSignal(list)         # list of image_paths
     selection_changed = pyqtSignal(list)           # list of all selected/highlighted paths
+    camera_hovered = pyqtSignal(str)               # image_path when hovered with Ctrl
+    camera_unhovered = pyqtSignal(str)             # image_path when hover ends
     
     def __init__(self, mvat_window=None, parent=None):
         """
@@ -595,10 +624,11 @@ class CameraGrid(QWidget):
                 widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
                 widget.clicked.connect(self._on_widget_clicked)
                 widget.double_clicked.connect(self._on_widget_double_clicked)
+                widget.hovered.connect(self.camera_hovered)
+                widget.unhovered.connect(self.camera_unhovered)
                 self.widgets_by_path[path] = widget
                 
-                # Load the thumbnail immediately for progress tracking
-                # widget.load_image()  # Might not be necessary
+                progress.update_progress()  # Update progress bar for each camera loaded
                 
         except Exception as e:
             print(f"Error loading camera thumbnails: {e}")
@@ -948,6 +978,18 @@ class CameraGrid(QWidget):
             self.selected_label.setText(f"Selected: {camera_label}")
         else:
             self.selected_label.setText("None selected")
+        
+    def update_hover_visuals(self, ctrl_pressed):
+        """Update hover visuals for the currently hovered widget based on Ctrl state."""
+        for widget in self.widgets_by_path.values():
+            if widget.data_item.is_hovered:
+                widget.data_item.set_hovered(ctrl_pressed)
+                widget.update_selection_visuals()
+                if ctrl_pressed:
+                    self.camera_hovered.emit(widget.data_item.camera.image_path)
+                else:
+                    self.camera_unhovered.emit(widget.data_item.camera.image_path)
+                break  # Only one can be hovered at a time
         
     def set_camera_order(self, ordered_paths):
         """
