@@ -7,6 +7,7 @@ Uses PyVista for 3D rendering and integrates with the main application's RasterM
 
 import os
 import warnings
+import time
 
 import numpy as np
 
@@ -1019,15 +1020,21 @@ class MVATWindow(QMainWindow):
             highlighted_paths (list): List of image paths for highlighted cameras.
                                      Should always include the selected camera.
         """
+        start_time = time.time()
+        
         # TODO: Pre-compute visibility for all cameras using ThreadPoolExecutor on project load.
         # Shows progress bar, trades startup time for instant filtering.
         
         # Skip if no point cloud is loaded
         if not self.viewer or not self.viewer.point_cloud:
+            total_time = time.time() - start_time
+            print(f"⏱️ _update_visibility_filter: Skipped (no point cloud) in {total_time:.3f}s")
             return
         
         # Check if "Show Full Point Cloud" is enabled - if so, bypass filtering
         if self.toggle_full_cloud_action.isChecked():
+            total_time = time.time() - start_time
+            print(f"⏱️ _update_visibility_filter: Skipped (full cloud enabled) in {total_time:.3f}s")
             return
         
         # If no cameras provided, hide everything
@@ -1035,6 +1042,8 @@ class MVATWindow(QMainWindow):
             self.viewer.update_point_cloud_subset([])
             total_points = self.viewer.point_cloud.mesh.n_points
             self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+            total_time = time.time() - start_time
+            print(f"⏱️ _update_visibility_filter: Hidden (no cameras) in {total_time:.3f}s")
             return
         
         # Collect visible_indices from all highlighted cameras
@@ -1055,9 +1064,9 @@ class MVATWindow(QMainWindow):
         if cameras_needing_visibility:
             # Show progress bar for visibility computation
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress = ProgressBar(self, title="Computing Visibility")
-            progress.show()
-            progress.start_progress(len(cameras_needing_visibility))
+            # progress = ProgressBar(self, title="Computing Visibility")
+            # progress.show()
+            # progress.start_progress(len(cameras_needing_visibility))
             
             try:
                 # Prepare data for batch processing            
@@ -1086,13 +1095,13 @@ class MVATWindow(QMainWindow):
                     )
                     
                     all_visible_indices.append(result['visible_indices'])
-                    progress.update_progress()
+                    # progress.update_progress()
                     
             finally:
                 QApplication.restoreOverrideCursor()
-                progress.finish_progress()
-                progress.close()
-                progress = None
+                # progress.finish_progress()
+                # progress.close()
+                # progress = None
         
         # If no cameras have visibility data, trigger computation or hide cloud
         if not all_visible_indices:
@@ -1133,6 +1142,8 @@ class MVATWindow(QMainWindow):
                 self.stats_label.setText(
                     f"Cameras: {len(self.cameras)} | (No visibility data)"
                 )
+                total_time = time.time() - start_time
+                print(f"⏱️ _update_visibility_filter: Hidden (no visibility data) in {total_time:.3f}s")
                 return
         
         # Compute union of all visible indices
@@ -1154,6 +1165,9 @@ class MVATWindow(QMainWindow):
         self.stats_label.setText(
             f"Cameras: {len(self.cameras)} | Visible Points: {percentage:.2f}%"
         )
+        
+        total_time = time.time() - start_time
+        print(f"⏱️ _update_visibility_filter: Updated visibility for {len(highlighted_paths)} cameras in {total_time:.3f}s")
             
     def _match_camera_perspective(self, camera):
         """Match the 3D viewer perspective to a camera's viewpoint."""
