@@ -40,9 +40,9 @@ class MVATViewer(QFrame):
 
         # Create PyVista QtInteractor
         self.plotter = QtInteractor(self, point_smoothing=False)
-        self.plotter.set_background('white')
 
-        # Optimizations
+        # Optimizations TODO make configurable?
+        self.plotter.set_background('white')
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()

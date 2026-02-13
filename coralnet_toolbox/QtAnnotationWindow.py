@@ -2033,8 +2033,8 @@ class AnnotationWindow(QGraphicsView):
         """Set the focal point marker at the given pixel coordinates."""
         if self.focal_marker is None:
             self.focal_marker = QGraphicsEllipseItem(-5, -5, 10, 10)
-            self.focal_marker.setBrush(QColor(0, 255, 0, 128))  # Semi-transparent lime green
-            self.focal_marker.setPen(QColor(0, 255, 0))  # Lime green border
+            self.focal_marker.setBrush(QColor(230, 62, 0, 128))  # Semi-transparent blood red
+            self.focal_marker.setPen(QColor(230, 62, 0))  # Blood red border
             self.scene.addItem(self.focal_marker)
         # Convert pixel to scene coordinates (assuming image is at (0,0))
         scene_pos = QPointF(u, v)
