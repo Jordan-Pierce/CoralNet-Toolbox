@@ -618,7 +618,22 @@ class MVATWindow(QMainWindow):
         Args:
             highlighted_paths: List of currently highlighted camera paths.
         """
+        # Update highlight state for all cameras
+        for path, camera in self.cameras.items():
+            if path in highlighted_paths:
+                camera.highlight()
+            else:
+                camera.unhighlight()
+            # Update appearance for all cameras (selected/highlighted state may have changed)
+            camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+        
         self.highlighted_cameras = [self.cameras.get(path) for path in highlighted_paths if path in self.cameras]
+        
+        # Update batched frustum colors
+        selected_path = self.selected_camera.image_path if self.selected_camera else None
+        self.frustum_manager.update_camera_states(selected_path, highlighted_paths)
+        self.frustum_manager.mark_modified()
+        
         self._clear_rays()
         
     def showEvent(self, event):
@@ -935,6 +950,12 @@ class MVATWindow(QMainWindow):
         # Update opacity of existing thumbnail actors
         for actor in self.thumbnail_actors:
             actor.GetProperty().SetOpacity(self.thumbnail_opacity)
+        
+        # Update opacity of frustum image planes
+        for camera in self.cameras.values():
+            if self.viewer.plotter in camera.frustum.image_actors:
+                actor = camera.frustum.image_actors[self.viewer.plotter]
+                actor.GetProperty().SetOpacity(self.thumbnail_opacity)
         
         # Update the render
         if self.viewer and self.viewer.plotter:
@@ -1375,8 +1396,17 @@ class MVATWindow(QMainWindow):
         """Select a camera and update UI."""
         previous_camera = self.selected_camera
         
+        # Deselect previous camera
+        if previous_camera:
+            previous_camera.deselect()
+            previous_camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+        
         # Update selected camera reference
         self.selected_camera = camera
+        
+        # Select new camera
+        camera.select()
+        camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
         
         # Get highlighted paths
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
@@ -1405,6 +1435,9 @@ class MVATWindow(QMainWindow):
     def _deselect_camera(self):
         """Deselect the current camera."""
         if self.selected_camera:
+            self.selected_camera.deselect()
+            self.selected_camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            
             # Get highlighted paths
             highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
             

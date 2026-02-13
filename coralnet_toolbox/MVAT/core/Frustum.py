@@ -247,12 +247,13 @@ class Frustum:
             
         return self.image_actors[plotter]
 
-    def update_appearance(self, plotter=None):
+    def update_appearance(self, plotter=None, opacity=0.8):
         """
         Update the frustum appearance based on selection state and color.
         
         Args:
             plotter: Specific plotter to update, or None to update all
+            opacity: Opacity for the image plane (0.0 to 1.0)
         """
         # Update visual properties based on selection and highlight
         if self.selected:
@@ -285,9 +286,14 @@ class Frustum:
                 
                 prop.SetLineWidth(self.line_width)
 
-            # Update image plane selection highlight (Optional)
-            if p in self.image_actors:
-                pass 
+            # Update image plane visibility based on selection/highlight
+            if self.selected or self.highlighted:
+                if p not in self.image_actors:
+                    self.create_image_plane_actor(p, opacity=opacity)
+            else:
+                if p in self.image_actors:
+                    p.remove_actor(self.image_actors[p])
+                    del self.image_actors[p] 
 
     def select(self):
         """Mark this frustum as selected and update appearance."""

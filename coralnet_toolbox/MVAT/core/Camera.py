@@ -399,9 +399,9 @@ class Camera:
         """Delegates creation of the Frustum actor to the Frustum class."""
         return self.frustum.create_actor(plotter, scale)
 
-    def update_appearance(self, plotter=None):
+    def update_appearance(self, plotter=None, opacity=0.8):
         """Update the Frustum appearance based on selection state."""
-        self.frustum.update_appearance(plotter)
+        self.frustum.update_appearance(plotter, opacity)
 
     def select(self):
         """Mark as selected and update appearance."""
@@ -412,3 +412,12 @@ class Camera:
         """Mark as deselected and update appearance."""
         self.selected = False
         self.frustum.deselect()
+
+    def highlight(self):
+        """Mark as highlighted and update appearance."""
+        if not self.selected:  # Only highlight if not selected
+            self.frustum.highlight()
+
+    def unhighlight(self):
+        """Mark as not highlighted and update appearance."""
+        self.frustum.unhighlight()
