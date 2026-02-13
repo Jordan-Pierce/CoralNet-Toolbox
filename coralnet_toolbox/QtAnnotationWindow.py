@@ -7,10 +7,10 @@ from typing import Optional
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QColor
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
-                             QMessageBox, QGraphicsPixmapItem)
+                             QMessageBox, QGraphicsPixmapItem, QGraphicsEllipseItem)
 
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
@@ -174,6 +174,10 @@ class AnnotationWindow(QGraphicsView):
         self.z_data_max = None  # Maximum value of raw Z-data
         self.z_data_shape = None  # Shape of Z-data array
         self.z_nodata_mask = None  # Boolean mask for NaN/nodata pixels
+        
+        # Focal point marker for MVAT integration
+        self.focal_marker = None  # QGraphicsEllipseItem for focal point marker
+        self.selected_camera_path = None  # Path of the currently selected camera in MVAT
         
         # Debounce timer for dynamic range updates (prevents lag during zoom)
         self.dynamic_range_timer = QTimer()
@@ -674,6 +678,10 @@ class AnnotationWindow(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         
+        # Reset item references
+        self.focal_marker = None
+        self.z_item = None
+        
     def reset_scene_view(self):
         """Resets the scene view"""
         # Update the zoom tool's state
@@ -817,6 +825,14 @@ class AnnotationWindow(QGraphicsView):
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        
+        # Update focal marker visibility
+        if self.selected_camera_path == image_path:
+            # If this image is the selected camera, the marker should be shown if focal point exists
+            # But since the signal will be emitted again if needed, just ensure it's hidden for now
+            pass
+        else:
+            self._hide_focal_marker()
         
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -1999,3 +2015,33 @@ class AnnotationWindow(QGraphicsView):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
+            
+    # --- MVAT Event Handlers ---
+
+    def _on_camera_selected_in_mvat(self, path):
+        """Handle camera selection in MVAT."""
+        self.selected_camera_path = path
+
+    def _on_focal_point_projected(self, path, u, v):
+        """Handle focal point projection from MVAT."""
+        if path == self.current_image_path and not (np.isnan(u) or np.isnan(v)):
+            self._set_focal_marker(u, v)
+        else:
+            self._hide_focal_marker()
+
+    def _set_focal_marker(self, u, v):
+        """Set the focal point marker at the given pixel coordinates."""
+        if self.focal_marker is None:
+            self.focal_marker = QGraphicsEllipseItem(-5, -5, 10, 10)
+            self.focal_marker.setBrush(QColor(0, 255, 0, 128))  # Semi-transparent lime green
+            self.focal_marker.setPen(QColor(0, 255, 0))  # Lime green border
+            self.scene.addItem(self.focal_marker)
+        # Convert pixel to scene coordinates (assuming image is at (0,0))
+        scene_pos = QPointF(u, v)
+        self.focal_marker.setPos(scene_pos)
+        self.focal_marker.show()
+
+    def _hide_focal_marker(self):
+        """Hide the focal point marker."""
+        if self.focal_marker:
+            self.focal_marker.hide()

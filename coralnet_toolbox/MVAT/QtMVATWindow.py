@@ -279,6 +279,8 @@ class MVATWindow(QMainWindow):
     
     # Signal emitted when a camera is selected in MVAT
     cameraSelectedInMVAT = pyqtSignal(str)
+    # Signal emitted with projected focal point for a camera
+    focalPointProjected = pyqtSignal(str, float, float)  # path, u, v
     
     def __init__(self, main_window, parent=None):
         """
@@ -299,6 +301,10 @@ class MVATWindow(QMainWindow):
         self.selected_camera = None
         self.highlighted_cameras = []
         self.hovered_camera = None
+        
+        # Focal point management
+        self.current_focal_point = None
+        self.selected_camera_path = None
         
         # Batched geometry managers for efficient rendering (O(1) draw calls)
         self.frustum_manager = BatchedFrustumManager()
@@ -565,6 +571,13 @@ class MVATWindow(QMainWindow):
         # Connect camera grid highlight changes to clear rays
         # This ensures stale rays from previously-highlighted cameras are removed
         self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
+        
+        # Connect viewer focal point changes
+        self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
+        
+        # Connect to AnnotationWindow for focal point marker
+        self.focalPointProjected.connect(self.annotation_window._on_focal_point_projected)
+        self.cameraSelectedInMVAT.connect(self.annotation_window._on_camera_selected_in_mvat)
     
     def _on_main_image_loaded(self, path: str):
         """
@@ -631,6 +644,17 @@ class MVATWindow(QMainWindow):
         
         self._clear_rays()
         
+    def _on_focal_point_changed(self, point_3d):
+        """Handle focal point changes from the 3D viewer."""
+        self.current_focal_point = point_3d
+        if self.selected_camera_path and self.selected_camera_path in self.cameras:
+            camera = self.cameras[self.selected_camera_path]
+            pixel = camera.project(point_3d)
+            if not np.isnan(pixel).any():
+                self.focalPointProjected.emit(self.selected_camera_path, pixel[0], pixel[1])
+            else:
+                self.focalPointProjected.emit(self.selected_camera_path, np.nan, np.nan)
+    
     def _on_camera_hovered(self, path):
         """Handle camera hover start."""
         self.hovered_camera = path
@@ -1415,6 +1439,7 @@ class MVATWindow(QMainWindow):
         
         # Update selected camera reference
         self.selected_camera = camera
+        self.selected_camera_path = path
         
         # Select new camera
         camera.select()
@@ -1443,6 +1468,13 @@ class MVATWindow(QMainWindow):
         # Emit signal for bi-directional sync (unless suppressed)
         if emit_signal:
             self.cameraSelectedInMVAT.emit(path)
+            # Emit focal point projection if we have a focal point
+            if self.current_focal_point is not None:
+                pixel = camera.project(self.current_focal_point)
+                if not np.isnan(pixel).any():
+                    self.focalPointProjected.emit(path, pixel[0], pixel[1])
+                else:
+                    self.focalPointProjected.emit(path, np.nan, np.nan)
         
     def _deselect_camera(self):
         """Deselect the current camera."""

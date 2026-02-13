@@ -11,9 +11,8 @@ Customized interaction style:
 
 import time
 import numpy as np
-import vtk
 from pyvistaqt import QtInteractor
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QFrame, QVBoxLayout
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -22,6 +21,8 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 
 class MVATViewer(QFrame):
+    focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
+
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
@@ -303,6 +304,7 @@ class MVATViewer(QFrame):
         # Animate the transition if desired, or just set it
         self.plotter.camera.focal_point = point
         self.plotter.render()
+        self.focalPointChanged.emit(np.asarray(point))
         
     # --------------------------------------------------------------------------
     # Point Cloud Loading and Subsetting
