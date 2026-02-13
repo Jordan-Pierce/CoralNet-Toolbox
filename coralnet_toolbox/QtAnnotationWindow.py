@@ -2031,6 +2031,11 @@ class AnnotationWindow(QGraphicsView):
 
     def _set_focal_marker(self, u, v):
         """Set the focal point marker at the given pixel coordinates."""
+        width, height = self.get_image_dimensions()
+        if not (0 <= u < width and 0 <= v < height):
+            self._hide_focal_marker()
+            return
+        
         if self.focal_marker is None:
             self.focal_marker = QGraphicsEllipseItem(-5, -5, 10, 10)
             self.focal_marker.setBrush(QColor(230, 62, 0, 128))  # Semi-transparent blood red

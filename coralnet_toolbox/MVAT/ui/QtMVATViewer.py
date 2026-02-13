@@ -336,6 +336,7 @@ class MVATViewer(QFrame):
             self.add_point_cloud()
             event.acceptProposedAction()
             
+            # TODO this doesn't actually update the selected camera's sub-point cloud
             # Trigger visibility filtering for the selected camera
             # This ensures the cloud transitions directly to filtered state
             if self.parent() and hasattr(self.parent(), 'selected_camera'):
