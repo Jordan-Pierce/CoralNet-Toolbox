@@ -51,13 +51,9 @@ class MVATViewer(QFrame):
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
         self.plotter.disable_depth_peeling()
-
-        # Use standard TrackballCamera style as base
-        # We will override specific behaviors via Observers on the Interactor
-        style = vtk.vtkInteractorStyleTrackballCamera()
-        self.plotter.interactor.SetInteractorStyle(style)
         
         # Add observer for Left Click (for Double-Click detection)
+        # This is added to the Interactor directly, so it persists
         self.plotter.interactor.AddObserver("LeftButtonPressEvent", self._on_left_press)
         self._last_click_time = 0
 
@@ -77,48 +73,48 @@ class MVATViewer(QFrame):
         
         self.plotter.interactor.installEventFilter(self)
 
-        # Enforce Interaction Rules
-        # We use a timer to run this AFTER the parent window has potentially
-        # called 'enable_point_picking' or other setup methods that add observers.
-        QTimer.singleShot(100, self._enforce_right_click_behavior)
+        # Enforce Interaction Rules (Delayed)
+        # We run this on a timer to ensure it happens AFTER the parent window
+        # has run its setup (like enable_point_picking), so we can override it.
+        QTimer.singleShot(100, self._configure_interaction)
 
     # --------------------------------------------------------------------------
     # Custom Interaction Logic
     # --------------------------------------------------------------------------
     
-    def _enforce_right_click_behavior(self):
+    def _configure_interaction(self):
         """
-        Aggressively cleanse and reset Right Mouse Button behaviors.
-        
-        This removes ALL observers for RightButtonPress/Release, which effectively:
-        1. Disables the default VTK 'Zoom' on right-drag.
-        2. Disables the PyVista 'PointPicking' (Focus Point) on right-click.
-        
-        It then re-binds Right Click strictly to 'Pan'.
+        Configures the interaction style using PyVista's custom trackball API.
+        Also cleans up unwanted observers from the parent window.
         """
         interactor = self.plotter.interactor
-        
-        # 1. Remove existing observers (Zoom, Pick, etc.)
+        if not interactor:
+            return
+
+        # 1. Clean Interactor Observers (The Fix for Single-Click Focus)
+        # We aggressively remove any Right Button observers attached directly to the 
+        # Interactor (e.g., by enable_point_picking). This prevents the "Focus Point"
+        # behavior on single clicks.
         interactor.RemoveObservers("RightButtonPressEvent")
         interactor.RemoveObservers("RightButtonReleaseEvent")
         
-        # 2. Add our exclusive Pan handlers
-        interactor.AddObserver("RightButtonPressEvent", self._start_pan)
-        interactor.AddObserver("RightButtonReleaseEvent", self._end_pan)
-        
-        print("MVATViewer: Right-click interaction strictly enforced (Pan only).")
-
-    def _start_pan(self, obj, event):
-        """Manually trigger Pan state on the current style."""
-        style = self.plotter.interactor.GetInteractorStyle()
-        if style:
-            style.StartPan()
-
-    def _end_pan(self, obj, event):
-        """Manually end Pan state."""
-        style = self.plotter.interactor.GetInteractorStyle()
-        if style:
-            style.EndPan()
+        # 2. Apply Custom Trackball Style (The Fix for Pan sticking)
+        # We use PyVista's native method to map Right Mouse -> Pan.
+        # This handles the state machine correctly so it won't "stick".
+        # left='rotate' is implied default.
+        if hasattr(self.plotter, 'enable_custom_trackball_style'):
+            try:
+                self.plotter.enable_custom_trackball_style(right='pan')
+                print("MVATViewer: Custom trackball style enabled (Right=Pan).")
+            except AttributeError:
+                # Fallback for older PyVista versions or pyvistaqt wrappers causing issues
+                print("MVATViewer: Warning - enable_custom_trackball_style not found.")
+                style = vtk.vtkInteractorStyleTrackballCamera()
+                self.plotter.interactor.SetInteractorStyle(style)
+        else:
+            # Fallback
+            style = vtk.vtkInteractorStyleTrackballCamera()
+            self.plotter.interactor.SetInteractorStyle(style)
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
