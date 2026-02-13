@@ -30,22 +30,14 @@ from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
                                                   RAY_COLOR_SELECTED, 
-                                                  RAY_COLOR_HIGHLIGHTED)
+                                                  RAY_COLOR_HIGHLIGHTED,
+                                                  MOUSE_THROTTLE_MS)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------------------------------------------------
-
-# Throttle interval for mouse position updates (milliseconds)
-# 16ms is approximately 60fps for responsive mouse tracking
-MOUSE_THROTTLE_MS = 16
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -306,6 +298,7 @@ class MVATWindow(QMainWindow):
         self.cameras = {}  # image_path -> Camera object
         self.selected_camera = None
         self.highlighted_cameras = []
+        self.hovered_camera = None
         
         # Batched geometry managers for efficient rendering (O(1) draw calls)
         self.frustum_manager = BatchedFrustumManager()
@@ -516,6 +509,8 @@ class MVATWindow(QMainWindow):
         self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
         self.camera_grid.camera_highlighted_single.connect(self._on_grid_camera_highlighted_single)
         self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
+        self.camera_grid.camera_hovered.connect(self._on_camera_hovered)
+        self.camera_grid.camera_unhovered.connect(self._on_camera_unhovered)
         right_layout.addWidget(self.camera_grid)
         
         self.splitter.addWidget(self.right_container)
@@ -631,10 +626,28 @@ class MVATWindow(QMainWindow):
         
         # Update batched frustum colors
         selected_path = self.selected_camera.image_path if self.selected_camera else None
-        self.frustum_manager.update_camera_states(selected_path, highlighted_paths)
+        self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
         self.frustum_manager.mark_modified()
         
         self._clear_rays()
+        
+    def _on_camera_hovered(self, path):
+        """Handle camera hover start."""
+        self.hovered_camera = path
+        self._update_frustum_states()
+        
+    def _on_camera_unhovered(self, path):
+        """Handle camera hover end."""
+        if self.hovered_camera == path:
+            self.hovered_camera = None
+        self._update_frustum_states()
+        
+    def _update_frustum_states(self):
+        """Update frustum colors for all cameras."""
+        selected_path = self.selected_camera.image_path if self.selected_camera else None
+        highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
+        self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
+        self.frustum_manager.mark_modified()
         
     def showEvent(self, event):
         """Handle show event - load cameras when window is shown."""
@@ -816,7 +829,7 @@ class MVATWindow(QMainWindow):
                 # Apply current selection state
                 selected_path = self.selected_camera.image_path if self.selected_camera else None
                 highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
-                self.frustum_manager.update_camera_states(selected_path, highlighted_paths)
+                self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
                 self.frustum_manager.mark_modified()
         
         # Thumbnails: Only render for selected camera (lazy loading)
@@ -1014,7 +1027,7 @@ class MVATWindow(QMainWindow):
         selected_path = self.selected_camera.image_path if self.selected_camera else None
         
         # Batch update all camera states at once (O(1) instead of O(N) actor updates)
-        self.frustum_manager.update_camera_states(selected_path, paths)
+        self.frustum_manager.update_camera_states(selected_path, paths, self.hovered_camera)
         self.frustum_manager.mark_modified()
             
         # Update the render
@@ -1412,7 +1425,7 @@ class MVATWindow(QMainWindow):
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
         
         # Update batched frustum colors
-        self.frustum_manager.update_camera_states(path, highlighted_paths)
+        self.frustum_manager.update_camera_states(path, highlighted_paths, self.hovered_camera)
         self.frustum_manager.mark_modified()
         
         # Lazy thumbnail loading: update thumbnail for new selection
@@ -1442,7 +1455,7 @@ class MVATWindow(QMainWindow):
             highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
             
             # Update batched frustum colors (no selection, keep highlights)
-            self.frustum_manager.update_camera_states(None, highlighted_paths)
+            self.frustum_manager.update_camera_states(None, highlighted_paths, self.hovered_camera)
             self.frustum_manager.mark_modified()
             
             # Remove thumbnail actor (lazy unloading)
@@ -1518,5 +1531,14 @@ class MVATWindow(QMainWindow):
             self._reset_camera_view()
         elif event.key() == Qt.Key_F:
             self._fit_to_view()
+        elif event.key() == Qt.Key_Control:
+            self.camera_grid.update_hover_visuals(True)
         else:
             super().keyPressEvent(event)
+            
+    def keyReleaseEvent(self, event):
+        """Handle key release events."""
+        if event.key() == Qt.Key_Control:
+            self.camera_grid.update_hover_visuals(False)
+        else:
+            super().keyReleaseEvent(event)

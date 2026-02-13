@@ -17,24 +17,11 @@ from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.constants import (
     SELECT_COLOR_RGB,
     HIGHLIGHT_COLOR_RGB,
+    STATE_DEFAULT,
+    STATE_HIGHLIGHTED,
+    STATE_SELECTED,
+    STATE_COLORS,
 )
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------------------------------------------------
-
-# State constants for scalar-based coloring
-STATE_DEFAULT = 0
-STATE_HIGHLIGHTED = 1
-STATE_SELECTED = 2
-
-# Colors for each state (RGB normalized 0-1)
-STATE_COLORS = {
-    STATE_DEFAULT: (0.8, 0.8, 0.8),      # Light gray/white
-    STATE_HIGHLIGHTED: tuple(c / 255 for c in HIGHLIGHT_COLOR_RGB),  # Cyan
-    STATE_SELECTED: tuple(c / 255 for c in SELECT_COLOR_RGB),        # Lime green
-}
 
 
 # ----------------------------------------------------------------------------------------------------------------------
