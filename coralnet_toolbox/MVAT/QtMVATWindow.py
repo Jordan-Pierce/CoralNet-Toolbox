@@ -809,8 +809,7 @@ class MVATWindow(QMainWindow):
         # Re-add point cloud (always loaded in memory, but visibility controlled by filtering)
         self.viewer.point_cloud_actor = None
         self.viewer.add_point_cloud()
-        # **CHANGED: Do not set visible initially - let filtering control visibility**
-        # self.viewer.set_point_cloud_visible(True)
+        # **Do not set visible initially - let filtering control visibility**
         
         # Add a reference grid
         self.viewer.plotter.add_axes()
@@ -832,7 +831,7 @@ class MVATWindow(QMainWindow):
                 self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
                 self.frustum_manager.mark_modified()
         
-        # Thumbnails: Only render for selected camera (lazy loading)
+        # Thumbnails: Only render for selected / highlighted cameras (lazy loading)
         # This avoids creating N texture actors; just 1 for the selected camera
         if self._show_thumbnails_enabled and self.selected_camera:
             self._add_thumbnail_for_camera(self.selected_camera)
@@ -1098,9 +1097,9 @@ class MVATWindow(QMainWindow):
         if cameras_needing_visibility:
             # Show progress bar for visibility computation
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            # progress = ProgressBar(self, title="Computing Visibility")
-            # progress.show()
-            # progress.start_progress(len(cameras_needing_visibility))
+            progress = ProgressBar(self, title="Computing Visibility")
+            progress.show()
+            progress.start_progress(len(cameras_needing_visibility))
             
             try:
                 # Prepare data for batch processing            
@@ -1129,13 +1128,13 @@ class MVATWindow(QMainWindow):
                     )
                     
                     all_visible_indices.append(result['visible_indices'])
-                    # progress.update_progress()
+                    progress.update_progress()
                     
             finally:
                 QApplication.restoreOverrideCursor()
-                # progress.finish_progress()
-                # progress.close()
-                # progress = None
+                progress.finish_progress()
+                progress.close()
+                progress = None
         
         # If no cameras have visibility data, trigger computation or hide cloud
         if not all_visible_indices:
