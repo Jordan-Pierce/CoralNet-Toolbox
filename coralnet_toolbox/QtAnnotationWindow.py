@@ -7,10 +7,11 @@ from typing import Optional
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QColor
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QColor, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
-                             QMessageBox, QGraphicsPixmapItem, QGraphicsEllipseItem)
+                             QMessageBox, QGraphicsPixmapItem, QGraphicsEllipseItem,
+                             QGraphicsItemGroup, QGraphicsLineItem)
 
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
@@ -2037,11 +2038,29 @@ class AnnotationWindow(QGraphicsView):
             return
         
         if self.focal_marker is None:
-            self.focal_marker = QGraphicsEllipseItem(-5, -5, 10, 10)
-            self.focal_marker.setBrush(QColor(230, 62, 0, 128))  # Semi-transparent blood red
-            self.focal_marker.setPen(QColor(230, 62, 0))  # Blood red border
+            self.focal_marker = QGraphicsItemGroup()
+            
+            # Create open circle (ellipse with no fill)
+            ellipse = QGraphicsEllipseItem(-5, -5, 10, 10)
+            ellipse.setBrush(QBrush(Qt.NoBrush))  # No fill
+            ellipse.setPen(QColor(230, 62, 0))  # Blood red border
+            self.focal_marker.addToGroup(ellipse)
+            
+            # Create crosshairs (lines extending outside the circle)
+            # Horizontal line: from (-10, 0) to (10, 0) relative to center
+            h_line = QGraphicsLineItem(-10, 0, 10, 0)
+            h_line.setPen(QColor(230, 62, 0))
+            self.focal_marker.addToGroup(h_line)
+            
+            # Vertical line: from (0, -10) to (0, 10) relative to center
+            v_line = QGraphicsLineItem(0, -10, 0, 10)
+            v_line.setPen(QColor(230, 62, 0))
+            self.focal_marker.addToGroup(v_line)
+            
+            # Add the group to the scene
             self.scene.addItem(self.focal_marker)
-        # Convert pixel to scene coordinates (assuming image is at (0,0))
+        
+        # Position the marker group at the scene coordinates
         scene_pos = QPointF(u, v)
         self.focal_marker.setPos(scene_pos)
         self.focal_marker.show()
