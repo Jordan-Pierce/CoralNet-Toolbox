@@ -648,6 +648,9 @@ class MVATWindow(QMainWindow):
         self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
         self.frustum_manager.mark_modified()
         
+        # Update camera grid visual state to match
+        self.camera_grid.render_highlight_from_paths(highlighted_paths)
+        
         self._clear_rays()
         
     def _on_focal_point_changed(self, point_3d):
