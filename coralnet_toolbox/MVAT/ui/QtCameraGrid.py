@@ -399,15 +399,9 @@ class CameraImageWidget(QWidget):
         # Configure pen based on occlusion state
         pen = QPen(self._marker_color, MARKER_LINE_WIDTH)
         
-        if self._is_occluded:
-            # Occluded style: Dashed line, Hollow center
-            pen.setStyle(Qt.DashLine)
-            painter.setBrush(Qt.NoBrush)
-        else:
-            # Visible style: Solid line
-            pen.setStyle(Qt.SolidLine)
-            # Use solid brush if depth is accurate, otherwise hollow
-            painter.setBrush(self._marker_color if self._marker_accurate else Qt.NoBrush)
+        # Always draw as open circle, only color changes
+        pen.setStyle(Qt.SolidLine)
+        painter.setBrush(Qt.NoBrush)
 
         painter.setPen(pen)
         
@@ -416,20 +410,6 @@ class CameraImageWidget(QWidget):
         painter.drawEllipse(marker_x - half_size, 
                             marker_y - half_size, 
                             MARKER_SIZE, MARKER_SIZE)
-        
-        # Only draw crosshairs if point is visible (cleaner look)
-        if not self._is_occluded:
-            crosshair_extend = half_size + 4
-            # Horizontal
-            painter.drawLine(marker_x - crosshair_extend, marker_y,
-                             marker_x - half_size - 1, marker_y)
-            painter.drawLine(marker_x + half_size + 1, marker_y,
-                             marker_x + crosshair_extend, marker_y)
-            # Vertical
-            painter.drawLine(marker_x, marker_y - crosshair_extend,
-                             marker_x, marker_y - half_size - 1)
-            painter.drawLine(marker_x, marker_y + half_size + 1,
-                             marker_x, marker_y + crosshair_extend)
             
     def mousePressEvent(self, event):
         """Handle mouse press for selection."""

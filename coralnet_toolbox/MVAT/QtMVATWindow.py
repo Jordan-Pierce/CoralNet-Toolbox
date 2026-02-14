@@ -29,8 +29,10 @@ from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
 
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
+                                                  MARKER_COLOR_INVALID,
                                                   RAY_COLOR_SELECTED, 
                                                   RAY_COLOR_HIGHLIGHTED,
+                                                  RAY_COLOR_INVALID,
                                                   MOUSE_THROTTLE_MS)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -139,21 +141,30 @@ class MousePositionBridge:
             default_depth=default_depth
         )
         
+        # Get the point cloud mesh for intersection checks
+        if self.mvat_window.viewer.point_cloud and hasattr(self.mvat_window.viewer.point_cloud, 'mesh'):
+            mesh = self.mvat_window.viewer.point_cloud.mesh 
+        else:
+            mesh = None
+        
         # Get highlighted cameras and create rays from them to the world point
         highlighted_cameras = self.mvat_window.highlighted_cameras
         
         # List to store rays for 3D viewer: [(Ray, Color), ...]
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED if ray.has_accurate_depth else RAY_COLOR_INVALID)]
         
         # Dictionary to store visibility status for 2D markers: {image_path: is_occluded}
         visibility_status = {}
+        
+        # Dictionary to store accuracies for markers: {image_path: has_accurate_depth}
+        accuracies = {camera.image_path: ray.has_accurate_depth}
         
         for target_cam in highlighted_cameras:
             # Skip self
             if target_cam.image_path == camera.image_path:
                 continue
             
-            # --- OCCLUSION CHECK ---
+            # --- OCCLUSION CHECK (for markers) ---
             # TODO: Handle case where target_cam does not have z-channel data.
             # Currently assumes visible, but consider user warning or alternative occlusion method (e.g., mesh-based).
             is_occluded = target_cam.is_point_occluded_depth_based(ray.terminal_point, depth_threshold=0.15)
@@ -165,13 +176,16 @@ class MousePositionBridge:
                 camera=target_cam
             )
             
-            # Color coding: Red if blocked, Cyan if visible
-            if is_occluded:
-                ray_color = (255, 0, 0)  # Red
-            else:
-                ray_color = RAY_COLOR_HIGHLIGHTED  # Cyan
+            # Check if highlighted ray intersects the point cloud
+            highlighted_intersects = target_ray.cast_on_mesh(mesh) is not None
+            
+            # Color coding based on accuracy
+            ray_color = RAY_COLOR_HIGHLIGHTED if target_ray.has_accurate_depth else RAY_COLOR_INVALID
                 
             rays_with_colors.append((target_ray, ray_color))
+            
+            # Store accuracy for markers
+            accuracies[target_cam.image_path] = target_ray.has_accurate_depth
         
         # Update 3D ray visualization with all rays
         self.mvat_window.viewer.show_rays(rays_with_colors)
@@ -180,20 +194,20 @@ class MousePositionBridge:
         projections = ray.project_to_cameras(self.mvat_window.cameras)
         
         # Update markers on visible camera widgets with appropriate colors
-        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras, visibility_status)
+        self._update_camera_markers(projections, accuracies, highlighted_cameras, visibility_status)
         
-    def _update_camera_markers(self, projections: dict, accurate: bool, 
+    def _update_camera_markers(self, projections: dict, accuracies: dict, 
                                highlighted_cameras: list, visibility_status: dict):
         """
         Update marker positions on visible camera widgets.
         
         Only updates markers for widgets that are currently visible in the
-        camera grid viewport. Uses lime color for selected camera marker,
-        cyan for highlighted camera markers.
+        camera grid viewport. Uses lime color for selected camera marker if valid,
+        cyan for highlighted camera markers if valid, blood red if invalid.
         
         Args:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
-            accurate: Whether the depth used was accurate.
+            accuracies: Dict mapping image_path to has_accurate_depth bool.
             highlighted_cameras: List of highlighted Camera objects.
             visibility_status: Dict mapping image_path to is_occluded bool.
         """        
@@ -223,18 +237,22 @@ class MousePositionBridge:
                     # Check occlusion status (Default to False if not in dict)
                     is_occluded = visibility_status.get(path, False)
                     
-                    # Determine color
-                    if path == selected_path:
-                        color = MARKER_COLOR_SELECTED
-                        is_occluded = False # Selected camera is never occluded from itself
-                    elif path in highlighted_paths:
-                        color = MARKER_COLOR_HIGHLIGHTED
-                    else:
-                        color = MARKER_COLOR_HIGHLIGHTED
+                    # Get accuracy for this camera
+                    acc = accuracies.get(path, False)
                     
-                    # Pass is_occluded to the widget
-                    widget.set_marker_position(px, py, accurate=accurate, 
-                                               color=color, is_occluded=is_occluded)
+                    # Determine color based on accuracy
+                    if path == selected_path:
+                        color = MARKER_COLOR_SELECTED if acc else MARKER_COLOR_INVALID
+                    elif path in highlighted_paths:
+                        color = MARKER_COLOR_HIGHLIGHTED if acc else MARKER_COLOR_INVALID
+                    else:
+                        color = MARKER_COLOR_INVALID
+                    
+                    # Override color if occluded
+                    if is_occluded:
+                        color = MARKER_COLOR_INVALID
+                    
+                    widget.set_marker_position(px, py, acc, color, is_occluded)
                 else:
                     widget.clear_marker()
             else:
