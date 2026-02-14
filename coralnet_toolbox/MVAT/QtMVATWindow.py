@@ -35,6 +35,8 @@ from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED,
                                                   RAY_COLOR_INVALID,
                                                   MOUSE_THROTTLE_MS)
 
+from coralnet_toolbox.MVAT.core.Marker import Marker
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
@@ -297,8 +299,6 @@ class MVATWindow(QMainWindow):
     
     # Signal emitted when a camera is selected in MVAT
     cameraSelectedInMVAT = pyqtSignal(str)
-    # Signal emitted with projected focal point for a camera
-    focalPointProjected = pyqtSignal(str, float, float)  # path, u, v
     
     def __init__(self, main_window, parent=None):
         """
@@ -583,18 +583,12 @@ class MVATWindow(QMainWindow):
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
         
-        # Connect our signal to navigate main app (for completeness)
-        self.cameraSelectedInMVAT.connect(self._on_camera_selected_sync)
-        
         # Connect camera grid highlight changes to clear rays
         # This ensures stale rays from previously-highlighted cameras are removed
         self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
-        
         # Connect viewer focal point changes
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
-        
-        # Connect to AnnotationWindow for focal point marker
-        self.focalPointProjected.connect(self.annotation_window._on_focal_point_projected)
+        # Connect to AnnotationWindow for camera selection
         self.cameraSelectedInMVAT.connect(self.annotation_window._on_camera_selected_in_mvat)
     
     def _on_main_image_loaded(self, path: str):
@@ -620,18 +614,6 @@ class MVATWindow(QMainWindow):
             
             # Update visibility filtering for the new image**
             self._update_visibility_filter([path])
-    
-    def _on_camera_selected_sync(self, path: str):
-        """
-        Handle camera selection sync (internal slot).
-        
-        This is connected to our own signal for extensibility.
-        
-        Args:
-            path: Image path of the selected camera.
-        """
-        # Navigation to main app is handled in _goto_selected_image
-        pass
     
     def _on_highlights_changed(self, highlighted_paths: list):
         """
@@ -664,14 +646,26 @@ class MVATWindow(QMainWindow):
         
     def _on_focal_point_changed(self, point_3d):
         """Handle focal point changes from the 3D viewer."""
+        # Set the current focal point
         self.current_focal_point = point_3d
+        
+        # Update the marker in the annotation window based on the new focal point
         if self.selected_camera_path and self.selected_camera_path in self.cameras:
+            # Get the selected camera and project the 3D point to its image plane
             camera = self.cameras[self.selected_camera_path]
             pixel = camera.project(point_3d)
+            # Check if the projected pixel is valid (not NaN)
             if not np.isnan(pixel).any():
-                self.focalPointProjected.emit(self.selected_camera_path, pixel[0], pixel[1])
+                u, v = pixel[0], pixel[1]
+                # Check z-channel for validity using get_z_value
+                depth = camera._raster.get_z_value(int(u), int(v))
+                color = MARKER_COLOR_SELECTED if depth is not None and depth > 0 else MARKER_COLOR_INVALID
+                # Set the marker position and color in the annotation window
+                self.main_window.annotation_window.set_incoming_marker(u, v, color)
             else:
-                self.focalPointProjected.emit(self.selected_camera_path, np.nan, np.nan)
+                self.main_window.annotation_window.marker.hide()
+        else:
+            self.main_window.annotation_window.marker.hide()
     
     def _on_camera_hovered(self, path):
         """Handle camera hover start."""

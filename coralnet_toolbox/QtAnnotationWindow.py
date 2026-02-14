@@ -7,11 +7,12 @@ from typing import Optional
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QColor, QBrush
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
-                             QMessageBox, QGraphicsPixmapItem, QGraphicsEllipseItem,
-                             QGraphicsItemGroup, QGraphicsLineItem)
+                             QMessageBox, QGraphicsPixmapItem)
+
+from coralnet_toolbox.MVAT.core.Marker import Marker
 
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
@@ -176,15 +177,14 @@ class AnnotationWindow(QGraphicsView):
         self.z_data_shape = None  # Shape of Z-data array
         self.z_nodata_mask = None  # Boolean mask for NaN/nodata pixels
         
-        # Focal point marker for MVAT integration
-        self.focal_marker = None  # QGraphicsEllipseItem for focal point marker
-        self.selected_camera_path = None  # Path of the currently selected camera in MVAT
-        
         # Debounce timer for dynamic range updates (prevents lag during zoom)
         self.dynamic_range_timer = QTimer()
         self.dynamic_range_timer.setSingleShot(True)
         self.dynamic_range_timer.timeout.connect(self.update_dynamic_range)
         self.dynamic_range_update_delay = 100  # milliseconds
+        
+        # MVAT visisualization attributes
+        self.marker = Marker()  # Marker for focal point display from MVAT
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
@@ -194,6 +194,11 @@ class AnnotationWindow(QGraphicsView):
 
         # Initialize the action stack for undo/redo
         self.action_stack = ActionStack()
+        
+    def set_incoming_marker(self, u, v, color):
+        """Set the incoming marker position and color from MVAT."""
+        self.marker.set_position(u, v, color)
+        self.scene.addItem(self.marker.marker_item)
         
     def initialize_tools(self):
         """Initialize tools"""
@@ -828,7 +833,7 @@ class AnnotationWindow(QGraphicsView):
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
         
         # Update focal marker visibility
-        if self.selected_camera_path == image_path:
+        if self.current_image_path == image_path:
             # If this image is the selected camera, the marker should be shown if focal point exists
             # But since the signal will be emitted again if needed, just ensure it's hidden for now
             pass
@@ -2021,51 +2026,4 @@ class AnnotationWindow(QGraphicsView):
 
     def _on_camera_selected_in_mvat(self, path):
         """Handle camera selection in MVAT."""
-        self.selected_camera_path = path
-
-    def _on_focal_point_projected(self, path, u, v):
-        """Handle focal point projection from MVAT."""
-        if path == self.current_image_path and not (np.isnan(u) or np.isnan(v)):
-            self._set_focal_marker(u, v)
-        else:
-            self._hide_focal_marker()
-
-    def _set_focal_marker(self, u, v):
-        """Set the focal point marker at the given pixel coordinates."""
-        width, height = self.get_image_dimensions()
-        if not (0 <= u < width and 0 <= v < height):
-            self._hide_focal_marker()
-            return
-        
-        if self.focal_marker is None:
-            self.focal_marker = QGraphicsItemGroup()
-            
-            # Create open circle (ellipse with no fill)
-            ellipse = QGraphicsEllipseItem(-5, -5, 10, 10)
-            ellipse.setBrush(QBrush(Qt.NoBrush))  # No fill
-            ellipse.setPen(QColor(230, 62, 0))  # Blood red border
-            self.focal_marker.addToGroup(ellipse)
-            
-            # Create crosshairs (lines extending outside the circle)
-            # Horizontal line: from (-10, 0) to (10, 0) relative to center
-            h_line = QGraphicsLineItem(-10, 0, 10, 0)
-            h_line.setPen(QColor(230, 62, 0))
-            self.focal_marker.addToGroup(h_line)
-            
-            # Vertical line: from (0, -10) to (0, 10) relative to center
-            v_line = QGraphicsLineItem(0, -10, 0, 10)
-            v_line.setPen(QColor(230, 62, 0))
-            self.focal_marker.addToGroup(v_line)
-            
-            # Add the group to the scene
-            self.scene.addItem(self.focal_marker)
-        
-        # Position the marker group at the scene coordinates
-        scene_pos = QPointF(u, v)
-        self.focal_marker.setPos(scene_pos)
-        self.focal_marker.show()
-
-    def _hide_focal_marker(self):
-        """Hide the focal point marker."""
-        if self.focal_marker:
-            self.focal_marker.hide()
+        self.current_image_path = path
