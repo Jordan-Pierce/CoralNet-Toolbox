@@ -12,6 +12,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
                              QMessageBox, QGraphicsPixmapItem)
 
+from coralnet_toolbox.MVAT.core.Marker import Marker
+
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
     PolygonAnnotation,
@@ -180,6 +182,9 @@ class AnnotationWindow(QGraphicsView):
         self.dynamic_range_timer.setSingleShot(True)
         self.dynamic_range_timer.timeout.connect(self.update_dynamic_range)
         self.dynamic_range_update_delay = 100  # milliseconds
+        
+        # MVAT visisualization attributes
+        self.marker = Marker()  # Marker for focal point display from MVAT
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
@@ -189,6 +194,11 @@ class AnnotationWindow(QGraphicsView):
 
         # Initialize the action stack for undo/redo
         self.action_stack = ActionStack()
+        
+    def set_incoming_marker(self, u, v, color):
+        """Set the incoming marker position and color from MVAT."""
+        self.marker.set_position(u, v, color)
+        self.scene.addItem(self.marker.marker_item)
         
     def initialize_tools(self):
         """Initialize tools"""
@@ -674,6 +684,10 @@ class AnnotationWindow(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         
+        # Reset item references
+        self.focal_marker = None
+        self.z_item = None
+        
     def reset_scene_view(self):
         """Resets the scene view"""
         # Update the zoom tool's state
@@ -817,6 +831,14 @@ class AnnotationWindow(QGraphicsView):
         # Set the image dimensions, and current view in status bar
         self.imageLoaded.emit(self.pixmap_image.width(), self.pixmap_image.height())
         self.viewChanged.emit(self.pixmap_image.width(), self.pixmap_image.height())
+        
+        # Update focal marker visibility
+        if self.current_image_path == image_path:
+            # If this image is the selected camera, the marker should be shown if focal point exists
+            # But since the signal will be emitted again if needed, just ensure it's hidden for now
+            pass
+        else:
+            self._hide_focal_marker()
         
         # Restore cursor
         QApplication.restoreOverrideCursor()

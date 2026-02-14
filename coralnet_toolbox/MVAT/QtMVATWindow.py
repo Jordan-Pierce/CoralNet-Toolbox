@@ -29,9 +29,13 @@ from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
 
 from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
                                                   MARKER_COLOR_HIGHLIGHTED, 
+                                                  MARKER_COLOR_INVALID,
                                                   RAY_COLOR_SELECTED, 
                                                   RAY_COLOR_HIGHLIGHTED,
+                                                  RAY_COLOR_INVALID,
                                                   MOUSE_THROTTLE_MS)
+
+from coralnet_toolbox.MVAT.core.Marker import Marker
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -139,21 +143,30 @@ class MousePositionBridge:
             default_depth=default_depth
         )
         
+        # Get the point cloud mesh for intersection checks
+        if self.mvat_window.viewer.point_cloud and hasattr(self.mvat_window.viewer.point_cloud, 'mesh'):
+            mesh = self.mvat_window.viewer.point_cloud.mesh 
+        else:
+            mesh = None
+        
         # Get highlighted cameras and create rays from them to the world point
         highlighted_cameras = self.mvat_window.highlighted_cameras
         
         # List to store rays for 3D viewer: [(Ray, Color), ...]
-        rays_with_colors = [(ray, RAY_COLOR_SELECTED)]
+        rays_with_colors = [(ray, RAY_COLOR_SELECTED if ray.has_accurate_depth else RAY_COLOR_INVALID)]
         
         # Dictionary to store visibility status for 2D markers: {image_path: is_occluded}
         visibility_status = {}
+        
+        # Dictionary to store accuracies for markers: {image_path: has_accurate_depth}
+        accuracies = {camera.image_path: ray.has_accurate_depth}
         
         for target_cam in highlighted_cameras:
             # Skip self
             if target_cam.image_path == camera.image_path:
                 continue
             
-            # --- OCCLUSION CHECK ---
+            # --- OCCLUSION CHECK (for markers) ---
             # TODO: Handle case where target_cam does not have z-channel data.
             # Currently assumes visible, but consider user warning or alternative occlusion method (e.g., mesh-based).
             is_occluded = target_cam.is_point_occluded_depth_based(ray.terminal_point, depth_threshold=0.15)
@@ -165,13 +178,16 @@ class MousePositionBridge:
                 camera=target_cam
             )
             
-            # Color coding: Red if blocked, Cyan if visible
-            if is_occluded:
-                ray_color = (255, 0, 0)  # Red
-            else:
-                ray_color = RAY_COLOR_HIGHLIGHTED  # Cyan
+            # Check if highlighted ray intersects the point cloud
+            highlighted_intersects = target_ray.cast_on_mesh(mesh) is not None
+            
+            # Color coding based on accuracy
+            ray_color = RAY_COLOR_HIGHLIGHTED if target_ray.has_accurate_depth else RAY_COLOR_INVALID
                 
             rays_with_colors.append((target_ray, ray_color))
+            
+            # Store accuracy for markers
+            accuracies[target_cam.image_path] = target_ray.has_accurate_depth
         
         # Update 3D ray visualization with all rays
         self.mvat_window.viewer.show_rays(rays_with_colors)
@@ -180,20 +196,20 @@ class MousePositionBridge:
         projections = ray.project_to_cameras(self.mvat_window.cameras)
         
         # Update markers on visible camera widgets with appropriate colors
-        self._update_camera_markers(projections, ray.has_accurate_depth, highlighted_cameras, visibility_status)
+        self._update_camera_markers(projections, accuracies, highlighted_cameras, visibility_status)
         
-    def _update_camera_markers(self, projections: dict, accurate: bool, 
+    def _update_camera_markers(self, projections: dict, accuracies: dict, 
                                highlighted_cameras: list, visibility_status: dict):
         """
         Update marker positions on visible camera widgets.
         
         Only updates markers for widgets that are currently visible in the
-        camera grid viewport. Uses lime color for selected camera marker,
-        cyan for highlighted camera markers.
+        camera grid viewport. Uses lime color for selected camera marker if valid,
+        cyan for highlighted camera markers if valid, blood red if invalid.
         
         Args:
             projections: Dict mapping image_path to (x, y, is_valid) tuples.
-            accurate: Whether the depth used was accurate.
+            accuracies: Dict mapping image_path to has_accurate_depth bool.
             highlighted_cameras: List of highlighted Camera objects.
             visibility_status: Dict mapping image_path to is_occluded bool.
         """        
@@ -223,18 +239,22 @@ class MousePositionBridge:
                     # Check occlusion status (Default to False if not in dict)
                     is_occluded = visibility_status.get(path, False)
                     
-                    # Determine color
-                    if path == selected_path:
-                        color = MARKER_COLOR_SELECTED
-                        is_occluded = False # Selected camera is never occluded from itself
-                    elif path in highlighted_paths:
-                        color = MARKER_COLOR_HIGHLIGHTED
-                    else:
-                        color = MARKER_COLOR_HIGHLIGHTED
+                    # Get accuracy for this camera
+                    acc = accuracies.get(path, False)
                     
-                    # Pass is_occluded to the widget
-                    widget.set_marker_position(px, py, accurate=accurate, 
-                                               color=color, is_occluded=is_occluded)
+                    # Determine color based on accuracy
+                    if path == selected_path:
+                        color = MARKER_COLOR_SELECTED if acc else MARKER_COLOR_INVALID
+                    elif path in highlighted_paths:
+                        color = MARKER_COLOR_HIGHLIGHTED if acc else MARKER_COLOR_INVALID
+                    else:
+                        color = MARKER_COLOR_INVALID
+                    
+                    # Override color if occluded
+                    if is_occluded:
+                        color = MARKER_COLOR_INVALID
+                    
+                    widget.set_marker_position(px, py, acc, color, is_occluded)
                 else:
                     widget.clear_marker()
             else:
@@ -299,6 +319,10 @@ class MVATWindow(QMainWindow):
         self.selected_camera = None
         self.highlighted_cameras = []
         self.hovered_camera = None
+        
+        # Focal point management
+        self.current_focal_point = None
+        self.selected_camera_path = None
         
         # Batched geometry managers for efficient rendering (O(1) draw calls)
         self.frustum_manager = BatchedFrustumManager()
@@ -559,12 +583,11 @@ class MVATWindow(QMainWindow):
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
         
-        # Connect our signal to navigate main app (for completeness)
-        self.cameraSelectedInMVAT.connect(self._on_camera_selected_sync)
-        
         # Connect camera grid highlight changes to clear rays
         # This ensures stale rays from previously-highlighted cameras are removed
         self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
+        # Connect viewer focal point changes
+        self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
     
     def _on_main_image_loaded(self, path: str):
         """
@@ -576,12 +599,20 @@ class MVATWindow(QMainWindow):
             path: Image path that was loaded in the main app.
         """
         if path in self.cameras:
+            # Clear all highlights
+            self._on_highlights_changed([])
+            
             # Update camera grid selection without triggering navigation
             self.camera_grid.render_selection_from_path(path)
             
             # Update 3D view selection
             camera = self.cameras[path]
             self._select_camera(path, camera, emit_signal=False)
+            
+            # Highlight the selected camera
+            self._on_highlights_changed([path])
+            
+            # Match camera perspective in 3D viewer
             self._match_camera_perspective(camera)
             
             # Reorder cameras based on proximity to selected camera
@@ -589,18 +620,6 @@ class MVATWindow(QMainWindow):
             
             # Update visibility filtering for the new image**
             self._update_visibility_filter([path])
-    
-    def _on_camera_selected_sync(self, path: str):
-        """
-        Handle camera selection sync (internal slot).
-        
-        This is connected to our own signal for extensibility.
-        
-        Args:
-            path: Image path of the selected camera.
-        """
-        # Navigation to main app is handled in _goto_selected_image
-        pass
     
     def _on_highlights_changed(self, highlighted_paths: list):
         """
@@ -629,8 +648,34 @@ class MVATWindow(QMainWindow):
         self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
         self.frustum_manager.mark_modified()
         
+        # Update camera grid visual state to match
+        self.camera_grid.render_highlight_from_paths(highlighted_paths)
+        
         self._clear_rays()
         
+    def _on_focal_point_changed(self, point_3d):
+        """Handle focal point changes from the 3D viewer."""
+        # Set the current focal point
+        self.current_focal_point = point_3d
+        
+        # Update the marker in the annotation window based on the new focal point
+        if self.selected_camera_path and self.selected_camera_path in self.cameras:
+            # Get the selected camera and project the 3D point to its image plane
+            camera = self.cameras[self.selected_camera_path]
+            pixel = camera.project(point_3d)
+            # Check if the projected pixel is valid (not NaN)
+            if not np.isnan(pixel).any():
+                u, v = pixel[0], pixel[1]
+                # Check z-channel for validity using get_z_value
+                depth = camera._raster.get_z_value(int(u), int(v))
+                color = MARKER_COLOR_SELECTED if depth is not None and depth > 0 else MARKER_COLOR_INVALID
+                # Set the marker position and color in the annotation window
+                self.main_window.annotation_window.set_incoming_marker(u, v, color)
+            else:
+                self.main_window.annotation_window.marker.hide()
+        else:
+            self.main_window.annotation_window.marker.hide()
+    
     def _on_camera_hovered(self, path):
         """Handle camera hover start."""
         self.hovered_camera = path
@@ -1415,6 +1460,10 @@ class MVATWindow(QMainWindow):
         
         # Update selected camera reference
         self.selected_camera = camera
+        self.selected_camera_path = path
+        
+        # Sync the camera grid's selection state
+        self.camera_grid.render_selection_from_path(path)
         
         # Select new camera
         camera.select()
@@ -1443,6 +1492,13 @@ class MVATWindow(QMainWindow):
         # Emit signal for bi-directional sync (unless suppressed)
         if emit_signal:
             self.cameraSelectedInMVAT.emit(path)
+            # Emit focal point projection if we have a focal point
+            if self.current_focal_point is not None:
+                pixel = camera.project(self.current_focal_point)
+                if not np.isnan(pixel).any():
+                    self.focalPointProjected.emit(path, pixel[0], pixel[1])
+                else:
+                    self.focalPointProjected.emit(path, np.nan, np.nan)
         
     def _deselect_camera(self):
         """Deselect the current camera."""

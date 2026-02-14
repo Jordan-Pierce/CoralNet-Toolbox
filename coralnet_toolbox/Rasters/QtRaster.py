@@ -1064,8 +1064,9 @@ class Raster(QObject):
         if self.index_map_path is not None:
             raster_data['index_map_path'] = self.index_map_path
         
-        if self.visible_indices is not None:
-            raster_data['visible_indices'] = self.visible_indices.tolist()  # Store for quick filtering
+        # TODO figure out if this neccessary, or if we can just read in the index_map when needed from the path.        
+        # if self.visible_indices is not None:
+        #     raster_data['visible_indices'] = self.visible_indices.tolist()  # Store for quick filtering
         
         # Include z_channel path if available
         if self.z_channel_path is not None:

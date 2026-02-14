@@ -332,6 +332,12 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
     return np.array(intrinsics_list), np.array(extrinsics_list)
 
 
+def normalize_extension(name):
+    """Normalize the file extension to lower case for case-insensitive comparison."""
+    base, ext = os.path.splitext(name)
+    return base + ext.lower()
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -501,12 +507,16 @@ class ImportCOLMAPCameras(QDialog):
             QApplication.restoreOverrideCursor()
         
         # Match COLMAP images to loaded rasters
-        image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
+        image_path_map = {}
+        for path in self.image_window.raster_manager.image_paths:
+            normalized_name = normalize_extension(os.path.basename(path))
+            image_path_map[normalized_name] = path
+            
         matched_images = {}
         
         for img_id, img in images.items():
-            img_basename = os.path.basename(img.name)
-            if img_basename in image_path_map:
+            img_basename_normalized = normalize_extension(img.name)
+            if img_basename_normalized in image_path_map:
                 matched_images[img_id] = img
         
         if not matched_images:
@@ -518,12 +528,12 @@ class ImportCOLMAPCameras(QDialog):
         # Check for existing camera parameters in matched rasters
         rasters_with_cameras = []
         for img_id, img in matched_images.items():
-            img_basename = os.path.basename(img.name)
-            image_path = image_path_map[img_basename]
+            img_basename_normalized = normalize_extension(img.name)
+            image_path = image_path_map[img_basename_normalized]
             raster = self.image_window.raster_manager.get_raster(image_path)
             
             if raster and (raster.intrinsics is not None or raster.extrinsics is not None):
-                rasters_with_cameras.append(img_basename)
+                rasters_with_cameras.append(os.path.basename(img.name))
         
         # Alert user if existing camera data found
         if rasters_with_cameras:
@@ -561,8 +571,8 @@ class ImportCOLMAPCameras(QDialog):
                     extrinsics = all_extrinsics[idx]  # w2c
                     
                     # Get the raster and update camera parameters
-                    image_basename = os.path.basename(img.name)
-                    image_path = image_path_map[image_basename]
+                    image_basename_normalized = normalize_extension(img.name)
+                    image_path = image_path_map[image_basename_normalized]
                     raster = self.image_window.raster_manager.get_raster(image_path)
                     
                     if raster:

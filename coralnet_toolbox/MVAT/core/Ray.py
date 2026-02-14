@@ -321,46 +321,40 @@ class BatchedRayManager:
     """
     Manages batched rendering of camera rays for efficient visualization.
     
-    Instead of creating individual line and sphere actors per ray (2*N draw calls),
+    Instead of creating individual line actors per ray (N draw calls),
     this class maintains a single PolyData mesh containing all ray lines and updates
     point coordinates in-place when the mouse moves.
     
     Attributes:
         ray_mesh: PolyData containing all ray line segments
-        sphere_mesh: PolyData containing terminal point spheres
         ray_actor: Single actor for all ray lines
-        sphere_actor: Single actor for terminal spheres
     """
     
     def __init__(self):
         """Initialize the BatchedRayManager."""
         self.ray_mesh: Optional[pv.PolyData] = None
-        self.sphere_mesh: Optional[pv.PolyData] = None
         self.ray_actor = None
-        self.sphere_actor = None
         
         # Ray colors stored per ray
         self._ray_colors: Optional[np.ndarray] = None
         self._num_rays = 0
         
     def build_ray_batch(self, 
-                        rays_with_colors: List[Tuple['CameraRay', tuple]]) -> Tuple[Optional[pv.PolyData], 
-                                                                                    Optional[pv.PolyData]]:
+                        rays_with_colors: List[Tuple['CameraRay', tuple]]) -> Optional[pv.PolyData]:
         """
-        Build merged meshes for multiple rays.
+        Build merged mesh for multiple rays.
         
         Args:
             rays_with_colors: List of (CameraRay, color_rgb) tuples
                              Colors should be RGB tuples (0-255)
             
         Returns:
-            Tuple of (ray_lines_mesh, sphere_mesh)
+            ray_lines_mesh
         """
         if not rays_with_colors:
             self.ray_mesh = None
-            self.sphere_mesh = None
             self._num_rays = 0
-            return None, None
+            return None
         
         self._num_rays = len(rays_with_colors)
         
@@ -392,55 +386,25 @@ class BatchedRayManager:
         
         if not points:
             self.ray_mesh = None
-            self.sphere_mesh = None
-            return None, None
+            return None
         
         # Create lines mesh
         self.ray_mesh = pv.PolyData(np.array(points), lines=np.array(lines))
         self._ray_colors = np.array(colors)
         self.ray_mesh['RGB'] = (self._ray_colors * 255).astype(np.uint8)
         
-        # Build spheres at terminal points
-        first_ray = rays_with_colors[0][0]
-        if first_ray is not None:
-            base_radius = np.linalg.norm(first_ray.terminal_point - first_ray.origin) * 0.005
-            base_radius = max(base_radius, 0.01)
-        else:
-            base_radius = 0.05
-        
-        spheres = []
-        for i, (ray, color) in enumerate(rays_with_colors):
-            if ray is None:
-                continue
-            # Primary ray gets larger sphere
-            radius = base_radius if i == 0 else base_radius * 0.6
-            sphere = pv.Sphere(radius=radius, center=ray.terminal_point.tolist())
-            
-            # Add color to sphere
-            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
-                norm_color = tuple(c / 255 for c in color[:3])
-            else:
-                norm_color = color[:3] if len(color) >= 3 else color
-            sphere['RGB'] = np.tile(np.array(norm_color) * 255, (sphere.n_points, 1)).astype(np.uint8)
-            spheres.append(sphere)
-        
-        if spheres:
-            self.sphere_mesh = pv.merge(spheres) if len(spheres) > 1 else spheres[0]
-        else:
-            self.sphere_mesh = None
-        
-        return self.ray_mesh, self.sphere_mesh
+        return self.ray_mesh
     
-    def add_to_plotter(self, plotter, line_width: float = 3) -> Tuple[Optional['vtkActor'], Optional['vtkActor']]:
+    def add_to_plotter(self, plotter, line_width: float = 3) -> Optional['vtkActor']:
         """
-        Add the batched ray meshes to a plotter.
+        Add the batched ray mesh to a plotter.
         
         Args:
             plotter: PyVista plotter instance
             line_width: Width of ray lines
             
         Returns:
-            Tuple of (ray_actor, sphere_actor)
+            ray_actor
         """
         # Remove existing actors
         self.remove_from_plotter(plotter)
@@ -458,18 +422,7 @@ class BatchedRayManager:
                 reset_camera=False
             )
         
-        if self.sphere_mesh is not None:
-            self.sphere_actor = plotter.add_mesh(
-                self.sphere_mesh,
-                scalars='RGB',
-                rgb=True,
-                name='_batched_ray_spheres',
-                pickable=False,
-                smooth_shading=False,
-                reset_camera=False
-            )
-        
-        return self.ray_actor, self.sphere_actor
+        return self.ray_actor
     
     def update_ray_endpoints(self, 
                              rays_with_colors: List[Tuple['CameraRay', tuple]]):
@@ -497,33 +450,22 @@ class BatchedRayManager:
         self.ray_mesh.Modified()
     
     def set_visibility(self, visible: bool):
-        """Set visibility of ray actors."""
+        """Set visibility of ray actor."""
         if self.ray_actor is not None:
             self.ray_actor.SetVisibility(visible)
-        if self.sphere_actor is not None:
-            self.sphere_actor.SetVisibility(visible)
     
     def remove_from_plotter(self, plotter):
-        """Remove ray actors from plotter."""
+        """Remove ray actor from plotter."""
         if self.ray_actor is not None:
             try:
                 plotter.remove_actor(self.ray_actor)
             except:
                 pass
             self.ray_actor = None
-            
-        if self.sphere_actor is not None:
-            try:
-                plotter.remove_actor(self.sphere_actor)
-            except:
-                pass
-            self.sphere_actor = None
     
     def clear(self):
         """Clear all cached data."""
         self.ray_mesh = None
-        self.sphere_mesh = None
         self.ray_actor = None
-        self.sphere_actor = None
         self._ray_colors = None
         self._num_rays = 0

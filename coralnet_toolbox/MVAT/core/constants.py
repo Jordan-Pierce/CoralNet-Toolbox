@@ -9,19 +9,30 @@ from PyQt5.QtGui import QColor
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Base Color Constants - RGB tuple format (0-255)
+# These are the three primary colors used throughout MVAT
+# ----------------------------------------------------------------------------------------------------------------------
+
+CYAN_RGB = (0, 168, 230)         # Primary highlight color
+LIME_RGB = (144, 238, 144)       # Primary selection color
+BLOOD_RED_RGB = (230, 62, 0)     # Primary invalid/hover color
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Color Constants - QColor format (for Qt widgets)
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Selection/Highlight Colors
-HIGHLIGHT_COLOR = QColor(0, 168, 230)       # Cyan for multi-highlight
-SELECT_COLOR = QColor(144, 238, 144)        # Lime Green for single select
-HOVER_COLOR = QColor(230, 62, 0)            # Blood red
+SELECT_COLOR = QColor(*LIME_RGB)          # Lime Green for single select
+HIGHLIGHT_COLOR = QColor(*CYAN_RGB)       # Cyan for multi-highlight
+INVALID_COLOR = QColor(*BLOOD_RED_RGB)    # Blood red for invalid state
+HOVER_COLOR = QColor(*BLOOD_RED_RGB)      # Blood red
 
 # Marker Colors (for cross-camera position display)
-# Now using highlight/select colors instead of generic magenta
 MARKER_COLOR_SELECTED = SELECT_COLOR        # Lime Green for selected camera marker
 MARKER_COLOR_HIGHLIGHTED = HIGHLIGHT_COLOR  # Cyan for highlighted camera markers
-MARKER_COLOR_DEFAULT = SELECT_COLOR
+MARKER_COLOR_INVALID = INVALID_COLOR        # Blood red for invalid camera markers
+MARKER_COLOR_DEFAULT = INVALID_COLOR         # Default marker color
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -31,13 +42,15 @@ MARKER_COLOR_DEFAULT = SELECT_COLOR
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Selection/Highlight Colors for PyVista
-HIGHLIGHT_COLOR_RGB = (0, 168, 230)         # Cyan
-SELECT_COLOR_RGB = (144, 238, 144)          # Lime Green
-HOVER_COLOR_RGB = (230, 62, 0)              # Blood red
+SELECT_COLOR_RGB = LIME_RGB               # Lime Green
+HIGHLIGHT_COLOR_RGB = CYAN_RGB            # Cyan
+HOVER_COLOR_RGB = BLOOD_RED_RGB           # Blood red
+INVALID_COLOR_RGB = BLOOD_RED_RGB         # Blood red for invalid state
 
 # Marker/Ray Colors for PyVista
-RAY_COLOR_SELECTED = SELECT_COLOR_RGB        # RGB tuple for selected camera ray
-RAY_COLOR_HIGHLIGHTED = HIGHLIGHT_COLOR_RGB  # RGB tuple for highlighted camera rays
+RAY_COLOR_SELECTED = SELECT_COLOR_RGB           # RGB tuple for selected camera ray
+RAY_COLOR_HIGHLIGHTED = HIGHLIGHT_COLOR_RGB     # RGB tuple for highlighted camera rays
+RAY_COLOR_INVALID = INVALID_COLOR_RGB           # RGB tuple for invalid rays (blood red)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # UI Sizing Constants
@@ -70,11 +83,12 @@ STATE_DEFAULT = 0
 STATE_HIGHLIGHTED = 1
 STATE_SELECTED = 2
 STATE_HOVER = 3
-
+STATE_INVALID = 4
 # Colors for each state (RGB normalized 0-1)
 STATE_COLORS = {
     STATE_DEFAULT: (0.8, 0.8, 0.8),      # Light gray/white
     STATE_HIGHLIGHTED: tuple(c / 255 for c in HIGHLIGHT_COLOR_RGB),  # Cyan
     STATE_SELECTED: tuple(c / 255 for c in SELECT_COLOR_RGB),        # Lime green
     STATE_HOVER: tuple(c / 255 for c in HOVER_COLOR_RGB),            # Blood red
+    STATE_INVALID: tuple(c / 255 for c in INVALID_COLOR_RGB),        # Blood red for invalid state
 }

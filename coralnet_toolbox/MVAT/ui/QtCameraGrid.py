@@ -399,15 +399,9 @@ class CameraImageWidget(QWidget):
         # Configure pen based on occlusion state
         pen = QPen(self._marker_color, MARKER_LINE_WIDTH)
         
-        if self._is_occluded:
-            # Occluded style: Dashed line, Hollow center
-            pen.setStyle(Qt.DashLine)
-            painter.setBrush(Qt.NoBrush)
-        else:
-            # Visible style: Solid line
-            pen.setStyle(Qt.SolidLine)
-            # Use solid brush if depth is accurate, otherwise hollow
-            painter.setBrush(self._marker_color if self._marker_accurate else Qt.NoBrush)
+        # Always draw as open circle, only color changes
+        pen.setStyle(Qt.SolidLine)
+        painter.setBrush(Qt.NoBrush)
 
         painter.setPen(pen)
         
@@ -416,20 +410,6 @@ class CameraImageWidget(QWidget):
         painter.drawEllipse(marker_x - half_size, 
                             marker_y - half_size, 
                             MARKER_SIZE, MARKER_SIZE)
-        
-        # Only draw crosshairs if point is visible (cleaner look)
-        if not self._is_occluded:
-            crosshair_extend = half_size + 4
-            # Horizontal
-            painter.drawLine(marker_x - crosshair_extend, marker_y,
-                             marker_x - half_size - 1, marker_y)
-            painter.drawLine(marker_x + half_size + 1, marker_y,
-                             marker_x + crosshair_extend, marker_y)
-            # Vertical
-            painter.drawLine(marker_x, marker_y - crosshair_extend,
-                             marker_x, marker_y - half_size - 1)
-            painter.drawLine(marker_x, marker_y + half_size + 1,
-                             marker_x, marker_y + crosshair_extend)
             
     def mousePressEvent(self, event):
         """Handle mouse press for selection."""
@@ -666,7 +646,8 @@ class CameraGrid(QWidget):
     def recalculate_layout(self):
         """Schedule a layout recalculation (debounced)."""
         self._layout_timer.start(50)  # 50ms debounce
-        
+    
+    # TODO figure out which method needs a progress bar
     def _do_recalculate_layout(self):
         """Actually recalculate widget positions."""
         if not self.data_items:
@@ -816,7 +797,9 @@ class CameraGrid(QWidget):
             data_item.clear_thumbnail_cache()
         
         self.recalculate_layout()
-        
+    
+    # TODO if a widget is clicked but it corresponds to a camera already selected / highlighted, make sure
+    # we do not attempt to update the point cloud again unnecessarily.
     def _on_widget_clicked(self, widget, event):
         """Handle widget click for selection/highlighting."""
         path = widget.data_item.image_path
@@ -859,6 +842,10 @@ class CameraGrid(QWidget):
         self.selected_path = path
         widget.data_item.set_selected(True)
         widget.update_selection_visuals()
+        
+        # Clear all highlights except the new selected camera and ensure it's highlighted
+        self._clear_highlights()
+        self._add_highlight(path)
         
         # Emit signal for 3D view to match perspective
         self.camera_selected.emit(path)

@@ -11,9 +11,8 @@ Customized interaction style:
 
 import time
 import numpy as np
-import vtk
 from pyvistaqt import QtInteractor
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QFrame, QVBoxLayout
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -22,6 +21,8 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 
 class MVATViewer(QFrame):
+    focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
+
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
@@ -39,9 +40,9 @@ class MVATViewer(QFrame):
 
         # Create PyVista QtInteractor
         self.plotter = QtInteractor(self, point_smoothing=False)
-        self.plotter.set_background('white')
 
-        # Optimizations
+        # Optimizations TODO make configurable?
+        self.plotter.set_background('white')
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -303,6 +304,7 @@ class MVATViewer(QFrame):
         # Animate the transition if desired, or just set it
         self.plotter.camera.focal_point = point
         self.plotter.render()
+        self.focalPointChanged.emit(np.asarray(point))
         
     # --------------------------------------------------------------------------
     # Point Cloud Loading and Subsetting
@@ -334,6 +336,7 @@ class MVATViewer(QFrame):
             self.add_point_cloud()
             event.acceptProposedAction()
             
+            # TODO this doesn't actually update the selected camera's sub-point cloud
             # Trigger visibility filtering for the selected camera
             # This ensures the cloud transitions directly to filtered state
             if self.parent() and hasattr(self.parent(), 'selected_camera'):
