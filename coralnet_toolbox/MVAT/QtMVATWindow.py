@@ -588,8 +588,6 @@ class MVATWindow(QMainWindow):
         self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
         # Connect viewer focal point changes
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
-        # Connect to AnnotationWindow for camera selection
-        self.cameraSelectedInMVAT.connect(self.annotation_window._on_camera_selected_in_mvat)
     
     def _on_main_image_loaded(self, path: str):
         """
@@ -601,12 +599,20 @@ class MVATWindow(QMainWindow):
             path: Image path that was loaded in the main app.
         """
         if path in self.cameras:
+            # Clear all highlights
+            self._on_highlights_changed([])
+            
             # Update camera grid selection without triggering navigation
             self.camera_grid.render_selection_from_path(path)
             
             # Update 3D view selection
             camera = self.cameras[path]
             self._select_camera(path, camera, emit_signal=False)
+            
+            # Highlight the selected camera
+            self._on_highlights_changed([path])
+            
+            # Match camera perspective in 3D viewer
             self._match_camera_perspective(camera)
             
             # Reorder cameras based on proximity to selected camera
@@ -1452,6 +1458,9 @@ class MVATWindow(QMainWindow):
         # Update selected camera reference
         self.selected_camera = camera
         self.selected_camera_path = path
+        
+        # Sync the camera grid's selection state
+        self.camera_grid.render_selection_from_path(path)
         
         # Select new camera
         camera.select()

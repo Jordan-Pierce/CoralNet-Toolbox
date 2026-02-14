@@ -2021,10 +2021,3 @@ class AnnotationWindow(QGraphicsView):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
-            
-    # --- MVAT Event Handlers ---
-
-    def _on_camera_selected_in_mvat(self, path):
-        """Handle camera selection in MVAT."""
-        # TODO is this necessary?
-        self.current_image_path = path

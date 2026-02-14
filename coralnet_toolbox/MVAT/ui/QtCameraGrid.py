@@ -843,6 +843,10 @@ class CameraGrid(QWidget):
         widget.data_item.set_selected(True)
         widget.update_selection_visuals()
         
+        # Clear all highlights except the new selected camera and ensure it's highlighted
+        self._clear_highlights()
+        self._add_highlight(path)
+        
         # Emit signal for 3D view to match perspective
         self.camera_selected.emit(path)
         
