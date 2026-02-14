@@ -646,7 +646,8 @@ class CameraGrid(QWidget):
     def recalculate_layout(self):
         """Schedule a layout recalculation (debounced)."""
         self._layout_timer.start(50)  # 50ms debounce
-        
+    
+    # TODO figure out which method needs a progress bar
     def _do_recalculate_layout(self):
         """Actually recalculate widget positions."""
         if not self.data_items:
@@ -796,7 +797,9 @@ class CameraGrid(QWidget):
             data_item.clear_thumbnail_cache()
         
         self.recalculate_layout()
-        
+    
+    # TODO if a widget is clicked but it corresponds to a camera already selected / highlighted, make sure
+    # we do not attempt to update the point cloud again unnecessarily.
     def _on_widget_clicked(self, widget, event):
         """Handle widget click for selection/highlighting."""
         path = widget.data_item.image_path

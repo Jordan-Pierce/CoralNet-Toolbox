@@ -2026,4 +2026,5 @@ class AnnotationWindow(QGraphicsView):
 
     def _on_camera_selected_in_mvat(self, path):
         """Handle camera selection in MVAT."""
+        # TODO is this necessary?
         self.current_image_path = path
