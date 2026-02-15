@@ -178,9 +178,6 @@ class MousePositionBridge:
                 camera=target_cam
             )
             
-            # Check if highlighted ray intersects the point cloud
-            highlighted_intersects = target_ray.cast_on_mesh(mesh) is not None
-            
             # Color coding based on accuracy
             ray_color = RAY_COLOR_HIGHLIGHTED if target_ray.has_accurate_depth else RAY_COLOR_INVALID
                 

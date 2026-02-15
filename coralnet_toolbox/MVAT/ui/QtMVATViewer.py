@@ -506,11 +506,15 @@ class MVATViewer(QFrame):
             self.clear_ray()
             return
         
-        # Build batched ray geometry
-        self._ray_manager.build_ray_batch(rays_with_colors)
-        
-        # Add to plotter (removes old actors first)
-        self._ray_manager.add_to_plotter(self.plotter, line_width=3)
+        # Build or update batched ray geometry
+        if self._ray_manager.ray_actor is not None and self._ray_manager._num_rays == len(rays_with_colors):
+            # Update existing rays in-place for better performance
+            self._ray_manager.update_ray_endpoints(rays_with_colors)
+        else:
+            # Build new batched ray geometry
+            self._ray_manager.build_ray_batch(rays_with_colors)
+            # Add to plotter (removes old actors first)
+            self._ray_manager.add_to_plotter(self.plotter, line_width=3)
         
         # Apply visibility state
         self._ray_manager.set_visibility(self._ray_visible)
