@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
-from coralnet_toolbox.QtTimer import TimerGroupBox
+from coralnet_toolbox.QtTimerWindow import TimerWindow
 
 # Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
@@ -1288,7 +1288,7 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.annotation_group_box)
 
         # Create the timer group (kept but will be placed in its own dock)
-        self.timer_group = TimerGroupBox(self)
+        self.timer_group = TimerWindow(self)
 
         # Left dock: LabelWindow
         self.left_dock = QDockWidget("Label Window", self)
