@@ -1492,10 +1492,11 @@ class MVATWindow(QMainWindow):
             # Emit focal point projection if we have a focal point
             if self.current_focal_point is not None:
                 pixel = camera.project(self.current_focal_point)
-                if not np.isnan(pixel).any():
-                    self.focalPointProjected.emit(path, pixel[0], pixel[1])
-                else:
-                    self.focalPointProjected.emit(path, np.nan, np.nan)
+                # TODO
+                # if not np.isnan(pixel).any():
+                #     self.focalPointProjected.emit(path, pixel[0], pixel[1])
+                # else:
+                #     self.focalPointProjected.emit(path, np.nan, np.nan)
         
     def _deselect_camera(self):
         """Deselect the current camera."""
