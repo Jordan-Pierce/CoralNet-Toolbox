@@ -200,55 +200,40 @@ class TimerWidget(QWidget):
         return instance
 
 
-class TimerGroupBox(QGroupBox):
-    """A group box containing the timer widget."""
+class TimerGroupBox(QWidget):
+    """A simple container widget containing the timer widget.
+
+    Note: this used to be a checkable QGroupBox; hiding/collapsing is
+    removed per UI changes — the timer is always visible in its dock.
+    """
 
     def __init__(self, parent=None):
-        super().__init__("Timer", parent)
-        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n "
+        super().__init__(parent)
+        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n"
                         "Tracks and saves total duration across sessions and logs all timer actions.")
         self.timer_widget = TimerWidget(self)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.timer_widget)
 
-        # Make the group box checkable for collapsing
-        self.setCheckable(True)
-        self.setChecked(True)
-        self.toggled.connect(self.on_toggled)
-
-    def on_toggled(self, checked):
-        """Handle the toggle event to show/hide the timer widget."""
-        self.timer_widget.setVisible(checked)
-
     def to_dict(self):
-        """Serialize the timer group box data to a dictionary."""
-        data = self.timer_widget.to_dict()
-        data['checked'] = self.isChecked()
-        return data
+        """Serialize the timer widget data to a dictionary."""
+        return self.timer_widget.to_dict()
 
     @classmethod
     def from_dict(cls, data):
-        """Deserialize the timer group box data from a dictionary."""
-        # Create a new instance normally to ensure proper Qt initialization
         instance = cls()
-        
-        # Stop and replace the timer widget with the deserialized one
-        if hasattr(instance.timer_widget, 'stop_threads'):
-            instance.timer_widget.stop_threads()
-        
-        # Remove the old timer widget from layout
+        # Replace timer widget with deserialized one
         layout = instance.layout()
+        # Remove old widget
         if layout and layout.count() > 0:
             old_widget = layout.itemAt(0).widget()
+            if old_widget and hasattr(old_widget, 'stop_threads'):
+                old_widget.stop_threads()
             if old_widget:
                 layout.removeWidget(old_widget)
                 old_widget.setParent(None)
-        
-        # Create new timer widget with deserialized data
+
         instance.timer_widget = TimerWidget.from_dict(data)
         layout.addWidget(instance.timer_widget)
-        
-        # Set the checked state
-        instance.setChecked(data.get('checked', True))
-        
         return instance

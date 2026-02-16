@@ -153,7 +153,7 @@ class ConfidenceWindow(QWidget):
         self.layout.setSpacing(0)
 
         # Create a groupbox and set its title
-        self.groupBox = QGroupBox("Confidence Window")
+        self.groupBox = QGroupBox("")
         self.groupBoxLayout = QVBoxLayout()
         self.groupBox.setLayout(self.groupBoxLayout)
 
