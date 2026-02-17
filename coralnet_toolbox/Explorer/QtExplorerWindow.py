@@ -99,7 +99,7 @@ class ExplorerWindow(QMainWindow):
         self._ui_initialized = False
 
         self.setWindowTitle("Explorer")
-        explorer_icon_path = get_icon("magic.png")
+        explorer_icon_path = get_icon("magic.svg")
         self.setWindowIcon(QIcon(explorer_icon_path))
 
         self.central_widget = QWidget()

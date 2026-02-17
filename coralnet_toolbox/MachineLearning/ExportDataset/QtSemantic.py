@@ -43,7 +43,7 @@ class Semantic(Base):
     def __init__(self, main_window, parent=None):
         super(Semantic, self).__init__(main_window, parent)
         self.setWindowTitle("Export Semantic Segmentation Dataset")
-        self.setWindowIcon(get_icon("mask.png"))
+        self.setWindowIcon(get_icon("mask.svg"))
         
         # This will store {annotation_id: stats_dict}
         self._stats_cache = {} 

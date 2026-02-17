@@ -33,6 +33,10 @@ def get_icon(icon_name):
     :param icon_name:
     :return:
     """
+    if ".png" in icon_name.lower():
+        # Keep for backwards compatibility, but prefer SVGs
+        icon_name = icon_name.lower().replace(".png", ".svg")
+        
     return QIcon(get_icon_path(icon_name))
 
 

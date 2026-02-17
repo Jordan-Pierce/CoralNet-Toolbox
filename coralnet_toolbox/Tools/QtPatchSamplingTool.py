@@ -148,7 +148,7 @@ class PatchSamplingDialog(QDialog):
         self.animation_manager = self.annotation_window.animation_manager
 
         self.setWindowTitle("Sample Annotations")
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self.layout = QVBoxLayout(self)

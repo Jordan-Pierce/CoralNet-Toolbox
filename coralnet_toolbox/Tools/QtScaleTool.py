@@ -30,7 +30,7 @@ class ScaleToolDialog(QDialog):
         self.main_window = self.annotation_window.main_window
 
         self.setWindowTitle("Scale Tool")
-        self.setWindowIcon(get_icon("scale.png"))
+        self.setWindowIcon(get_icon("scale.svg"))
         self.resize(450, 350)
 
         # This dialog is modeless

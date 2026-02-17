@@ -1259,7 +1259,7 @@ class BreakoutGame(QMainWindow):
                             Qt.WindowCloseButtonHint)
         
         # Set the window icon and title
-        self.setWindowIcon(get_icon("breakout.png"))
+        self.setWindowIcon(get_icon("breakout.svg"))
         self.title = "Breakout Game"
         
         # Set the window opacity

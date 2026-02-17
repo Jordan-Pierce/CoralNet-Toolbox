@@ -467,7 +467,7 @@ class LabelWindow(QWidget):
         self.actions_bar.addWidget(self.label_lock_button)
 
         self.toggle_all_button = QPushButton()
-        self.toggle_all_button.setIcon(get_icon("all.png"))
+        self.toggle_all_button.setIcon(get_icon("all.svg"))
         self.toggle_all_button.setToolTip("Toggle All Labels")
         self.toggle_all_button.clicked.connect(self.toggle_all_labels)
         self.toggle_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1557,7 +1557,7 @@ class AddLabelDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -1637,7 +1637,7 @@ class EditLabelDialog(QDialog):
         self.label_window = label_window
         self.label = label
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Edit Label")
         self.setObjectName("EditLabelDialog")
 

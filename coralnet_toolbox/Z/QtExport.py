@@ -65,7 +65,7 @@ class ZExportDialog(QDialog):
             return
         
         self.setWindowTitle("Export Z-Channels")
-        self.setWindowIcon(get_icon("z.png"))
+        self.setWindowIcon(get_icon("z.svg"))
         self.resize(600, 300)
         
         # Main layout

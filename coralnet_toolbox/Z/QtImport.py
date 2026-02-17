@@ -180,7 +180,7 @@ class ZImportDialog(QDialog):
         self.setModal(True)
         
         self.setWindowTitle("Z-Channel Import")
-        self.setWindowIcon(get_icon("z.png"))
+        self.setWindowIcon(get_icon("z.svg"))
         self.resize(1150, 600)
         
         # Set busy cursor while loading and matching

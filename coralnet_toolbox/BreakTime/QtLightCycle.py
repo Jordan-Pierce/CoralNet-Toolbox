@@ -708,7 +708,7 @@ class LightCycleGame(QMainWindow):
                             Qt.WindowCloseButtonHint)
 
         # Set the window icon
-        self.setWindowIcon(get_icon("lightcycle.png"))
+        self.setWindowIcon(get_icon("lightcycle.svg"))
         # Set the window title
         self.title = "Light Cycle Game"
 

@@ -46,7 +46,7 @@ class DeployPredictorDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("wizard.png"))
+        self.setWindowIcon(get_icon("wizard.svg"))
         self.setWindowTitle("SAM Deploy Model")
         self.resize(400, 325)
 

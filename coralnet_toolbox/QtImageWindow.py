@@ -342,7 +342,7 @@ class ImageWindow(QWidget):
         # Add Home button to the info_layout
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
-        self.home_button.setIcon(get_icon("home.png"))  
+        self.home_button.setIcon(get_icon("home.svg"))  
         self.home_button.setFixedSize(24, 24)             
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
