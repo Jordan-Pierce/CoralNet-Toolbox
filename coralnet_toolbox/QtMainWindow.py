@@ -1035,13 +1035,32 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.device_tool_action)
 
         # ----------------------------------------
-        # Create and add the status bar (QStatusBar placed at the top)
+        # Create and add the top 'status' toolbar (keeps a fixed height,
+        # spans the full window width and sits under the menu bar).
         # ----------------------------------------
-        # We'll use a real QStatusBar widget but add it to the main layout
-        # so it remains visually at the top (as requested).
-        self.status_bar = QStatusBar()
-        self.status_bar.setSizeGripEnabled(False)
-        # Keep an explicit list of widgets placed into the status bar so other
+        # Use a QToolBar as a top fixed-height status area so it always
+        # appears under the menu bar and above all docks/central widget.
+        self.top_status_toolbar = QToolBar()
+        self.top_status_toolbar.setMovable(False)
+        self.top_status_toolbar.setFloatable(False)
+        self.top_status_toolbar.setAllowedAreas(Qt.TopToolBarArea)
+        # Make the toolbar visually like a status bar and prevent height changes
+        # Compute a fixed toolbar height based on font metrics so it scales
+        # sensibly with DPI/font size but remains constant at runtime.
+        fm = self.fontMetrics()
+        toolbar_height = max(64, int(fm.height() * 3.6))
+        self.top_status_toolbar.setFixedHeight(toolbar_height)
+        self.top_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.top_status_toolbar.setObjectName("topStatusToolbar")
+        # Light background so the toolbar reads like a status area but remains
+        # visually subtle. Use an RGBA color so it works with dark/light themes
+        # while remaining slightly lighter than the default window background.
+        self.top_status_toolbar.setStyleSheet(
+            "QToolBar#topStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}\n"
+            "QToolButton{background:transparent;border:0px;padding:0px;margin:0px;}"
+        )
+
+        # Keep an explicit list of widgets placed into the top toolbar so other
         # code can iterate/enable/disable them (replaces layout.itemAt usage).
         self.status_bar_widgets = []
 
@@ -1237,7 +1256,7 @@ class MainWindow(QMainWindow):
         area_thresh_widget.setLayout(area_thresh_layout)
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
-        # Add widgets to the QStatusBar and track them
+        # Add widgets to the top toolbar and track them
         for w in (
             self.mouse_position_label,
             self.image_dimensions_label,
@@ -1254,7 +1273,7 @@ class MainWindow(QMainWindow):
             self.parameters_section,
         ):
             # Use addWidget so widgets appear left-to-right; store for later
-            self.status_bar.addWidget(w)
+            self.top_status_toolbar.addWidget(w)
             self.status_bar_widgets.append(w)
 
         # --------------------------------------------------
@@ -1266,9 +1285,10 @@ class MainWindow(QMainWindow):
         # Main vertical layout
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Add the status bar widget to the top of the main layout (keeps
-        # visual placement at top while using a real QStatusBar)
-        self.main_layout.addWidget(self.status_bar)
+        # Add the top toolbar to the QMainWindow so it appears under the menu
+        # bar and above all docks/central widget. This ensures it spans the
+        # entire width and that docks are placed below it.
+        self.addToolBar(Qt.TopToolBarArea, self.top_status_toolbar)
 
         # The annotation container will be placed below the status bar as the
         # main content area (added later). No placeholder is required.
