@@ -5,7 +5,7 @@ from datetime import datetime
 
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSizePolicy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
@@ -95,31 +95,45 @@ class TimerWidget(QWidget):
 
     def setup_ui(self):
         """Set up the user interface."""
+        # Compact layout and spacing to minimize height
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
 
-        # Time display
+        # Time display (more readable/default styling)
         self.time_label = QLabel("00:00:00")
-        self.time_label.setFont(QFont("Arial", 8, QFont.Bold))
-        self.time_label.setStyleSheet("color: #333; padding: 10px; background-color: #F0F0F0; border-radius: 5px;"+"")
+        self.time_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.time_label.setStyleSheet(
+            "color: #333; padding: 6px; background-color: #F0F0F0; border-radius: 4px;"
+        )
+        self.time_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         layout.addWidget(self.time_label)
 
-        # Buttons layout
+        # Buttons layout (small buttons)
         buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(2)
 
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_timer)
+        # Let the button size itself; allow horizontal shrinking but fixed height
+        self.start_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop_timer)
         self.stop_button.setEnabled(False)
+        self.stop_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.stop_button)
 
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_timer)
+        self.reset_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.reset_button)
 
         layout.addLayout(buttons_layout)
+
+        # Make the widget request a reasonable minimum height but allow growth
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
 
     def start_timer(self):
         """Start the timer."""
@@ -215,6 +229,14 @@ class TimerWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.timer_widget)
+        # Allow the container to be at least the preferred height but not smaller.
+        # Use the widget's sizeHint after activating the layout so the minimal
+        # height is based on the actual widget metrics rather than hardcoded pixels.
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        layout.activate()
+        self.timer_widget.adjustSize()
+        self.adjustSize()
+        self.setMinimumHeight(self.timer_widget.sizeHint().height())
 
     def to_dict(self):
         """Serialize the timer widget data to a dictionary."""

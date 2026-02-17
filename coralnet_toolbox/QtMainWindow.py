@@ -1314,7 +1314,7 @@ class MainWindow(QMainWindow):
         annotation_container_layout.addWidget(self.top_status_toolbar)
         annotation_container_layout.addWidget(self.annotation_group_box)
 
-        self.annotation_dock = QDockWidget("Workspace", self)
+        self.annotation_dock = QDockWidget("Annotation Window", self)
         self.annotation_dock.setObjectName("AnnotationDock")
         self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
@@ -1326,7 +1326,7 @@ class MainWindow(QMainWindow):
         self.timer_dock.setObjectName("TimerDock")
         self.timer_dock.setWidget(self.timer_group)
         self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.timer_dock.setMaximumHeight(140)
+        self.timer_dock.setMaximumHeight(90)
 
         # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
