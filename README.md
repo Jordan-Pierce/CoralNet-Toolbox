@@ -36,8 +36,8 @@ pip install uv
 If you have an NVIDIA GPU with CUDA, install PyTorch with CUDA support for full acceleration.
 
 ```bash
-# Example for CUDA 11.8; use your version of CUDA
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Example for CUDA 12.8; use your version of CUDA
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **3. Install**
