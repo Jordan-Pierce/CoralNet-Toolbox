@@ -27,7 +27,7 @@ class SystemMonitor(QMainWindow):
 
         # --- Window Properties ---
         self.setWindowTitle("System Monitor")
-        self.setWindowIcon(get_icon("system_monitor.png"))
+        self.setWindowIcon(get_icon("system_monitor.svg"))
         self.setGeometry(100, 100, 800, 900)
 
         # --- Data Storage ---

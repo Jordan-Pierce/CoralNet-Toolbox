@@ -230,7 +230,7 @@ class SnakeGame(QMainWindow):
                             Qt.WindowCloseButtonHint)
 
         # Set the window icon
-        self.setWindowIcon(get_icon("snake.png"))
+        self.setWindowIcon(get_icon("snake.svg"))
         # Set the window title
         self.title = "Coral Snake Game"
 

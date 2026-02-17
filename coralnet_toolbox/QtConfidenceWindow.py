@@ -153,7 +153,7 @@ class ConfidenceWindow(QWidget):
         self.layout.setSpacing(0)
 
         # Create a groupbox and set its title
-        self.groupBox = QGroupBox("Confidence Window")
+        self.groupBox = QGroupBox("")
         self.groupBoxLayout = QVBoxLayout()
         self.groupBox.setLayout(self.groupBoxLayout)
 
@@ -173,17 +173,17 @@ class ConfidenceWindow(QWidget):
         self.confidence_bar_labels = []
         
         # Get and store the icons
-        self.user_icon = get_icon("user.png")
-        self.machine_icon = get_icon("machine.png")
+        self.user_icon = get_icon("user.svg")
+        self.machine_icon = get_icon("machine.svg")
         self.prev_icon = self.style().standardIcon(QStyle.SP_ArrowLeft)
         self.next_icon = self.style().standardIcon(QStyle.SP_ArrowRight)
         
         self.top_k_icons = {
-            "1": get_icon("1.png").pixmap(12, 12),
-            "2": get_icon("2.png").pixmap(12, 12),
-            "3": get_icon("3.png").pixmap(12, 12),
-            "4": get_icon("4.png").pixmap(12, 12),
-            "5": get_icon("5.png").pixmap(12, 12)
+            "1": get_icon("1.svg").pixmap(12, 12),
+            "2": get_icon("2.svg").pixmap(12, 12),
+            "3": get_icon("3.svg").pixmap(12, 12),
+            "4": get_icon("4.svg").pixmap(12, 12),
+            "5": get_icon("5.svg").pixmap(12, 12)
         }
 
         # --- Graphics View Controls Layout ---
@@ -219,7 +219,7 @@ class ConfidenceWindow(QWidget):
         self.toggle_button = QPushButton(self)
         self.toggle_button.setFixedSize(24, 24)
         self.toggle_state = False  # False = user, True = machine
-        self.toggle_button.setIcon(get_icon("user.png"))
+        self.toggle_button.setIcon(get_icon("user.svg"))
         self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
         self.set_user_icon(False)  # Set to disabled user mode by default
 

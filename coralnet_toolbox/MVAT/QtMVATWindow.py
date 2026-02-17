@@ -178,9 +178,6 @@ class MousePositionBridge:
                 camera=target_cam
             )
             
-            # Check if highlighted ray intersects the point cloud
-            highlighted_intersects = target_ray.cast_on_mesh(mesh) is not None
-            
             # Color coding based on accuracy
             ray_color = RAY_COLOR_HIGHLIGHTED if target_ray.has_accurate_depth else RAY_COLOR_INVALID
                 
@@ -364,7 +361,7 @@ class MVATWindow(QMainWindow):
     def _setup_window(self):
         """Configure the main window properties."""
         self.setWindowTitle("MultiView Annotation Tool (MVAT)")
-        self.setWindowIcon(QIcon(get_icon("camera.png")))
+        self.setWindowIcon(QIcon(get_icon("camera.svg")))
         self.setMinimumSize(1200, 800)
         
     def _setup_menubar(self):
@@ -1495,10 +1492,11 @@ class MVATWindow(QMainWindow):
             # Emit focal point projection if we have a focal point
             if self.current_focal_point is not None:
                 pixel = camera.project(self.current_focal_point)
-                if not np.isnan(pixel).any():
-                    self.focalPointProjected.emit(path, pixel[0], pixel[1])
-                else:
-                    self.focalPointProjected.emit(path, np.nan, np.nan)
+                # TODO
+                # if not np.isnan(pixel).any():
+                #     self.focalPointProjected.emit(path, pixel[0], pixel[1])
+                # else:
+                #     self.focalPointProjected.emit(path, np.nan, np.nan)
         
     def _deselect_camera(self):
         """Deselect the current camera."""

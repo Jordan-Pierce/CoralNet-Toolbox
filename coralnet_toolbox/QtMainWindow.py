@@ -17,13 +17,13 @@ from PyQt5.QtWidgets import (QListWidget, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
-                             QGroupBox, QSpacerItem)
+                             QGroupBox, QSpacerItem, QStatusBar, QDockWidget)
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
 from coralnet_toolbox.QtSystemMonitor import SystemMonitor
-from coralnet_toolbox.QtTimer import TimerGroupBox
+from coralnet_toolbox.QtTimerWindow import TimerWindow
 
 # Main Windows
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
@@ -169,37 +169,37 @@ class MainWindow(QMainWindow):
         self.pid = os.getpid()
 
         # Define icons
-        self.coralnet_icon = get_icon("coralnet.png")
-        self.coral_icon = get_icon("coral.png")
-        self.select_icon = get_icon("select.png")
-        self.patch_icon = get_icon("patch.png")
-        self.rectangle_icon = get_icon("rectangle.png")
-        self.polygon_icon = get_icon("polygon.png")
-        self.brush_icon = get_icon("brush.png")
-        self.erase_icon = get_icon("erase.png")
-        self.dropper_icon = get_icon("dropper.png")
-        self.fill_icon = get_icon("fill.png")
-        self.sam_icon = get_icon("wizard.png")
-        self.see_anything_icon = get_icon("eye.png")
-        self.tile_icon = get_icon("tile.png")
-        self.workarea_icon = get_icon("workarea.png")
-        self.scale_icon = get_icon("scale.png")
-        self.turtle_icon = get_icon("turtle.png")
-        self.rabbit_icon = get_icon("rabbit.png")
-        self.rocket_icon = get_icon("rocket.png")
-        self.apple_icon = get_icon("apple.png")
-        self.transparent_icon = get_icon("transparent.png")
-        self.opaque_icon = get_icon("opaque.png")
-        self.z_icon = get_icon("z.png")
-        self.dynamic_icon = get_icon("dynamic.png")
-        self.parameters_icon = get_icon("parameters.png")
-        self.system_monitor_icon = get_icon("system_monitor.png")
-        self.add_icon = get_icon("add.png")
-        self.remove_icon = get_icon("remove.png")
-        self.edit_icon = get_icon("edit.png")
-        self.lock_icon = get_icon("lock.png")
-        self.unlock_icon = get_icon("unlock.png")
-        self.home_icon = get_icon("home.png")
+        self.coralnet_icon = get_icon("coralnet.svg")
+        self.coral_icon = get_icon("coral.svg")
+        self.select_icon = get_icon("select.svg")
+        self.patch_icon = get_icon("patch.svg")
+        self.rectangle_icon = get_icon("rectangle.svg")
+        self.polygon_icon = get_icon("polygon.svg")
+        self.brush_icon = get_icon("brush.svg")
+        self.erase_icon = get_icon("erase.svg")
+        self.dropper_icon = get_icon("dropper.svg")
+        self.fill_icon = get_icon("fill.svg")
+        self.sam_icon = get_icon("wizard.svg")
+        self.see_anything_icon = get_icon("eye.svg")
+        self.tile_icon = get_icon("tile.svg")
+        self.workarea_icon = get_icon("workarea.svg")
+        self.scale_icon = get_icon("scale.svg")
+        self.turtle_icon = get_icon("turtle.svg")
+        self.rabbit_icon = get_icon("rabbit.svg")
+        self.rocket_icon = get_icon("rocket.svg")
+        self.apple_icon = get_icon("apple.svg")
+        self.transparent_icon = get_icon("transparent.svg")
+        self.opaque_icon = get_icon("opaque.svg")
+        self.z_icon = get_icon("z.svg")
+        self.dynamic_icon = get_icon("dynamic.svg")
+        self.parameters_icon = get_icon("parameters.svg")
+        self.system_monitor_icon = get_icon("system_monitor.svg")
+        self.add_icon = get_icon("add.svg")
+        self.remove_icon = get_icon("remove.svg")
+        self.edit_icon = get_icon("edit.svg")
+        self.lock_icon = get_icon("lock.svg")
+        self.unlock_icon = get_icon("unlock.svg")
+        self.home_icon = get_icon("home.svg")
 
         # Set the version
         self.version = __version__
@@ -369,8 +369,7 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Connect the filterChanged signal from ImageWindow to expand ConfidenceWindow height
-        self.image_window.filterGroupToggled.connect(self.on_image_window_filter_toggled)
+        # Previously there was a toggle for filter group; filters are always visible now
         # Connect the zChannelRemoved signal from ImageWindow to update status bar
         self.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
         # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
@@ -1036,14 +1035,39 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.device_tool_action)
 
         # ----------------------------------------
-        # Create and add the status bar
+        # Create and add the top 'status' toolbar (keeps a fixed height,
+        # spans the full window width and sits under the menu bar).
         # ----------------------------------------
-        self.status_bar_layout = QHBoxLayout()
+        # Use a QToolBar as a top fixed-height status area so it always
+        # appears under the menu bar and above all docks/central widget.
+        self.top_status_toolbar = QToolBar()
+        self.top_status_toolbar.setMovable(False)
+        self.top_status_toolbar.setFloatable(False)
+        self.top_status_toolbar.setAllowedAreas(Qt.TopToolBarArea)
+        # Make the toolbar visually like a status bar and prevent height changes
+        # Compute a fixed toolbar height based on font metrics so it scales
+        # sensibly with DPI/font size but remains constant at runtime.
+        fm = self.fontMetrics()
+        toolbar_height = max(64, int(fm.height() * 3.6))
+        self.top_status_toolbar.setFixedHeight(toolbar_height)
+        self.top_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.top_status_toolbar.setObjectName("topStatusToolbar")
+        # Light background so the toolbar reads like a status area but remains
+        # visually subtle. Use an RGBA color so it works with dark/light themes
+        # while remaining slightly lighter than the default window background.
+        self.top_status_toolbar.setStyleSheet(
+            "QToolBar#topStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}\n"
+            "QToolButton{background:transparent;border:0px;padding:0px;margin:0px;}"
+        )
+
+        # Keep an explicit list of widgets placed into the top toolbar so other
+        # code can iterate/enable/disable them (replaces layout.itemAt usage).
+        self.status_bar_widgets = []
 
         # Image and view dimensions and mouse position
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
         self.mouse_position_label.setFixedWidth(150)
-        
+
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.image_dimensions_label.setFixedWidth(150)
 
@@ -1160,7 +1184,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
-        self.parameters_section = CollapsibleSection("Parameters", "parameters.png")
+        self.parameters_section = CollapsibleSection("Parameters", "parameters.svg")
 
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
@@ -1232,68 +1256,129 @@ class MainWindow(QMainWindow):
         area_thresh_widget.setLayout(area_thresh_layout)
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
-        # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.mouse_position_label)
-        self.status_bar_layout.addWidget(self.image_dimensions_label)
-        self.status_bar_layout.addWidget(self.view_dimensions_label)
-        self.status_bar_layout.addWidget(self.transparency_widget)
-        self.status_bar_layout.addWidget(self.scale_unit_dropdown)
-        self.status_bar_layout.addWidget(self.scaled_dimensions_label)
-        self.status_bar_layout.addWidget(self.z_unit_dropdown)
-        self.status_bar_layout.addWidget(self.z_label)
-        self.status_bar_layout.addWidget(self.z_colormap_dropdown)
-        self.status_bar_layout.addWidget(self.z_transparency_widget)
-        self.status_bar_layout.addWidget(self.z_dynamic_button)
-        self.status_bar_layout.addWidget(self.annotation_size_widget)
-        self.status_bar_layout.addWidget(self.parameters_section)
+        # Add widgets to the top toolbar and track them
+        for w in (
+            self.mouse_position_label,
+            self.image_dimensions_label,
+            self.view_dimensions_label,
+            self.transparency_widget,
+            self.scale_unit_dropdown,
+            self.scaled_dimensions_label,
+            self.z_unit_dropdown,
+            self.z_label,
+            self.z_colormap_dropdown,
+            self.z_transparency_widget,
+            self.z_dynamic_button,
+            self.annotation_size_widget,
+            self.parameters_section,
+        ):
+            # Use addWidget so widgets appear left-to-right; store for later
+            self.top_status_toolbar.addWidget(w)
+            self.status_bar_widgets.append(w)
 
         # --------------------------------------------------
-        # Create the main layout
+        # Setup Main Docking Layout (With Vacant Center Trick)
         # --------------------------------------------------
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-
-        # Main vertical layout
-        self.main_layout = QVBoxLayout(self.central_widget)
-
-        # Status bar in a group box
-        self.status_bar_group_box = QGroupBox("Status Bar")
-        self.status_bar_group_box.setLayout(self.status_bar_layout)
-        self.main_layout.addWidget(self.status_bar_group_box)
-
-        # Panels layout: horizontal row under status bar 
-        # (LabelWindow, AnnotationWindow, ImageWindow + ConfidenceWindow)
-        self.panels_layout = QHBoxLayout()
-
-        # Label panel (left)
-        self.label_layout = QVBoxLayout()
-        self.label_layout.addWidget(self.label_window)
-
-        # Add the timer group box under the label window (which contains Counts)
-        self.timer_group = TimerGroupBox(self)
-        self.label_layout.addWidget(self.timer_group)
-
-        # Annotation panel (center) (in a group box since it's a QGraphicsView)
-        self.annotation_layout = QVBoxLayout()
-        self.annotation_group_box = QGroupBox("Annotation Window")
-        group_layout = QVBoxLayout(self.annotation_group_box)
-        group_layout.addWidget(self.annotation_window)
-        self.annotation_group_box.setLayout(group_layout)
-        self.annotation_layout.addWidget(self.annotation_group_box)
-
-        # Image panel (ImageWindow + ConfidenceWindow stacked vertically)
-        self.image_layout = QVBoxLayout()
-        self.image_layout.addWidget(self.image_window, 54)
-        self.image_layout.addWidget(self.confidence_window, 46)
         
-        # Set stretch factors to control relative sizes
-        self.panels_layout.addLayout(self.label_layout, 15)  # Strict width
-        self.panels_layout.addLayout(self.annotation_layout, 120)  # Strict width
-        self.panels_layout.addLayout(self.image_layout, 25)
+        # 1. Bring back the blank central widget. This creates the permanent "void".
+        self.central_widget = QWidget()
+        # Force the dummy widget to be 0 pixels tall so it yields all vertical space
+        self.central_widget.setFixedHeight(0) 
+        # Expand horizontally to maintain the gap, but stay fixed vertically
+        self.central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCentralWidget(self.central_widget)
+        self.setDockNestingEnabled(True)
 
-        # Add the panels row to the main layout
-        self.main_layout.addLayout(self.panels_layout)
+        # 2. The Qt Corner Trick: 
+        # Force the Left and Right dock areas to stretch all the way from the very top 
+        # of the window to the very bottom. This traps the Top and Bottom dock areas 
+        # strictly in the center column.
+        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
 
+        # --------------------------------------------------
+        # Create the Docks & Containers
+        # --------------------------------------------------
+
+        # Setup the Annotation Container & Dock (Combines Canvas + Status Bar)
+        self.annotation_group_box = QWidget()
+        group_layout = QVBoxLayout(self.annotation_group_box)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.addWidget(self.annotation_window)
+
+        self.annotation_dock_container = QWidget()
+        annotation_container_layout = QVBoxLayout(self.annotation_dock_container)
+        annotation_container_layout.setContentsMargins(0, 0, 0, 0)
+        annotation_container_layout.addWidget(self.top_status_toolbar)
+        annotation_container_layout.addWidget(self.annotation_group_box)
+
+        self.annotation_dock = QDockWidget("Annotation Window", self)
+        self.annotation_dock.setObjectName("AnnotationDock")
+        self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.annotation_dock.setWidget(self.annotation_dock_container)
+
+        # Setup Timer Dock
+        self.timer_group = TimerWindow(self)
+        self.timer_dock = QDockWidget("Timer Window", self)
+        self.timer_dock.setObjectName("TimerDock")
+        self.timer_dock.setWidget(self.timer_group)
+        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.timer_dock.setMaximumHeight(90)
+
+        # Setup Label Dock (Left)
+        self.left_dock = QDockWidget("Label Window", self)
+        self.left_dock.setObjectName("LabelDock")
+        self.left_container = QWidget()
+        self.left_layout = QVBoxLayout(self.left_container)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.addWidget(self.label_window)
+        self.left_dock.setWidget(self.left_container)
+        self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
+        # Setup Image Dock (Right)
+        self.right_dock = QDockWidget("Image Window", self)
+        self.right_dock.setObjectName("ImageDock")
+        self.right_container = QWidget()
+        self.right_layout = QVBoxLayout(self.right_container)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_layout.addWidget(self.image_window)
+        self.right_dock.setWidget(self.right_container)
+        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
+        # Setup Confidence Dock (Right)
+        self.confidence_dock = QDockWidget("Confidence Window", self)
+        self.confidence_dock.setObjectName("ConfidenceDock")
+        self.confidence_dock.setWidget(self.confidence_window)
+        self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
+        # --------------------------------------------------
+        # Explicitly arrange the docks on the screen
+        # --------------------------------------------------
+
+        # 3. Add the side docks to their respective areas
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        
+        # 4. Add the Workspace dock to the TOP area. 
+        # Because we locked the corners above, "Top" now effectively means 
+        # "Top of the center column", sitting perfectly above our invisible central widget!
+        self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
+        
+        # 5. Split the side panels vertically (Timer below Labels, Confidence below Image)
+        self.splitDockWidget(self.left_dock, self.timer_dock, Qt.Vertical)
+        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+
+        # 6. Shrink the default width of the side docks.
+        # This tells Qt to assign 250 pixels of width to the left side and right side,
+        # leaving the vast majority of the screen for your center column.
+        self.resizeDocks([self.left_dock, self.right_dock], [250, 250], Qt.Horizontal)
+        
+        # Give the Workspace dock the absolute maximum vertical space available
+        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
+        
         # --------------------------------------------------
         # Setup global event filter for shortcuts
         # --------------------------------------------------
@@ -1428,7 +1513,7 @@ class MainWindow(QMainWindow):
             self.confidence_window,
             self.annotation_window,
             # Status bar widgets
-            *(self.status_bar_layout.itemAt(i).widget() for i in range(self.status_bar_layout.count()))
+            *tuple(self.status_bar_widgets)
         ]
         # Remove None entries (in case any status bar slot is empty)
         all_widgets = [w for w in all_widgets if w is not None]
@@ -2014,13 +2099,15 @@ class MainWindow(QMainWindow):
         """
         if is_expanded:
             # Reset to default stretch factors (54 / 46)
-            self.image_layout.setStretch(0, 54)  # index 0 is image_window
-            self.image_layout.setStretch(1, 46)  # index 1 is confidence_window
+            if hasattr(self, 'right_layout'):
+                self.right_layout.setStretch(0, 54)  # index 0 is image_window
+                self.right_layout.setStretch(1, 46)  # index 1 is confidence_window
         else:
             # Filters are hidden, give less space to image_window
             # and more to confidence_window.
-            self.image_layout.setStretch(0, 54)
-            self.image_layout.setStretch(1, 66)
+            if hasattr(self, 'right_layout'):
+                self.right_layout.setStretch(0, 54)
+                self.right_layout.setStretch(1, 66)
             
     def enable_z_visualization_controls(self, enabled):
         """
@@ -3305,14 +3392,16 @@ class MainWindow(QMainWindow):
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
             
-            # Move the label_window from the main layout to the explorer
-            self.label_layout.removeWidget(self.label_window)
+            # Move the label_window from the left dock to the explorer
+            if hasattr(self, 'left_layout'):
+                self.left_layout.removeWidget(self.label_window)
             self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
             self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
-            
+
             # Add a spacer to push the timer to the bottom of the left panel while explorer is open
             self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
-            self.label_layout.insertItem(0, self.explorer_spacer)
+            if hasattr(self, 'left_layout'):
+                self.left_layout.insertItem(0, self.explorer_spacer)
                 
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
@@ -3342,14 +3431,15 @@ class MainWindow(QMainWindow):
         """Handle the explorer window being closed."""
         if self.explorer_window:
             # Remove the spacer that was added when explorer opened
-            if hasattr(self, 'explorer_spacer'):
-                self.label_layout.removeItem(self.explorer_spacer)
+            if hasattr(self, 'explorer_spacer') and hasattr(self, 'left_layout'):
+                self.left_layout.removeItem(self.explorer_spacer)
                 del self.explorer_spacer
-            
-            # Move the label_window back to the main window's layout
-            self.label_window.setParent(self.central_widget)  # Re-parent back
-            # Insert at index 0 to maintain original order: label_window first, timer_group second
-            self.label_layout.insertWidget(0, self.label_window)
+
+            # Move the label_window back to the left dock's layout
+            self.label_window.setParent(self.left_container)  # Re-parent back
+            # Insert at index 0 to maintain original order: label_window first
+            if hasattr(self, 'left_layout'):
+                self.left_layout.insertWidget(0, self.label_window)
             self.label_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)

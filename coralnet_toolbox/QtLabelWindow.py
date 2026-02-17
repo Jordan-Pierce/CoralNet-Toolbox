@@ -424,8 +424,8 @@ class LabelWindow(QWidget):
 
     def setup_actions_section(self):
         """Set up the actions section of the UI."""
-        # Create a QGroupBox for Label Actions
-        self.actions_group = QGroupBox("Label Actions")
+        # Create a container widget for Label Actions (removed QGroupBox wrapper)
+        self.actions_group = QWidget()
         actions_layout = QVBoxLayout()
         self.actions_group.setLayout(actions_layout)
 
@@ -467,7 +467,7 @@ class LabelWindow(QWidget):
         self.actions_bar.addWidget(self.label_lock_button)
 
         self.toggle_all_button = QPushButton()
-        self.toggle_all_button.setIcon(get_icon("all.png"))
+        self.toggle_all_button.setIcon(get_icon("all.svg"))
         self.toggle_all_button.setToolTip("Toggle All Labels")
         self.toggle_all_button.clicked.connect(self.toggle_all_labels)
         self.toggle_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -490,8 +490,8 @@ class LabelWindow(QWidget):
 
     def setup_labels_section(self):
         """Set up the labels section of the UI."""
-        # Create a QGroupBox for Label Window
-        self.labels_group = QGroupBox("Label Window")
+        # Create a container widget for the Label list (removed QGroupBox wrapper)
+        self.labels_group = QWidget()
         labels_layout = QVBoxLayout()
         self.labels_group.setLayout(labels_layout)
 
@@ -515,8 +515,8 @@ class LabelWindow(QWidget):
 
     def setup_counts_section(self):
         """Set up the counts section of the UI."""
-        # Create a QGroupBox for Counts
-        self.counts_group = QGroupBox("Counts")
+        # Create a container widget for Counts (removed QGroupBox wrapper)
+        self.counts_group = QWidget()
         counts_layout = QVBoxLayout()
         self.counts_group.setLayout(counts_layout)
 
@@ -1557,7 +1557,7 @@ class AddLabelDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -1637,7 +1637,7 @@ class EditLabelDialog(QDialog):
         self.label_window = label_window
         self.label = label
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Edit Label")
         self.setObjectName("EditLabelDialog")
 

@@ -189,7 +189,6 @@ class ImageWindow(QWidget):
     filterChanged = pyqtSignal(int)  # Number of filtered images
     rasterAdded = pyqtSignal(str)  # Path of added raster
     rasterRemoved = pyqtSignal(str)  # Path of removed raster
-    filterGroupToggled = pyqtSignal(bool)  # When filter group is toggled
     zChannelRemoved = pyqtSignal(str)  # Path of raster with removed z-channel
 
     def __init__(self, main_window):
@@ -243,17 +242,13 @@ class ImageWindow(QWidget):
         
     def setup_filter_section(self):
         """Set up the filter section of the UI."""
-        # Create a QGroupBox for search and filters
-        self.filter_group = QGroupBox("Search and Filters")
-        self.filter_layout = QVBoxLayout()
-        self.filter_group.setLayout(self.filter_layout)
-
-        # --- Create a container widget for all contents ---
-        # This one widget will hold everything inside the group box.
+        # Create a simple container for search and filters (always visible)
         self.filter_content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.filter_content_widget)
-        # Remove padding so it looks seamless inside the group box
-        self.content_layout.setContentsMargins(0, 0, 0, 0) 
+        self.filter_layout = QVBoxLayout(self.filter_content_widget)
+        self.filter_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout = QVBoxLayout()
+        # Remove padding so it looks seamless inside the container
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
 
         # Create a form layout for the search bars
         self.search_layout = QFormLayout()
@@ -329,23 +324,14 @@ class ImageWindow(QWidget):
         self.search_layout.addRow("Search Images:", self.image_search_container)
         self.search_layout.addRow("Search Labels:", self.label_search_container)
 
-        # --- Add the single content widget to the group's layout ---
-        self.filter_layout.addWidget(self.filter_content_widget)
-
-        # --- Make the group box checkable and connect its signal ---
-        self.filter_group.setCheckable(True)
-        self.filter_group.toggled.connect(self.on_filter_group_toggled)
-        
-        # Set the default state to checked (expanded)
-        self.filter_group.setChecked(True)
-
-        # Add the group box to the main layout  
-        self.layout.addWidget(self.filter_group)
+        # Add the content layout into the filter container and add to main layout
+        self.filter_layout.addLayout(self.content_layout)
+        self.layout.addWidget(self.filter_content_widget)
         
     def setup_image_section(self):
         """Set up the image list section of the UI."""
-        # Create a QGroupBox for Image Window
-        self.info_table_group = QGroupBox("Image Window", self)
+        # Create a container widget for the Image Window header/info (removed QGroupBox wrapper)
+        self.info_table_group = QWidget(self)
         info_table_layout = QVBoxLayout()
         self.info_table_group.setLayout(info_table_layout)
 
@@ -356,7 +342,7 @@ class ImageWindow(QWidget):
         # Add Home button to the info_layout
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
-        self.home_button.setIcon(get_icon("home.png"))  
+        self.home_button.setIcon(get_icon("home.svg"))  
         self.home_button.setFixedSize(24, 24)             
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
@@ -457,20 +443,7 @@ class ImageWindow(QWidget):
         self.search_timer.stop()
         self.search_timer.start(300)  # 300ms delay
         
-    def on_filter_group_toggled(self, checked):
-        """
-        Shows or hides the filter content by changing its maximum height,
-        which preserves the horizontal width.
-        """
-        if checked:
-            # Set a very large max height (the default "no limit")
-            self.filter_content_widget.setMaximumHeight(16777215)
-        else:
-            # Set max height to 0 to collapse it
-            self.filter_content_widget.setMaximumHeight(0)
-        
-        # Emit signal to MainWindow to expand/collapse layout
-        self.filterGroupToggled.emit(checked)
+    # Filter toggling removed; filters are always visible now.
         
     @contextmanager
     def busy_cursor(self):

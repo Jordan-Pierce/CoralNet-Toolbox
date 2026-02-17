@@ -247,28 +247,28 @@ class EmbeddingViewer(QWidget):
 
         # Locate annotation button
         self.locate_button = QPushButton()
-        self.locate_button.setIcon(get_icon("location.png"))
+        self.locate_button.setIcon(get_icon("location.svg"))
         self.locate_button.setToolTip("Show location indicator for selected annotation")
         self.locate_button.clicked.connect(self._on_locate_clicked)
         toolbar_layout.addWidget(self.locate_button)
 
         # Center on selection button
         self.center_on_selection_button = QPushButton()
-        self.center_on_selection_button.setIcon(get_icon("target.png"))
+        self.center_on_selection_button.setIcon(get_icon("target.svg"))
         self.center_on_selection_button.setToolTip("Center view on selected point(s)")
         self.center_on_selection_button.clicked.connect(self.center_on_selection)
         toolbar_layout.addWidget(self.center_on_selection_button)
                 
         # Home button to reset view
         self.home_button = QPushButton()
-        self.home_button.setIcon(get_icon("home.png"))
+        self.home_button.setIcon(get_icon("home.svg"))
         self.home_button.setToolTip("Reset view to fit all points")
         self.home_button.clicked.connect(self.reset_view)
         toolbar_layout.addWidget(self.home_button)
         
         # Sprite and Dot view toggle buttons
         self.sprite_toggle_button = QPushButton()
-        self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+        self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
         self.sprite_toggle_button.setToolTip("Switch to Sprites View")
         self.sprite_toggle_button.clicked.connect(self.on_display_mode_changed) 
         toolbar_layout.addWidget(self.sprite_toggle_button)
@@ -317,11 +317,11 @@ class EmbeddingViewer(QWidget):
         """Toggles the display mode between dots and image sprites."""
         if self.display_mode == 'dots':
             self.display_mode = 'sprites'
-            self.sprite_toggle_button.setIcon(get_icon("dot.png"))
+            self.sprite_toggle_button.setIcon(get_icon("dot.svg"))
             self.sprite_toggle_button.setToolTip("Switch to Dots View")
         else:
             self.display_mode = 'dots'
-            self.sprite_toggle_button.setIcon(get_icon("sprites.png"))
+            self.sprite_toggle_button.setIcon(get_icon("sprites.svg"))
             self.sprite_toggle_button.setToolTip("Switch to Sprites View")
 
         # Notify the scene that the geometry of items is about to change.
@@ -1081,7 +1081,7 @@ class AnnotationViewer(QWidget):
         
         # Confidence badge toggle button
         self.confidence_toggle_button = QPushButton()
-        self.confidence_toggle_button.setIcon(get_icon("percentage.png"))
+        self.confidence_toggle_button.setIcon(get_icon("percentage.svg"))
         self.confidence_toggle_button.setToolTip("Toggle confidence badge visibility")
         self.confidence_toggle_button.setCheckable(True)
         self.confidence_toggle_button.setChecked(False)  # Start with badges hidden

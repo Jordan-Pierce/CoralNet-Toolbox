@@ -40,7 +40,7 @@ class DeployModelDialog(CollapsibleSection):
             parent: Parent widget
             highlighted_images: Optional list of image paths to process in batch
         """
-        super().__init__("Z-Inference", "z.png", parent)
+        super().__init__("Z-Inference", "z.svg", parent)
         
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
@@ -695,7 +695,7 @@ class DeployModelDialog(CollapsibleSection):
         """
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
-        msg.setWindowIcon(get_icon("z.png"))
+        msg.setWindowIcon(get_icon("z.svg"))
         
         # Set minimum width for the dialog
         msg.setStyleSheet("QMessageBox { min-width: 500px; }")

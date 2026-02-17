@@ -29,7 +29,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Video Inference")
         
         # Optionally set a minimum size

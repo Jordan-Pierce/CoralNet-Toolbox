@@ -40,7 +40,7 @@ class ExportGeoJSONAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Export Annotations to GeoJSON")
         self.resize(400, 500)
 

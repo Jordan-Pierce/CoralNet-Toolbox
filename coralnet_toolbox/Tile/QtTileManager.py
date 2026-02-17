@@ -40,7 +40,7 @@ class TileManager(QDialog):
         
         self.animation_manager = main_window.animation_manager
 
-        self.setWindowIcon(get_icon("tile.png"))
+        self.setWindowIcon(get_icon("tile.svg"))
         self.setWindowTitle("Tile Manager")
         self.resize(400, 600)
         

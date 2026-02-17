@@ -5,7 +5,7 @@ from datetime import datetime
 
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSizePolicy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
@@ -95,31 +95,45 @@ class TimerWidget(QWidget):
 
     def setup_ui(self):
         """Set up the user interface."""
+        # Compact layout and spacing to minimize height
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
 
-        # Time display
+        # Time display (more readable/default styling)
         self.time_label = QLabel("00:00:00")
-        self.time_label.setFont(QFont("Arial", 8, QFont.Bold))
-        self.time_label.setStyleSheet("color: #333; padding: 10px; background-color: #F0F0F0; border-radius: 5px;")
+        self.time_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.time_label.setStyleSheet(
+            "color: #333; padding: 6px; background-color: #F0F0F0; border-radius: 4px;"
+        )
+        self.time_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         layout.addWidget(self.time_label)
 
-        # Buttons layout
+        # Buttons layout (small buttons)
         buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(2)
 
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_timer)
+        # Let the button size itself; allow horizontal shrinking but fixed height
+        self.start_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop_timer)
         self.stop_button.setEnabled(False)
+        self.stop_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.stop_button)
 
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_timer)
+        self.reset_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.reset_button)
 
         layout.addLayout(buttons_layout)
+
+        # Make the widget request a reasonable minimum height but allow growth
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
 
     def start_timer(self):
         """Start the timer."""
@@ -200,55 +214,48 @@ class TimerWidget(QWidget):
         return instance
 
 
-class TimerGroupBox(QGroupBox):
-    """A group box containing the timer widget."""
+class TimerWindow(QWidget):
+    """A simple container widget containing the timer widget.
+
+    Note: this used to be a checkable QGroupBox; hiding/collapsing is
+    removed per UI changes — the timer is always visible in its dock.
+    """
 
     def __init__(self, parent=None):
-        super().__init__("Timer", parent)
-        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n "
+        super().__init__(parent)
+        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n"
                         "Tracks and saves total duration across sessions and logs all timer actions.")
         self.timer_widget = TimerWidget(self)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.timer_widget)
-
-        # Make the group box checkable for collapsing
-        self.setCheckable(True)
-        self.setChecked(True)
-        self.toggled.connect(self.on_toggled)
-
-    def on_toggled(self, checked):
-        """Handle the toggle event to show/hide the timer widget."""
-        self.timer_widget.setVisible(checked)
+        # Allow the container to be at least the preferred height but not smaller.
+        # Use the widget's sizeHint after activating the layout so the minimal
+        # height is based on the actual widget metrics rather than hardcoded pixels.
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        layout.activate()
+        self.timer_widget.adjustSize()
+        self.adjustSize()
+        self.setMinimumHeight(self.timer_widget.sizeHint().height())
 
     def to_dict(self):
-        """Serialize the timer group box data to a dictionary."""
-        data = self.timer_widget.to_dict()
-        data['checked'] = self.isChecked()
-        return data
+        """Serialize the timer widget data to a dictionary."""
+        return self.timer_widget.to_dict()
 
     @classmethod
     def from_dict(cls, data):
-        """Deserialize the timer group box data from a dictionary."""
-        # Create a new instance normally to ensure proper Qt initialization
         instance = cls()
-        
-        # Stop and replace the timer widget with the deserialized one
-        if hasattr(instance.timer_widget, 'stop_threads'):
-            instance.timer_widget.stop_threads()
-        
-        # Remove the old timer widget from layout
+        # Replace timer widget with deserialized one
         layout = instance.layout()
+        # Remove old widget
         if layout and layout.count() > 0:
             old_widget = layout.itemAt(0).widget()
+            if old_widget and hasattr(old_widget, 'stop_threads'):
+                old_widget.stop_threads()
             if old_widget:
                 layout.removeWidget(old_widget)
                 old_widget.setParent(None)
-        
-        # Create new timer widget with deserialized data
+
         instance.timer_widget = TimerWidget.from_dict(data)
         layout.addWidget(instance.timer_widget)
-        
-        # Set the checked state
-        instance.setChecked(data.get('checked', True))
-        
         return instance

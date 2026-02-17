@@ -232,7 +232,7 @@ class TrainModelDialog(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("eye.png"))
+        self.setWindowIcon(get_icon("eye.svg"))
         self.setWindowTitle("Train YOLOE Model")
         self.resize(600, 800)  # Increased height for new parameters
 

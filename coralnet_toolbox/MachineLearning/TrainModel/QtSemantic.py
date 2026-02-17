@@ -173,7 +173,7 @@ class Semantic(QDialog):  # Does not inherit from Base due to major differences
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Train Semantic Segmentation Model")
         self.resize(600, 750)  
 

@@ -99,7 +99,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         
-        self.setWindowIcon(get_icon("coralnet.png"))
+        self.setWindowIcon(get_icon("coralnet.svg"))
         self.setWindowTitle("Export Model")
         self.resize(500, 700)  # Increased size for new options
 

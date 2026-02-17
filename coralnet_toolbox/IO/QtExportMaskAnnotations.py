@@ -86,7 +86,7 @@ class ExportMaskAnnotations(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowIcon(get_icon("mask.png"))
+        self.setWindowIcon(get_icon("mask.svg"))
         self.setWindowTitle("Export Annotations to Masks")
         self.resize(800, 600)
 

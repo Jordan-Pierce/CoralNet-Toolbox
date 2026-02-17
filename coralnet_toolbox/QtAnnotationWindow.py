@@ -40,79 +40,26 @@ from coralnet_toolbox.Tools import (
     PatchSamplingTool,
 )
 
+
+from coralnet_toolbox.QtActions import (
+    Action,
+    AddAnnotationAction,
+    DeleteAnnotationAction,
+    ActionStack,
+)
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import rasterio_open
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class Action:
-    """Base class for undo/redo actions."""
-    def do(self):
-        raise NotImplementedError
-
-    def undo(self):
-        raise NotImplementedError
-
-
-class AddAnnotationAction(Action):
-    def __init__(self, annotation_window, annotation):
-        self.annotation_window = annotation_window
-        self.annotation = annotation
-
-    def do(self):
-        # Only add if the annotation's image is the current image
-        if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
-
-    def undo(self):
-        # Only delete if the annotation's image is the current image
-        if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
-
-
-class DeleteAnnotationAction(Action):
-    def __init__(self, annotation_window, annotation):
-        self.annotation_window = annotation_window
-        self.annotation = annotation
-
-    def do(self):
-        # Only delete if the annotation's image is the current image
-        if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.delete_annotation(self.annotation.id, record_action=False)
-
-    def undo(self):
-        # Only add if the annotation's image is the current image
-        if self.annotation_window.current_image_path == self.annotation.image_path:
-            self.annotation_window.add_annotation_from_tool(self.annotation, record_action=False)
-
-
-class ActionStack:
-    def __init__(self):
-        self.undo_stack = []
-        self.redo_stack = []
-
-    def push(self, action):
-        self.undo_stack.append(action)
-        self.redo_stack.clear()
-
-    def undo(self):
-        if self.undo_stack:
-            action = self.undo_stack.pop()
-            action.undo()
-            self.redo_stack.append(action)
-
-    def redo(self):
-        if self.redo_stack:
-            action = self.redo_stack.pop()
-            action.do()
-            self.undo_stack.append(action)
 
 
 class AnnotationWindow(QGraphicsView):

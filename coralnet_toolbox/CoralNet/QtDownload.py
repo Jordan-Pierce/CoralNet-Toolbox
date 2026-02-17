@@ -196,7 +196,7 @@ class DownloadDialog(QDialog):
 
         # Add debug toggle button with bug icon
         self.debug_button = QToolButton()
-        self.debug_button.setIcon(get_icon("www.png"))
+        self.debug_button.setIcon(get_icon("www.svg"))
         self.debug_button.setToolTip("Toggle Headless Mode")
         self.debug_button.setCheckable(True)
         self.debug_button.setMaximumWidth(30)
