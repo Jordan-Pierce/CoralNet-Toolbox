@@ -109,7 +109,7 @@ class UpdateImagePaths(QDialog):
             # Open file dialog and get the directory from selected file
             directory = self.open_file_dialog()
             if not directory:  # User cancelled
-                return
+                self.reject()
             
             # Update paths for missing images
             updated_count = 0
