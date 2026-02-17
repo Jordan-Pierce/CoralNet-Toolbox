@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import rasterio
 
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex, QEvent
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
@@ -464,8 +464,12 @@ class ImageWindow(QWidget):
     
     def eventFilter(self, source, event):
         """Event filter to track mouse movement over table rows and handle scrolling."""
+        # If the table view hasn't been created yet, skip custom handling
+        if not hasattr(self, 'tableView'):
+            return super().eventFilter(source, event)
+
         # Handle wheel events on the table view to customize scrolling
-        if source is self.tableView and event.type() == event.Wheel:
+        if source is self.tableView and event.type() == QEvent.Wheel:
             # Get the direction of the scroll
             delta = event.angleDelta().y()
             
@@ -486,14 +490,14 @@ class ImageWindow(QWidget):
         
         # Handle mouse movement events for showing image previews
         if source is self.tableView.viewport():
-            if event.type() == event.Enter:
+            if event.type() == QEvent.Enter:
                 # Mouse entered the table viewport
                 pass
-            elif event.type() == event.Leave:
+            elif event.type() == QEvent.Leave:
                 # Mouse left the table viewport
                 self.hide_image_preview()
                 self.hover_row = -1
-            elif event.type() == event.MouseMove:
+            elif event.type() == QEvent.MouseMove:
                 # Mouse moved within the table viewport
                 pos = event.pos()
                 index = self.tableView.indexAt(pos)
