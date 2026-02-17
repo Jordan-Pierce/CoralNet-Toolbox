@@ -1277,87 +1277,108 @@ class MainWindow(QMainWindow):
             self.status_bar_widgets.append(w)
 
         # --------------------------------------------------
-        # Create the main layout
+        # Setup Main Docking Layout (With Vacant Center Trick)
         # --------------------------------------------------
+        
+        # 1. Bring back the blank central widget. This creates the permanent "void".
         self.central_widget = QWidget()
+        # Force the dummy widget to be 0 pixels tall so it yields all vertical space
+        self.central_widget.setFixedHeight(0) 
+        # Expand horizontally to maintain the gap, but stay fixed vertically
+        self.central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCentralWidget(self.central_widget)
+        self.setDockNestingEnabled(True)
 
-        # Main vertical layout
-        self.main_layout = QVBoxLayout(self.central_widget)
+        # 2. The Qt Corner Trick: 
+        # Force the Left and Right dock areas to stretch all the way from the very top 
+        # of the window to the very bottom. This traps the Top and Bottom dock areas 
+        # strictly in the center column.
+        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
 
-        # Add the top toolbar to the QMainWindow so it appears under the menu
-        # bar and above all docks/central widget. This ensures it spans the
-        # entire width and that docks are placed below it.
-        self.addToolBar(Qt.TopToolBarArea, self.top_status_toolbar)
+        # --------------------------------------------------
+        # Create the Docks & Containers
+        # --------------------------------------------------
 
-        # The annotation container will be placed below the status bar as the
-        # main content area (added later). No placeholder is required.
-
-        # Panels are now dockable: AnnotationWindow remains as the central
-        # widget; other panels are placed into QDockWidgets so they can be
-        # resized, floated and rearranged by the user.
-
-        # Create the annotation container as the central content (removed QGroupBox wrapper)
+        # Setup the Annotation Container & Dock (Combines Canvas + Status Bar)
         self.annotation_group_box = QWidget()
         group_layout = QVBoxLayout(self.annotation_group_box)
         group_layout.setContentsMargins(0, 0, 0, 0)
         group_layout.addWidget(self.annotation_window)
-        self.annotation_group_box.setLayout(group_layout)
-        # Add the annotation container to the main layout so it appears in the
-        # center under the status bar by default.
-        self.main_layout.addWidget(self.annotation_group_box)
 
-        # Create the timer group (kept but will be placed in its own dock)
+        self.annotation_dock_container = QWidget()
+        annotation_container_layout = QVBoxLayout(self.annotation_dock_container)
+        annotation_container_layout.setContentsMargins(0, 0, 0, 0)
+        annotation_container_layout.addWidget(self.top_status_toolbar)
+        annotation_container_layout.addWidget(self.annotation_group_box)
+
+        self.annotation_dock = QDockWidget("Workspace", self)
+        self.annotation_dock.setObjectName("AnnotationDock")
+        self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.annotation_dock.setWidget(self.annotation_dock_container)
+
+        # Setup Timer Dock
         self.timer_group = TimerWindow(self)
+        self.timer_dock = QDockWidget("Timer Window", self)
+        self.timer_dock.setObjectName("TimerDock")
+        self.timer_dock.setWidget(self.timer_group)
+        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.timer_dock.setMaximumHeight(140)
 
-        # Left dock: LabelWindow
+        # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
-        self.left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.left_dock.setObjectName("LabelDock")
         self.left_container = QWidget()
         self.left_layout = QVBoxLayout(self.left_container)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.addWidget(self.label_window)
         self.left_dock.setWidget(self.left_container)
         self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
 
-        # Create a separate dock for the timer group and place it below the Labels dock
-        # so it appears at the bottom of the left side by default. Limit its height
-        # to keep it short visually while still allowing the user to resize if needed.
-        self.timer_dock = QDockWidget("Timer Window", self)
-        self.timer_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.timer_dock.setWidget(self.timer_group)
-        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        # Make the timer dock short by default
-        self.timer_dock.setMaximumHeight(140)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.timer_dock)
-        # Split the left dock vertically so the timer sits below the labels
-        try:
-            self.splitDockWidget(self.left_dock, self.timer_dock, Qt.Vertical)
-        except Exception:
-            # splitDockWidget can fail on some platforms or states; ignore and
-            # leave docks added normally.
-            pass
-
-        # Right dock: Image + Confidence stacked vertically
+        # Setup Image Dock (Right)
         self.right_dock = QDockWidget("Image Window", self)
-        self.right_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.right_dock.setObjectName("ImageDock")
         self.right_container = QWidget()
         self.right_layout = QVBoxLayout(self.right_container)
         self.right_layout.setContentsMargins(0, 0, 0, 0)
-        # Keep the right dock containing only the image window; confidence is in its own dock
         self.right_layout.addWidget(self.image_window)
         self.right_dock.setWidget(self.right_container)
         self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
 
-        # Create a separate dock for the confidence window so it is independent of the Image dock
+        # Setup Confidence Dock (Right)
         self.confidence_dock = QDockWidget("Confidence Window", self)
-        self.confidence_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.confidence_dock.setObjectName("ConfidenceDock")
         self.confidence_dock.setWidget(self.confidence_window)
         self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
 
+        # --------------------------------------------------
+        # Explicitly arrange the docks on the screen
+        # --------------------------------------------------
+
+        # 3. Add the side docks to their respective areas
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        
+        # 4. Add the Workspace dock to the TOP area. 
+        # Because we locked the corners above, "Top" now effectively means 
+        # "Top of the center column", sitting perfectly above our invisible central widget!
+        self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
+        
+        # 5. Split the side panels vertically (Timer below Labels, Confidence below Image)
+        self.splitDockWidget(self.left_dock, self.timer_dock, Qt.Vertical)
+        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+
+        # 6. Shrink the default width of the side docks.
+        # This tells Qt to assign 250 pixels of width to the left side and right side,
+        # leaving the vast majority of the screen for your center column.
+        self.resizeDocks([self.left_dock, self.right_dock], [250, 250], Qt.Horizontal)
+        
+        # Give the Workspace dock the absolute maximum vertical space available
+        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
+        
         # --------------------------------------------------
         # Setup global event filter for shortcuts
         # --------------------------------------------------
