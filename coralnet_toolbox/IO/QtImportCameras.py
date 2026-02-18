@@ -755,7 +755,7 @@ class MetashapeTab(QWidget):
         self.parent_dialog.accept()
 
 
-class ImportCamerasDialog(QDialog):
+class ImportCameras(QDialog):
     def __init__(self, main_window):
         """Create the tabbed import dialog containing COLMAP and Metashape tabs."""
         super().__init__(main_window)
@@ -772,7 +772,3 @@ class ImportCamerasDialog(QDialog):
         layout = QVBoxLayout()
         layout.addWidget(tabs)
         self.setLayout(layout)
-
-
-    # Backwards-compatible export name expected by other modules
-    ImportCameras = ImportCamerasDialog
