@@ -21,7 +21,7 @@ class CollapsibleSection(QWidget):
     The popup can contain multiple widgets organized in group boxes.
     """
     
-    def __init__(self, title, icon, parent=None):
+    def __init__(self, title, icon, parent=None, position='bottomleft'):
         """
         Initialize the collapsible section.
         
@@ -34,6 +34,12 @@ class CollapsibleSection(QWidget):
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
+
+        # Position of popup relative to the button. One of:
+        # 'topleft', 'topright', 'bottomleft', 'bottomright'
+        self.position = position if isinstance(position, str) else 'bottomleft'
+        if self.position not in ('topleft', 'topright', 'bottomleft', 'bottomright'):
+            self.position = 'bottomleft'
 
         # Create the action
         self.toggle_action = QAction(QIcon(get_icon(icon)), title, self)
@@ -62,11 +68,30 @@ class CollapsibleSection(QWidget):
         if self.popup.isVisible():
             self.popup.hide()
         else:
-            # Position popup below and to the left of the button
             pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
-            popup_width = self.popup.sizeHint().width()
-            self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
-                            pos.y() + self.toggle_button.height())
+            popup_size = self.popup.sizeHint()
+            popup_width = popup_size.width()
+            popup_height = popup_size.height()
+
+            # Compute coordinates based on desired position
+            if self.position == 'topleft':
+                # Align popup left edge with button left edge, bottom with button top
+                new_x = pos.x()
+                new_y = pos.y() - popup_height
+            elif self.position == 'topright':
+                # Align popup left edge with button right edge, bottom with button top
+                new_x = pos.x() + self.toggle_button.width()
+                new_y = pos.y() - popup_height
+            elif self.position == 'bottomright':
+                # Align popup left edge with button right edge, top with button bottom
+                new_x = pos.x() + self.toggle_button.width()
+                new_y = pos.y() + self.toggle_button.height()
+            else:  # 'bottomleft'
+                # Align popup right edge with button right edge, top with button bottom
+                new_x = pos.x() - popup_width + self.toggle_button.width()
+                new_y = pos.y() + self.toggle_button.height()
+
+            self.popup.move(new_x, new_y)
             self.popup.show()
 
     def add_widget(self, widget, title=None):
