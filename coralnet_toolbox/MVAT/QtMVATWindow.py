@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
+from coralnet_toolbox.MVAT.core.SelectionModel import SelectionModel
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
@@ -346,6 +347,9 @@ class MVATWindow(QMainWindow):
         # Reference to annotation window for signal connections
         self.annotation_window = main_window.annotation_window
         
+        # Selection model (single source of truth for UI selection state)
+        self.selection_model = SelectionModel(self)
+
         # Setup UI
         self._setup_window()
         self._setup_menubar()
@@ -525,8 +529,8 @@ class MVATWindow(QMainWindow):
         right_layout = QVBoxLayout(self.right_container)
         right_layout.setContentsMargins(2, 2, 2, 2)
         
-        # Create the camera grid widget
-        self.camera_grid = CameraGrid(mvat_window=self)
+        # Create the camera grid widget (pass shared selection model)
+        self.camera_grid = CameraGrid(model=self.selection_model, mvat_window=self)
         self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
         self.camera_grid.camera_highlighted_single.connect(self._on_grid_camera_highlighted_single)
         self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
@@ -580,9 +584,14 @@ class MVATWindow(QMainWindow):
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
         
-        # Connect camera grid highlight changes to clear rays
-        # This ensures stale rays from previously-highlighted cameras are removed
-        self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
+        # Connect selection model signals to update MVAT state
+        # This replaces direct grid-driven signals so window and grid share a model
+        try:
+            self.selection_model.active_changed.connect(self._on_active_camera_changed)
+            self.selection_model.selection_changed.connect(self._on_selections_changed)
+        except Exception:
+            # Fall back to camera_grid signals if model isn't connected
+            self.camera_grid.cameras_highlighted.connect(self._on_highlights_changed)
         # Connect viewer focal point changes
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
     
@@ -596,27 +605,8 @@ class MVATWindow(QMainWindow):
             path: Image path that was loaded in the main app.
         """
         if path in self.cameras:
-            # Clear all highlights
-            self._on_highlights_changed([])
-            
-            # Update camera grid selection without triggering navigation
-            self.camera_grid.render_selection_from_path(path)
-            
-            # Update 3D view selection
-            camera = self.cameras[path]
-            self._select_camera(path, camera, emit_signal=False)
-            
-            # Highlight the selected camera
-            self._on_highlights_changed([path])
-            
-            # Match camera perspective in 3D viewer
-            self._match_camera_perspective(camera)
-            
-            # Reorder cameras based on proximity to selected camera
-            self._reorder_cameras(path, hide_distant_cameras=True)
-            
-            # Update visibility filtering for the new image**
-            self._update_visibility_filter([path])
+            # Use SelectionModel to set the active camera; model signals will drive UI sync
+            self.selection_model.set_active(path)
     
     def _on_highlights_changed(self, highlighted_paths: list):
         """
@@ -710,8 +700,22 @@ class MVATWindow(QMainWindow):
                 self.annotation_window.mouseMoved.disconnect(self.mouse_bridge.on_mouse_moved)
             if hasattr(self.image_window, 'imageLoaded'):
                 self.image_window.imageLoaded.disconnect(self._on_main_image_loaded)
+            # Disconnect model signals if connected
+            if hasattr(self, 'selection_model'):
+                try:
+                    self.selection_model.active_changed.disconnect(self._on_active_camera_changed)
+                except Exception:
+                    pass
+                try:
+                    self.selection_model.selection_changed.disconnect(self._on_selections_changed)
+                except Exception:
+                    pass
+            # Fall back: disconnect legacy grid signal if present
             if hasattr(self.camera_grid, 'cameras_highlighted'):
-                self.camera_grid.cameras_highlighted.disconnect(self._on_highlights_changed)
+                try:
+                    self.camera_grid.cameras_highlighted.disconnect(self._on_highlights_changed)
+                except Exception:
+                    pass
         except:
             pass  # Signals may already be disconnected
         
@@ -869,7 +873,7 @@ class MVATWindow(QMainWindow):
                 
                 # Apply current selection state
                 selected_path = self.selected_camera.image_path if self.selected_camera else None
-                highlighted_paths = list(getattr(self.camera_grid, 'highlighted_paths', set()))
+                highlighted_paths = list(self.selection_model.selected_paths) if (hasattr(self, 'selection_model') and self.selection_model) else []
                 self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
                 self.frustum_manager.mark_modified()
         
@@ -1035,6 +1039,56 @@ class MVATWindow(QMainWindow):
         # That only happens on double-click selection
         # The highlighting is handled by _on_grid_cameras_highlighted signal
         pass
+
+    def _on_active_camera_changed(self, path):
+        """Handle active camera changes coming from SelectionModel."""
+        camera = self.cameras.get(path)
+        if camera:
+            # Clear any rendered rays before navigation
+            self._clear_rays()
+
+            # Select camera (updates frustum colors and thumbnails)
+            self._select_camera(path, camera)
+
+            # Match 3D view to camera perspective
+            self._match_camera_perspective(camera)
+
+            # Reorder cameras based on proximity to selected camera
+            self._reorder_cameras(path, hide_distant_cameras=True)
+
+            # Automatically navigate to the image (only on active change)
+            self._goto_selected_image()
+
+    def _on_selections_changed(self, selected_paths):
+        """Handle selection set changes coming from SelectionModel.
+
+        selected_paths is expected to be a set of image paths.
+        """
+        # Update highlight state for all cameras
+        for path, camera in self.cameras.items():
+            if path in selected_paths:
+                camera.highlight()
+            else:
+                camera.unhighlight()
+            camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+
+        # Update local highlighted camera list for compatibility with existing code
+        self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
+
+        # Update batched frustum colors
+        selected_path = self.selected_camera.image_path if self.selected_camera else None
+        self.frustum_manager.update_camera_states(selected_path, list(selected_paths), self.hovered_camera)
+        self.frustum_manager.mark_modified()
+
+        # Sync camera grid visuals
+        try:
+            self.camera_grid._sync_ui_to_model()
+        except Exception:
+            pass
+
+        # Clear rays and update visibility filtering
+        self._clear_rays()
+        self._update_visibility_filter(list(selected_paths))
             
     def _on_grid_camera_selected(self, path):
         """Handle camera selection from the grid (double-click).
@@ -1437,14 +1491,11 @@ class MVATWindow(QMainWindow):
                 
         # Select if within reasonable distance (heuristic based on scale)
         if closest_camera and min_dist < self.frustum_scale * 2:
-            self._select_camera(closest_path, closest_camera)
-            # Sync selection to grid
-            if hasattr(self, 'camera_grid'):
-                self.camera_grid.render_selection_from_path(closest_path)
+            # Delegate selection to the central model
+            self.selection_model.set_active(closest_path)
         else:
-            self._deselect_camera()
-            if hasattr(self, 'camera_grid'):
-                self.camera_grid.clear_all_selections()
+            # Clear model selections
+            self.selection_model.clear_all()
             
     def _select_camera(self, path, camera, emit_signal=True):
         """Select a camera and update UI."""
@@ -1458,9 +1509,12 @@ class MVATWindow(QMainWindow):
         # Update selected camera reference
         self.selected_camera = camera
         self.selected_camera_path = path
-        
-        # Sync the camera grid's selection state
-        self.camera_grid.render_selection_from_path(path)
+
+        # Sync the camera grid's selection visuals (do not call render_selection_from_path to avoid recursion)
+        try:
+            self.camera_grid._sync_ui_to_model()
+        except Exception:
+            pass
         
         # Select new camera
         camera.select()
@@ -1532,8 +1586,8 @@ class MVATWindow(QMainWindow):
         """Auto-select the first camera if none is selected."""
         if self.selected_camera is None and self.cameras:
             first_path = next(iter(self.cameras))
-            self._select_camera(first_path, self.cameras[first_path], emit_signal=False)
-            self.camera_grid.render_selection_from_path(first_path)
+            # Use the central selection model to set active camera
+            self.selection_model.set_active(first_path)
         
     def _goto_selected_image(self):
         """Navigate to the selected camera's image in the main window."""

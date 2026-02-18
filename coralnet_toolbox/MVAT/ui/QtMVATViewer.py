@@ -336,23 +336,14 @@ class MVATViewer(QFrame):
             self.add_point_cloud()
             event.acceptProposedAction()
             
-            # TODO this doesn't actually update the selected camera's sub-point cloud
-            # Trigger visibility filtering for the selected camera
-            # This ensures the cloud transitions directly to filtered state
-            if self.parent() and hasattr(self.parent(), 'selected_camera'):
+            # Trigger visibility filtering based on the model's current selections
+            if self.parent() and hasattr(self.parent(), 'selection_model'):
                 mvat_window = self.parent()
-                if mvat_window.selected_camera:
-                    # Always start with at least the selected camera
-                    selected_path = mvat_window.selected_camera.image_path
-                    highlighted_paths = [selected_path]
-                    
-                    # Add any other highlighted cameras
-                    for cam in mvat_window.highlighted_cameras:
-                        if cam.image_path not in highlighted_paths:
-                            highlighted_paths.append(cam.image_path)
-                    
-                    # Trigger visibility filtering
-                    mvat_window._update_visibility_filter(highlighted_paths)
+                model = mvat_window.selection_model
+
+                if model.selected_paths:
+                    # The model already guarantees the active camera is in this set!
+                    mvat_window._update_visibility_filter(list(model.selected_paths))
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
