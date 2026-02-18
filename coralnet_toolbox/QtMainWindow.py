@@ -1183,13 +1183,15 @@ class MainWindow(QMainWindow):
         
         # Scale labels and dropdowns
         self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        self.scaled_dimensions_label.setFixedWidth(200)
+        # Increase fixed width so long scale strings are not truncated
+        self.scaled_dimensions_label.setFixedWidth(220)
         self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
         
         self.scale_unit_dropdown = QComboBox()
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.scale_unit_dropdown.setFixedWidth(50)
+        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
+        self.scale_unit_dropdown.setFixedWidth(72)
         self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Z unit dropdown
@@ -1198,12 +1200,14 @@ class MainWindow(QMainWindow):
         self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
         self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.z_unit_dropdown.setFixedWidth(50)
+        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
+        self.z_unit_dropdown.setFixedWidth(72)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
         
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
-        self.z_label.setFixedWidth(75)  # Fixed width to prevent shifting
+        # Increase width to avoid truncation of formatted Z values
+        self.z_label.setFixedWidth(140)  # Fixed width to prevent shifting
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Use the Custom ComboBox Class
@@ -1283,7 +1287,8 @@ class MainWindow(QMainWindow):
         self.bottom_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.bottom_status_toolbar.setObjectName("bottomStatusToolbar")
         self.bottom_status_toolbar.setStyleSheet(
-            "QToolBar#bottomStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}")
+            "QToolBar#bottomStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}"
+        )
 
         # Create a container widget with an HBoxLayout to control spacing
         self.bottom_status_container = QWidget()
@@ -1305,9 +1310,19 @@ class MainWindow(QMainWindow):
         group_mouse = make_group(self.mouse_position_label)
         group_image = make_group(self.image_dimensions_label)
         group_view = make_group(self.view_dimensions_label)
-        group_scale = make_group(self.scaled_dimensions_label, self.scale_unit_dropdown)
-        group_z = make_group(self.z_label, self.z_unit_dropdown)
-        group_z_tools = make_group(self.z_transparency_widget, self.z_dynamic_button, self.z_colormap_dropdown)
+        group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
+        # Tighten spacing inside the scale group so the dropdown sits closer
+        if group_scale.layout() is not None:
+            group_scale.layout().setSpacing(2)
+            group_scale.layout().setContentsMargins(0, 0, 0, 0)
+        # Combine Z label, unit dropdown, transparency, dynamic toggle and colormap
+        group_z = make_group(
+            self.z_unit_dropdown,
+            self.z_label,
+            self.z_transparency_widget,
+            self.z_dynamic_button,
+            self.z_colormap_dropdown,
+        )
 
         # Add groups and stretches so groups are evenly spaced across the bar
         bottom_layout.addWidget(group_mouse)
@@ -1319,8 +1334,6 @@ class MainWindow(QMainWindow):
         bottom_layout.addWidget(group_scale)
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(group_z)
-        bottom_layout.addStretch(1)
-        bottom_layout.addWidget(group_z_tools)
 
         # Put the container into the toolbar
         self.bottom_status_toolbar.addWidget(self.bottom_status_container)
@@ -1441,7 +1454,7 @@ class MainWindow(QMainWindow):
         # 6. Shrink the default width of the side docks.
         # This tells Qt to assign N pixels of width to the left side and right side,
         # leaving the vast majority of the screen for your center column.
-        self.resizeDocks([self.left_dock, self.right_dock], [350, 350], Qt.Horizontal)
+        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
         
         # Give the Workspace dock the absolute maximum vertical space available
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
