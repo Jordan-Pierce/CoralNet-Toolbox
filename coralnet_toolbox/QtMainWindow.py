@@ -61,8 +61,7 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportCOLMAPCameras,
-    ImportMetashapeCameras,
+    ImportCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -262,8 +261,7 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
-        self.import_colmap_cameras = ImportCOLMAPCameras(self)
-        self.import_metashape_cameras = ImportMetashapeCameras(self)
+        self.import_cameras_dialog = ImportCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -405,14 +403,10 @@ class MainWindow(QMainWindow):
         
         # Cameras submenu
         self.import_cameras_menu = self.import_menu.addMenu("Cameras")
-        # Import COLMAP Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
-        self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
+        # Import Cameras
+        self.import_colmap_cameras_action = QAction("COLMAP / Metashape", self)
+        self.import_colmap_cameras_action.triggered.connect(self.import_cameras_dialog.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras  TODO re-enable when implemented correctly
-        # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
-        # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
-        # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
