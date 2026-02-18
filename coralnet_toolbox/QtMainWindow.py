@@ -1260,22 +1260,84 @@ class MainWindow(QMainWindow):
         self.annotation_size_widget.setLayout(annotation_size_layout)
         
         # Add widgets to the top toolbar and track them
+        # Keep only the compact controls in the top status bar. Move
+        # positional/scale/z widgets to a dedicated bottom status bar
         for w in (
-            self.mouse_position_label,
-            self.image_dimensions_label,
-            self.view_dimensions_label,
             self.transparency_widget,
-            self.scale_unit_dropdown,
-            self.scaled_dimensions_label,
-            self.z_unit_dropdown,
-            self.z_label,
-            self.z_colormap_dropdown,
-            self.z_transparency_widget,
-            self.z_dynamic_button,
             self.annotation_size_widget,
         ):
             # Use addWidget so widgets appear left-to-right; store for later
             self.top_status_toolbar.addWidget(w)
+            self.status_bar_widgets.append(w)
+
+        # --------------------------------------------------
+        # Create bottom status toolbar for annotation-specific status
+        # --------------------------------------------------
+        # This toolbar sits at the bottom of the annotation dock and
+        # contains grouped status widgets which are evenly spaced.
+        self.bottom_status_toolbar = QToolBar()
+        self.bottom_status_toolbar.setMovable(False)
+        self.bottom_status_toolbar.setFloatable(False)
+        self.bottom_status_toolbar.setAllowedAreas(Qt.BottomToolBarArea)
+        self.bottom_status_toolbar.setFixedHeight(max(40, int(fm.height() * 2.4)))
+        self.bottom_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.bottom_status_toolbar.setObjectName("bottomStatusToolbar")
+        self.bottom_status_toolbar.setStyleSheet(
+            "QToolBar#bottomStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}")
+
+        # Create a container widget with an HBoxLayout to control spacing
+        self.bottom_status_container = QWidget()
+        bottom_layout = QHBoxLayout(self.bottom_status_container)
+        bottom_layout.setContentsMargins(6, 2, 6, 2)
+        bottom_layout.setSpacing(12)
+
+        # Helper to create small grouped widgets so we can keep tuples together
+        def make_group(*widgets):
+            g = QWidget()
+            l = QHBoxLayout(g)
+            l.setContentsMargins(0, 0, 0, 0)
+            l.setSpacing(6)
+            for ww in widgets:
+                l.addWidget(ww)
+            return g
+
+        # Groups (keep tuples together as requested)
+        group_mouse = make_group(self.mouse_position_label)
+        group_image = make_group(self.image_dimensions_label)
+        group_view = make_group(self.view_dimensions_label)
+        group_scale = make_group(self.scaled_dimensions_label, self.scale_unit_dropdown)
+        group_z = make_group(self.z_label, self.z_unit_dropdown)
+        group_z_tools = make_group(self.z_transparency_widget, self.z_dynamic_button, self.z_colormap_dropdown)
+
+        # Add groups and stretches so groups are evenly spaced across the bar
+        bottom_layout.addWidget(group_mouse)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_image)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_view)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_scale)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_z)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_z_tools)
+
+        # Put the container into the toolbar
+        self.bottom_status_toolbar.addWidget(self.bottom_status_container)
+
+        # Track the widgets in status_bar_widgets so existing logic can find them
+        for w in (
+            self.mouse_position_label,
+            self.image_dimensions_label,
+            self.view_dimensions_label,
+            self.scaled_dimensions_label,
+            self.scale_unit_dropdown,
+            self.z_label,
+            self.z_unit_dropdown,
+            self.z_colormap_dropdown,
+            self.z_transparency_widget,
+            self.z_dynamic_button,
+        ):
             self.status_bar_widgets.append(w)
 
         # --------------------------------------------------
@@ -1315,6 +1377,9 @@ class MainWindow(QMainWindow):
         annotation_container_layout.setContentsMargins(0, 0, 0, 0)
         annotation_container_layout.addWidget(self.top_status_toolbar)
         annotation_container_layout.addWidget(self.annotation_group_box)
+        # Add the bottom status toolbar (contains grouped status widgets)
+        if hasattr(self, 'bottom_status_toolbar'):
+            annotation_container_layout.addWidget(self.bottom_status_toolbar)
 
         self.annotation_dock = QDockWidget("Annotation Window", self)
         self.annotation_dock.setObjectName("AnnotationDock")
@@ -1374,9 +1439,9 @@ class MainWindow(QMainWindow):
         self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
 
         # 6. Shrink the default width of the side docks.
-        # This tells Qt to assign 250 pixels of width to the left side and right side,
+        # This tells Qt to assign N pixels of width to the left side and right side,
         # leaving the vast majority of the screen for your center column.
-        self.resizeDocks([self.left_dock, self.right_dock], [250, 250], Qt.Horizontal)
+        self.resizeDocks([self.left_dock, self.right_dock], [350, 350], Qt.Horizontal)
         
         # Give the Workspace dock the absolute maximum vertical space available
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
