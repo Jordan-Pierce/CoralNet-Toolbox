@@ -58,8 +58,6 @@ class CameraDataItem:
             camera: The Camera object from core.Camera
         """
         self.camera = camera
-        self._is_highlighted = False
-        self._is_selected = False
         self._is_hovered = False
         self._thumbnail_pixmap = None
         self._thumbnail_size = None
@@ -87,20 +85,24 @@ class CameraDataItem:
     @property
     def is_highlighted(self):
         """Check if this camera is highlighted (multi-select)."""
-        return self._is_highlighted
+        # Highlight state is now managed by SelectionModel (external)
+        raise AttributeError("is_highlighted is managed by SelectionModel")
     
     @property
     def is_selected(self):
         """Check if this camera is selected (single active)."""
-        return self._is_selected
+        # Selected/active state is now managed by SelectionModel (external)
+        raise AttributeError("is_selected is managed by SelectionModel")
     
     def set_highlighted(self, highlighted):
         """Set the highlight state."""
-        self._is_highlighted = highlighted
+        # Deprecated: state moved to SelectionModel
+        return
         
     def set_selected(self, selected):
         """Set the selection state."""
-        self._is_selected = selected
+        # Deprecated: state moved to SelectionModel
+        return
         
     @property
     def is_hovered(self):
@@ -193,7 +195,7 @@ class CameraImageWidget(QWidget):
     hovered = pyqtSignal(str)             # (image_path)
     unhovered = pyqtSignal(str)           # (image_path)
     
-    def __init__(self, data_item, widget_size=256, parent=None):
+    def __init__(self, data_item, model, widget_size=256, parent=None):
         """
         Initialize a CameraImageWidget.
         
@@ -203,8 +205,8 @@ class CameraImageWidget(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
-        
         self.data_item = data_item
+        self.model = model
         self.widget_size = widget_size
         self.pixmap = None
         self.is_loaded = False
@@ -332,28 +334,31 @@ class CameraImageWidget(QWidget):
             painter.setPen(QColor(100, 100, 100))
             painter.drawText(rect, Qt.AlignCenter, "Loading...")
             
-        # Draw borders with priority: hover > select > highlight
+        # Draw borders with priority: hover > active (model.active_path) > selected (model.selected_paths)
+        path = self.data_item.image_path
+        is_active = (getattr(self.model, 'active_path', None) == path)
+        is_selected = (path in getattr(self.model, 'selected_paths', set()))
+
         if self.data_item.is_hovered:
             pen = QPen(HOVER_COLOR, SELECT_WIDTH)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             inset = SELECT_WIDTH // 2
             painter.drawRect(rect.adjusted(inset, inset, -inset, -inset))
-        elif self.data_item.is_selected:
+        elif is_active:
             pen = QPen(SELECT_COLOR, SELECT_WIDTH)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             inset = SELECT_WIDTH // 2
             painter.drawRect(rect.adjusted(inset, inset, -inset, -inset))
-        elif self.data_item.is_highlighted:
+        elif is_selected:
             pen = QPen(HIGHLIGHT_COLOR, HIGHLIGHT_WIDTH)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             inset = HIGHLIGHT_WIDTH // 2
             painter.drawRect(rect.adjusted(inset, inset, -inset, -inset))
-            
-        # Draw white border for non-selected/non-highlighted (1px)
         else:
+            # Draw white border for non-selected/non-highlighted (1px)
             pen = QPen(QColor(200, 200, 200), 1)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
@@ -460,7 +465,7 @@ class CameraGrid(QWidget):
     camera_hovered = pyqtSignal(str)               # image_path when hovered with Ctrl
     camera_unhovered = pyqtSignal(str)             # image_path when hover ends
     
-    def __init__(self, mvat_window=None, parent=None):
+    def __init__(self, model, mvat_window=None, parent=None):
         """
         Initialize the CameraGrid.
         
@@ -471,15 +476,14 @@ class CameraGrid(QWidget):
         super().__init__(parent)
         
         self.mvat_window = mvat_window
+        self.model = model
         
         # Data management
         self.data_items = []                    # List of CameraDataItem
         self.widgets_by_path = {}               # image_path -> CameraImageWidget
         self.widget_positions = {}              # image_path -> QRect
         
-        # Selection state
-        self.selected_path = None               # Single selected camera path
-        self.highlighted_paths = set()          # Set of highlighted camera paths
+        # Selection tracking (delegated to model)
         self.last_clicked_index = -1            # For shift-click range selection
         
         # Display settings
@@ -492,6 +496,12 @@ class CameraGrid(QWidget):
         
         # Setup UI
         self._setup_ui()
+        # Sync UI when model changes
+        try:
+            self.model.active_changed.connect(self._sync_ui_to_model)
+            self.model.selection_changed.connect(self._sync_ui_to_model)
+        except Exception:
+            pass
         
     def _setup_ui(self):
         """Setup the widget UI with toolbar and scroll area."""
@@ -583,8 +593,8 @@ class CameraGrid(QWidget):
         self.data_items.clear()
         self.widgets_by_path.clear()
         self.widget_positions.clear()
-        self.selected_path = None
-        self.highlighted_paths.clear()
+        # Selection state is managed by SelectionModel
+        self.model.clear_selections()
         self.last_clicked_index = -1
         
         # Make cursor busy
@@ -601,7 +611,7 @@ class CameraGrid(QWidget):
                 data_item = CameraDataItem(camera)
                 self.data_items.append(data_item)
                 
-                widget = CameraImageWidget(data_item, self.thumbnail_size, self.content_widget)
+                widget = CameraImageWidget(data_item, self.model, self.thumbnail_size, self.content_widget)
                 widget.clicked.connect(self._on_widget_clicked)
                 widget.double_clicked.connect(self._on_widget_double_clicked)
                 widget.hovered.connect(self.camera_hovered)
@@ -640,8 +650,8 @@ class CameraGrid(QWidget):
         self.data_items.clear()
         self.widgets_by_path.clear()
         self.widget_positions.clear()
-        self.selected_path = None
-        self.highlighted_paths.clear()
+        # Selection state is managed by SelectionModel
+        self.model.clear_selections()
         
     def recalculate_layout(self):
         """Schedule a layout recalculation (debounced)."""
@@ -776,8 +786,9 @@ class CameraGrid(QWidget):
         Returns:
             List of Camera objects for highlighted paths.
         """
+        # Return Camera objects for all paths currently selected in the model
         cameras = []
-        for path in self.highlighted_paths:
+        for path in getattr(self.model, 'selected_paths', set()):
             widget = self.widgets_by_path.get(path)
             if widget and widget.data_item:
                 cameras.append(widget.data_item.camera)
@@ -801,88 +812,72 @@ class CameraGrid(QWidget):
     # TODO if a widget is clicked but it corresponds to a camera already selected / highlighted, make sure
     # we do not attempt to update the point cloud again unnecessarily.
     def _on_widget_clicked(self, widget, event):
-        """Handle widget click for selection/highlighting."""
+        """Handle widget click for selection/highlighting using SelectionModel."""
         path = widget.data_item.image_path
         modifiers = event.modifiers()
-        
+
         # Find index of clicked item
-        clicked_index = -1
-        for i, item in enumerate(self.data_items):
-            if item.image_path == path:
-                clicked_index = i
-                break
-                
+        clicked_index = next((i for i, item in enumerate(self.data_items) if item.image_path == path), -1)
+
         if modifiers & Qt.ControlModifier:
-            # Ctrl+Click: Toggle highlight
-            self._toggle_highlight(path)
+            # Ctrl+Click: Toggle selection in model
+            self.model.toggle_selection(path)
         elif modifiers & Qt.ShiftModifier and self.last_clicked_index >= 0:
             # Shift+Click: Range selection
-            self._range_highlight(self.last_clicked_index, clicked_index)
+            start, end = sorted([self.last_clicked_index, clicked_index])
+            paths_in_range = [item.image_path for item in self.data_items[start:end + 1]]
+            self.model.set_selections(paths_in_range)
         else:
-            # Plain click: Clear others, highlight this one
-            self._clear_highlights()
-            self._add_highlight(path)
-            # Emit signal for single camera highlight -> change 3D view perspective
+            # Plain click: select only this path
+            self.model.set_selections([path])
+            # Emit single highlight (for 3D view perspective change)
             self.camera_highlighted_single.emit(path)
-            
+
+        # Update last clicked index and notify listeners
         self.last_clicked_index = clicked_index
-        self._emit_highlight_changed()
+
+        # Mirror model change through grid signals for backward compatibility
+        current_selected = list(getattr(self.model, 'selected_paths', set()))
+        self.cameras_highlighted.emit(current_selected)
+        self.selection_changed.emit(current_selected)
         
     def _on_widget_double_clicked(self, widget):
-        """Handle widget double-click for single selection."""
+        """Handle widget double-click for single selection via SelectionModel."""
         path = widget.data_item.image_path
-        
-        # Clear previous selection
-        if self.selected_path and self.selected_path in self.widgets_by_path:
-            old_item = self.widgets_by_path[self.selected_path].data_item
-            old_item.set_selected(False)
-            self.widgets_by_path[self.selected_path].update_selection_visuals()
-            
-        # Set new selection
-        self.selected_path = path
-        widget.data_item.set_selected(True)
-        widget.update_selection_visuals()
-        
-        # Clear all highlights except the new selected camera and ensure it's highlighted
-        self._clear_highlights()
-        self._add_highlight(path)
-        
-        # Emit signal for 3D view to match perspective
+
+        # Delegate active selection to model
+        self.model.set_active(path)
+
+        # Emit grid-level signal for backward compatibility
         self.camera_selected.emit(path)
-        
+
+        # Ensure UI updates
+        self._sync_ui_to_model()
+
+    def _sync_ui_to_model(self, *args):
+        """Force visible widgets to repaint their borders based on model state."""
+        visible_widgets = self.get_visible_widgets()
+        for widget in visible_widgets.values():
+            widget.update()
         self._update_selection_label()
         
     def _toggle_highlight(self, path):
         """Toggle highlight state of a camera."""
-        data_item = self.widgets_by_path[path].data_item
-        
-        if path in self.highlighted_paths:
-            self.highlighted_paths.discard(path)
-            data_item.set_highlighted(False)
-        else:
-            self.highlighted_paths.add(path)
-            data_item.set_highlighted(True)
-            
-        self.widgets_by_path[path].update_selection_visuals()
-        self._update_selection_label()
+        # Deprecated: use SelectionModel.toggle_selection
+        self.model.toggle_selection(path)
+        self._sync_ui_to_model()
         
     def _add_highlight(self, path):
         """Add highlight to a camera."""
-        if path not in self.highlighted_paths:
-            self.highlighted_paths.add(path)
-            data_item = self.widgets_by_path[path].data_item
-            data_item.set_highlighted(True)
-            self.widgets_by_path[path].update_selection_visuals()
-            self._update_selection_label()
+        # Deprecated: use SelectionModel.add_selection
+        self.model.add_selection(path)
+        self._sync_ui_to_model()
             
     def _remove_highlight(self, path):
         """Remove highlight from a camera."""
-        if path in self.highlighted_paths:
-            self.highlighted_paths.discard(path)
-            data_item = self.widgets_by_path[path].data_item
-            data_item.set_highlighted(False)
-            self.widgets_by_path[path].update_selection_visuals()
-            self._update_selection_label()
+        # Deprecated: use SelectionModel.remove_selection
+        self.model.remove_selection(path)
+        self._sync_ui_to_model()
             
     def _clear_highlights(self):
         """Clear all highlights except the selected camera.
@@ -890,47 +885,27 @@ class CameraGrid(QWidget):
         The selected camera should always remain highlighted to ensure
         its point cloud subset stays visible.
         """
-        for path in list(self.highlighted_paths):
-            # Skip the selected camera - it should remain highlighted
-            if path == self.selected_path:
-                continue
-                
-            if path in self.widgets_by_path:
-                self.widgets_by_path[path].data_item.set_highlighted(False)
-                self.widgets_by_path[path].update_selection_visuals()
-        
-        # Remove all highlights except selected camera
-        paths_to_remove = [p for p in self.highlighted_paths if p != self.selected_path]
-        for path in paths_to_remove:
-            self.highlighted_paths.discard(path)
-        
-        self._update_selection_label()
+        # Deprecated: use SelectionModel.set_selections to control selections.
+        # Reset model selections to only include active path (if any)
+        self.model.clear_selections()
+        self._sync_ui_to_model()
         
     def _range_highlight(self, start_index, end_index):
         """Highlight a range of cameras."""
         if start_index > end_index:
             start_index, end_index = end_index, start_index
-            
-        # Clear existing highlights
-        self._clear_highlights()
-        
-        # Highlight range
-        for i in range(start_index, end_index + 1):
-            if i < len(self.data_items):
-                path = self.data_items[i].image_path
-                self._add_highlight(path)
+
+        # Select the range in the model
+        paths_in_range = [self.data_items[i].image_path for i in range(start_index, min(end_index + 1, len(self.data_items)))]
+        self.model.set_selections(paths_in_range)
+        self._sync_ui_to_model()
                 
     def highlight_all(self):
         """Highlight all cameras (Ctrl+A)."""
-        for data_item in self.data_items:
-            path = data_item.image_path
-            self.highlighted_paths.add(path)
-            data_item.set_highlighted(True)
-            if path in self.widgets_by_path:
-                self.widgets_by_path[path].update_selection_visuals()
-                
-        self._update_selection_label()
-        self._emit_highlight_changed()
+        # Select all cameras via model
+        all_paths = [d.image_path for d in self.data_items]
+        self.model.set_selections(all_paths)
+        self._sync_ui_to_model()
         
     def clear_all_selections(self):
         """Clear all highlights but preserve the selected camera.
@@ -939,29 +914,27 @@ class CameraGrid(QWidget):
         cameras (cyan borders) are cleared. This ensures there's always a
         main camera with its point cloud subset visible.
         """
-        # Clear highlights only (not selection)
-        self._clear_highlights()
-        
-        self._emit_highlight_changed()
+        # Delegate to model to clear secondary selections (preserves active)
+        self.model.clear_selections()
+        self._sync_ui_to_model()
         
     def _emit_highlight_changed(self):
         """Emit signal when highlight selection changes."""
-        self.cameras_highlighted.emit(list(self.highlighted_paths))
-        
-        # Also emit combined selection
-        all_selected = list(self.highlighted_paths)
-        if self.selected_path and self.selected_path not in all_selected:
-            all_selected.append(self.selected_path)
-        self.selection_changed.emit(all_selected)
+        # Emit based on model state for compatibility
+        selected = list(getattr(self.model, 'selected_paths', set()))
+        self.cameras_highlighted.emit(selected)
+        self.selection_changed.emit(selected)
         
     def _update_selection_label(self):
         """Update the selection count label."""
-        count = len(self.highlighted_paths)
+        selected_set = getattr(self.model, 'selected_paths', set())
+        count = len(selected_set)
         self.selection_label.setText(f"{count} highlighted")
-        
-        # Update selected camera label
-        if self.selected_path and self.selected_path in self.widgets_by_path:
-            camera_label = self.widgets_by_path[self.selected_path].data_item.label
+
+        # Update selected camera label using model.active_path
+        active = getattr(self.model, 'active_path', None)
+        if active and active in self.widgets_by_path:
+            camera_label = self.widgets_by_path[active].data_item.label
             self.selected_label.setText(f"Selected: {camera_label}")
         else:
             self.selected_label.setText("None selected")
@@ -1019,19 +992,10 @@ class CameraGrid(QWidget):
         """
         if path not in self.widgets_by_path:
             return
-            
-        # Clear previous selection
-        if self.selected_path and self.selected_path in self.widgets_by_path:
-            old_item = self.widgets_by_path[self.selected_path].data_item
-            old_item.set_selected(False)
-            self.widgets_by_path[self.selected_path].update_selection_visuals()
-            
-        # Set new selection
-        self.selected_path = path
-        widget = self.widgets_by_path[path]
-        widget.data_item.set_selected(True)
-        widget.update_selection_visuals()
-        
+
+        # Delegate selection to model (this will include active in selected_paths)
+        self.model.set_active(path)
+
         # Scroll to make visible
         pos_rect = self.widget_positions.get(path)
         if pos_rect:
@@ -1041,8 +1005,9 @@ class CameraGrid(QWidget):
                 pos_rect.width(),
                 pos_rect.height()
             )
-            
-        self._update_selection_label()
+
+        # Sync visuals
+        self._sync_ui_to_model()
         
     def render_highlight_from_paths(self, paths):
         """
@@ -1051,13 +1016,9 @@ class CameraGrid(QWidget):
         Args:
             paths (list): List of image paths to highlight
         """
-        # Clear existing highlights
-        self._clear_highlights()
-        
-        # Add new highlights
-        for path in paths:
-            if path in self.widgets_by_path:
-                self._add_highlight(path)
+        # Delegate to model (will preserve active camera in set)
+        self.model.set_selections(paths)
+        self._sync_ui_to_model()
                 
     def get_highlighted_cameras(self):
         """
@@ -1067,7 +1028,7 @@ class CameraGrid(QWidget):
             list: List of Camera objects that are highlighted
         """
         cameras = []
-        for path in self.highlighted_paths:
+        for path in getattr(self.model, 'selected_paths', set()):
             if path in self.widgets_by_path:
                 cameras.append(self.widgets_by_path[path].data_item.camera)
         return cameras
@@ -1079,8 +1040,9 @@ class CameraGrid(QWidget):
         Returns:
             Camera or None: The selected camera, or None if none selected
         """
-        if self.selected_path and self.selected_path in self.widgets_by_path:
-            return self.widgets_by_path[self.selected_path].data_item.camera
+        active = getattr(self.model, 'active_path', None)
+        if active and active in self.widgets_by_path:
+            return self.widgets_by_path[active].data_item.camera
         return None
         
     def keyPressEvent(self, event):
@@ -1101,7 +1063,8 @@ class CameraGrid(QWidget):
         
     def contextMenuEvent(self, event):
         """Show context menu for highlighted cameras."""
-        count = len(self.highlighted_paths)
+        selected_set = getattr(self.model, 'selected_paths', set())
+        count = len(selected_set)
         if count == 0:
             return
             
@@ -1127,6 +1090,7 @@ class CameraGrid(QWidget):
         
     def _goto_first_highlighted(self):
         """Navigate to the first highlighted camera's image."""
-        if self.highlighted_paths and self.mvat_window:
-            first_path = next(iter(self.highlighted_paths))
+        selected_set = getattr(self.model, 'selected_paths', set())
+        if selected_set and self.mvat_window:
+            first_path = next(iter(selected_set))
             self.camera_selected.emit(first_path)

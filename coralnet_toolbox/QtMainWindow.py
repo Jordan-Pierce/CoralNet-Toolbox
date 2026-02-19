@@ -61,8 +61,7 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportCOLMAPCameras,
-    ImportMetashapeCameras,
+    ImportCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -262,8 +261,7 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
-        self.import_colmap_cameras = ImportCOLMAPCameras(self)
-        self.import_metashape_cameras = ImportMetashapeCameras(self)
+        self.import_cameras_dialog = ImportCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -405,14 +403,10 @@ class MainWindow(QMainWindow):
         
         # Cameras submenu
         self.import_cameras_menu = self.import_menu.addMenu("Cameras")
-        # Import COLMAP Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
-        self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
+        # Import Cameras
+        self.import_colmap_cameras_action = QAction("COLMAP / Metashape", self)
+        self.import_colmap_cameras_action.triggered.connect(self.import_cameras_dialog.exec_)
         self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras  TODO re-enable when implemented correctly
-        # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
-        # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
-        # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -1005,6 +999,84 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.toolbar.addWidget(spacer)
         
+        # --------------------------------------------------
+        # Create collapsible Parameters section (open topright by default)
+        # --------------------------------------------------
+        self.parameters_section = CollapsibleSection("Parameters", "parameters.svg", position='topright')
+
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detections)
+        self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
+        max_detections_layout = QHBoxLayout()
+        max_detections_label = QLabel("Max Detections:")
+        max_detections_layout.addWidget(max_detections_label)
+        max_detections_layout.addWidget(self.max_detections_spinbox)
+        max_detections_layout.addStretch()
+        max_detections_widget = QWidget()
+        max_detections_widget.setLayout(max_detections_layout)
+        self.parameters_section.add_widget(max_detections_widget, "Max Detections")
+
+        # Uncertainty threshold
+        self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_thresh_slider.setRange(0, 100)
+        self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
+        self.uncertainty_thresh_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_thresh_slider.setTickInterval(10)
+        self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
+        uncertainty_layout = QHBoxLayout()
+        uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
+        uncertainty_layout.addWidget(self.uncertainty_value_label)
+        uncertainty_widget = QWidget()
+        uncertainty_widget.setLayout(uncertainty_layout)
+        self.parameters_section.add_widget(uncertainty_widget, "Uncertainty Threshold")
+
+        # IoU threshold
+        self.iou_thresh_slider = QSlider(Qt.Horizontal)
+        self.iou_thresh_slider.setRange(0, 100)
+        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
+        self.iou_thresh_slider.setTickPosition(QSlider.TicksBelow)
+        self.iou_thresh_slider.setTickInterval(10)
+        self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
+        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
+        iou_layout = QHBoxLayout()
+        iou_layout.addWidget(self.iou_thresh_slider)
+        iou_layout.addWidget(self.iou_value_label)
+        iou_widget = QWidget()
+        iou_widget.setLayout(iou_layout)
+        self.parameters_section.add_widget(iou_widget, "IoU Threshold")
+
+        # Area threshold controls
+        min_val = self.area_thresh_min
+        max_val = self.area_thresh_max
+        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_min_slider.setMinimum(0)
+        self.area_threshold_min_slider.setMaximum(100)
+        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_min_slider.setTickInterval(10)
+        self.area_threshold_min_slider.setValue(int(min_val * 100))
+        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_max_slider.setMinimum(0)
+        self.area_threshold_max_slider.setMaximum(100)
+        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_max_slider.setTickInterval(10)
+        self.area_threshold_max_slider.setValue(int(max_val * 100))
+        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
+        area_thresh_layout = QVBoxLayout()
+        area_thresh_layout.addWidget(self.area_threshold_min_slider)
+        area_thresh_layout.addWidget(self.area_threshold_max_slider)
+        area_thresh_layout.addWidget(self.area_threshold_label)
+        area_thresh_widget = QWidget()
+        area_thresh_widget.setLayout(area_thresh_layout)
+        self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
+        
+        # Add the parameters section to the toolbar
+        self.toolbar.addWidget(self.parameters_section)
+        
         self.toolbar.addSeparator()
 
         # Add the device label widget as an action in the toolbar
@@ -1105,13 +1177,15 @@ class MainWindow(QMainWindow):
         
         # Scale labels and dropdowns
         self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        self.scaled_dimensions_label.setFixedWidth(200)
+        # Increase fixed width so long scale strings are not truncated
+        self.scaled_dimensions_label.setFixedWidth(220)
         self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
         
         self.scale_unit_dropdown = QComboBox()
         self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
         self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.scale_unit_dropdown.setFixedWidth(50)
+        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
+        self.scale_unit_dropdown.setFixedWidth(72)
         self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
 
         # Z unit dropdown
@@ -1120,12 +1194,14 @@ class MainWindow(QMainWindow):
         self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
         self.z_unit_dropdown.addItem('px')
         self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        self.z_unit_dropdown.setFixedWidth(50)
+        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
+        self.z_unit_dropdown.setFixedWidth(72)
         self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
         
         # Z label for depth information
         self.z_label = QLabel("Z: -----")
-        self.z_label.setFixedWidth(75)  # Fixed width to prevent shifting
+        # Increase width to avoid truncation of formatted Z values
+        self.z_label.setFixedWidth(140)  # Fixed width to prevent shifting
         self.z_label.setEnabled(False)  # Disabled by default until Z data is available
 
         # Use the Custom ComboBox Class
@@ -1180,100 +1256,95 @@ class MainWindow(QMainWindow):
 
         self.annotation_size_widget = QWidget()
         self.annotation_size_widget.setLayout(annotation_size_layout)
-
-        # --------------------------------------------------
-        # Create collapsible Parameters section
-        # --------------------------------------------------
-        self.parameters_section = CollapsibleSection("Parameters", "parameters.svg")
-
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detections)
-        self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
-        max_detections_layout = QHBoxLayout()
-        max_detections_label = QLabel("Max Detections:")
-        max_detections_layout.addWidget(max_detections_label)
-        max_detections_layout.addWidget(self.max_detections_spinbox)
-        max_detections_layout.addStretch()
-        max_detections_widget = QWidget()
-        max_detections_widget.setLayout(max_detections_layout)
-        self.parameters_section.add_widget(max_detections_widget, "Max Detections")
-
-        # Uncertainty threshold
-        self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_thresh_slider.setRange(0, 100)
-        self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
-        self.uncertainty_thresh_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_thresh_slider.setTickInterval(10)
-        self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
-        uncertainty_layout = QHBoxLayout()
-        uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
-        uncertainty_layout.addWidget(self.uncertainty_value_label)
-        uncertainty_widget = QWidget()
-        uncertainty_widget.setLayout(uncertainty_layout)
-        self.parameters_section.add_widget(uncertainty_widget, "Uncertainty Threshold")
-
-        # IoU threshold
-        self.iou_thresh_slider = QSlider(Qt.Horizontal)
-        self.iou_thresh_slider.setRange(0, 100)
-        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_thresh_slider.setTickPosition(QSlider.TicksBelow)
-        self.iou_thresh_slider.setTickInterval(10)
-        self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
-        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
-        iou_layout = QHBoxLayout()
-        iou_layout.addWidget(self.iou_thresh_slider)
-        iou_layout.addWidget(self.iou_value_label)
-        iou_widget = QWidget()
-        iou_widget.setLayout(iou_layout)
-        self.parameters_section.add_widget(iou_widget, "IoU Threshold")
-
-        # Area threshold controls
-        min_val = self.area_thresh_min
-        max_val = self.area_thresh_max
-        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_min_slider.setMinimum(0)
-        self.area_threshold_min_slider.setMaximum(100)
-        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_min_slider.setTickInterval(10)
-        self.area_threshold_min_slider.setValue(int(min_val * 100))
-        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
-        self.area_threshold_max_slider.setMinimum(0)
-        self.area_threshold_max_slider.setMaximum(100)
-        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_max_slider.setTickInterval(10)
-        self.area_threshold_max_slider.setValue(int(max_val * 100))
-        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_threshold_min_slider)
-        area_thresh_layout.addWidget(self.area_threshold_max_slider)
-        area_thresh_layout.addWidget(self.area_threshold_label)
-        area_thresh_widget = QWidget()
-        area_thresh_widget.setLayout(area_thresh_layout)
-        self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
-
+        
         # Add widgets to the top toolbar and track them
+        # Keep only the compact controls in the top status bar. Move
+        # positional/scale/z widgets to a dedicated bottom status bar
+        for w in (
+            self.transparency_widget,
+            self.annotation_size_widget,
+        ):
+            # Use addWidget so widgets appear left-to-right; store for later
+            self.top_status_toolbar.addWidget(w)
+            self.status_bar_widgets.append(w)
+
+        # --------------------------------------------------
+        # Create bottom status toolbar for annotation-specific status
+        # --------------------------------------------------
+        # This toolbar sits at the bottom of the annotation dock and
+        # contains grouped status widgets which are evenly spaced.
+        self.bottom_status_toolbar = QToolBar()
+        self.bottom_status_toolbar.setMovable(False)
+        self.bottom_status_toolbar.setFloatable(False)
+        self.bottom_status_toolbar.setAllowedAreas(Qt.BottomToolBarArea)
+        self.bottom_status_toolbar.setFixedHeight(max(40, int(fm.height() * 2.4)))
+        self.bottom_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.bottom_status_toolbar.setObjectName("bottomStatusToolbar")
+        self.bottom_status_toolbar.setStyleSheet(
+            "QToolBar#bottomStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}"
+        )
+
+        # Create a container widget with an HBoxLayout to control spacing
+        self.bottom_status_container = QWidget()
+        bottom_layout = QHBoxLayout(self.bottom_status_container)
+        bottom_layout.setContentsMargins(6, 2, 6, 2)
+        bottom_layout.setSpacing(12)
+
+        # Helper to create small grouped widgets so we can keep tuples together
+        def make_group(*widgets):
+            g = QWidget()
+            l = QHBoxLayout(g)
+            l.setContentsMargins(0, 0, 0, 0)
+            l.setSpacing(6)
+            for ww in widgets:
+                l.addWidget(ww)
+            return g
+
+        # Groups (keep tuples together as requested)
+        group_mouse = make_group(self.mouse_position_label)
+        group_image = make_group(self.image_dimensions_label)
+        group_view = make_group(self.view_dimensions_label)
+        group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
+        # Tighten spacing inside the scale group so the dropdown sits closer
+        if group_scale.layout() is not None:
+            group_scale.layout().setSpacing(2)
+            group_scale.layout().setContentsMargins(0, 0, 0, 0)
+        # Combine Z label, unit dropdown, transparency, dynamic toggle and colormap
+        group_z = make_group(
+            self.z_unit_dropdown,
+            self.z_label,
+            self.z_transparency_widget,
+            self.z_dynamic_button,
+            self.z_colormap_dropdown,
+        )
+
+        # Add groups and stretches so groups are evenly spaced across the bar
+        bottom_layout.addWidget(group_mouse)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_image)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_view)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_scale)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(group_z)
+
+        # Put the container into the toolbar
+        self.bottom_status_toolbar.addWidget(self.bottom_status_container)
+
+        # Track the widgets in status_bar_widgets so existing logic can find them
         for w in (
             self.mouse_position_label,
             self.image_dimensions_label,
             self.view_dimensions_label,
-            self.transparency_widget,
-            self.scale_unit_dropdown,
             self.scaled_dimensions_label,
-            self.z_unit_dropdown,
+            self.scale_unit_dropdown,
             self.z_label,
+            self.z_unit_dropdown,
             self.z_colormap_dropdown,
             self.z_transparency_widget,
             self.z_dynamic_button,
-            self.annotation_size_widget,
-            self.parameters_section,
         ):
-            # Use addWidget so widgets appear left-to-right; store for later
-            self.top_status_toolbar.addWidget(w)
             self.status_bar_widgets.append(w)
 
         # --------------------------------------------------
@@ -1313,6 +1384,9 @@ class MainWindow(QMainWindow):
         annotation_container_layout.setContentsMargins(0, 0, 0, 0)
         annotation_container_layout.addWidget(self.top_status_toolbar)
         annotation_container_layout.addWidget(self.annotation_group_box)
+        # Add the bottom status toolbar (contains grouped status widgets)
+        if hasattr(self, 'bottom_status_toolbar'):
+            annotation_container_layout.addWidget(self.bottom_status_toolbar)
 
         self.annotation_dock = QDockWidget("Annotation Window", self)
         self.annotation_dock.setObjectName("AnnotationDock")
@@ -1326,7 +1400,7 @@ class MainWindow(QMainWindow):
         self.timer_dock.setObjectName("TimerDock")
         self.timer_dock.setWidget(self.timer_group)
         self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.timer_dock.setMaximumHeight(90)
+        self.timer_dock.setMaximumHeight(100)
 
         # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
@@ -1372,9 +1446,9 @@ class MainWindow(QMainWindow):
         self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
 
         # 6. Shrink the default width of the side docks.
-        # This tells Qt to assign 250 pixels of width to the left side and right side,
+        # This tells Qt to assign N pixels of width to the left side and right side,
         # leaving the vast majority of the screen for your center column.
-        self.resizeDocks([self.left_dock, self.right_dock], [250, 250], Qt.Horizontal)
+        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
         
         # Give the Workspace dock the absolute maximum vertical space available
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
