@@ -123,35 +123,41 @@ def read_images_text(path):
     """Parse COLMAP images.txt and return a dict of Image namedtuples."""
     images = {}
     with open(path) as fid:
-        lines = [line.strip() for line in fid if line.strip() and not line.strip().startswith("#")]
-        i = 0
-        while i < len(lines):
-            parts = lines[i].split()
-            # image line: IMAGE_ID, QW QX QY QZ, TX TY TZ, CAMERA_ID, NAME
-            image_id = int(parts[0])
-            qvec = np.array(list(map(float, parts[1:5])))
-            tvec = np.array(list(map(float, parts[5:8])))
-            camera_id = int(parts[8])
-            name = parts[9]
-            i += 1
-            # next line contains 2D points
-            xys = []
-            point3D_ids = []
-            if i < len(lines):
-                elems = lines[i].split()
-                for j in range(0, len(elems), 3):
-                    xys.append((float(elems[j]), float(elems[j + 1])))
-                    point3D_ids.append(int(elems[j + 2]))
-                i += 1
-            images[image_id] = Image(
-                id=image_id,
-                qvec=qvec,
-                tvec=tvec,
-                camera_id=camera_id,
-                name=name,
-                xys=np.array(xys),
-                point3D_ids=np.array(point3D_ids),
-            )
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                image_id = int(elems[0])
+                qvec = np.array(tuple(map(float, elems[1:5])))
+                tvec = np.array(tuple(map(float, elems[5:8])))
+                camera_id = int(elems[8])
+                image_name = elems[9]
+                # second line contains 2D points
+                elems = fid.readline().split()
+                if len(elems) > 0:
+                    xys = np.column_stack(
+                        [
+                            tuple(map(float, elems[0::3])),
+                            tuple(map(float, elems[1::3])),
+                        ]
+                    )
+                    point3D_ids = np.array(tuple(map(int, elems[2::3])))
+                else:
+                    xys = np.zeros((0, 2))
+                    point3D_ids = np.zeros((0,), dtype=int)
+
+                images[image_id] = Image(
+                    id=image_id,
+                    qvec=qvec,
+                    tvec=tvec,
+                    camera_id=camera_id,
+                    name=image_name,
+                    xys=xys,
+                    point3D_ids=point3D_ids,
+                )
     return images
 
 
@@ -252,7 +258,7 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         w2c[:3, :3] = R
         w2c[:3, 3] = t
         extrinsics_list.append(w2c)
-        labels.append(os.path.splitext(os.path.basename(img.name))[0])
+        labels.append(os.path.splitext(os.path.basename(img.name))[0].lower())
 
     if len(intrinsics_list) == 0:
         return np.array([]), np.array([]), []
@@ -369,7 +375,8 @@ def extract_intrinsics_extrinsics_from_metashape(sensors, cameras):
         except np.linalg.LinAlgError:
             intrinsics_list.pop()
             continue
-        camera_labels.append(cam.label)
+        # store label as basename without extension, lowercased for matching
+        camera_labels.append(os.path.splitext(cam.label)[0].lower())
 
     if len(intrinsics_list) == 0:
         return np.array([]), np.array([]), []
@@ -489,14 +496,16 @@ class ColmapTab(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
             
+        # Build a case-insensitive map of loaded images by basename (no extension)
         image_path_map = {}
         for path in self.image_window.raster_manager.image_paths:
-            image_path_map[normalize_extension(os.path.basename(path))] = path
-        
+            base = os.path.splitext(os.path.basename(path))[0].lower()
+            image_path_map[base] = path
+
         matched_images = {}
         for img_id, img in images.items():
-            img_basename_normalized = normalize_extension(img.name)
-            if img_basename_normalized in image_path_map:
+            img_basename = os.path.splitext(os.path.basename(img.name))[0].lower()
+            if img_basename in image_path_map:
                 matched_images[img_id] = img
 
         if not matched_images:
@@ -507,8 +516,8 @@ class ColmapTab(QWidget):
 
         rasters_with_cameras = []
         for img_id, img in matched_images.items():
-            img_basename_normalized = normalize_extension(img.name)
-            image_path = image_path_map[img_basename_normalized]
+            img_basename = os.path.splitext(os.path.basename(img.name))[0].lower()
+            image_path = image_path_map[img_basename]
             raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and (raster.intrinsics is not None or raster.extrinsics is not None):
                 rasters_with_cameras.append(image_path)
@@ -539,7 +548,7 @@ class ColmapTab(QWidget):
             label_to_idx = {label: idx for idx, label in enumerate(labels)}
 
             for img_id, img in matched_images.items():
-                image_basename = os.path.splitext(os.path.basename(img.name))[0]
+                image_basename = os.path.splitext(os.path.basename(img.name))[0].lower()
                 if image_basename not in label_to_idx:
                     skipped_count += 1
                     progress_bar.update_progress()
@@ -547,7 +556,7 @@ class ColmapTab(QWidget):
                 idx = label_to_idx[image_basename]
                 intrinsics = intrinsics_all[idx]
                 extrinsics = extrinsics_all[idx]
-                image_path = image_path_map[normalize_extension(img.name)]
+                image_path = image_path_map[image_basename]
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
                     skipped_count += 1
@@ -650,14 +659,18 @@ class MetashapeTab(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
+        # Case-insensitive basename map for loaded images
         image_path_map = {}
         for path in self.image_window.raster_manager.image_paths:
-            image_basename = os.path.splitext(os.path.basename(path))[0]
-            image_path_map[image_basename] = path
-            
+            base = os.path.splitext(os.path.basename(path))[0].lower()
+            image_path_map[base] = path
+
         matched_cameras = {}
         for cam_id, cam in cameras.items():
-            if cam.label in image_path_map:
+            if not cam.label:
+                continue
+            cam_basename = os.path.splitext(cam.label)[0].lower()
+            if cam_basename in image_path_map:
                 matched_cameras[cam_id] = cam
 
         if not matched_cameras:
@@ -671,7 +684,7 @@ class MetashapeTab(QWidget):
 
         rasters_with_cameras = []
         for cam_id, cam in matched_cameras.items():
-            image_basename = cam.label
+            image_basename = os.path.splitext(cam.label)[0].lower()
             image_path = image_path_map[image_basename]
             raster = self.image_window.raster_manager.get_raster(image_path)
             if raster and (raster.intrinsics is not None or raster.extrinsics is not None):
@@ -711,10 +724,11 @@ class MetashapeTab(QWidget):
                                     "No Valid Camera Data", 
                                     "No valid camera calibration or transform data found in the XML file.")
                 return
-            label_to_idx = {label: idx for idx, label in enumerate(camera_labels)}
+            # Use lowercase labels for case-insensitive matching
+            label_to_idx = {label.lower(): idx for idx, label in enumerate(camera_labels)}
 
             for cam_id, cam in matched_cameras.items():
-                image_basename = cam.label
+                image_basename = os.path.splitext(cam.label)[0].lower()
                 if image_basename not in label_to_idx:
                     skipped_count += 1
                     progress_bar.update_progress()
