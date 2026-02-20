@@ -646,30 +646,57 @@ class MVATViewer(QFrame):
         if show_thumbnails is None:
             show_thumbnails = self._show_thumbnails_enabled
 
+        print(f"🔧 MVATViewer.add_frustums called:")
+        print(f"   - Cameras: {len(cameras)}")
+        print(f"   - Scale: {frustum_scale}")
+        print(f"   - Wireframes enabled: {self._show_wireframes_enabled}")
+        print(f"   - Thumbnails enabled: {show_thumbnails}")
+        print(f"   - Selected camera: {selected_camera.image_path if selected_camera else 'None'}")
+        print(f"   - Highlighted paths: {len(highlighted_paths) if highlighted_paths else 0}")
+
         # Clear prior frustum actors in plotter (but do not clear entire plotter)
         try:
             self._frustum_manager.clear()
+            print(f"   ✅ Cleared frustum manager")
+            
             # Build merged mesh
             merged = self._frustum_manager.build_frustum_batch(cameras, scale=frustum_scale)
-            if merged is not None and self._show_wireframes_enabled:
-                self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
-                selected_path = selected_camera.image_path if selected_camera else None
-                highlighted_paths = highlighted_paths or []
-                self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
-                self._frustum_manager.mark_modified()
+            print(f"   - Built merged frustum mesh: {merged is not None}")
+            
+            if merged is not None:
+                print(f"   - Mesh stats: n_points={merged.n_points}, n_cells={merged.n_cells}")
+                
+                if self._show_wireframes_enabled:
+                    print(f"   - Adding frustums to plotter...")
+                    self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
+                    selected_path = selected_camera.image_path if selected_camera else None
+                    highlighted_paths = highlighted_paths or []
+                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.mark_modified()
+                    print(f"   ✅ Frustums added to plotter successfully")
+                else:
+                    print(f"   ⚠️ Frustums NOT added - wireframes disabled")
+            else:
+                print(f"   ⚠️ Merged mesh is None - no frustums to add")
+                
         except Exception as e:
-            print(f"Failed to build frustums: {e}")
+            print(f"   ❌ Failed to build frustums: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Thumbnails (lazy): only for selected camera to limit actors
         # Clear previous thumbnails first
         self.remove_thumbnails()
         if show_thumbnails and selected_camera is not None:
+            print(f"   - Adding thumbnail for selected camera")
             self._add_thumbnail_for_camera(selected_camera, scale=frustum_scale)
+        
         # Render update
         try:
             self.plotter.render()
-        except Exception:
-            pass
+            print(f"   ✅ Plotter rendered")
+        except Exception as e:
+            print(f"   ⚠️ Render failed: {e}")
 
     def _add_thumbnail_for_camera(self, camera, scale: float = None):
         """Add a single image-plane thumbnail for the given camera."""

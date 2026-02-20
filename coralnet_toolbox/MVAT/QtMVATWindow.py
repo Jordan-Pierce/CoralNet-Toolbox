@@ -864,13 +864,21 @@ class MVATWindow(QMainWindow):
         Delegates work to MVATViewer to encapsulate 3D scene management.
         """
         if not self.viewer or not self.viewer.plotter:
+            print("⚠️ _render_frustums: No viewer or plotter available")
             return
+
+        print(f"🔍 _render_frustums: Rendering {len(self.cameras)} cameras")
+        print(f"   - Selected camera: {self.selected_camera.image_path if self.selected_camera else 'None'}")
+        print(f"   - Frustum scale: {self.frustum_scale}")
+        print(f"   - Show wireframes: {self._show_wireframes_enabled}")
+        print(f"   - Show thumbnails: {self._show_thumbnails_enabled}")
 
         # Clear existing actors in plotter
         try:
             self.viewer.plotter.clear()
-        except Exception:
-            pass
+            print("   ✅ Cleared plotter")
+        except Exception as e:
+            print(f"   ⚠️ Failed to clear plotter: {e}")
 
         # Keep MVATWindow thumbnail_actors in sync with viewer
         try:
@@ -881,17 +889,21 @@ class MVATWindow(QMainWindow):
         # Let viewer warm up point cloud GPU cache and add reference axes via viewer API
         try:
             self.viewer.add_point_cloud()
-        except Exception:
-            pass
+            print("   ✅ Added point cloud")
+        except Exception as e:
+            print(f"   ⚠️ Failed to add point cloud: {e}")
         try:
             self.viewer.add_axes()
-        except Exception:
-            pass
+            print("   ✅ Added axes")
+        except Exception as e:
+            print(f"   ⚠️ Failed to add axes: {e}")
 
         # Delegate frustum creation to viewer
         try:
             # Use SelectionManager API to obtain highlighted/selected cameras
             highlighted = self.selection_model.get_selected_list() if self.selection_model else []
+            print(f"   - Highlighted cameras: {len(highlighted)}")
+            
             self.viewer.add_frustums(
                 self.cameras,
                 frustum_scale=self.frustum_scale,
@@ -900,14 +912,18 @@ class MVATWindow(QMainWindow):
                 highlighted_paths=highlighted,
                 hovered_camera=self.hovered_camera
             )
+            print("   ✅ add_frustums() completed")
         except Exception as e:
-            print(f"Failed to render frustums via viewer: {e}")
+            print(f"   ❌ Failed to render frustums via viewer: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Update the render via viewer
         try:
             self.viewer.update()
-        except Exception:
-            pass
+            print("   ✅ Viewer updated")
+        except Exception as e:
+            print(f"   ⚠️ Failed to update viewer: {e}")
             
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
