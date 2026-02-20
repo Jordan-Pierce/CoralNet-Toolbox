@@ -1391,7 +1391,10 @@ class MainWindow(QMainWindow):
         self.annotation_dock = QDockWidget("Annotation Window", self)
         self.annotation_dock.setObjectName("AnnotationDock")
         self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                         QDockWidget.DockWidgetFloatable |
+                                         QDockWidget.DockWidgetClosable)
+        
         self.annotation_dock.setWidget(self.annotation_dock_container)
 
         # Setup Timer Dock
@@ -1399,8 +1402,11 @@ class MainWindow(QMainWindow):
         self.timer_dock = QDockWidget("Timer Window", self)
         self.timer_dock.setObjectName("TimerDock")
         self.timer_dock.setWidget(self.timer_group)
-        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.timer_dock.setMaximumHeight(100)
+        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                    QDockWidget.DockWidgetFloatable |
+                                    QDockWidget.DockWidgetClosable)
+        
 
         # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
@@ -1410,7 +1416,9 @@ class MainWindow(QMainWindow):
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.addWidget(self.label_window)
         self.left_dock.setWidget(self.left_container)
-        self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                   QDockWidget.DockWidgetFloatable |
+                                   QDockWidget.DockWidgetClosable)
 
         # Setup Image Dock (Right)
         self.right_dock = QDockWidget("Image Window", self)
@@ -1420,13 +1428,17 @@ class MainWindow(QMainWindow):
         self.right_layout.setContentsMargins(0, 0, 0, 0)
         self.right_layout.addWidget(self.image_window)
         self.right_dock.setWidget(self.right_container)
-        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                    QDockWidget.DockWidgetFloatable | 
+                                    QDockWidget.DockWidgetClosable)
 
         # Setup Confidence Dock (Right)
         self.confidence_dock = QDockWidget("Confidence Window", self)
         self.confidence_dock.setObjectName("ConfidenceDock")
         self.confidence_dock.setWidget(self.confidence_window)
-        self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                         QDockWidget.DockWidgetFloatable |
+                                         QDockWidget.DockWidgetClosable)
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
