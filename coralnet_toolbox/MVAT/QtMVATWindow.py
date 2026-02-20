@@ -1106,18 +1106,36 @@ class MVATWindow(QMainWindow):
         # Update local highlighted camera list for compatibility with existing code
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
 
-        # Update batched frustum colors via viewer
+        # Update batched frustum colors WITHOUT rebuilding geometry
+        # Only update the state arrays for efficient rendering
         try:
             highlighted = list(selected_paths)
-            self.viewer.add_frustums(
-                self.cameras,
-                frustum_scale=self.frustum_scale,
-                show_thumbnails=self._show_thumbnails_enabled,
-                selected_camera=self.selected_camera,
-                highlighted_paths=highlighted,
-                hovered_camera=self.hovered_camera,
-            )
-        except Exception:
+            selected_path = self.selected_camera.image_path if self.selected_camera else None
+            
+            # Use the viewer's frustum manager to update states in-place
+            if hasattr(self.viewer, '_frustum_manager') and self.viewer._frustum_manager:
+                self.viewer._frustum_manager.update_camera_states(
+                    selected_path, 
+                    highlighted, 
+                    self.hovered_camera
+                )
+                self.viewer._frustum_manager.mark_modified()
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+            else:
+                # Fallback: full rebuild (should only happen during initialization)
+                self.viewer.add_frustums(
+                    self.cameras,
+                    frustum_scale=self.frustum_scale,
+                    show_thumbnails=self._show_thumbnails_enabled,
+                    selected_camera=self.selected_camera,
+                    highlighted_paths=highlighted,
+                    hovered_camera=self.hovered_camera,
+                )
+        except Exception as e:
+            print(f"⚠️ Failed to update frustum states: {e}")
             # Fallback to legacy frustum manager update
             selected_path = self.selected_camera.image_path if self.selected_camera else None
             try:
