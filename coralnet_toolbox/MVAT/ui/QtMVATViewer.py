@@ -13,15 +13,22 @@ import time
 import numpy as np
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QFrame, QVBoxLayout
+from PyQt5.QtWidgets import (
+    QApplication, QFrame, QVBoxLayout,
+    QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox
+)
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
+from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 
 class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
+    # UI signals
+    opacityChanged = pyqtSignal(int)           # percentage 0-100
+    pointSizeChanged = pyqtSignal(int)
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -60,8 +67,56 @@ class MVATViewer(QFrame):
         self._show_rays_enabled = show_rays
         self._ray_visible = True
         self._ray_manager = BatchedRayManager()
+        # Frustum and thumbnail management
+        self._frustum_manager = BatchedFrustumManager()
+        self.thumbnail_actors = []
+        self.thumbnail_opacity = 0.25
+        self.frustum_scale = 0.1
+        self._show_wireframes_enabled = True
+        self._show_thumbnails_enabled = True
 
+        # Top and bottom toolbar widgets (previously exposed for host composition)
+        # Refactor: toolbars are owned by the viewer and inserted into its layout
+        # to improve encapsulation while keeping attributes for backward compat.
+        self.top_toolbar_widget = QWidget()
+        self.top_toolbar_layout = QHBoxLayout(self.top_toolbar_widget)
+        self.top_toolbar_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Bottom toolbar widget (point-size and opacity controls)
+        self.bottom_toolbar_widget = QWidget()
+        bottom_layout = QHBoxLayout(self.bottom_toolbar_widget)
+        bottom_layout.setContentsMargins(6, 2, 6, 2)
+        bottom_layout.setSpacing(12)
+
+        # Insert widgets into the viewer's own layout (top toolbar, plotter, bottom toolbar)
+        self.layout.addWidget(self.top_toolbar_widget)
         self.layout.addWidget(self.plotter.interactor)
+        self.layout.addWidget(self.bottom_toolbar_widget)
+
+        # Opacity control (for thumbnail/frustum opacity)
+        opacity_label = QLabel("Opacity:")
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(25)
+        self.opacity_slider.setFixedWidth(120)
+        self.opacity_slider.setToolTip("Adjust thumbnail opacity")
+        self.opacity_slider.valueChanged.connect(lambda v: self.opacityChanged.emit(v))
+
+        # Point size control
+        point_size_label = QLabel("Point Size:")
+        self.point_size_spinbox = QSpinBox()
+        self.point_size_spinbox.setRange(1, 20)
+        self.point_size_spinbox.setSingleStep(1)
+        self.point_size_spinbox.setValue(self.point_size)
+        self.point_size_spinbox.setToolTip("Adjust point cloud point size")
+        self.point_size_spinbox.valueChanged.connect(self._on_point_size_spin_changed)
+
+        # Add widgets to bottom layout (left aligned: opacity, stretch, point size)
+        bottom_layout.addWidget(opacity_label)
+        bottom_layout.addWidget(self.opacity_slider)
+        bottom_layout.addStretch(1)
+        bottom_layout.addWidget(point_size_label)
+        bottom_layout.addWidget(self.point_size_spinbox)
 
         # Navigation constants
         self.move_speed = 0.01          # world units per key press
@@ -341,9 +396,10 @@ class MVATViewer(QFrame):
                 mvat_window = self.parent()
                 model = mvat_window.selection_model
 
-                if model.selected_paths:
+                selected = model.get_selected_list() if model else []
+                if selected:
                     # The model already guarantees the active camera is in this set!
-                    mvat_window._update_visibility_filter(list(model.selected_paths))
+                    mvat_window._update_visibility_filter(selected)
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
             event.ignore()
@@ -373,6 +429,14 @@ class MVATViewer(QFrame):
         if self._filtered_actor is not None:
             self._filtered_actor.GetProperty().SetPointSize(size)
             self.plotter.render()
+
+    def _on_point_size_spin_changed(self, value):
+        """Handle spinbox changes: set internal point size and emit signal."""
+        try:
+            self.set_point_size(value)
+            self.pointSizeChanged.emit(value)
+        except Exception:
+            pass
     
     def update_point_cloud_subset(self, indices):
         """
@@ -560,6 +624,231 @@ class MVATViewer(QFrame):
         except:
             return 10.0  # Default fallback depth
 
+    # ------------------------------------------------------------------
+    # Frustum & Thumbnail Management (moved from MVATWindow)
+    # ------------------------------------------------------------------
+    def add_frustums(self, cameras: dict, frustum_scale: float = None,
+                     show_thumbnails: bool = None, selected_camera=None,
+                     highlighted_paths: list = None, hovered_camera: str = None):
+        """
+        Build and add batched frustums (wireframes) to the plotter.
+
+        Args:
+            cameras: Dict mapping image_path -> Camera
+            frustum_scale: Scale to use for frustum geometry
+            show_thumbnails: Whether to add image plane thumbnails for selected camera
+            selected_camera: Camera object to render thumbnail for
+            highlighted_paths: List of highlighted camera paths
+            hovered_camera: Path of hovered camera
+        """
+        if frustum_scale is None:
+            frustum_scale = self.frustum_scale
+        if show_thumbnails is None:
+            show_thumbnails = self._show_thumbnails_enabled
+
+        # Clear prior frustum actors in plotter (but do not clear entire plotter)
+        try:
+            self._frustum_manager.clear()
+            # Build merged mesh
+            merged = self._frustum_manager.build_frustum_batch(cameras, scale=frustum_scale)
+            if merged is not None and self._show_wireframes_enabled:
+                self._frustum_manager.add_to_plotter(self.plotter, line_width=1.5)
+                selected_path = selected_camera.image_path if selected_camera else None
+                highlighted_paths = highlighted_paths or []
+                self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                self._frustum_manager.mark_modified()
+        except Exception as e:
+            print(f"Failed to build frustums: {e}")
+
+        # Thumbnails (lazy): only for selected camera to limit actors
+        # Clear previous thumbnails first
+        self.remove_thumbnails()
+        if show_thumbnails and selected_camera is not None:
+            self._add_thumbnail_for_camera(selected_camera, scale=frustum_scale)
+        # Render update
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def _add_thumbnail_for_camera(self, camera, scale: float = None):
+        """Add a single image-plane thumbnail for the given camera."""
+        if scale is None:
+            scale = self.frustum_scale
+        try:
+            # Clear any cached image actors for this frustum
+            camera.frustum.image_actors.clear()
+            actor = camera.frustum.create_image_plane_actor(self.plotter, scale=scale, opacity=self.thumbnail_opacity)
+            self.thumbnail_actors.append(actor)
+        except Exception as e:
+            print(f"Failed to render thumbnail for {getattr(camera, 'image_path', '<unknown>')}: {e}")
+
+    def remove_thumbnails(self):
+        """Remove all thumbnail actors from the plotter and clear caches."""
+        for actor in list(self.thumbnail_actors):
+            try:
+                self.plotter.remove_actor(actor)
+            except Exception:
+                pass
+        self.thumbnail_actors.clear()
+
+        # Clear frustum image actor caches
+        try:
+            # Cameras are not owned by viewer; safe to attempt if present on parent
+            parent = getattr(self, 'parent', None)
+        except Exception:
+            parent = None
+        # We cannot enumerate cameras here safely; callers should clear camera.frustum.image_actors if needed
+
+    def set_thumbnail_opacity(self, opacity: float):
+        """Set opacity for any existing thumbnail image plane actors (0.0-1.0)."""
+        try:
+            self.thumbnail_opacity = float(opacity)
+            # Update any existing frustum image actors (if they exist)
+            # Try to update through frustum objects if accessible via frustum manager
+            for path, cam in getattr(self._frustum_manager, 'cameras', {}).items():
+                fr = getattr(cam, 'frustum', None)
+                if fr is not None:
+                    for actor in list(fr.image_actors.values()):
+                        try:
+                            actor.GetProperty().SetOpacity(self.thumbnail_opacity)
+                        except Exception:
+                            pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def fit_to_view(self):
+        """Fit the current scene in view (wrapper)."""
+        try:
+            self.plotter.reset_camera()
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def reset_view(self):
+        """Reset to default isometric view."""
+        try:
+            self.plotter.reset_camera()
+            try:
+                self.plotter.view_isometric()
+            except Exception:
+                pass
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def match_camera_perspective(self, camera, focal_distance_ratio: float = 0.2):
+        """Match the 3D viewer perspective to a camera's viewpoint.
+
+        Args:
+            camera: Camera object with position, R, K, width/height
+            focal_distance_ratio: Fraction of scene diagonal to use as focal distance
+        """
+        try:
+            position = camera.position
+
+            # view direction: camera looks along +Z in camera frame
+            view_direction = camera.R.T @ np.array([0, 0, 1])
+
+            # up vector: -Y in camera frame
+            up_vector = camera.R.T @ np.array([0, -1, 0])
+
+            # Compute focal distance from scene bounds
+            try:
+                bounds = self.plotter.bounds
+                scene_size = np.sqrt(
+                    (bounds[1] - bounds[0])**2 +
+                    (bounds[3] - bounds[2])**2 +
+                    (bounds[5] - bounds[4])**2
+                )
+                focal_distance = scene_size * float(focal_distance_ratio)
+            except Exception:
+                focal_distance = 5.0
+
+            focal_point = position + view_direction * focal_distance
+
+            self.plotter.camera.position = position.tolist()
+            self.plotter.camera.focal_point = focal_point.tolist()
+            self.plotter.camera.up = up_vector.tolist()
+
+            # Match vertical FOV from intrinsics if available
+            try:
+                if getattr(camera, 'K', None) is not None:
+                    fy = camera.K[1, 1]
+                    height = camera.height
+                    fov_rad = 2 * np.arctan(height / (2 * fy))
+                    fov_deg = np.degrees(fov_rad)
+                    fov_deg = np.clip(fov_deg, 10, 120)
+                    self.plotter.camera.view_angle = fov_deg
+            except Exception:
+                pass
+
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"MVATViewer.match_camera_perspective failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Convenience / Public API wrappers for MVATWindow
+    # ------------------------------------------------------------------
+    def enable_wireframes(self, enabled: bool):
+        """Enable/disable drawing of frustum wireframes."""
+        try:
+            self._show_wireframes_enabled = bool(enabled)
+            if hasattr(self, '_frustum_manager') and self._frustum_manager is not None:
+                try:
+                    self._frustum_manager.set_visibility(bool(enabled))
+                except Exception:
+                    pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def enable_thumbnails(self, enabled: bool):
+        """Enable/disable thumbnail image plane actors."""
+        try:
+            self._show_thumbnails_enabled = bool(enabled)
+            # Update visibility of existing thumbnail actors
+            for actor in getattr(self, 'thumbnail_actors', []):
+                try:
+                    actor.SetVisibility(bool(enabled))
+                except Exception:
+                    pass
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def set_frustum_scale(self, scale: float):
+        """Set scale used for frustum geometry."""
+        try:
+            self.frustum_scale = float(scale)
+        except Exception:
+            pass
+
+    def update_frustum_states(self, selected_path, highlighted_paths, hovered_camera):
+        """Update frustum manager camera states and mark modified."""
+        try:
+            if hasattr(self, '_frustum_manager') and self._frustum_manager is not None:
+                try:
+                    self._frustum_manager.update_camera_states(selected_path, highlighted_paths, hovered_camera)
+                    self._frustum_manager.mark_modified()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def close(self):
         """Clean up the plotter resources."""
         # Clean up ray manager
@@ -568,3 +857,60 @@ class MVATViewer(QFrame):
         
         if self.plotter:
             self.plotter.close()
+
+    # ------------------------------------------------------------------
+    # Small public helpers used by MVATWindow to avoid reaching into plotter
+    # ------------------------------------------------------------------
+    def clear_plotter(self):
+        """Clear plotter actors (wrapper)."""
+        try:
+            self.plotter.clear()
+        except Exception:
+            pass
+
+    def add_axes(self):
+        """Add reference axes to the plotter (wrapper)."""
+        try:
+            self.plotter.add_axes()
+        except Exception:
+            pass
+
+    def render(self):
+        """Render the plotter (wrapper)."""
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def update(self):
+        """Update the plotter (alias to render/update as available)."""
+        try:
+            # Some PyVista versions have update(); prefer render()
+            if hasattr(self.plotter, 'update'):
+                try:
+                    self.plotter.update()
+                    return
+                except Exception:
+                    pass
+            self.plotter.render()
+        except Exception:
+            pass
+
+    def get_bounds(self):
+        """Return the plotter bounds (wrapper)."""
+        try:
+            return self.plotter.bounds
+        except Exception:
+            return None
+
+    def update_camera_appearance(self, camera, opacity=None):
+        """Update camera visual appearance via its helper method using this viewer's plotter."""
+        try:
+            if camera is None:
+                return
+            if opacity is not None:
+                camera.update_appearance(self.plotter, opacity=opacity)
+            else:
+                camera.update_appearance(self.plotter)
+        except Exception:
+            pass

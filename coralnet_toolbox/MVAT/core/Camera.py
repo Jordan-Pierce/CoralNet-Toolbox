@@ -347,7 +347,7 @@ class Camera:
         
         try:
             # Import here to avoid circular dependencies
-            from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
             
             # Get point cloud points
             points_world = point_cloud.get_points_array()
