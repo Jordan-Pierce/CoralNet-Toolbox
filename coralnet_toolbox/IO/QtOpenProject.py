@@ -177,7 +177,13 @@ class OpenProject(QDialog):
         image_paths = [img['path'] for img in images_data] if is_new_format else images_data
         
         if not all([os.path.exists(path) for path in image_paths]):
-            image_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
+            # Ask user to update missing paths. If they cancel, abort the import.
+            new_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
+            if new_paths is None:
+                # User cancelled path update — stop importing images
+                return
+            
+            image_paths = new_paths
         
         total_images = len(image_paths)
         progress_bar = ProgressBar(self.image_window, title="Importing Images")

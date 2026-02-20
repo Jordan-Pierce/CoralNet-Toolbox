@@ -108,9 +108,11 @@ class UpdateImagePaths(QDialog):
         while self.missing_images:
             # Open file dialog and get the directory from selected file
             directory = self.open_file_dialog()
-            if not directory:  # User cancelled
+            if directory is None:  # User cancelled or closed dialog
+                # Ensure dialog is rejected and exit early to avoid further processing
                 self.reject()
-            
+                return
+
             # Update paths for missing images
             updated_count = 0
             still_missing = []
@@ -133,11 +135,14 @@ class UpdateImagePaths(QDialog):
             
             # Update the missing images list
             self.missing_images = still_missing
-            
+
             if updated_count == 0:
-                QMessageBox.warning(self, "No Images Found", 
-                                    "No images were found in the selected directory. "
-                                    "Looking for files like: {first_basename}")
+                # Recompute the sample basename for the warning message (if available)
+                first_basename = os.path.basename(self.missing_images[0]) if self.missing_images else ''
+                QMessageBox.warning(self, 
+                                    "No Images Found",
+                                    f"No images were found in the selected directory. Looking for files like: "
+                                    f"{first_basename}")
             elif still_missing:
                 # Update the list widget with remaining missing images
                 self.list_widget.clear()
@@ -159,8 +164,9 @@ class UpdateImagePaths(QDialog):
         """Static method to create and execute the dialog."""
         dialog = UpdateImagePaths(image_paths, parent)
         result = dialog.exec_()
-        
         if result == QDialog.Accepted:
             return dialog.image_paths, dialog.updated_paths
         else:
-            return image_paths, {}  # Return original paths if cancelled
+            # User cancelled the update dialog — signal caller to abort import by
+            # returning None for image_paths.
+            return None, {}
