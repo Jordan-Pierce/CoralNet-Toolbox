@@ -160,6 +160,33 @@ class MVATViewer(QFrame):
             self.keyPressEvent(event)
             if event.isAccepted():
                 return True
+        # Swallow ContextMenu events coming from the plotter interactor so the
+        # default Qt context menu does not appear on single right-click.
+        if event.type() == QEvent.ContextMenu:
+            return True
+
+        # Preserve existing key handling behavior
+        if event.type() == QEvent.KeyPress:
+            try:
+                key = event.key()
+                if key == Qt.Key_W:
+                    self.move_forward()
+                elif key == Qt.Key_S:
+                    self.move_backward()
+                elif key == Qt.Key_A:
+                    self.strafe_left()
+                elif key == Qt.Key_D:
+                    self.strafe_right()
+                elif key == Qt.Key_Q:
+                    self.rotate_left()
+                elif key == Qt.Key_E:
+                    self.rotate_right()
+                else:
+                    return super().eventFilter(obj, event)
+                return True
+            except Exception:
+                return super().eventFilter(obj, event)
+
         return super().eventFilter(obj, event)
 
     def _on_left_press(self, obj, event):
