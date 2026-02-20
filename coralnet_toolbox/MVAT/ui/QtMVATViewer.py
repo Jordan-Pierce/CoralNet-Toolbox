@@ -377,15 +377,79 @@ class MVATViewer(QFrame):
         # focal point and up remain unchanged
         self._update_clipping_range()
 
+    def _rotate_vector_around_axis(self, v, k, angle_rad):
+        """Rotate vector v around axis k by angle_rad using Rodrigues' formula."""
+        k = np.asarray(k, dtype=float)
+        k = k / (np.linalg.norm(k) + 1e-12)
+        v = np.asarray(v, dtype=float)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        return v * cos_a + np.cross(k, v) * sin_a + k * (np.dot(k, v)) * (1 - cos_a)
+
+    def _rotate_yaw_inplace(self, angle_rad):
+        """Rotate view direction around the camera's up vector (in-place rotation).
+
+        Camera position remains fixed; focal_point is updated.
+        """
+        cam = self.plotter.camera
+        pos = np.array(cam.position)
+        fp = np.array(cam.focal_point)
+        up = np.array(cam.up)
+        if np.linalg.norm(up) < 1e-12:
+            up = np.array([0, 0, 1])
+
+        v = fp - pos
+        if np.linalg.norm(v) < 1e-6:
+            # No focal separation; choose sensible default distance
+            dist = self.get_scene_median_depth(pos)
+            v = np.array([0, 0, 1]) * dist
+
+        v_rot = self._rotate_vector_around_axis(v, up, angle_rad)
+        cam.focal_point = (pos + v_rot).tolist()
+        # up remains unchanged for yaw
+        self._update_clipping_range()
+
+    def _rotate_pitch_inplace(self, angle_rad):
+        """Rotate view direction around the camera's right vector (in-place rotation).
+
+        Camera position remains fixed; focal_point and up vector are updated.
+        """
+        cam = self.plotter.camera
+        pos = np.array(cam.position)
+        fp = np.array(cam.focal_point)
+        up = np.array(cam.up)
+        up = up / (np.linalg.norm(up) + 1e-12)
+
+        v = fp - pos
+        if np.linalg.norm(v) < 1e-6:
+            dist = self.get_scene_median_depth(pos)
+            v = np.array([0, 0, 1]) * dist
+
+        view_dir_norm = v / (np.linalg.norm(v) + 1e-12)
+        right = np.cross(view_dir_norm, up)
+        right = right / (np.linalg.norm(right) + 1e-12)
+
+        v_rot = self._rotate_vector_around_axis(v, right, angle_rad)
+        # Update focal point
+        cam.focal_point = (pos + v_rot).tolist()
+
+        # Recompute up vector to remain orthogonal
+        new_view_dir = (pos + v_rot) - pos
+        new_view_dir_norm = new_view_dir / (np.linalg.norm(new_view_dir) + 1e-12)
+        new_up = np.cross(right, new_view_dir_norm)
+        new_up = new_up / (np.linalg.norm(new_up) + 1e-12)
+        cam.up = new_up.tolist()
+        self._update_clipping_range()
+
     # ------------------------------------------------------------------
     # Key event handling
     # ------------------------------------------------------------------
     def keyPressEvent(self, event):
         """Handle key presses.
 
-        New mapping:
-        - WASD: change view direction (orbit around focal point)
-          W/S: pitch up/down, A/D: yaw left/right
+                New mapping:
+                - WASD: change view direction in-place (rotate viewing direction)
+                    W/S: pitch up/down, A/D: yaw left/right
         - Arrow keys: move camera position (forward/back/strafe)
         - Q/E: keep existing rotate behavior
         """
@@ -393,20 +457,20 @@ class MVATViewer(QFrame):
         ang = np.radians(self.rotate_speed)
 
         if key == Qt.Key_W:
-            # Pitch up
-            self._orbit_pitch(ang)
+            # Pitch up (rotate view direction in-place)
+            self._rotate_pitch_inplace(ang)
             event.accept()
         elif key == Qt.Key_S:
-            # Pitch down
-            self._orbit_pitch(-ang)
+            # Pitch down (rotate view direction in-place)
+            self._rotate_pitch_inplace(-ang)
             event.accept()
         elif key == Qt.Key_A:
-            # Yaw left
-            self._orbit_yaw(ang)
+            # Yaw left (rotate view direction in-place)
+            self._rotate_yaw_inplace(ang)
             event.accept()
         elif key == Qt.Key_D:
-            # Yaw right
-            self._orbit_yaw(-ang)
+            # Yaw right (rotate view direction in-place)
+            self._rotate_yaw_inplace(-ang)
             event.accept()
         elif key == Qt.Key_Up:
             self.move_forward()
