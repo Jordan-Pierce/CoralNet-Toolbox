@@ -873,12 +873,9 @@ class MVATWindow(QMainWindow):
         print(f"   - Show wireframes: {self._show_wireframes_enabled}")
         print(f"   - Show thumbnails: {self._show_thumbnails_enabled}")
 
-        # Clear existing actors in plotter
-        try:
-            self.viewer.plotter.clear()
-            print("   ✅ Cleared plotter")
-        except Exception as e:
-            print(f"   ⚠️ Failed to clear plotter: {e}")
+        # DON'T clear the entire plotter - it destroys everything including point cloud
+        # Instead, let individual add_* methods handle their own cleanup
+        # Each method (add_point_cloud, add_axes, add_frustums) will remove old actors before adding new ones
 
         # Keep MVATWindow thumbnail_actors in sync with viewer
         try:

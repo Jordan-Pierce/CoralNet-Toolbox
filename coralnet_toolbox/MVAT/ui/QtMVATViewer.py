@@ -654,12 +654,22 @@ class MVATViewer(QFrame):
         print(f"   - Selected camera: {selected_camera.image_path if selected_camera else 'None'}")
         print(f"   - Highlighted paths: {len(highlighted_paths) if highlighted_paths else 0}")
 
-        # Clear prior frustum actors in plotter (but do not clear entire plotter)
+        # Remove old frustum actors from plotter before rebuilding
+        try:
+            self._frustum_manager.remove_from_plotter(self.plotter)
+            print(f"   ✅ Removed old frustum actors from plotter")
+        except Exception as e:
+            print(f"   ⚠️ Failed to remove old actors: {e}")
+        
+        # Clear frustum manager's internal state
         try:
             self._frustum_manager.clear()
-            print(f"   ✅ Cleared frustum manager")
+            print(f"   ✅ Cleared frustum manager state")
+        except Exception as e:
+            print(f"   ⚠️ Failed to clear manager: {e}")
             
-            # Build merged mesh
+        # Build merged mesh
+        try:
             merged = self._frustum_manager.build_frustum_batch(cameras, scale=frustum_scale)
             print(f"   - Built merged frustum mesh: {merged is not None}")
             
