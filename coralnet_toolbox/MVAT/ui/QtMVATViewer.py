@@ -156,36 +156,16 @@ class MVATViewer(QFrame):
 
     def eventFilter(self, obj, event):
         """Intercept key press events."""
-        if event.type() == QEvent.KeyPress:
-            self.keyPressEvent(event)
-            if event.isAccepted():
-                return True
         # Swallow ContextMenu events coming from the plotter interactor so the
         # default Qt context menu does not appear on single right-click.
         if event.type() == QEvent.ContextMenu:
             return True
 
-        # Preserve existing key handling behavior
+        # Forward key presses to keyPressEvent once; if handled, consume the event
         if event.type() == QEvent.KeyPress:
-            try:
-                key = event.key()
-                if key == Qt.Key_W:
-                    self.move_forward()
-                elif key == Qt.Key_S:
-                    self.move_backward()
-                elif key == Qt.Key_A:
-                    self.strafe_left()
-                elif key == Qt.Key_D:
-                    self.strafe_right()
-                elif key == Qt.Key_Q:
-                    self.rotate_left()
-                elif key == Qt.Key_E:
-                    self.rotate_right()
-                else:
-                    return super().eventFilter(obj, event)
+            self.keyPressEvent(event)
+            if event.isAccepted():
                 return True
-            except Exception:
-                return super().eventFilter(obj, event)
 
         return super().eventFilter(obj, event)
 
@@ -353,22 +333,91 @@ class MVATViewer(QFrame):
         # Focal point and up remain unchanged
         self._update_clipping_range()
 
+    def _orbit_pitch(self, angle_rad):
+        """
+        Pitch the camera up/down around the camera's right vector, keeping
+        the focal point fixed. Positive angle pitches up.
+        """
+        cam = self.plotter.camera
+        pos = np.array(cam.position)
+        fp = np.array(cam.focal_point)
+        up = np.array(cam.up)
+        up = up / np.linalg.norm(up)
+
+        # Vector from focal point to camera
+        vec = pos - fp
+        dist = np.linalg.norm(vec)
+        if dist < 1e-6:
+            return
+
+        # Compute right vector
+        view_dir = (fp - pos)
+        view_dir_norm = view_dir / (np.linalg.norm(view_dir) + 1e-12)
+        right = np.cross(view_dir_norm, up)
+        right = right / (np.linalg.norm(right) + 1e-12)
+
+        # Decompose into components parallel and perpendicular to right
+        v_parallel = np.dot(vec, right) * right
+        v_perp = vec - v_parallel
+        perp_len = np.linalg.norm(v_perp)
+        if perp_len < 1e-6:
+            return
+
+        v_perp_norm = v_perp / perp_len
+
+        # Rotate the perpendicular component around the right vector
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        v_perp_rot = cos_a * v_perp_norm + sin_a * np.cross(right, v_perp_norm)
+
+        # New camera position
+        new_pos = fp + v_parallel + v_perp_rot * perp_len
+
+        cam.position = new_pos.tolist()
+        # focal point and up remain unchanged
+        self._update_clipping_range()
+
     # ------------------------------------------------------------------
     # Key event handling
     # ------------------------------------------------------------------
     def keyPressEvent(self, event):
-        """Handle key presses for WASD movement and QE rotation."""
+        """Handle key presses.
+
+        New mapping:
+        - WASD: change view direction (orbit around focal point)
+          W/S: pitch up/down, A/D: yaw left/right
+        - Arrow keys: move camera position (forward/back/strafe)
+        - Q/E: keep existing rotate behavior
+        """
         key = event.key()
+        ang = np.radians(self.rotate_speed)
+
         if key == Qt.Key_W:
-            self.move_forward()
+            # Pitch up
+            self._orbit_pitch(ang)
             event.accept()
         elif key == Qt.Key_S:
-            self.move_backward()
+            # Pitch down
+            self._orbit_pitch(-ang)
             event.accept()
         elif key == Qt.Key_A:
-            self.strafe_left()
+            # Yaw left
+            self._orbit_yaw(ang)
             event.accept()
         elif key == Qt.Key_D:
+            # Yaw right
+            self._orbit_yaw(-ang)
+            event.accept()
+        elif key == Qt.Key_Up:
+            self.move_forward()
+            event.accept()
+        elif key == Qt.Key_Down:
+            self.move_backward()
+            event.accept()
+        elif key == Qt.Key_Left:
+            self.strafe_left()
+            event.accept()
+        elif key == Qt.Key_Right:
             self.strafe_right()
             event.accept()
         elif key == Qt.Key_Q:
