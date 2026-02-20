@@ -305,11 +305,12 @@ class MVATWindow(QMainWindow):
         self.thumbnail_actors = None
         
         # Display status
+        self.point_size = 1
         self.frustum_scale = 0.1
+        self.thumbnail_opacity = 0.25
+        
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
-        self.thumbnail_opacity = 0.25
-        self.point_size = 1
         self._show_rays_enabled = True
         
         # Mouse position bridge for cross-window sync
@@ -430,6 +431,7 @@ class MVATWindow(QMainWindow):
         # ----------------------
         # Create the viewer instance
         self.viewer = MVATViewer(self, point_size=self.point_size, show_rays=self._show_rays_enabled)
+        
         try:
             # Enable picking for camera selection using the viewer's plotter
             self.viewer.plotter.enable_point_picking(
@@ -458,8 +460,7 @@ class MVATWindow(QMainWindow):
         except Exception:
             pass
 
-        # Viewer container: MVATViewer now owns its top/bottom toolbars and
-        # inserts them into its own layout. Embed the viewer widget directly.
+        # Viewer widget
         self.viewer_group_box = QWidget()
         vbox = QVBoxLayout(self.viewer_group_box)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -482,14 +483,12 @@ class MVATWindow(QMainWindow):
         # Camera grid widget (pass shared selection model)
         self.camera_grid = CameraGrid(model=self.selection_model, mvat_window=self)
         self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
-        self.camera_grid.camera_highlighted_single.connect(self._on_grid_camera_highlighted_single)
-        # Legacy signal: update frustum highlighting when the grid indicates highlighted cameras
         self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
         self.camera_grid.camera_hovered.connect(self._on_camera_hovered)
         self.camera_grid.camera_unhovered.connect(self._on_camera_unhovered)
 
-        # Wire CameraGrid intent signals to SelectionManager (SelectionManager is authoritative)
         try:
+            # Wire CameraGrid intent signals to SelectionManager (SelectionManager is authoritative)
             self.camera_grid.selection_requested.connect(lambda paths: self.selection_model.set_selections(paths))
             self.camera_grid.toggle_requested.connect(lambda path: self.selection_model.toggle(path))
             self.camera_grid.active_requested.connect(lambda path: self.selection_model.set_active(path))
@@ -497,7 +496,7 @@ class MVATWindow(QMainWindow):
         except Exception:
             pass
 
-        # Grid container (CameraGrid manages its own toolbar internally)
+        # Grid container
         self.grid_group_box = QWidget()
         gbox_layout = QVBoxLayout(self.grid_group_box)
         gbox_layout.setContentsMargins(2, 2, 2, 2)
@@ -525,7 +524,7 @@ class MVATWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.grid_dock)
         self.splitDockWidget(self.viewer_dock, self.grid_dock, Qt.Horizontal)
         # Bias initial sizes (viewer larger)
-        self.resizeDocks([self.viewer_dock, self.grid_dock], [1200, 400], Qt.Horizontal)
+        self.resizeDocks([self.viewer_dock, self.grid_dock], [800, 800], Qt.Horizontal)
         # Give the viewer the maximum vertical space available in the center column
         self.resizeDocks([self.viewer_dock], [2000], Qt.Vertical)
         
@@ -909,9 +908,7 @@ class MVATWindow(QMainWindow):
             self.viewer.update()
         except Exception:
             pass
-    
-    # Thumbnail management is delegated to MVATViewer (methods called inline where needed).
-        
+            
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
         if self.viewer:
@@ -1053,17 +1050,6 @@ class MVATWindow(QMainWindow):
         """Handle point size change for point clouds."""
         self.point_size = value
         self.viewer.set_point_size(value)
-        
-    def _on_grid_camera_highlighted_single(self, path):
-        """Handle single camera highlight from the grid (single-click).
-        
-        Only updates frustum colors without changing the 3D view.
-        Use double-click to both change view and load image.
-        """
-        # Note: We don't change the 3D view on single-click highlight
-        # That only happens on double-click selection
-        # The highlighting is handled by _on_grid_cameras_highlighted signal
-        pass
 
     def _on_active_camera_changed(self, path):
         """Handle active camera changes coming from SelectionManager."""
