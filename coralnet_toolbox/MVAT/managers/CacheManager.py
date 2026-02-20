@@ -92,16 +92,24 @@ class CacheManager:
             # Load compressed numpy archive
             data = np.load(cache_path)
             
-            return {
+            result = {
                 'index_map': data['index_map'],
                 'visible_indices': data['visible_indices']
             }
+            # depth_map is optional in older caches
+            if 'depth_map' in data:
+                result['depth_map'] = data['depth_map']
+            else:
+                result['depth_map'] = None
+
+            return result
         except Exception as e:
             print(f"Warning: Failed to load visibility cache from {cache_path}: {e}")
             return None
     
     def save_visibility(self, extrinsics: np.ndarray, point_cloud_path: str, 
-                        index_map: np.ndarray, visible_indices: np.ndarray) -> str:
+                        index_map: np.ndarray, visible_indices: np.ndarray,
+                        depth_map: Optional[np.ndarray] = None) -> str:
         """
         Save visibility data to cache.
         
@@ -118,12 +126,20 @@ class CacheManager:
         
         try:
             # Save as compressed numpy archive
-            np.savez_compressed(
-                cache_path,
-                index_map=index_map,
-                visible_indices=visible_indices
-            )
-            
+            if depth_map is None:
+                np.savez_compressed(
+                    cache_path,
+                    index_map=index_map,
+                    visible_indices=visible_indices
+                )
+            else:
+                np.savez_compressed(
+                    cache_path,
+                    index_map=index_map,
+                    visible_indices=visible_indices,
+                    depth_map=depth_map
+                )
+
             return cache_path
         except Exception as e:
             print(f"Warning: Failed to save visibility cache to {cache_path}: {e}")

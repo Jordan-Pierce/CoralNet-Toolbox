@@ -479,6 +479,94 @@ class Raster(QObject):
         """
         # Same validation as add
         self.add_z_channel(z_data, z_path, z_unit, z_data_type, z_nodata)  
+
+    def merge_or_set_depth_map(self, new_depth_map: np.ndarray, z_data_type: str = 'depth', 
+                               z_nodata: float = np.nan) -> bool:
+        """
+        Merges a newly calculated depth map into the existing Z-channel, 
+        or initializes it if one does not exist.
+        
+        Args:
+            new_depth_map (np.ndarray): 2D array of new depth values (float32).
+            z_data_type (str): Type of z-channel data, defaults to 'depth'.
+            z_nodata (float): The NoData value used in new_depth_map, defaults to np.nan.
+            
+        Returns:
+            bool: True if the Z-channel was updated or created, False if no changes were needed.
+        """
+        # Validation
+        if not isinstance(new_depth_map, np.ndarray) or new_depth_map.ndim != 2:
+            raise ValueError("New depth map must be a 2D numpy array")
+
+        # Resize if necessary
+        if new_depth_map.shape != (self.height, self.width):
+            new_depth_map = cv2.resize(
+                new_depth_map,
+                (self.width, self.height),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+        # Case A: No existing Z-channel
+        if not self.has_z_channel():
+            self.add_z_channel(new_depth_map.astype(np.float32), z_data_type=z_data_type, z_nodata=z_nodata)
+            return True
+
+        # Case B: Merge with existing Z-channel
+        existing_z = self.z_channel_lazy
+        if existing_z is None:
+            # Safety fallback: has_z_channel was true but lazy load failed
+            self.add_z_channel(new_depth_map.astype(np.float32), z_data_type=z_data_type, z_nodata=z_nodata)
+            return True
+
+        # Create mask of where existing data is missing
+        needs_fill_mask = np.isnan(existing_z)
+        if self.z_nodata is not None:
+            try:
+                needs_fill_mask |= (existing_z == self.z_nodata)
+            except Exception:
+                pass
+
+        if self.z_data_type == 'depth':
+            try:
+                needs_fill_mask |= (existing_z == 0.0)
+            except Exception:
+                pass
+
+        # New valid mask
+        new_valid_mask = ~np.isnan(new_depth_map)
+        if z_nodata is not None and not (isinstance(z_nodata, float) and np.isnan(z_nodata)):
+            try:
+                new_valid_mask &= (new_depth_map != z_nodata)
+            except Exception:
+                pass
+
+        if z_data_type == 'depth':
+            new_valid_mask &= (new_depth_map != 0.0)
+
+        # Intersection: pixels we can update
+        update_mask = needs_fill_mask & new_valid_mask
+
+        if not np.any(update_mask):
+            return False
+
+        merged_z = existing_z.copy()
+
+        # Promote dtype if necessary
+        if merged_z.dtype == np.uint8 and new_depth_map.dtype == np.float32:
+            merged_z = merged_z.astype(np.float32)
+
+        merged_z[update_mask] = new_depth_map[update_mask]
+
+        # Update channel, preserve metadata
+        self.update_z_channel(
+            merged_z,
+            z_path=self.z_channel_path,
+            z_unit=self.z_unit,
+            z_data_type=self.z_data_type,
+            z_nodata=self.z_nodata
+        )
+
+        return True
         
     def set_z_channel_path(self, z_path: str, auto_load: bool = True):
         """

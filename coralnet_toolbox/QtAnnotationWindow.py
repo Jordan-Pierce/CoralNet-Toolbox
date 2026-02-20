@@ -634,6 +634,17 @@ class AnnotationWindow(QGraphicsView):
         # Reset item references
         self.focal_marker = None
         self.z_item = None
+        # Disconnect any zChannelChanged signal from previously displayed raster
+        try:
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                prev_raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+                if prev_raster is not None:
+                    try:
+                        prev_raster.zChannelChanged.disconnect(self.refresh_z_channel_visualization)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
     def reset_scene_view(self):
         """Resets the scene view"""
@@ -703,6 +714,20 @@ class AnnotationWindow(QGraphicsView):
             except Exception:
                 # Z-channel loading failure is non-critical; proceed without it
                 pass
+
+        # Connect raster's zChannelChanged to refresh visualization for live updates
+        try:
+            # Disconnect previous if exists to avoid duplicate connections
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                prev_raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+                if prev_raster is not None:
+                    try:
+                        prev_raster.zChannelChanged.disconnect(self.refresh_z_channel_visualization)
+                    except Exception:
+                        pass
+            raster.zChannelChanged.connect(self.refresh_z_channel_visualization)
+        except Exception:
+            pass
 
         # Get low-res thumbnail first for a preview
         low_res_qimage = raster.get_thumbnail(longest_edge=256)

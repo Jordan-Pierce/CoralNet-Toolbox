@@ -308,10 +308,12 @@ class MVATWindow(QMainWindow):
         self.point_size = 1
         self.frustum_scale = 0.1
         self.thumbnail_opacity = 0.25
-        
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
         self._show_rays_enabled = True
+
+        # User preference: whether to compute and merge depth maps during visibility
+        self.compute_depth_maps_enabled = True
         
         # Mouse position bridge for cross-window sync
         self.mouse_bridge = None  # Initialized after UI setup
@@ -383,7 +385,14 @@ class MVATWindow(QMainWindow):
         self.view_menu.addAction(self.toggle_rays_action)
         
         self.view_menu.addSeparator()
-        
+        # Compute depth maps toggle (move from toolbar into View menu)
+        self.compute_depths_action = QAction("Compute Depth Maps", self)
+        self.compute_depths_action.setCheckable(True)
+        self.compute_depths_action.setChecked(True)
+        self.compute_depths_action.setToolTip("Toggle computing depth maps during visibility computation (may be slow)")
+        self.compute_depths_action.toggled.connect(lambda v: setattr(self, 'compute_depth_maps_enabled', v))
+        self.view_menu.addAction(self.compute_depths_action)
+
         # Fit to View
         self.fit_view_action = QAction("Fit All", self)
         self.fit_view_action.setShortcut("F")
@@ -1283,7 +1292,10 @@ class MVATWindow(QMainWindow):
                 points_world = self.viewer.point_cloud.get_points_array()
                 camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
                 
-                batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+                compute_depth_map = self.compute_depth_maps_enabled
+                batch_results = VisibilityManager.compute_batch_visibility(points_world, 
+                                                                           camera_params, 
+                                                                           compute_depth_map=compute_depth_map)
                 
                 # Store results back to cameras and collect visible indices
                 for i, (camera, result) in enumerate(zip(cameras_needing_visibility, batch_results)):
@@ -1294,7 +1306,8 @@ class MVATWindow(QMainWindow):
                             camera._raster.extrinsics,
                             self.viewer.point_cloud.file_path,
                             result['index_map'],
-                            result['visible_indices']
+                            result['visible_indices'],
+                            result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
                         )
                     
                     # Store in Raster
@@ -1303,7 +1316,17 @@ class MVATWindow(QMainWindow):
                         cache_path,
                         result['visible_indices']
                     )
-                    
+                    # Merge/set depth map if provided and user enabled depth computation
+                    if (
+                        compute_depth_map and 
+                        isinstance(result, dict) and 
+                        result.get('depth_map') is not None
+                    ):
+                        try:
+                            camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                        except Exception:
+                            pass
+
                     all_visible_indices.append(result['visible_indices'])
                     progress.update_progress()
                     
@@ -1321,7 +1344,9 @@ class MVATWindow(QMainWindow):
                 points_world = self.viewer.point_cloud.get_points_array()
                 camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
                 
-                batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+                batch_results = VisibilityManager.compute_batch_visibility(points_world, 
+                                                                           camera_params, 
+                                                                           compute_depth_map=compute_depth_map)
                 
                 # Store results back to cameras and collect visible indices
                 for camera, result in zip(cameras_needing_visibility, batch_results):
@@ -1332,7 +1357,8 @@ class MVATWindow(QMainWindow):
                             camera._raster.extrinsics,
                             self.viewer.point_cloud.file_path,
                             result['index_map'],
-                            result['visible_indices']
+                            result['visible_indices'],
+                            result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
                         )
                     
                     # Store in Raster
@@ -1341,6 +1367,12 @@ class MVATWindow(QMainWindow):
                         cache_path,
                         result['visible_indices']
                     )
+                    # Merge/set depth map if provided and user enabled depth computation
+                    if compute_depth_map and isinstance(result, dict) and result.get('depth_map') is not None:
+                        try:
+                            camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                        except Exception:
+                            pass
                     
                     all_visible_indices.append(result['visible_indices'])
             

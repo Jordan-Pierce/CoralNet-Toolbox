@@ -296,7 +296,7 @@ class Camera:
     # Visibility Computation (Index Maps)
     # --------------------------------------------------------------------------
     
-    def ensure_visibility_data(self, point_cloud, cache_manager):
+    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True):
         """
         Ensure visibility data (index_map and visible_indices) is computed and cached.
         
@@ -334,6 +334,12 @@ class Camera:
                     cache_path,
                     cached_data['visible_indices']
                 )
+                # Merge or set depth map only if caller requested depth updates
+                if compute_depth_map and 'depth_map' in cached_data and cached_data['depth_map'] is not None:
+                    try:
+                        self._raster.merge_or_set_depth_map(cached_data['depth_map'])
+                    except Exception:
+                        pass
                 return True
         
         # Step 3: Compute visibility using VisibilityManager
@@ -363,7 +369,8 @@ class Camera:
                 R=self.R,
                 t=self.t,
                 width=self.width,
-                height=self.height
+                height=self.height,
+                compute_depth_map=compute_depth_map
             )
             
             # Save to cache if manager is available
@@ -373,7 +380,8 @@ class Camera:
                     self._raster.extrinsics,
                     point_cloud.file_path,
                     result['index_map'],
-                    result['visible_indices']
+                    result['visible_indices'],
+                    result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
                 )
             
             # Store in Raster
@@ -382,6 +390,12 @@ class Camera:
                 cache_path,
                 result['visible_indices']
             )
+            # Merge or set newly computed depth map only if requested
+            if compute_depth_map and 'depth_map' in result and result['depth_map'] is not None:
+                try:
+                    self._raster.merge_or_set_depth_map(result['depth_map'])
+                except Exception:
+                    pass
             
             return True
             
