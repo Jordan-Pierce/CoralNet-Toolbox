@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
-from coralnet_toolbox.QtSystemMonitor import SystemMonitor
+from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
 
 # Main Windows
@@ -194,7 +194,6 @@ class MainWindow(QMainWindow):
         self.z_icon = get_icon("z.svg")
         self.dynamic_icon = get_icon("dynamic.svg")
         self.parameters_icon = get_icon("parameters.svg")
-        self.system_monitor_icon = get_icon("system_monitor.svg")
         self.add_icon = get_icon("add.svg")
         self.remove_icon = get_icon("remove.svg")
         self.edit_icon = get_icon("edit.svg")
@@ -251,13 +250,12 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)     
         self.timer_window = TimerWindow(self)   
+        self.performance_window = PerformanceWindow(self) 
+         
         # Initialized in open_explorer_window
         self.explorer_window = None  
         # Initialized in open_mvat_window
         self.mvat_window = None  
-        # Initialized in open_system_monitor
-        self.system_monitor = None  
-        
         # Initialize after main windows are created
         self.annotation_window.initialize_tools()
 
@@ -1446,12 +1444,11 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        # Setup System Monitor Dock (Right, tabbed with Confidence) using DockWrapper
-        self.system_monitor_widget = SystemMonitor(self)
-        self.system_monitor_dock = DockWrapper(
-            title="System Monitor",
-            object_name="SystemMonitorDock",
-            main_widget=self.system_monitor_widget,
+        # Setup Performance Dock (Right, tabbed with Confidence) using DockWrapper
+        self.performance_dock = DockWrapper(
+            title="Performance Monitor",
+            object_name="PerformanceWindowDock",
+            main_widget=self.performance_window,
             parent=self
         )
 
@@ -1463,16 +1460,16 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
         
-        # Add Confidence and System Monitor docks to the Right side
+        # Add Confidence and Performance Window docks to the Right side
         self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.system_monitor_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
         
-        # Tabify Confidence Window and System Monitor together
-        self.tabifyDockWidget(self.confidence_dock, self.system_monitor_dock)
+        # Tabify Confidence Window and Performance Window together
+        self.tabifyDockWidget(self.confidence_dock, self.performance_dock)
         
-        # Make sure Confidence is the active tab, and completely hide System Monitor on startup
+        # Make sure Confidence is the active tab, and completely hide Performance Window on startup
         self.confidence_dock.raise_()
-        self.system_monitor_dock.hide()
+        self.performance_dock.hide()
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
@@ -1525,7 +1522,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure special windows (explorer, mvat) and system monitor are closed when the main window closes."""
+        """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
@@ -1535,10 +1532,6 @@ class MainWindow(QMainWindow):
         if self.mvat_window:
             self.mvat_window.setParent(None)
             self.mvat_window.close()
-        
-        # Close the system monitor if it exists
-        if self.system_monitor:
-            self.system_monitor.close()
         
         # Stop timer threads properly
         if hasattr(self, 'timer_window') and self.timer_window:

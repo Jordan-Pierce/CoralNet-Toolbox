@@ -15,7 +15,7 @@ from PyQt5.QtGui import QFont
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SystemMonitor(QWidget):
+class PerformanceWindow(QWidget):
     """
     A widget to monitor and display real-time CPU, Memory, and GPU usage.
     The monitoring starts/stops automatically when the widget is shown/hidden.
