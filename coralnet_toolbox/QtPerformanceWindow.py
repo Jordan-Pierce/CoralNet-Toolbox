@@ -144,9 +144,9 @@ class PerformanceWindow(QWidget):
             return w, val, curve
 
         # Graph colors: CPU=yellow, Memory=cyan, GPU=magenta
-        cpu_color = '#FFD400'   # yellow
-        mem_color = '#00E5FF'   # cyan
-        gpu_color = '#FF00CC'   # magenta
+        cpu_color = '#00A8E6' # FFD400'   # yellow
+        mem_color = '#00A8E6' # 00E5FF'   # cyan
+        gpu_color = '#00A8E6' # FF00CC'   # magenta
 
         cpu_widget, self.cpu_value_label, self.cpu_curve = make_compact_metric("CPU", "0%", cpu_color)
         mem_widget, self.mem_value_label, self.mem_curve = make_compact_metric("Memory", "0%", mem_color)

@@ -1452,7 +1452,7 @@ class MainWindow(QMainWindow):
             parent=self
         )
         # Set the size policy to fixed vertically
-        self.performance_dock.setMaximumHeight(150)  # Set height
+        self.performance_dock.setMaximumHeight(125)  # Set height
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
