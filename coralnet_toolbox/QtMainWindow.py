@@ -1446,11 +1446,13 @@ class MainWindow(QMainWindow):
         
         # Setup Performance Dock (Right, tabbed with Confidence) using DockWrapper
         self.performance_dock = DockWrapper(
-            title="Performance Monitor",
+            title="Performance Window",
             object_name="PerformanceWindowDock",
             main_widget=self.performance_window,
             parent=self
         )
+        # Set the size policy to fixed vertically
+        self.performance_dock.setMaximumHeight(150)  # Set height
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1463,13 +1465,6 @@ class MainWindow(QMainWindow):
         # Add Confidence and Performance Window docks to the Right side
         self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
-        
-        # Tabify Confidence Window and Performance Window together
-        self.tabifyDockWidget(self.confidence_dock, self.performance_dock)
-        
-        # Make sure Confidence is the active tab, and completely hide Performance Window on startup
-        self.confidence_dock.raise_()
-        self.performance_dock.hide()
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
