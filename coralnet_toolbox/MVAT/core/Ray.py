@@ -438,15 +438,37 @@ class BatchedRayManager:
             # Need to rebuild - ray count changed
             self.build_ray_batch(rays_with_colors)
             return
-        
+
         # Update points in-place
         points = self.ray_mesh.points
-        for i, (ray, _) in enumerate(rays_with_colors):
+        colors = []
+        for i, (ray, color) in enumerate(rays_with_colors):
             if ray is not None:
                 pt_idx = i * 2
                 points[pt_idx] = ray.origin
                 points[pt_idx + 1] = ray.terminal_point
-        
+
+            # Normalize/convert color to 0-1 float tuple (store per-endpoint)
+            if isinstance(color, tuple) and any(c > 1 for c in color[:3]):
+                norm_color = tuple(c / 255 for c in color[:3])
+            else:
+                # assume already normalized or QColor-like sequence
+                norm_color = color[:3] if len(color) >= 3 else color
+
+            # Append same color for both endpoints of the line
+            colors.append(norm_color)
+            colors.append(norm_color)
+
+        # Update the mesh color array
+        try:
+            self._ray_colors = np.array(colors)
+            # PyVista expects uint8 RGB if using 0-255, so convert from 0-1 floats
+            self.ray_mesh['RGB'] = (self._ray_colors * 255).astype(np.uint8)
+        except Exception:
+            # Fallback: leave existing colors if update fails
+            pass
+
+        # Mark mesh modified so the plotter updates
         self.ray_mesh.Modified()
     
     def set_visibility(self, visible: bool):

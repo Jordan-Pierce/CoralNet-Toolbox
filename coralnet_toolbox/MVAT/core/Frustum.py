@@ -368,8 +368,11 @@ class BatchedFrustumManager:
             pv.PolyData: Merged wireframe mesh with 'state' scalar array, or None if empty
         """
         if not cameras:
+            print(f"   🐛 build_frustum_batch: No cameras provided")
             return None
             
+        print(f"   🐛 build_frustum_batch: Processing {len(cameras)} cameras")
+        
         self.cameras = cameras
         self.camera_indices.clear()
         self.camera_paths.clear()
@@ -396,12 +399,16 @@ class BatchedFrustumManager:
                     self.point_ranges.append((point_offset, point_offset + n_points))
                     point_offset += n_points
                     meshes.append(wireframe_mesh)
+                    print(f"   🐛   Camera {idx}: Created wireframe ({n_points} points)")
                 else:
+                    print(f"   🐛   Camera {idx}: _frustum_to_wireframe_polydata returned None")
                     self.point_ranges.append((point_offset, point_offset))
             else:
+                print(f"   🐛   Camera {idx}: camera.frustum.get_mesh returned None")
                 self.point_ranges.append((point_offset, point_offset))
         
         if not meshes:
+            print(f"   🐛 build_frustum_batch: No meshes generated - returning None")
             self.merged_wireframe = None
             return None
             

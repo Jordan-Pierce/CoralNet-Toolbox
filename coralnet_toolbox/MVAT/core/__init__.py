@@ -7,7 +7,7 @@ Contains core classes for camera geometry and visualization.
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
-from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
+from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.core.constants import (
     HIGHLIGHT_COLOR,
     SELECT_COLOR,

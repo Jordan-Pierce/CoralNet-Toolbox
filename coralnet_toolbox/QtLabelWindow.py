@@ -6,10 +6,10 @@ import random
 
 from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
-from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget,
-                             QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox, QScrollArea,
-                             QGraphicsDropShadowEffect)
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QHBoxLayout,
+                             QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
+                             QPushButton, QApplication, QScrollArea,
+                             QGraphicsDropShadowEffect, QToolBar)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -413,135 +413,129 @@ class LabelWindow(QWidget):
         self.animation_manager = manager
 
     def setup_ui(self):
-        """Set up the user interface."""
+        """Set up the user interface. The payload is ONLY the scroll area now."""
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         
-        # Create UI sections
-        self.setup_actions_section()
+        # Instantiate the widgets so __init__ can connect signals, 
+        # but DO NOT put them in the main layout.
+        self._init_action_widgets()
+        self._init_count_widgets()
+
+        # Build and add the payload (the label list) to the main layout
         self.setup_labels_section()
-        self.setup_counts_section()
 
-    def setup_actions_section(self):
-        """Set up the actions section of the UI."""
-        # Create a container widget for Label Actions (removed QGroupBox wrapper)
-        self.actions_group = QWidget()
-        actions_layout = QVBoxLayout()
-        self.actions_group.setLayout(actions_layout)
-
-        # Top Actions Bar
-        self.actions_bar = QHBoxLayout()
-        self.actions_bar.setContentsMargins(0, 0, 0, 0)
-        self.actions_bar.setSpacing(0)
-
+    def _init_action_widgets(self):
+        """Instantiate action buttons and filter bar."""
         self.add_label_button = QPushButton()
         self.add_label_button.setIcon(self.main_window.add_icon)
         self.add_label_button.setToolTip("Add Label")
-        self.add_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.add_label_button.setFixedHeight(self.label_height)
-        self.actions_bar.addWidget(self.add_label_button)
 
         self.delete_label_button = QPushButton()
         self.delete_label_button.setIcon(self.main_window.remove_icon)
         self.delete_label_button.setToolTip("Delete Label")
-        self.delete_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.delete_label_button.setFixedHeight(self.label_height)
         self.delete_label_button.setEnabled(False)
-        self.actions_bar.addWidget(self.delete_label_button)
 
         self.edit_label_button = QPushButton()
         self.edit_label_button.setIcon(self.main_window.edit_icon)
         self.edit_label_button.setToolTip("Edit Label / Merge Labels")
-        self.edit_label_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.edit_label_button.setFixedHeight(self.label_height)
         self.edit_label_button.setEnabled(False)
-        self.actions_bar.addWidget(self.edit_label_button)
 
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
         self.label_lock_button.setToolTip("Label Unlocked")
         self.label_lock_button.setCheckable(True)
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
-        self.label_lock_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.label_lock_button.setFixedHeight(self.label_height)
-        self.actions_bar.addWidget(self.label_lock_button)
 
         self.toggle_all_button = QPushButton()
         self.toggle_all_button.setIcon(get_icon("all.svg"))
         self.toggle_all_button.setToolTip("Toggle All Labels")
         self.toggle_all_button.clicked.connect(self.toggle_all_labels)
-        self.toggle_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.toggle_all_button.setFixedHeight(self.label_height)
-        self.actions_bar.addWidget(self.toggle_all_button)
 
-        # Filter/Search Bar
-        self.filter_bar_layout = QHBoxLayout()
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
         self.filter_bar.textChanged.connect(self.filter_labels)
-        self.filter_bar_layout.addWidget(self.filter_bar)
 
-        # Add layouts to the group box layout
-        actions_layout.addLayout(self.actions_bar)
-        actions_layout.addLayout(self.filter_bar_layout)
-
-        # Add the group box to the main layout
-        self.layout.addWidget(self.actions_group)
-
-    def setup_labels_section(self):
-        """Set up the labels section of the UI."""
-        # Create a container widget for the Label list (removed QGroupBox wrapper)
-        self.labels_group = QWidget()
-        labels_layout = QVBoxLayout()
-        self.labels_group.setLayout(labels_layout)
-
-        # --- Add scroll area and label layout ---
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Allow scroll area to expand
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_content = QWidget()
-        self.labels_layout = QVBoxLayout(self.scroll_content)
-        self.labels_layout.setContentsMargins(0, 0, 0, 0)
-        self.labels_layout.setSpacing(0)
-        self.scroll_content.setLayout(self.labels_layout)
-        self.scroll_area.setWidget(self.scroll_content)
-
-        # Add scroll area to the group box layout
-        labels_layout.addWidget(self.scroll_area)
-
-        # Add the group box to the main layout
-        self.layout.addWidget(self.labels_group)
-
-    def setup_counts_section(self):
-        """Set up the counts section of the UI."""
-        # Create a container widget for Counts (removed QGroupBox wrapper)
-        self.counts_group = QWidget()
-        counts_layout = QVBoxLayout()
-        self.counts_group.setLayout(counts_layout)
-
-        # Bottom Status Bar
-        self.status_bar = QHBoxLayout()
-        self.counts_layout = QVBoxLayout()
-
+    def _init_count_widgets(self):
+        """Instantiate count displays."""
         self.label_count_display = QLineEdit("Labels: 1")
         self.label_count_display.setReadOnly(True)
         self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
-        self.counts_layout.addWidget(self.label_count_display)
 
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)
         self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
-        self.counts_layout.addWidget(self.annotation_count_display)
 
-        self.status_bar.addLayout(self.counts_layout)
+    def setup_labels_section(self):
+        """Set up the core payload: the scrollable labels area."""
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        self.scroll_content = QWidget()
+        self.labels_layout = QVBoxLayout(self.scroll_content)
+        self.labels_layout.setContentsMargins(0, 0, 0, 0)
+        self.labels_layout.setSpacing(0)
+        
+        self.scroll_area.setWidget(self.scroll_content)
+        self.layout.addWidget(self.scroll_area)
+        
+    # --- DOCK WRAPPER HOOKS ---
 
-        # Add layout to the group box layout
-        counts_layout.addLayout(self.status_bar)
+    def create_action_toolbar(self) -> QToolBar:
+        """Create the first row top toolbar containing action buttons."""
+        toolbar = QToolBar("Label Actions")
+        toolbar.setMovable(False)
 
-        # Add the group box to the main layout
-        self.layout.addWidget(self.counts_group)
+        # Create a container widget and a horizontal layout
+        button_container = QWidget()
+        container_layout = QHBoxLayout(button_container)
+        
+        # Strip margins so it looks native inside the toolbar
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(2)  # Add a tiny gap between buttons
+
+        # Add the buttons to the layout (they will expand equally here)
+        container_layout.addWidget(self.add_label_button)
+        container_layout.addWidget(self.delete_label_button)
+        container_layout.addWidget(self.edit_label_button)
+        container_layout.addWidget(self.label_lock_button)
+        container_layout.addWidget(self.toggle_all_button)
+
+        # Force the container itself to expand across the toolbar
+        button_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        # Add the single container widget to the toolbar
+        toolbar.addWidget(button_container)
+
+        return toolbar
+
+    def create_filter_toolbar(self) -> QToolBar:
+        """Create the second row top toolbar containing the filter search bar."""
+        toolbar = QToolBar("Label Filter")
+        toolbar.setMovable(False)
+
+        # Force the search bar to span the entire width of the toolbar
+        self.filter_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        toolbar.addWidget(self.filter_bar)
+
+        return toolbar
+
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar containing the counts side-by-side."""
+        toolbar = QToolBar("Label Counts")
+        toolbar.setMovable(False)
+
+        # Force the text boxes to expand horizontally to fill the toolbar
+        self.label_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.annotation_count_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        toolbar.addWidget(self.label_count_display)
+        toolbar.addWidget(self.annotation_count_display)
+
+        return toolbar
         
     def showEvent(self, event):
         """Handle the show event to force a layout update, using a timer for startup."""

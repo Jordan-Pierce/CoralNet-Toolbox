@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
                              QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
 
 from coralnet_toolbox.Annotations import (
     PatchAnnotation,
@@ -299,6 +300,70 @@ class AnnotationWindow(QGraphicsView):
         self.schedule_dynamic_range_update()
         
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """Handle mouse double-click events to set focal point in MVATViewer."""
+        # Only process left double-clicks
+        if event.button() != Qt.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        
+        # Check if MVAT window exists and is accessible
+        if not hasattr(self.main_window, 'mvat_window'):
+            super().mouseDoubleClickEvent(event)
+            return
+        
+        mvat_window = self.main_window.mvat_window
+        if mvat_window is None:
+            super().mouseDoubleClickEvent(event)
+            return
+        
+        # Check if current image has camera data
+        if not self.current_image_path or self.current_image_path not in mvat_window.cameras:
+            super().mouseDoubleClickEvent(event)
+            return
+        
+        # Get scene position
+        scene_pos = self.mapToScene(event.pos())
+        x, y = int(scene_pos.x()), int(scene_pos.y())
+        
+        # Check if position is within image bounds
+        camera = mvat_window.cameras[self.current_image_path]
+        if not (0 <= x < camera.width and 0 <= y < camera.height):
+            super().mouseDoubleClickEvent(event)
+            return
+        
+        # Get depth from z-channel if available
+        raster = camera._raster
+        depth = None
+        
+        if raster.z_channel is not None and raster.z_data_type == 'depth':
+            depth = raster.get_z_value(x, y)
+        
+        # Get default depth from scene if no depth available
+        if depth is None or depth <= 0 or np.isnan(depth):
+            default_depth = mvat_window.viewer.get_scene_median_depth(camera.position)
+        else:
+            default_depth = depth
+        
+        # Create ray from pixel position to get 3D world point
+        try:
+            ray = CameraRay.from_pixel_and_camera(
+                pixel_xy=(x, y),
+                camera=camera,
+                depth=depth,
+                default_depth=default_depth
+            )
+            
+            # Update MVATViewer focal point with the ray's terminal point
+            # This will trigger the existing signal chain that projects back to all camera views
+            mvat_window.viewer.set_focal_point(ray.terminal_point)
+            
+        except Exception as e:
+            # Silently handle any errors to allow AnnotationWindow to work independently
+            print(f"Warning: Could not set focal point from double-click: {e}")
+        
+        super().mouseDoubleClickEvent(event)
         
     def keyPressEvent(self, event):
         """Handle keyboard press events including undo/redo and deletion of selected annotations."""
@@ -634,6 +699,17 @@ class AnnotationWindow(QGraphicsView):
         # Reset item references
         self.focal_marker = None
         self.z_item = None
+        # Disconnect any zChannelChanged signal from previously displayed raster
+        try:
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                prev_raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+                if prev_raster is not None:
+                    try:
+                        prev_raster.zChannelChanged.disconnect(self.refresh_z_channel_visualization)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
     def reset_scene_view(self):
         """Resets the scene view"""
@@ -703,6 +779,20 @@ class AnnotationWindow(QGraphicsView):
             except Exception:
                 # Z-channel loading failure is non-critical; proceed without it
                 pass
+
+        # Connect raster's zChannelChanged to refresh visualization for live updates
+        try:
+            # Disconnect previous if exists to avoid duplicate connections
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                prev_raster = self.main_window.image_window.raster_manager.get_raster(self.current_image_path)
+                if prev_raster is not None:
+                    try:
+                        prev_raster.zChannelChanged.disconnect(self.refresh_z_channel_visualization)
+                    except Exception:
+                        pass
+            raster.zChannelChanged.connect(self.refresh_z_channel_visualization)
+        except Exception:
+            pass
 
         # Get low-res thumbnail first for a preview
         low_res_qimage = raster.get_thumbnail(longest_edge=256)

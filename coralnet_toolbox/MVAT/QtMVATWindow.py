@@ -5,7 +5,6 @@ A 3D viewer for visualizing camera frustums and navigating MultiView imagery.
 Uses PyVista for 3D rendering and integrates with the main application's RasterManager.
 """
 
-import os
 import warnings
 import time
 
@@ -14,29 +13,28 @@ import numpy as np
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QToolBar, QAction, QLabel, QSlider,
-    QGroupBox, QMessageBox, QApplication, QFrame, QDoubleSpinBox,
-    QSizePolicy, QSpinBox
+    QMainWindow, QWidget, QVBoxLayout,
+    QToolBar, QAction,
+    QMessageBox, QApplication,
+    QSizePolicy, QDockWidget
 )
 
 from coralnet_toolbox.MVAT.ui.QtMVATViewer import MVATViewer
 from coralnet_toolbox.MVAT.ui.QtCameraGrid import CameraGrid
 from coralnet_toolbox.MVAT.core.Camera import Camera
-from coralnet_toolbox.MVAT.core.SelectionModel import SelectionModel
-from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
-from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.VisibilityManager import VisibilityManager
+from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
+from coralnet_toolbox.MVAT.core.Ray import CameraRay
+from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 
-from coralnet_toolbox.MVAT.core.constants import (MARKER_COLOR_SELECTED, 
-                                                  MARKER_COLOR_HIGHLIGHTED, 
-                                                  MARKER_COLOR_INVALID,
-                                                  RAY_COLOR_SELECTED, 
-                                                  RAY_COLOR_HIGHLIGHTED,
-                                                  RAY_COLOR_INVALID,
-                                                  MOUSE_THROTTLE_MS)
+from coralnet_toolbox.MVAT.core.constants import (
+    MARKER_COLOR_SELECTED,
+    MARKER_COLOR_INVALID,
+    RAY_COLOR_SELECTED,
+    RAY_COLOR_HIGHLIGHTED,
+    RAY_COLOR_INVALID,
+    MOUSE_THROTTLE_MS,
+)
 
-from coralnet_toolbox.MVAT.core.Marker import Marker
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -144,11 +142,7 @@ class MousePositionBridge:
             default_depth=default_depth
         )
         
-        # Get the point cloud mesh for intersection checks
-        if self.mvat_window.viewer.point_cloud and hasattr(self.mvat_window.viewer.point_cloud, 'mesh'):
-            mesh = self.mvat_window.viewer.point_cloud.mesh 
-        else:
-            mesh = None
+        # (mesh intersection checks removed - mesh variable unused)
         
         # Get highlighted cameras and create rays from them to the world point
         highlighted_cameras = self.mvat_window.highlighted_cameras
@@ -211,60 +205,35 @@ class MousePositionBridge:
             highlighted_cameras: List of highlighted Camera objects.
             visibility_status: Dict mapping image_path to is_occluded bool.
         """        
+        # Delegate marker updates to CameraGrid to encapsulate widget logic
         camera_grid = self.mvat_window.camera_grid
-        selected_camera = self.mvat_window.selected_camera
-        
-        # Get set of highlighted camera paths for quick lookup
         highlighted_paths = {cam.image_path for cam in highlighted_cameras}
-        
-        # Get selected camera path
-        selected_path = selected_camera.image_path if selected_camera else None
-        
-        # Get visible widgets from the camera grid
-        visible_widgets = camera_grid.get_visible_widgets()
-        
-        # Update each visible widget
-        for path, widget in visible_widgets.items():
-            # Only draw markers on selected or highlighted cameras
-            if path not in (highlighted_paths | {selected_path} if selected_path else highlighted_paths):
-                widget.clear_marker()
-                continue
-                
-            if path in projections:
-                px, py, is_valid = projections[path]
-                
-                if is_valid:
-                    # Check occlusion status (Default to False if not in dict)
-                    is_occluded = visibility_status.get(path, False)
-                    
-                    # Get accuracy for this camera
-                    acc = accuracies.get(path, False)
-                    
-                    # Determine color based on accuracy
-                    if path == selected_path:
-                        color = MARKER_COLOR_SELECTED if acc else MARKER_COLOR_INVALID
-                    elif path in highlighted_paths:
-                        color = MARKER_COLOR_HIGHLIGHTED if acc else MARKER_COLOR_INVALID
-                    else:
-                        color = MARKER_COLOR_INVALID
-                    
-                    # Override color if occluded
-                    if is_occluded:
-                        color = MARKER_COLOR_INVALID
-                    
-                    widget.set_marker_position(px, py, acc, color, is_occluded)
-                else:
-                    widget.clear_marker()
-            else:
-                widget.clear_marker()
+        selected_path = self.mvat_window.selected_camera.image_path if self.mvat_window.selected_camera else None
+        try:
+            camera_grid.update_markers(
+                projections,
+                accuracies,
+                highlighted_paths,
+                visibility_status,
+                selected_path=selected_path,
+            )
+        except Exception:
+            # Fallback: clear markers on error
+            camera_grid.clear_all_markers()
                 
     def clear_all_markers(self):
         """Clear markers from all visible camera widgets."""
-        camera_grid = self.mvat_window.camera_grid
-        visible_widgets = camera_grid.get_visible_widgets()
-        
-        for widget in visible_widgets.values():
-            widget.clear_marker()
+        try:
+            self.mvat_window.camera_grid.clear_all_markers()
+        except Exception:
+            # Fallback: iterate visible widgets
+            try:
+                camera_grid = self.mvat_window.camera_grid
+                visible_widgets = camera_grid.get_visible_widgets()
+                for widget in visible_widgets.values():
+                    widget.clear_marker()
+            except Exception:
+                pass
             
     def set_enabled(self, enabled: bool):
         """
@@ -323,23 +292,28 @@ class MVATWindow(QMainWindow):
         self.selected_camera_path = None
         
         # Batched geometry managers for efficient rendering (O(1) draw calls)
-        self.frustum_manager = BatchedFrustumManager()
-        self.ray_manager = BatchedRayManager()
+        # These are owned by the MVATViewer; initialize to None and bind to viewer-managed instances
+        self.frustum_manager = None
+        self.ray_manager = None
         
         # Cache manager for visibility data
-        from coralnet_toolbox.MVAT.core.CacheManager import CacheManager
+        from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
         self.cache_manager = CacheManager("")
         
         # Actor lists for thumbnails (cannot be batched due to textures)
-        self.thumbnail_actors = []
+        # Owned by MVATViewer; placeholder until viewer is created
+        self.thumbnail_actors = None
         
         # Display status
+        self.point_size = 1
         self.frustum_scale = 0.1
+        self.thumbnail_opacity = 0.25
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
-        self.thumbnail_opacity = 0.25
-        self.point_size = 1
         self._show_rays_enabled = True
+
+        # User preference: whether to compute and merge depth maps during visibility
+        self.compute_depth_maps_enabled = True
         
         # Mouse position bridge for cross-window sync
         self.mouse_bridge = None  # Initialized after UI setup
@@ -348,7 +322,7 @@ class MVATWindow(QMainWindow):
         self.annotation_window = main_window.annotation_window
         
         # Selection model (single source of truth for UI selection state)
-        self.selection_model = SelectionModel(self)
+        self.selection_model = SelectionManager(self)
 
         # Setup UI
         self._setup_window()
@@ -411,7 +385,14 @@ class MVATWindow(QMainWindow):
         self.view_menu.addAction(self.toggle_rays_action)
         
         self.view_menu.addSeparator()
-        
+        # Compute depth maps toggle (move from toolbar into View menu)
+        self.compute_depths_action = QAction("Compute Depth Maps", self)
+        self.compute_depths_action.setCheckable(True)
+        self.compute_depths_action.setChecked(True)
+        self.compute_depths_action.setToolTip("Toggle computing depth maps during visibility computation (may be slow)")
+        self.compute_depths_action.toggled.connect(lambda v: setattr(self, 'compute_depth_maps_enabled', v))
+        self.view_menu.addAction(self.compute_depths_action)
+
         # Fit to View
         self.fit_view_action = QAction("Fit All", self)
         self.fit_view_action.setShortcut("F")
@@ -436,133 +417,143 @@ class MVATWindow(QMainWindow):
         # to match the Main Window's look and feel.
         
     def _setup_central_layout(self):
-        """Create the central widget, top status bar, and splitters."""
+        """Create the central widget and arrange MVAT viewer and camera grid as docks.
+
+        Uses the same "vacant central widget" trick as MainWindow so docks can
+        occupy the center column while remaining freely movable and resizable.
+        """
+        # Vacant central widget (zero height) so top/bottom dock areas behave like MainWindow
         self.central_widget = QWidget()
+        self.central_widget.setFixedHeight(0)
+        self.central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCentralWidget(self.central_widget)
-        
-        # Main Vertical Layout
-        self.main_layout = QVBoxLayout(self.central_widget)
-        self.main_layout.setContentsMargins(5, 5, 5, 5)
-        self.main_layout.setSpacing(5)  # Reduce spacing between bar and splitter
-        
-        # 1. Top status Group Box (Mimics MainWindow Status/Param Bar)
-        self.status_bar_group_box = QGroupBox("Status Bar")
-        # FORCE HEIGHT: Match typical compact status bar height (~50-60px)
-        self.status_bar_group_box.setMaximumHeight(65) 
-        
-        self.status_bar_layout = QVBoxLayout(self.status_bar_group_box)
-        # TIGHT MARGINS: (left, top, right, bottom)
-        self.status_bar_layout.setContentsMargins(5, 5, 5, 5) 
-        self.status_bar_layout.setSpacing(0)  # No spacing in vertical layout
-        
-        # Horizontal layout for the widgets
-        self.horizontal_layout = QHBoxLayout()
-        self.horizontal_layout.setSpacing(10)  # Spacing between widgets
-        
-        # --- Widget: Stats Label ---
-        self.stats_label = QLabel("Cameras: 0")
-        self.horizontal_layout.addWidget(self.stats_label)
-        
-        # Vertical Separator
-        self.horizontal_layout.addWidget(self._create_v_line())
-        
-        # --- Widget: Opacity Slider ---
-        opacity_label = QLabel("Opacity:")
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(int(self.thumbnail_opacity * 100))
-        self.opacity_slider.setFixedWidth(100)
-        self.opacity_slider.setToolTip("Adjust thumbnail opacity")
-        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)  
-        self.horizontal_layout.addWidget(opacity_label)
-        self.horizontal_layout.addWidget(self.opacity_slider)
-        
-        # Vertical Separator
-        self.horizontal_layout.addWidget(self._create_v_line())
-        
-        # --- Widget: Point Size ---
-        point_size_label = QLabel("Point Size:")
-        self.point_size_spinbox = QSpinBox()
-        self.point_size_spinbox.setRange(1, 20)
-        self.point_size_spinbox.setSingleStep(1)
-        self.point_size_spinbox.setValue(self.point_size)
-        self.point_size_spinbox.setToolTip("Adjust point cloud point size")
-        self.point_size_spinbox.valueChanged.connect(self._on_point_size_changed)
-        self.horizontal_layout.addWidget(point_size_label)
-        self.horizontal_layout.addWidget(self.point_size_spinbox)
-        
-        # Push everything to the left
-        self.horizontal_layout.addStretch()
-        
-        # Add stretches and horizontal layout to vertical layout for centering
-        self.status_bar_layout.addStretch()
-        self.status_bar_layout.addLayout(self.horizontal_layout)
-        self.status_bar_layout.addStretch()
-        
-        # Add status box to main layout
-        self.main_layout.addWidget(self.status_bar_group_box)
-        
-        # 2. Main Horizontal Splitter
-        self.splitter = QSplitter(Qt.Horizontal)
-        self.main_layout.addWidget(self.splitter)
-        
-        # --- Left Panel: 3D Viewer ---
-        # Create the viewer container class
+        self.setDockNestingEnabled(True)
+
+        # Ensure corners trap left/right dock areas (center column remains for docks)
+        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+
+        # ----------------------
+        # Create MVAT Viewer dock
+        # ----------------------
+        # Create the viewer instance
         self.viewer = MVATViewer(self, point_size=self.point_size, show_rays=self._show_rays_enabled)
-
-        # Enable picking for camera selection using the viewer's plotter
-        self.viewer.plotter.enable_point_picking(
-            callback=self._on_pick,
-            show_message=False,
-            use_picker=True,
-            pickable_window=True
-        )
-
-        # Wrap the viewer in a groupbox
-        left_groupbox = QGroupBox("3D Viewer")
-        left_layout = QVBoxLayout(left_groupbox)
-        left_layout.addWidget(self.viewer)
-        self.splitter.addWidget(left_groupbox)  # Add the groupbox instead of the viewer directly
         
-        # --- Right Panel: Camera Grid ---
-        self.right_container = QGroupBox("Camera Grid")
-        right_layout = QVBoxLayout(self.right_container)
-        right_layout.setContentsMargins(2, 2, 2, 2)
-        
-        # Create the camera grid widget (pass shared selection model)
+        try:
+            # Enable picking for camera selection using the viewer's plotter
+            self.viewer.plotter.enable_point_picking(
+                callback=self._on_pick,
+                show_message=False,
+                use_picker=True,
+                pickable_window=True
+            )
+        except Exception:
+            # If plotter is not ready yet, it's fine; picking will be enabled later
+            pass
+
+        try:
+            # Sync viewer controls and wire signals to MVAT window handlers
+            # Initialize viewer controls from MVATWindow state
+            if hasattr(self.viewer, 'opacity_slider'):
+                self.viewer.opacity_slider.setValue(int(self.thumbnail_opacity * 100))
+                self.viewer.opacityChanged.connect(self._on_opacity_changed)
+            if hasattr(self.viewer, 'point_size_spinbox'):
+                self.viewer.point_size_spinbox.setValue(self.point_size)
+                # Connect viewer's point size changes to MVATWindow handler
+                try:
+                    self.viewer.pointSizeChanged.connect(self._on_point_size_changed)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Viewer widget
+        self.viewer_group_box = QWidget()
+        vbox = QVBoxLayout(self.viewer_group_box)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.addWidget(self.viewer)
+
+        self.viewer_dock_container = QWidget()
+        viewer_container_layout = QVBoxLayout(self.viewer_dock_container)
+        viewer_container_layout.setContentsMargins(0, 0, 0, 0)
+        viewer_container_layout.addWidget(self.viewer_group_box)
+
+        self.viewer_dock = QDockWidget("MVAT Viewer", self)
+        self.viewer_dock.setObjectName("MVATViewerDock")
+        self.viewer_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.viewer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.viewer_dock.setWidget(self.viewer_dock_container)
+
+        # -------------------------
+        # Create Camera Grid dock
+        # -------------------------
+        # Camera grid widget (pass shared selection model)
         self.camera_grid = CameraGrid(model=self.selection_model, mvat_window=self)
         self.camera_grid.camera_selected.connect(self._on_grid_camera_selected)
-        self.camera_grid.camera_highlighted_single.connect(self._on_grid_camera_highlighted_single)
         self.camera_grid.cameras_highlighted.connect(self._on_grid_cameras_highlighted)
         self.camera_grid.camera_hovered.connect(self._on_camera_hovered)
         self.camera_grid.camera_unhovered.connect(self._on_camera_unhovered)
-        right_layout.addWidget(self.camera_grid)
-        
-        self.splitter.addWidget(self.right_container)
-        
-        # Set minimum width for camera grid to prevent collapse
-        # Ensure at least one column of thumbnails is always visible
-        self.right_container.setMinimumWidth(512)  # Thumbnail + scrollbar/padding
-        
-        # Set stretch factors: 3D viewer gets 3x weight, grid gets 1x weight
-        self.splitter.setStretchFactor(0, 3)  # Left panel (3D viewer)
-        self.splitter.setStretchFactor(1, 1)  # Right panel (camera grid)
-        
-        # Prevent panels from being completely collapsed
-        self.splitter.setChildrenCollapsible(False)
-        
-        # Connect splitter resize to grid layout update
-        self.splitter.splitterMoved.connect(self._on_splitter_moved)
-        
-        # Set splitter proportions (75% Viewer, 25% Right Panel)
-        self.splitter.setSizes([900, 300])
 
-    def _create_v_line(self):
-        """Helper to create a vertical separator line."""
-        line = QFrame()
-        line.setFrameShape(QFrame.VLine)
-        line.setFrameShadow(QFrame.Sunken)
-        return line
+        try:
+            # Wire CameraGrid intent signals to SelectionManager (SelectionManager is authoritative)
+            self.camera_grid.selection_requested.connect(lambda paths: self.selection_model.set_selections(paths))
+            self.camera_grid.toggle_requested.connect(lambda path: self.selection_model.toggle(path))
+            self.camera_grid.active_requested.connect(lambda path: self.selection_model.set_active(path))
+            self.camera_grid.clear_requested.connect(lambda: self.selection_model.clear_selections())
+        except Exception:
+            pass
+
+        # Grid container
+        self.grid_group_box = QWidget()
+        gbox_layout = QVBoxLayout(self.grid_group_box)
+        gbox_layout.setContentsMargins(2, 2, 2, 2)
+        gbox_layout.addWidget(self.camera_grid)
+
+        self.grid_dock_container = QWidget()
+        grid_container_layout = QVBoxLayout(self.grid_dock_container)
+        grid_container_layout.setContentsMargins(0, 0, 0, 0)
+        grid_container_layout.addWidget(self.grid_group_box)
+
+        self.grid_dock = QDockWidget("Camera Grid", self)
+        self.grid_dock.setObjectName("CameraGridDock")
+        self.grid_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.grid_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.grid_dock.setWidget(self.grid_dock_container)
+
+        # Add docks to the window and split them side-by-side by default
+        # Place the MVAT viewer in the center column (TopDockWidgetArea) so it
+        # effectively takes the spot of the central widget by default (same trick as MainWindow).
+        # Put the camera grid to the right and split horizontally so user may freely resize/swap.
+        # Place the MVAT viewer in the center column (TopDockWidgetArea)
+        # so it takes the spot of the central widget by default.
+        self.addDockWidget(Qt.TopDockWidgetArea, self.viewer_dock)
+        # Put the camera grid to the right and split horizontally so user may freely resize/swap.
+        self.addDockWidget(Qt.RightDockWidgetArea, self.grid_dock)
+        self.splitDockWidget(self.viewer_dock, self.grid_dock, Qt.Horizontal)
+        # Bias initial sizes (viewer larger)
+        self.resizeDocks([self.viewer_dock, self.grid_dock], [800, 800], Qt.Horizontal)
+        # Give the viewer the maximum vertical space available in the center column
+        self.resizeDocks([self.viewer_dock], [2000], Qt.Vertical)
+        
+        try:
+            # Set sensible minimum widths to avoid collapse
+            self.grid_group_box.setMinimumWidth(280)
+            self.viewer_group_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.viewer_dock.setMinimumWidth(500)
+            self.grid_dock.setMinimumWidth(240)
+        except Exception:
+            pass
+
+        # Prefer viewer-owned managers/actors where available to avoid duplicated state.
+        try:
+            # MVATViewer owns the frustum and ray managers as well as thumbnail actors.
+            self.frustum_manager = getattr(self.viewer, '_frustum_manager', self.frustum_manager)
+            self.ray_manager = getattr(self.viewer, '_ray_manager', self.ray_manager)
+            self.thumbnail_actors = getattr(self.viewer, 'thumbnail_actors', self.thumbnail_actors)
+        except Exception:
+            pass
     
     def _setup_signal_connections(self):
         """
@@ -605,7 +596,7 @@ class MVATWindow(QMainWindow):
             path: Image path that was loaded in the main app.
         """
         if path in self.cameras:
-            # Use SelectionModel to set the active camera; model signals will drive UI sync
+            # Use SelectionManager to set the active camera; model signals will drive UI sync
             self.selection_model.set_active(path)
     
     def _on_highlights_changed(self, highlighted_paths: list):
@@ -626,14 +617,26 @@ class MVATWindow(QMainWindow):
             else:
                 camera.unhighlight()
             # Update appearance for all cameras (selected/highlighted state may have changed)
-            camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            try:
+                if hasattr(self.viewer, 'update_camera_appearance'):
+                    self.viewer.update_camera_appearance(camera, opacity=self.thumbnail_opacity)
+                else:
+                    camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            except Exception:
+                pass
         
         self.highlighted_cameras = [self.cameras.get(path) for path in highlighted_paths if path in self.cameras]
         
-        # Update batched frustum colors
+        # Update batched frustum colors via viewer API when possible
         selected_path = self.selected_camera.image_path if self.selected_camera else None
-        self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
-        self.frustum_manager.mark_modified()
+        try:
+            if hasattr(self.viewer, 'update_frustum_states'):
+                self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
+            elif self.frustum_manager is not None:
+                self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
+                self.frustum_manager.mark_modified()
+        except Exception:
+            pass
         
         # Update camera grid visual state to match
         self.camera_grid.render_highlight_from_paths(highlighted_paths)
@@ -678,8 +681,14 @@ class MVATWindow(QMainWindow):
         """Update frustum colors for all cameras."""
         selected_path = self.selected_camera.image_path if self.selected_camera else None
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
-        self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
-        self.frustum_manager.mark_modified()
+        try:
+            if hasattr(self.viewer, 'update_frustum_states'):
+                self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
+            elif self.frustum_manager is not None:
+                self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
+                self.frustum_manager.mark_modified()
+        except Exception:
+            pass
         
     def showEvent(self, event):
         """Handle show event - load cameras when window is shown."""
@@ -729,10 +738,28 @@ class MVATWindow(QMainWindow):
         self.selected_camera = None
         self.highlighted_cameras.clear()
         
-        # Clear batched geometry managers
-        self.frustum_manager.clear()
-        self.ray_manager.clear()
-        self.thumbnail_actors.clear()
+        # Clear batched geometry managers (prefer viewer-owned instances)
+        try:
+            if hasattr(self.viewer, '_frustum_manager') and self.viewer._frustum_manager is not None:
+                self.viewer._frustum_manager.clear()
+            elif self.frustum_manager is not None:
+                self.frustum_manager.clear()
+        except Exception:
+            pass
+        try:
+            if hasattr(self.viewer, '_ray_manager') and self.viewer._ray_manager is not None:
+                self.viewer._ray_manager.clear()
+            elif self.ray_manager is not None:
+                self.ray_manager.clear()
+        except Exception:
+            pass
+        try:
+            if hasattr(self.viewer, 'thumbnail_actors') and self.viewer.thumbnail_actors is not None:
+                self.viewer.thumbnail_actors.clear()
+            elif self.thumbnail_actors is not None:
+                self.thumbnail_actors.clear()
+        except Exception:
+            pass
         
         # Close the viewer
         if self.viewer:
@@ -809,8 +836,11 @@ class MVATWindow(QMainWindow):
             self.close()
             return
             
-        # Update stats
-        self.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
+        # Update stats (CameraGrid owns the stats label)
+        try:
+            self.camera_grid.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
+        except Exception:
+            pass
         
         # Populate camera grid
         self.camera_grid.set_cameras(self.cameras)
@@ -838,91 +868,84 @@ class MVATWindow(QMainWindow):
             self._auto_select_first_camera()
         
     def _render_frustums(self):
-        """Render all camera frustums in the 3D scene using batched geometry."""
+        """Render all camera frustums in the 3D scene using batched geometry.
+
+        Delegates work to MVATViewer to encapsulate 3D scene management.
+        """
         if not self.viewer or not self.viewer.plotter:
+            print("⚠️ _render_frustums: No viewer or plotter available")
             return
-            
-        # Clear existing actors
-        self.viewer.plotter.clear()
-        
-        # Clear thumbnail actors (textures cannot be batched)
-        self.thumbnail_actors.clear()
-        
-        # Clear batched managers
-        self.frustum_manager.clear()
-        self.ray_manager.clear()
-        
-        # Re-add point cloud (always loaded in memory, but visibility controlled by filtering)
-        self.viewer.point_cloud_actor = None
-        self.viewer.add_point_cloud()
-        # **Do not set visible initially - let filtering control visibility**
-        
-        # Add a reference grid
-        self.viewer.plotter.add_axes()
-        
-        # Build batched wireframe geometry (single mesh for all frustums)
-        if self._show_wireframes_enabled and self.cameras:
-            merged_mesh = self.frustum_manager.build_frustum_batch(
-                self.cameras, 
-                scale=self.frustum_scale
-            )
-            
-            if merged_mesh is not None:
-                # Add single merged actor to plotter
-                self.frustum_manager.add_to_plotter(self.viewer.plotter, line_width=1.5)
-                
-                # Apply current selection state
-                selected_path = self.selected_camera.image_path if self.selected_camera else None
-                highlighted_paths = list(self.selection_model.selected_paths) if (hasattr(self, 'selection_model') and self.selection_model) else []
-                self.frustum_manager.update_camera_states(selected_path, highlighted_paths, self.hovered_camera)
-                self.frustum_manager.mark_modified()
-        
-        # Thumbnails: Only render for selected / highlighted cameras (lazy loading)
-        # This avoids creating N texture actors; just 1 for the selected camera
-        if self._show_thumbnails_enabled and self.selected_camera:
-            self._add_thumbnail_for_camera(self.selected_camera)
-                
-        # Update the render
-        self.viewer.plotter.update()
-    
-    def _add_thumbnail_for_camera(self, camera):
-        """Add thumbnail actor for a single camera (lazy loading)."""
+
+        print(f"🔍 _render_frustums: Rendering {len(self.cameras)} cameras")
+        print(f"   - Selected camera: {self.selected_camera.image_path if self.selected_camera else 'None'}")
+        print(f"   - Frustum scale: {self.frustum_scale}")
+        print(f"   - Show wireframes: {self._show_wireframes_enabled}")
+        print(f"   - Show thumbnails: {self._show_thumbnails_enabled}")
+
+        # DON'T clear the entire plotter - it destroys everything including point cloud
+        # Instead, let individual add_* methods handle their own cleanup
+        # Each method (add_point_cloud, add_axes, add_frustums) will remove old actors before adding new ones
+
+        # Keep MVATWindow thumbnail_actors in sync with viewer
         try:
-            # Clear old frustum actor cache to allow recreation
-            camera.frustum.image_actors.clear()
-            
-            actor = camera.frustum.create_image_plane_actor(
-                self.viewer.plotter, 
-                scale=self.frustum_scale,
-                opacity=self.thumbnail_opacity
-            )
-            self.thumbnail_actors.append(actor)
+            self.thumbnail_actors.clear()
+        except Exception:
+            pass
+
+        # Let viewer warm up point cloud GPU cache and add reference axes via viewer API
+        try:
+            self.viewer.add_point_cloud()
+            print("   ✅ Added point cloud")
         except Exception as e:
-            print(f"Failed to render thumbnail for {camera.image_path}: {e}")
-    
-    def _remove_thumbnails(self):
-        """Remove all thumbnail actors from the plotter."""
-        for actor in self.thumbnail_actors:
-            try:
-                self.viewer.plotter.remove_actor(actor)
-            except:
-                pass
-        self.thumbnail_actors.clear()
-        
-        # Clear frustum image actor caches
-        for camera in self.cameras.values():
-            camera.frustum.image_actors.clear()
-        
+            print(f"   ⚠️ Failed to add point cloud: {e}")
+        try:
+            self.viewer.add_axes()
+            print("   ✅ Added axes")
+        except Exception as e:
+            print(f"   ⚠️ Failed to add axes: {e}")
+
+        # Delegate frustum creation to viewer
+        try:
+            # Use SelectionManager API to obtain highlighted/selected cameras
+            highlighted = self.selection_model.get_selected_list() if self.selection_model else []
+            print(f"   - Highlighted cameras: {len(highlighted)}")
+            
+            self.viewer.add_frustums(
+                self.cameras,
+                frustum_scale=self.frustum_scale,
+                show_thumbnails=self._show_thumbnails_enabled,
+                selected_camera=self.selected_camera,
+                highlighted_paths=highlighted,
+                hovered_camera=self.hovered_camera
+            )
+            print("   ✅ add_frustums() completed")
+        except Exception as e:
+            print(f"   ❌ Failed to render frustums via viewer: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Update the render via viewer
+        try:
+            self.viewer.update()
+            print("   ✅ Viewer updated")
+        except Exception as e:
+            print(f"   ⚠️ Failed to update viewer: {e}")
+            
     def _reset_camera_view(self):
         """Reset the 3D camera to default view."""
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.reset_camera()
-            self.viewer.plotter.view_isometric()
+        if self.viewer:
+            try:
+                self.viewer.reset_view()
+            except Exception:
+                pass
             
     def _fit_to_view(self):
         """Fit all objects in the view."""
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.reset_camera()
+        if self.viewer:
+            try:
+                self.viewer.fit_to_view()
+            except Exception:
+                pass
             
     def _toggle_wireframes(self, checked=None):
         """Toggle wireframe visibility."""
@@ -930,16 +953,20 @@ class MVATWindow(QMainWindow):
             checked = self.toggle_wireframes_action.isChecked()
             
         self._show_wireframes_enabled = checked
-        
         # Sync UI elements
         self.toggle_wireframes_action.setChecked(checked)
-        
-        # Update visibility of batched wireframe actor
-        self.frustum_manager.set_visibility(checked)
-        
-        # Update the render
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+
+        # Delegate to viewer API to manage frustum visibility/state
+        try:
+            if hasattr(self.viewer, 'enable_wireframes'):
+                self.viewer.enable_wireframes(checked)
+            elif self.frustum_manager is not None:
+                try:
+                    self.frustum_manager.set_visibility(checked)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
     def _toggle_thumbnails(self, checked=None):
         """Toggle thumbnail visibility."""
@@ -950,14 +977,18 @@ class MVATWindow(QMainWindow):
         
         # Sync UI elements
         self.toggle_thumbnails_action.setChecked(checked)
-        
-        # Update visibility of existing actors
-        for actor in self.thumbnail_actors:
-            actor.SetVisibility(checked)
-        
-        # Update the render
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+        # Delegate to viewer to handle thumbnail visibility
+        try:
+            if hasattr(self.viewer, 'enable_thumbnails'):
+                self.viewer.enable_thumbnails(checked)
+            else:
+                for actor in getattr(self.viewer, 'thumbnail_actors', []) or []:
+                    try:
+                        actor.SetVisibility(checked)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     
     def _toggle_full_cloud(self, checked):
         """Toggle between filtered and full point cloud view."""
@@ -969,9 +1000,12 @@ class MVATWindow(QMainWindow):
             # Update status bar
             if self.viewer and self.viewer.point_cloud:
                 total_points = self.viewer.point_cloud.mesh.n_points
-                self.stats_label.setText(
-                    f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (Full Cloud)"
-                )
+                try:
+                    self.camera_grid.stats_label.setText(
+                        f"Cameras: {len(self.cameras)} | Points: {total_points:,} / {total_points:,} (Full Cloud)"
+                    )
+                except Exception:
+                    pass
         else:
             # Re-apply visibility filtering
             # Build list of paths to filter (always including selected camera)
@@ -992,56 +1026,55 @@ class MVATWindow(QMainWindow):
             checked = self.toggle_rays_action.isChecked()
             
         self._show_rays_enabled = checked
-        self.viewer._show_rays_enabled = checked
-        
         # Sync UI elements
         self.toggle_rays_action.setChecked(checked)
-        
-        # Clear rays if disabling
-        if not checked and self.viewer:
-            self.viewer.clear_ray()
+
+        # Delegate to viewer to toggle visibility
+        try:
+            # Use existing public API if available
+            if hasattr(self.viewer, 'set_ray_visible'):
+                self.viewer.set_ray_visible(checked)
+            else:
+                # Fallback: set internal flag and clear if disabling
+                try:
+                    self.viewer._show_rays_enabled = checked
+                except Exception:
+                    pass
+                if not checked and self.viewer:
+                    self.viewer.clear_ray()
+        except Exception:
+            pass
         
     def _on_opacity_changed(self, value):
         """Handle thumbnail opacity change."""
         self.thumbnail_opacity = value / 100.0
-        
-        # Update opacity of existing thumbnail actors
-        for actor in self.thumbnail_actors:
-            actor.GetProperty().SetOpacity(self.thumbnail_opacity)
-        
-        # Update opacity of frustum image planes
-        for camera in self.cameras.values():
-            if self.viewer.plotter in camera.frustum.image_actors:
-                actor = camera.frustum.image_actors[self.viewer.plotter]
-                actor.GetProperty().SetOpacity(self.thumbnail_opacity)
-        
+        # Delegate to viewer to update thumbnail opacity where possible
+        try:
+            if hasattr(self.viewer, 'set_thumbnail_opacity'):
+                self.viewer.set_thumbnail_opacity(self.thumbnail_opacity)
+            else:
+                for actor in self.thumbnail_actors:
+                    try:
+                        actor.GetProperty().SetOpacity(self.thumbnail_opacity)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # Update the render
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.update()
+        try:
+            if self.viewer and self.viewer.plotter:
+                self.viewer.plotter.update()
+        except Exception:
+            pass
     
     def _on_point_size_changed(self, value):
         """Handle point size change for point clouds."""
         self.point_size = value
         self.viewer.set_point_size(value)
-        
-    def _on_splitter_moved(self, pos, index):
-        """Handle splitter resize to update camera grid layout."""
-        if hasattr(self, 'camera_grid'):
-            self.camera_grid.recalculate_layout()
-    
-    def _on_grid_camera_highlighted_single(self, path):
-        """Handle single camera highlight from the grid (single-click).
-        
-        Only updates frustum colors without changing the 3D view.
-        Use double-click to both change view and load image.
-        """
-        # Note: We don't change the 3D view on single-click highlight
-        # That only happens on double-click selection
-        # The highlighting is handled by _on_grid_cameras_highlighted signal
-        pass
 
     def _on_active_camera_changed(self, path):
-        """Handle active camera changes coming from SelectionModel."""
+        """Handle active camera changes coming from SelectionManager."""
         camera = self.cameras.get(path)
         if camera:
             # Clear any rendered rays before navigation
@@ -1060,7 +1093,7 @@ class MVATWindow(QMainWindow):
             self._goto_selected_image()
 
     def _on_selections_changed(self, selected_paths):
-        """Handle selection set changes coming from SelectionModel.
+        """Handle selection set changes coming from SelectionManager.
 
         selected_paths is expected to be a set of image paths.
         """
@@ -1070,15 +1103,58 @@ class MVATWindow(QMainWindow):
                 camera.highlight()
             else:
                 camera.unhighlight()
-            camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            # Delegate camera appearance update to viewer
+            try:
+                if hasattr(self.viewer, 'update_camera_appearance'):
+                    self.viewer.update_camera_appearance(camera, opacity=self.thumbnail_opacity)
+                else:
+                    camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            except Exception:
+                pass
 
         # Update local highlighted camera list for compatibility with existing code
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
 
-        # Update batched frustum colors
-        selected_path = self.selected_camera.image_path if self.selected_camera else None
-        self.frustum_manager.update_camera_states(selected_path, list(selected_paths), self.hovered_camera)
-        self.frustum_manager.mark_modified()
+        # Update batched frustum colors WITHOUT rebuilding geometry
+        # Only update the state arrays for efficient rendering
+        try:
+            highlighted = list(selected_paths)
+            selected_path = self.selected_camera.image_path if self.selected_camera else None
+            
+            # Use the viewer's frustum manager to update states in-place
+            if hasattr(self.viewer, '_frustum_manager') and self.viewer._frustum_manager:
+                self.viewer._frustum_manager.update_camera_states(
+                    selected_path, 
+                    highlighted, 
+                    self.hovered_camera
+                )
+                self.viewer._frustum_manager.mark_modified()
+                try:
+                    self.viewer.plotter.render()
+                except Exception:
+                    pass
+            else:
+                # Fallback: full rebuild (should only happen during initialization)
+                self.viewer.add_frustums(
+                    self.cameras,
+                    frustum_scale=self.frustum_scale,
+                    show_thumbnails=self._show_thumbnails_enabled,
+                    selected_camera=self.selected_camera,
+                    highlighted_paths=highlighted,
+                    hovered_camera=self.hovered_camera,
+                )
+        except Exception as e:
+            print(f"⚠️ Failed to update frustum states: {e}")
+            # Fallback to legacy frustum manager update
+            selected_path = self.selected_camera.image_path if self.selected_camera else None
+            try:
+                if hasattr(self.viewer, 'update_frustum_states'):
+                    self.viewer.update_frustum_states(selected_path, list(selected_paths), self.hovered_camera)
+                elif self.frustum_manager is not None:
+                    self.frustum_manager.update_camera_states(selected_path, list(selected_paths), self.hovered_camera)
+                    self.frustum_manager.mark_modified()
+            except Exception:
+                pass
 
         # Sync camera grid visuals
         try:
@@ -1122,12 +1198,23 @@ class MVATWindow(QMainWindow):
         selected_path = self.selected_camera.image_path if self.selected_camera else None
         
         # Batch update all camera states at once (O(1) instead of O(N) actor updates)
-        self.frustum_manager.update_camera_states(selected_path, paths, self.hovered_camera)
-        self.frustum_manager.mark_modified()
+        try:
+            if hasattr(self.viewer, 'update_frustum_states'):
+                self.viewer.update_frustum_states(selected_path, paths, self.hovered_camera)
+            elif self.frustum_manager is not None:
+                self.frustum_manager.update_camera_states(selected_path, paths, self.hovered_camera)
+                self.frustum_manager.mark_modified()
+        except Exception:
+            pass
             
-        # Update the render
-        if self.viewer and self.viewer.plotter:
-            self.viewer.plotter.render()
+        # Update the render via viewer
+        try:
+            if hasattr(self.viewer, 'render'):
+                self.viewer.render()
+            elif self.viewer and getattr(self.viewer, 'plotter', None):
+                self.viewer.plotter.render()
+        except Exception:
+            pass
         
         # ALWAYS include the selected camera in visibility filtering
         # The selected camera (green) should always have its point cloud visible
@@ -1170,7 +1257,10 @@ class MVATWindow(QMainWindow):
         if not highlighted_paths:
             self.viewer.update_point_cloud_subset([])
             total_points = self.viewer.point_cloud.mesh.n_points
-            self.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+            try:
+                self.camera_grid.stats_label.setText(f"Cameras: {len(self.cameras)} | Points: 0 / {total_points:,}")
+            except Exception:
+                pass
             total_time = time.time() - start_time
             print(f"⏱️ _update_visibility_filter: Hidden (no cameras) in {total_time:.3f}s")
             return
@@ -1202,7 +1292,10 @@ class MVATWindow(QMainWindow):
                 points_world = self.viewer.point_cloud.get_points_array()
                 camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
                 
-                batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+                compute_depth_map = self.compute_depth_maps_enabled
+                batch_results = VisibilityManager.compute_batch_visibility(points_world, 
+                                                                           camera_params, 
+                                                                           compute_depth_map=compute_depth_map)
                 
                 # Store results back to cameras and collect visible indices
                 for i, (camera, result) in enumerate(zip(cameras_needing_visibility, batch_results)):
@@ -1213,7 +1306,8 @@ class MVATWindow(QMainWindow):
                             camera._raster.extrinsics,
                             self.viewer.point_cloud.file_path,
                             result['index_map'],
-                            result['visible_indices']
+                            result['visible_indices'],
+                            result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
                         )
                     
                     # Store in Raster
@@ -1222,7 +1316,17 @@ class MVATWindow(QMainWindow):
                         cache_path,
                         result['visible_indices']
                     )
-                    
+                    # Merge/set depth map if provided and user enabled depth computation
+                    if (
+                        compute_depth_map and 
+                        isinstance(result, dict) and 
+                        result.get('depth_map') is not None
+                    ):
+                        try:
+                            camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                        except Exception:
+                            pass
+
                     all_visible_indices.append(result['visible_indices'])
                     progress.update_progress()
                     
@@ -1240,7 +1344,9 @@ class MVATWindow(QMainWindow):
                 points_world = self.viewer.point_cloud.get_points_array()
                 camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
                 
-                batch_results = VisibilityManager.compute_batch_visibility(points_world, camera_params)
+                batch_results = VisibilityManager.compute_batch_visibility(points_world, 
+                                                                           camera_params, 
+                                                                           compute_depth_map=compute_depth_map)
                 
                 # Store results back to cameras and collect visible indices
                 for camera, result in zip(cameras_needing_visibility, batch_results):
@@ -1251,7 +1357,8 @@ class MVATWindow(QMainWindow):
                             camera._raster.extrinsics,
                             self.viewer.point_cloud.file_path,
                             result['index_map'],
-                            result['visible_indices']
+                            result['visible_indices'],
+                            result.get('depth_map') if (isinstance(result, dict) and compute_depth_map) else None
                         )
                     
                     # Store in Raster
@@ -1260,6 +1367,12 @@ class MVATWindow(QMainWindow):
                         cache_path,
                         result['visible_indices']
                     )
+                    # Merge/set depth map if provided and user enabled depth computation
+                    if compute_depth_map and isinstance(result, dict) and result.get('depth_map') is not None:
+                        try:
+                            camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                        except Exception:
+                            pass
                     
                     all_visible_indices.append(result['visible_indices'])
             
@@ -1268,9 +1381,12 @@ class MVATWindow(QMainWindow):
                 # **CHANGED: Hide cloud instead of showing full cloud**
                 self.viewer.update_point_cloud_subset([])  # Empty list hides the cloud
                 total_points = self.viewer.point_cloud.mesh.n_points
-                self.stats_label.setText(
-                    f"Cameras: {len(self.cameras)} | (No visibility data)"
-                )
+                try:
+                    self.camera_grid.stats_label.setText(
+                        f"Cameras: {len(self.cameras)} | (No visibility data)"
+                    )
+                except Exception:
+                    pass
                 total_time = time.time() - start_time
                 print(f"⏱️ _update_visibility_filter: Hidden (no visibility data) in {total_time:.3f}s")
                 return
@@ -1291,73 +1407,26 @@ class MVATWindow(QMainWindow):
         total_points = self.viewer.point_cloud.mesh.n_points
         visible_count = len(union_indices)
         percentage = (visible_count / total_points * 100) if total_points > 0 else 0
-        self.stats_label.setText(
-            f"Cameras: {len(self.cameras)} | Visible Points: {percentage:.2f}%"
-        )
+        try:
+            self.camera_grid.stats_label.setText(
+                f"Cameras: {len(self.cameras)} | Visible Points: {percentage:.2f}%"
+            )
+        except Exception:
+            pass
         
         total_time = time.time() - start_time
-        print(f"⏱️ _update_visibility_filter: Updated visibility for {len(highlighted_paths)} cameras in {total_time:.3f}s")
+        print(
+            f"⏱️ _update_visibility_filter: Updated visibility for {len(highlighted_paths)} "
+            f"cameras in {total_time:.3f}s"
+        )
             
     def _match_camera_perspective(self, camera):
-        """Match the 3D viewer perspective to a camera's viewpoint."""
-        if not self.viewer or not self.viewer.plotter:
-            return
-            
+        """Adapter to MVATViewer.match_camera_perspective."""
         try:
-            # Get camera position (optical center in world coordinates)
-            position = camera.position
-            
-            # Calculate view direction: Z-axis in camera frame transformed to world
-            # Camera looks along +Z in camera coordinates
-            view_direction = camera.R.T @ np.array([0, 0, 1])
-            
-            # Calculate up vector: -Y in camera frame (Y points down in image)
-            up_vector = camera.R.T @ np.array([0, -1, 0])
-            
-            # Calculate focal distance based on scene bounds for better viewing
-            # This ensures we're not too zoomed in or out regardless of frustum scale
-            try:
-                bounds = self.viewer.plotter.bounds
-                # Calculate scene diagonal for a reasonable focal distance
-                scene_size = np.sqrt(
-                    (bounds[1] - bounds[0])**2 + 
-                    (bounds[3] - bounds[2])**2 + 
-                    (bounds[5] - bounds[4])**2
-                )
-                # Use 20% of scene size as focal distance (can be tuned)
-                focal_distance = scene_size * 0.2
-            except:
-                # Fallback to a fixed reasonable distance if bounds aren't available
-                focal_distance = 5.0
-            
-            focal_point = position + view_direction * focal_distance
-            
-            # Set the plotter camera
-            self.viewer.plotter.camera.position = position.tolist()
-            self.viewer.plotter.camera.focal_point = focal_point.tolist()
-            self.viewer.plotter.camera.up = up_vector.tolist()
-            
-            # Optional: Match camera field of view from intrinsics
-            # This makes the 3D view more accurately represent what the camera sees
-            try:
-                if camera.K is not None:
-                    # Calculate vertical field of view from intrinsics
-                    # FOV = 2 * atan(height / (2 * fy))
-                    fy = camera.K[1, 1]
-                    height = camera.height
-                    fov_rad = 2 * np.arctan(height / (2 * fy))
-                    fov_deg = np.degrees(fov_rad)
-                    # Clamp FOV to reasonable range
-                    fov_deg = np.clip(fov_deg, 10, 120)
-                    self.viewer.plotter.camera.view_angle = fov_deg
-            except:
-                pass  # Use default FOV if calculation fails
-            
-            # Update the render
-            self.viewer.plotter.update()
-            
+            if self.viewer and hasattr(self.viewer, 'match_camera_perspective'):
+                self.viewer.match_camera_perspective(camera)
         except Exception as e:
-            print(f"Failed to match camera perspective: {e}")
+            print(f"Failed to match camera perspective via viewer: {e}")
     
     def _clear_rays(self):
         """Clear any rendered rays from the viewer."""
@@ -1404,7 +1473,11 @@ class MVATWindow(QMainWindow):
         # Use exponential decay: closer cameras get higher scores
         # Adjust the decay rate based on your scene scale
         try:
-            bounds = self.viewer.plotter.bounds
+            bounds = None
+            if hasattr(self.viewer, 'get_bounds'):
+                bounds = self.viewer.get_bounds()
+            elif getattr(self.viewer, 'plotter', None) is not None:
+                bounds = self.viewer.plotter.bounds
             scene_size = np.sqrt(
                 (bounds[1] - bounds[0])**2 + 
                 (bounds[3] - bounds[2])**2 + 
@@ -1504,7 +1577,13 @@ class MVATWindow(QMainWindow):
         # Deselect previous camera
         if previous_camera:
             previous_camera.deselect()
-            previous_camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            try:
+                if hasattr(self.viewer, 'update_camera_appearance'):
+                    self.viewer.update_camera_appearance(previous_camera, opacity=self.thumbnail_opacity)
+                else:
+                    previous_camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+            except Exception:
+                pass
         
         # Update selected camera reference
         self.selected_camera = camera
@@ -1518,35 +1597,70 @@ class MVATWindow(QMainWindow):
         
         # Select new camera
         camera.select()
-        camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+        try:
+            if hasattr(self.viewer, 'update_camera_appearance'):
+                self.viewer.update_camera_appearance(camera, opacity=self.thumbnail_opacity)
+            else:
+                camera.update_appearance(self.viewer.plotter, opacity=self.thumbnail_opacity)
+        except Exception:
+            pass
         
         # Get highlighted paths
         highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
         
         # Update batched frustum colors
-        self.frustum_manager.update_camera_states(path, highlighted_paths, self.hovered_camera)
-        self.frustum_manager.mark_modified()
+        try:
+            if hasattr(self.viewer, 'update_frustum_states'):
+                self.viewer.update_frustum_states(path, highlighted_paths, self.hovered_camera)
+            elif self.frustum_manager is not None:
+                self.frustum_manager.update_camera_states(path, highlighted_paths, self.hovered_camera)
+                self.frustum_manager.mark_modified()
+        except Exception:
+            pass
         
         # Lazy thumbnail loading: update thumbnail for new selection
         if self._show_thumbnails_enabled:
             # Remove previous camera's thumbnail if different
             if previous_camera and previous_camera != camera:
-                self._remove_thumbnails()
-            
+                try:
+                    if hasattr(self.viewer, 'remove_thumbnails'):
+                        self.viewer.remove_thumbnails()
+                        self.thumbnail_actors = list(getattr(self.viewer, 'thumbnail_actors', []) or [])
+                    elif self.thumbnail_actors is not None:
+                        for actor in list(self.thumbnail_actors):
+                            try:
+                                if hasattr(self.viewer, 'plotter'):
+                                    self.viewer.plotter.remove_actor(actor)
+                            except Exception:
+                                pass
+                        self.thumbnail_actors.clear()
+                except Exception:
+                    pass
+
             # Add thumbnail for newly selected camera
-            if not self.thumbnail_actors:
-                self._add_thumbnail_for_camera(camera)
+            try:
+                if not self.thumbnail_actors:
+                    if hasattr(self.viewer, '_add_thumbnail_for_camera'):
+                        self.viewer._add_thumbnail_for_camera(camera, scale=self.frustum_scale)
+                        self.thumbnail_actors = list(getattr(self.viewer, 'thumbnail_actors', []) or [])
+            except Exception:
+                pass
         
         # Update the plotter to show selection
-        self.viewer.plotter.render()
+        try:
+            if hasattr(self.viewer, 'render'):
+                self.viewer.render()
+            elif self.viewer and getattr(self.viewer, 'plotter', None):
+                self.viewer.plotter.render()
+        except Exception:
+            pass
         
-        # Emit signal for bi-directional sync (unless suppressed)
+        # TODO Emit signal for bi-directional sync (unless suppressed)
         if emit_signal:
             self.cameraSelectedInMVAT.emit(path)
             # Emit focal point projection if we have a focal point
             if self.current_focal_point is not None:
                 pixel = camera.project(self.current_focal_point)
-                # TODO
                 # if not np.isnan(pixel).any():
                 #     self.focalPointProjected.emit(path, pixel[0], pixel[1])
                 # else:
@@ -1562,8 +1676,14 @@ class MVATWindow(QMainWindow):
             highlighted_paths = [cam.image_path for cam in self.highlighted_cameras]
             
             # Update batched frustum colors (no selection, keep highlights)
-            self.frustum_manager.update_camera_states(None, highlighted_paths, self.hovered_camera)
-            self.frustum_manager.mark_modified()
+            try:
+                if hasattr(self.viewer, 'update_frustum_states'):
+                    self.viewer.update_frustum_states(None, highlighted_paths, self.hovered_camera)
+                elif self.frustum_manager is not None:
+                    self.frustum_manager.update_camera_states(None, highlighted_paths, self.hovered_camera)
+                    self.frustum_manager.mark_modified()
+            except Exception:
+                pass
             
             # Remove thumbnail actor (lazy unloading)
             if self._show_thumbnails_enabled:
@@ -1604,11 +1724,17 @@ class MVATWindow(QMainWindow):
             
     def _refresh_scene(self):
         """Apply changes and refresh the entire scene by reloading cameras."""
-        # Update opacity
-        self.thumbnail_opacity = self.opacity_slider.value() / 100.0
-        
-        # Update point size
-        self.point_size = self.point_size_spinbox.value()
+        # Read controls from MVATViewer toolbars
+        try:
+            self.thumbnail_opacity = self.viewer.opacity_slider.value() / 100.0
+        except Exception:
+            pass
+
+        try:
+            # viewer already updates its own point size; keep MVATWindow in sync
+            self.point_size = int(getattr(self.viewer, 'point_size', self.point_size))
+        except Exception:
+            pass
         
         # Update show flags
         self._show_wireframes_enabled = self.toggle_wireframes_action.isChecked()

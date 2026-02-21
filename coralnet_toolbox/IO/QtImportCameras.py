@@ -228,36 +228,43 @@ def extract_intrinsics_extrinsics_from_colmap(cameras, images):
         if cam is None:
             continue
 
+        # Parse parameters based on the specific COLMAP camera model
         if cam.model == "PINHOLE":
             fx, fy, cx, cy = cam.params[:4]
         elif cam.model == "SIMPLE_PINHOLE":
             f, cx, cy = cam.params[:3]
             fx = fy = f
-        elif cam.model in ["OPENCV", "RADIAL", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "OPENCV_FISHEYE"]:
-            if len(cam.params) >= 4:
-                fx = cam.params[0]
-                fy = cam.params[0]
-                cx = cam.params[1]
-                cy = cam.params[2]
-            elif len(cam.params) >= 3:
-                f = cam.params[0]
-                cx = cam.params[1]
-                cy = cam.params[2]
-                fx = fy = f
-            else:
-                raise ValueError(f"Unsupported parameter length for model {cam.model}")
+            
+        # FIX: OpenCV models use two distinct focal lengths (fx, fy) followed by the principal point (cx, cy)
+        elif cam.model in ["OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"]:
+            fx = cam.params[0]
+            fy = cam.params[1]
+            cx = cam.params[2]
+            cy = cam.params[3]
+            
+        # FIX: Radial models use a single focal length (f) followed by the principal point (cx, cy)
+        elif cam.model in ["RADIAL", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "SIMPLE_RADIAL_FISHEYE"]:
+            f = cam.params[0]
+            cx = cam.params[1]
+            cy = cam.params[2]
+            fx = fy = f
+            
         else:
             raise ValueError(f"Unsupported camera model: {cam.model}")
 
+        # Construct the Intrinsic Matrix (K)
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
         intrinsics_list.append(K)
 
+        # Construct the Extrinsic Matrix (World-to-Camera, 4x4)
         R = qvec2rotmat(img.qvec)
         t = img.tvec
         w2c = np.eye(4)
         w2c[:3, :3] = R
         w2c[:3, 3] = t
         extrinsics_list.append(w2c)
+        
+        # Store image label for matching (lowercased without extension)
         labels.append(os.path.splitext(os.path.basename(img.name))[0].lower())
 
     if len(intrinsics_list) == 0:

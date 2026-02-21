@@ -39,7 +39,8 @@ class VisibilityManager:
                            t: np.ndarray, 
                            width: int, 
                            height: int,
-                           point_ids: np.ndarray = None) -> dict:
+                           point_ids: np.ndarray = None,
+                           compute_depth_map: bool = True) -> dict:
         """
         Compute visibility for a cloud of points given camera parameters.
 
@@ -68,11 +69,22 @@ class VisibilityManager:
         # 1. Prefer PyTorch (CUDA or CPU)
         if HAS_TORCH:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            result = cls._compute_torch(points_world, point_ids, K, R, t, width, height, device)
+            result = cls._compute_torch(points_world, 
+                                        point_ids, 
+                                        K, R, t, 
+                                        width,
+                                        height, 
+                                        device, 
+                                        compute_depth_map=compute_depth_map)
         else:
             # 2. Fallback to NumPy if Torch is missing
             device = 'numpy'
-            result = cls._compute_numpy(points_world, point_ids, K, R, t, width, height)
+            result = cls._compute_numpy(points_world, 
+                                        point_ids, 
+                                        K, R, t, 
+                                        width, 
+                                        height, 
+                                        compute_depth_map=compute_depth_map)
         
         compute_time = time.time() - start_time
         visible_count = len(result['visible_indices'])
@@ -85,7 +97,8 @@ class VisibilityManager:
     def compute_batch_visibility(cls, 
                                  points_world: np.ndarray, 
                                  camera_params_list: list,
-                                 point_ids: np.ndarray = None) -> list:
+                                 point_ids: np.ndarray = None,
+                                 compute_depth_map: bool = True) -> list:
         """
         Compute visibility for multiple cameras in batch using GPU acceleration.
         
@@ -117,10 +130,14 @@ class VisibilityManager:
             # Fallback to sequential NumPy computation
             results = []
             for K, R, t, width, height in camera_params_list:
-                result = cls._compute_numpy(points_world, point_ids, K, R, t, width, height)
+                result = cls._compute_numpy(points_world, 
+                                            point_ids,
+                                            K, R, t, width, height, 
+                                            compute_depth_map=compute_depth_map)
                 results.append(result)
             compute_time = time.time() - start_time
-            print(f"⏱️ Computed batch visibility for {len(camera_params_list)} cameras, {len(points_world):,} points using NUMPY: {compute_time:.3f}s")
+            print(f"⏱️ Computed batch visibility for {len(camera_params_list)} cameras, "
+                  f"{len(points_world):,} points using NUMPY: {compute_time:.3f}s")
             return results
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -147,8 +164,8 @@ class VisibilityManager:
         points_batch = points.unsqueeze(0).expand(M, -1, -1)  # (M, N, 3)
         
         # Batch transform: World -> Camera for all cameras
-        # points_cam_batch = points_batch @ R_batch.transpose(1, 2) + t_batch.unsqueeze(1)
-        points_cam_batch = torch.einsum('mni,mij->mnj', points_batch, R_batch.transpose(1, 2)) + t_batch.unsqueeze(1)  # (M, N, 3)
+        # points_cam_batch = points_batch @ R_batch.transpose(1, 2) + t_batch.unsqueeze(1) (M, N, 3)
+        points_cam_batch = torch.einsum('mni,mij->mnj', points_batch, R_batch.transpose(1, 2)) + t_batch.unsqueeze(1)  
         
         # Extract coordinates
         x_batch = points_cam_batch[:, :, 0]
@@ -182,7 +199,8 @@ class VisibilityManager:
             if valid_ids.numel() == 0:
                 results.append({
                     'index_map': np.full((height, width), -1, dtype=np.int32),
-                    'visible_indices': np.array([], dtype=np.int32)
+                    'visible_indices': np.array([], dtype=np.int32),
+                    'depth_map': np.full((height, width), np.nan, dtype=np.float32)
                 })
                 continue
             
@@ -196,8 +214,11 @@ class VisibilityManager:
                 # Fallback for older PyTorch versions
                 warnings.warn("PyTorch version too old for scatter_reduce_. Using CPU fallback for this camera.")
                 result = cls._compute_numpy(points_world, point_ids, 
-                                            camera_params_list[i][0], camera_params_list[i][1], 
-                                            camera_params_list[i][2], width, height)
+                                            camera_params_list[i][0], 
+                                            camera_params_list[i][1], 
+                                            camera_params_list[i][2], 
+                                            width, height, 
+                                            compute_depth_map=compute_depth_map)
                 results.append(result)
                 continue
             
@@ -213,14 +234,28 @@ class VisibilityManager:
             index_map_2d = index_map_tensor.view(height, width)
             
             visible_indices = torch.unique(final_ids, sorted=True)
-            
+
+            if compute_depth_map:
+                # Extract depth map from z_buffer and convert inf -> nan
+                try:
+                    z_buffer[z_buffer == float('inf')] = float('nan')
+                    depth_map_2d = z_buffer.view(height, width)
+                    depth_map_np = depth_map_2d.cpu().numpy()
+                except Exception:
+                    # Fallback: create nan-filled depth map
+                    depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
+            else:
+                depth_map_np = None
+
             results.append({
                 'index_map': index_map_2d.cpu().numpy(),
-                'visible_indices': visible_indices.cpu().numpy()
+                'visible_indices': visible_indices.cpu().numpy(),
+                'depth_map': depth_map_np
             })
         
         compute_time = time.time() - start_time
-        print(f"⏱️ Computed batch visibility for {M} cameras, {len(points_world):,} points using {device.upper()}: {compute_time:.3f}s")
+        print(f"⏱️ Computed batch visibility for {M} cameras, {len(points_world):,} "
+              f"points using {device.upper()}: {compute_time:.3f}s")
         
         return results
 
@@ -229,7 +264,7 @@ class VisibilityManager:
     # ------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
-    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height, device):
+    def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height, device, compute_depth_map: bool = True):
         """
         PyTorch-based visibility computation.
         Uses scatter_reduce_ for efficient Z-buffering.
@@ -278,7 +313,8 @@ class VisibilityManager:
             # Nothing visible
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32)
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
             }
 
         # 5. Z-Buffering (Scatter Reduce)
@@ -322,9 +358,21 @@ class VisibilityManager:
         # Extract unique visible IDs
         visible_indices = torch.unique(final_ids, sorted=True)
 
+        # Extract the depth map from the Z-buffer if requested
+        if compute_depth_map:
+            try:
+                z_buffer[z_buffer == float('inf')] = float('nan')
+                depth_map_2d = z_buffer.view(height, width)
+                depth_map_np = depth_map_2d.cpu().numpy()
+            except Exception:
+                depth_map_np = np.full((height, width), np.nan, dtype=np.float32)
+        else:
+            depth_map_np = None
+
         return {
             'index_map': index_map_2d.cpu().numpy(),
-            'visible_indices': visible_indices.cpu().numpy()
+            'visible_indices': visible_indices.cpu().numpy(),
+            'depth_map': depth_map_np
         }
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -332,7 +380,7 @@ class VisibilityManager:
     # ------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
-    def _compute_numpy(points, ids, K, R, t, width, height):
+    def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map: bool = True):
         """
         CPU-based visibility computation (Legacy / Fallback).
         Uses 'Sort by Depth' optimization to handle occlusion efficiently without loops.
@@ -367,7 +415,8 @@ class VisibilityManager:
         if len(id_valid) == 0:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32)
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
             }
 
         # 4. Z-Buffering (The Sorting Trick)
@@ -379,18 +428,23 @@ class VisibilityManager:
         u_sorted = u_valid[sort_order]
         v_sorted = v_valid[sort_order]
         id_sorted = id_valid[sort_order]
+        z_sorted = z_valid[sort_order]
 
         # 5. Create Outputs
-        # Initialize map with -1
+        # Initialize map with -1 for IDs and NaN for depth
         index_map = np.full((height, width), -1, dtype=np.int32)
+        depth_map = np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
 
         # Bulk assignment handles the "last write wins" logic
         index_map[v_sorted, u_sorted] = id_sorted
+        if compute_depth_map:
+            depth_map[v_sorted, u_sorted] = z_sorted.astype(np.float32)
 
         # Extract unique IDs from the final map
         visible_indices = np.unique(index_map[index_map != -1])
 
         return {
             'index_map': index_map,
-            'visible_indices': visible_indices
+            'visible_indices': visible_indices,
+            'depth_map': depth_map
         }

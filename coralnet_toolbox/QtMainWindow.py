@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnimationManager import AnimationManager
-from coralnet_toolbox.QtSystemMonitor import SystemMonitor
+from coralnet_toolbox.QtPerformanceWindow import PerformanceWindow
 from coralnet_toolbox.QtTimerWindow import TimerWindow
 
 # Main Windows
@@ -124,6 +124,8 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
+from coralnet_toolbox.QtDockWrapper import DockWrapper
+
 from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
@@ -192,7 +194,6 @@ class MainWindow(QMainWindow):
         self.z_icon = get_icon("z.svg")
         self.dynamic_icon = get_icon("dynamic.svg")
         self.parameters_icon = get_icon("parameters.svg")
-        self.system_monitor_icon = get_icon("system_monitor.svg")
         self.add_icon = get_icon("add.svg")
         self.remove_icon = get_icon("remove.svg")
         self.edit_icon = get_icon("edit.svg")
@@ -247,14 +248,14 @@ class MainWindow(QMainWindow):
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
-        self.confidence_window = ConfidenceWindow(self)        
+        self.confidence_window = ConfidenceWindow(self)     
+        self.timer_window = TimerWindow(self)   
+        self.performance_window = PerformanceWindow(self) 
+         
         # Initialized in open_explorer_window
         self.explorer_window = None  
         # Initialized in open_mvat_window
         self.mvat_window = None  
-        # Initialized in open_system_monitor
-        self.system_monitor = None  
-        
         # Initialize after main windows are created
         self.annotation_window.initialize_tools()
 
@@ -776,10 +777,6 @@ class MainWindow(QMainWindow):
         self.usage_action = QAction("Usage / Hotkeys", self)
         self.usage_action.triggered.connect(self.open_usage_dialog)
         self.help_menu.addAction(self.usage_action)
-        # System Monitor
-        self.system_monitor_action = QAction("System Monitor", self)
-        self.system_monitor_action.triggered.connect(self.open_system_monitor_dialog)
-        self.help_menu.addAction(self.system_monitor_action)
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
@@ -1391,28 +1388,43 @@ class MainWindow(QMainWindow):
         self.annotation_dock = QDockWidget("Annotation Window", self)
         self.annotation_dock.setObjectName("AnnotationDock")
         self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                         QDockWidget.DockWidgetFloatable |
+                                         QDockWidget.DockWidgetClosable)
+        
         self.annotation_dock.setWidget(self.annotation_dock_container)
 
-        # Setup Timer Dock
-        self.timer_group = TimerWindow(self)
-        self.timer_dock = QDockWidget("Timer Window", self)
-        self.timer_dock.setObjectName("TimerDock")
-        self.timer_dock.setWidget(self.timer_group)
-        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.timer_dock.setMaximumHeight(100)
+        # Setup Timer Dock (Left, below Labels) using DockWrapper
+        # Wrap the window in the standardized DockWrapper
+        self.timer_dock = DockWrapper(
+            title="Timer Window", 
+            object_name="TimerDock", 
+            main_widget=self.timer_window, 
+            parent=self
+        )
+        # Set the size policy to fixed vertically
+        self.timer_dock.setMaximumHeight(100)  # Set height
 
-        # Setup Label Dock (Left)
-        self.left_dock = QDockWidget("Label Window", self)
-        self.left_dock.setObjectName("LabelDock")
-        self.left_container = QWidget()
-        self.left_layout = QVBoxLayout(self.left_container)
-        self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.addWidget(self.label_window)
-        self.left_dock.setWidget(self.left_container)
-        self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        # Setup Label Dock (Left) using DockWrapper
+        self.left_dock = DockWrapper(
+            title="Label Window", 
+            object_name="LabelDock", 
+            main_widget=self.label_window, 
+            parent=self
+        )
+        # Add the Actions to the Top Area
+        if hasattr(self.label_window, 'create_action_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_action_toolbar(), Qt.TopToolBarArea)
+        # Add a line break so the next toolbar drops to row 2
+        self.left_dock.add_toolbar_break(Qt.TopToolBarArea)
+        # Add the Filter to the Top Area (Row 2)
+        if hasattr(self.label_window, 'create_filter_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar(), Qt.TopToolBarArea)
+        # Add the Counts to the Bottom Area
+        if hasattr(self.label_window, 'create_bottom_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
-        # Setup Image Dock (Right)
+        # Setup Image Dock (Right) using DockWrapper
         self.right_dock = QDockWidget("Image Window", self)
         self.right_dock.setObjectName("ImageDock")
         self.right_container = QWidget()
@@ -1420,13 +1432,27 @@ class MainWindow(QMainWindow):
         self.right_layout.setContentsMargins(0, 0, 0, 0)
         self.right_layout.addWidget(self.image_window)
         self.right_dock.setWidget(self.right_container)
-        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | 
+                                    QDockWidget.DockWidgetFloatable | 
+                                    QDockWidget.DockWidgetClosable)
 
-        # Setup Confidence Dock (Right)
-        self.confidence_dock = QDockWidget("Confidence Window", self)
-        self.confidence_dock.setObjectName("ConfidenceDock")
-        self.confidence_dock.setWidget(self.confidence_window)
-        self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        # Setup Confidence Dock (Right) using DockWrapper
+        self.confidence_dock = DockWrapper(
+            title="Confidence Window", 
+            object_name="ConfidenceDock", 
+            main_widget=self.confidence_window, 
+            parent=self
+        )
+        
+        # Setup Performance Dock (Right, tabbed with Confidence) using DockWrapper
+        self.performance_dock = DockWrapper(
+            title="Performance Window",
+            object_name="PerformanceWindowDock",
+            main_widget=self.performance_window,
+            parent=self
+        )
+        # Set the size policy to fixed vertically
+        self.performance_dock.setMaximumHeight(125)  # Set height
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1435,6 +1461,10 @@ class MainWindow(QMainWindow):
         # 3. Add the side docks to their respective areas
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        
+        # Add Confidence and Performance Window docks to the Right side
+        self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
@@ -1487,7 +1517,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure special windows (explorer, mvat) and system monitor are closed when the main window closes."""
+        """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
@@ -1498,14 +1528,9 @@ class MainWindow(QMainWindow):
             self.mvat_window.setParent(None)
             self.mvat_window.close()
         
-        # Close the system monitor if it exists
-        if self.system_monitor:
-            self.system_monitor.close()
-        
         # Stop timer threads properly
-        if hasattr(self, 'timer_group') and self.timer_group:
-            if hasattr(self.timer_group, 'timer_widget') and self.timer_group.timer_widget:
-                self.timer_group.timer_widget.stop_threads()
+        if hasattr(self, 'timer_window') and self.timer_window:
+            self.timer_window.stop_threads()
             
         super().closeEvent(event)
 
@@ -3262,16 +3287,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
             
-    def open_system_monitor_dialog(self):
-        """Open the system system monitor window."""
-        if self.system_monitor is None or sip.isdeleted(self.system_monitor):
-            self.system_monitor = SystemMonitor()
-        
-        # Show the monitor window
-        self.system_monitor.show()
-        self.system_monitor.activateWindow()
-        self.system_monitor.raise_()
-            
     def open_usage_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
         try:
@@ -3466,11 +3481,9 @@ class MainWindow(QMainWindow):
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
             
-            # Move the label_window from the left dock to the explorer
-            if hasattr(self, 'left_layout'):
-                self.left_layout.removeWidget(self.label_window)
-            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            # Move the wrapper's entire inner QMainWindow (Payload + Toolbars) into the explorer
+            self.left_dock.inner_window.setParent(self.explorer_window.left_panel)
+            self.explorer_window.label_layout.insertWidget(1, self.left_dock.inner_window)
 
             # Add a spacer to push the timer to the bottom of the left panel while explorer is open
             self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
@@ -3509,12 +3522,10 @@ class MainWindow(QMainWindow):
                 self.left_layout.removeItem(self.explorer_spacer)
                 del self.explorer_spacer
 
-            # Move the label_window back to the left dock's layout
-            self.label_window.setParent(self.left_container)  # Re-parent back
-            # Insert at index 0 to maintain original order: label_window first
-            if hasattr(self, 'left_layout'):
-                self.left_layout.insertWidget(0, self.label_window)
-            self.label_window.show()
+            # Move the wrapper's inner QMainWindow back to the dock
+            self.left_dock.inner_window.setParent(self.left_dock)
+            self.left_dock.setWidget(self.left_dock.inner_window)
+            self.left_dock.inner_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
             
