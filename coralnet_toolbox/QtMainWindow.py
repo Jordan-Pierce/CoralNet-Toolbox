@@ -249,7 +249,8 @@ class MainWindow(QMainWindow):
         self.annotation_window = AnnotationWindow(self)
         self.image_window = ImageWindow(self)
         self.label_window = LabelWindow(self)
-        self.confidence_window = ConfidenceWindow(self)        
+        self.confidence_window = ConfidenceWindow(self)     
+        self.timer_window = TimerWindow(self)   
         # Initialized in open_explorer_window
         self.explorer_window = None  
         # Initialized in open_mvat_window
@@ -1400,16 +1401,14 @@ class MainWindow(QMainWindow):
         self.annotation_dock.setWidget(self.annotation_dock_container)
 
         # Setup Timer Dock (Left, below Labels)
-        # 1. Instantiate the raw widget
-        self.timer_group = TimerWindow(self)
-        # 2. Wrap it in the standardized DockWrapper
+        # Wrap the window in the standardized DockWrapper
         self.timer_dock = DockWrapper(
             title="Timer Window", 
             object_name="TimerDock", 
-            main_widget=self.timer_group, 
+            main_widget=self.timer_window, 
             parent=self
         )
-        self.timer_dock.setMaximumHeight(100) 
+        self.timer_dock.setMaximumHeight(100)  # Set height
 
         # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
@@ -1435,13 +1434,14 @@ class MainWindow(QMainWindow):
                                     QDockWidget.DockWidgetFloatable | 
                                     QDockWidget.DockWidgetClosable)
 
-        # Setup Confidence Dock (Right)
-        self.confidence_dock = QDockWidget("Confidence Window", self)
-        self.confidence_dock.setObjectName("ConfidenceDock")
-        self.confidence_dock.setWidget(self.confidence_window)
-        self.confidence_dock.setFeatures(QDockWidget.DockWidgetMovable | 
-                                         QDockWidget.DockWidgetFloatable |
-                                         QDockWidget.DockWidgetClosable)
+        # Setup Confidence Dock (Right) using DockWrapper
+        # Note: self.confidence_window was already instantiated near the top of __init__!
+        self.confidence_dock = DockWrapper(
+            title="Confidence Window", 
+            object_name="ConfidenceDock", 
+            main_widget=self.confidence_window, 
+            parent=self
+        )
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1518,8 +1518,8 @@ class MainWindow(QMainWindow):
             self.system_monitor.close()
         
         # Stop timer threads properly
-        if hasattr(self, 'timer_group') and self.timer_group:
-            self.timer_group.stop_threads()
+        if hasattr(self, 'timer_window') and self.timer_window:
+            self.timer_window.stop_threads()
             
         super().closeEvent(event)
 

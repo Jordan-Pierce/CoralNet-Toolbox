@@ -4,7 +4,8 @@ import warnings
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty, QTimer
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QSizePolicy,
-                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle)
+                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton, QStyle,
+                             QMenu, QToolBar, QStatusBar)
 
 from coralnet_toolbox.utilities import scale_pixmap
 from coralnet_toolbox.utilities import convert_scale_units
@@ -233,6 +234,32 @@ class ConfidenceWindow(QWidget):
         
         # Set initial state of buttons
         self.set_navigation_enabled(False)
+        
+    # --- FUTURE PROOFING HOOKS FOR DOCK WRAPPER ---
+    
+    def create_menu(self) -> QMenu:
+        """Create a contextual menu specific to this Window."""
+        # Example for the future:
+        # menu = QMenu("Options", self)
+        # menu.addAction("Export Data...")
+        # return menu
+        return None
+
+    def create_top_toolbar(self) -> QToolBar:
+        """Create a top toolbar specific to this Window."""
+        # Example for the future:
+        # toolbar = QToolBar("Tools")
+        # toolbar.addAction("Toggle Details")
+        # return toolbar
+        return None
+
+    def create_bottom_status_bar(self) -> QStatusBar:
+        """Create a status bar specific to this Window."""
+        # Example for the future:
+        # status = QStatusBar()
+        # status.showMessage("Ready")
+        # return status
+        return None
         
     def resizeEvent(self, event):
         """Handle resize events for the widget."""
