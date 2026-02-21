@@ -1655,13 +1655,12 @@ class MVATWindow(QMainWindow):
         except Exception:
             pass
         
-        # Emit signal for bi-directional sync (unless suppressed)
+        # TODO Emit signal for bi-directional sync (unless suppressed)
         if emit_signal:
             self.cameraSelectedInMVAT.emit(path)
             # Emit focal point projection if we have a focal point
             if self.current_focal_point is not None:
                 pixel = camera.project(self.current_focal_point)
-                # TODO
                 # if not np.isnan(pixel).any():
                 #     self.focalPointProjected.emit(path, pixel[0], pixel[1])
                 # else:
