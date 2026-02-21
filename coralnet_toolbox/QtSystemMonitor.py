@@ -5,11 +5,9 @@ import time
 import platform
 
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QMainWindow, QGridLayout, QWidget, QLabel
+from PyQt5.QtWidgets import QGridLayout, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
-
-from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,18 +15,16 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SystemMonitor(QMainWindow):
+class SystemMonitor(QWidget):
     """
-    A PyQt5 application to monitor and display real-time CPU, Memory, and GPU usage.
-    The monitoring starts/stops automatically when the window is shown/hidden.
+    A widget to monitor and display real-time CPU, Memory, and GPU usage.
+    The monitoring starts/stops automatically when the widget is shown/hidden.
     """
-    def __init__(self):
-        super().__init__()
-
-        # --- Window Properties ---
-        self.setWindowTitle("System Monitor")
-        self.setWindowIcon(get_icon("system_monitor.svg"))
-        self.setGeometry(100, 100, 800, 900)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Tooltip for context if hovered
+        self.setToolTip("Real-time hardware performance monitor.")
 
         # --- Data Storage ---
         # Use collections.deque for efficient, fixed-size data storage
@@ -58,7 +54,7 @@ class SystemMonitor(QMainWindow):
         self.x_axis = list(range(self.history_size))
 
         # --- Initialize UI ---
-        self.setup_layout()
+        self.setup_ui()
 
         # --- Timer for Real-Time Updates ---
         # Set up a QTimer to trigger the update_plots method every 1000 ms (1 second)
@@ -67,14 +63,13 @@ class SystemMonitor(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.update_plots)
 
-    def setup_layout(self):
+    def setup_ui(self):
         """
         Initializes the user interface, setting up the layout and plots.
         """
-        # --- Central Widget and Layout ---
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QGridLayout(central_widget)
+        # --- Layout ---
+        # Apply the layout directly to 'self' instead of a central widget
+        layout = QGridLayout(self)
         layout.setVerticalSpacing(20)  # Add more vertical spacing between plots
 
         # --- Styling ---

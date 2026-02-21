@@ -779,10 +779,6 @@ class MainWindow(QMainWindow):
         self.usage_action = QAction("Usage / Hotkeys", self)
         self.usage_action.triggered.connect(self.open_usage_dialog)
         self.help_menu.addAction(self.usage_action)
-        # System Monitor
-        self.system_monitor_action = QAction("System Monitor", self)
-        self.system_monitor_action.triggered.connect(self.open_system_monitor_dialog)
-        self.help_menu.addAction(self.system_monitor_action)
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
@@ -1443,11 +1439,19 @@ class MainWindow(QMainWindow):
                                     QDockWidget.DockWidgetClosable)
 
         # Setup Confidence Dock (Right) using DockWrapper
-        # Note: self.confidence_window was already instantiated near the top of __init__!
         self.confidence_dock = DockWrapper(
             title="Confidence Window", 
             object_name="ConfidenceDock", 
             main_widget=self.confidence_window, 
+            parent=self
+        )
+        
+        # Setup System Monitor Dock (Right, tabbed with Confidence) using DockWrapper
+        self.system_monitor_widget = SystemMonitor(self)
+        self.system_monitor_dock = DockWrapper(
+            title="System Monitor",
+            object_name="SystemMonitorDock",
+            main_widget=self.system_monitor_widget,
             parent=self
         )
 
@@ -1458,6 +1462,17 @@ class MainWindow(QMainWindow):
         # 3. Add the side docks to their respective areas
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        
+        # Add Confidence and System Monitor docks to the Right side
+        self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.system_monitor_dock)
+        
+        # Tabify Confidence Window and System Monitor together
+        self.tabifyDockWidget(self.confidence_dock, self.system_monitor_dock)
+        
+        # Make sure Confidence is the active tab, and completely hide System Monitor on startup
+        self.confidence_dock.raise_()
+        self.system_monitor_dock.hide()
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
@@ -3283,16 +3298,6 @@ class MainWindow(QMainWindow):
             self.see_anything_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
-            
-    def open_system_monitor_dialog(self):
-        """Open the system system monitor window."""
-        if self.system_monitor is None or sip.isdeleted(self.system_monitor):
-            self.system_monitor = SystemMonitor()
-        
-        # Show the monitor window
-        self.system_monitor.show()
-        self.system_monitor.activateWindow()
-        self.system_monitor.raise_()
             
     def open_usage_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
