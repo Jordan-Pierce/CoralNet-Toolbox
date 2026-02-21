@@ -124,6 +124,8 @@ from coralnet_toolbox.CoralNet import (
     DownloadDialog as CoralNetDownloadDialog
 )
 
+from coralnet_toolbox.QtDockWrapper import DockWrapper
+
 from coralnet_toolbox.Common import (
     CollapsibleSection,
 )
@@ -1397,16 +1399,17 @@ class MainWindow(QMainWindow):
         
         self.annotation_dock.setWidget(self.annotation_dock_container)
 
-        # Setup Timer Dock
+        # Setup Timer Dock (Left, below Labels)
+        # 1. Instantiate the raw widget
         self.timer_group = TimerWindow(self)
-        self.timer_dock = QDockWidget("Timer Window", self)
-        self.timer_dock.setObjectName("TimerDock")
-        self.timer_dock.setWidget(self.timer_group)
-        self.timer_dock.setMaximumHeight(100)
-        self.timer_dock.setFeatures(QDockWidget.DockWidgetMovable | 
-                                    QDockWidget.DockWidgetFloatable |
-                                    QDockWidget.DockWidgetClosable)
-        
+        # 2. Wrap it in the standardized DockWrapper
+        self.timer_dock = DockWrapper(
+            title="Timer Window", 
+            object_name="TimerDock", 
+            main_widget=self.timer_group, 
+            parent=self
+        )
+        self.timer_dock.setMaximumHeight(100) 
 
         # Setup Label Dock (Left)
         self.left_dock = QDockWidget("Label Window", self)
@@ -1516,8 +1519,7 @@ class MainWindow(QMainWindow):
         
         # Stop timer threads properly
         if hasattr(self, 'timer_group') and self.timer_group:
-            if hasattr(self.timer_group, 'timer_widget') and self.timer_group.timer_widget:
-                self.timer_group.timer_widget.stop_threads()
+            self.timer_group.stop_threads()
             
         super().closeEvent(event)
 

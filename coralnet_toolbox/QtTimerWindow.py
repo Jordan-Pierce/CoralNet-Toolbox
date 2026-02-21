@@ -81,35 +81,25 @@ class TimerWindow(QWidget):
 
         self.setup_ui()
 
-    def create_timer_menu(self) -> QMenu:
-        """
-        Creates a contextual menu specific to the Timer.
-        This will be attached to the DockWrapper's internal menu bar.
-        """
-        timer_menu = QMenu("Timer Options", self)
-        
-        # Example action: Export Timer Log
-        export_action = QAction("Export Session Log...", self)
-        export_action.setToolTip("Export the background timer events to a file.")
-        # export_action.triggered.connect(self.export_log) # Wire this up to a future method
-        timer_menu.addAction(export_action)
-        
-        return timer_menu
-
-    def closeEvent(self, event):
-        """Stop the worker threads when closing."""
-        self.stop_threads()
-        super().closeEvent(event)
-
     def stop_threads(self):
-        """Stop the worker threads."""
+        """Stop the worker threads safely."""
         self.worker.stop()
         self.background_worker.stop()
-        self.worker.update_signal.disconnect()
-        self.background_worker.update_signal.disconnect()
+        
+        # Safely disconnect signals (ignores TypeError if already disconnected)
+        try:
+            self.worker.update_signal.disconnect()
+        except TypeError:
+            pass
+            
+        try:
+            self.background_worker.update_signal.disconnect()
+        except TypeError:
+            pass
+            
         self.worker.wait()
         self.background_worker.wait()
-
+        
     def setup_ui(self):
         """Set up the user interface."""
         # Compact layout and spacing to minimize height

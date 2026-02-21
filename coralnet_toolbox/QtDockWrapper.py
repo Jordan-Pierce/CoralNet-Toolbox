@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDockWidget, QMainWindow, QMenu, QToolBar, QWidget
+from PyQt5.QtWidgets import QDockWidget, QMainWindow, QMenu, QToolBar, QWidget, QStatusBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -10,8 +10,8 @@ from PyQt5.QtWidgets import QDockWidget, QMainWindow, QMenu, QToolBar, QWidget
 class DockWrapper(QDockWidget):
     """
     A universal wrapper that encapsulates a widget inside a QDockWidget.
-    Uses an internal QMainWindow to natively support toolbars and menu bars
-    specific to the wrapped widget.
+    Uses an internal QMainWindow to natively support toolbars, menu bars, 
+    and status bars specific to the wrapped widget.
     """
     def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None):
         super().__init__(title, parent)
@@ -27,12 +27,15 @@ class DockWrapper(QDockWidget):
 
         # THE TRICK: Use a QMainWindow as the single widget inside the dock
         self.inner_window = QMainWindow()
-        
-        # Ensure it behaves as a child widget, not a pop-up desktop window
         self.inner_window.setWindowFlags(Qt.Widget) 
         
-        # Set the core payload (e.g., TimerWindow, MVATViewer)
-        self.inner_window.setCentralWidget(main_widget)
+        # Strip default margins so the payload sits flush against the dock borders
+        self.inner_window.setContentsMargins(0, 0, 0, 0)
+        
+        # Store the payload and set it as the central widget
+        self.payload_widget = main_widget
+        self.inner_window.setCentralWidget(self.payload_widget)
+        
         self.setWidget(self.inner_window)
 
     def add_menu(self, menu: QMenu):
@@ -40,5 +43,25 @@ class DockWrapper(QDockWidget):
         self.inner_window.menuBar().addMenu(menu)
 
     def add_toolbar(self, toolbar: QToolBar, area=Qt.TopToolBarArea):
-        """Attaches a QToolBar to the dock's internal layout."""
+        """
+        Attaches a QToolBar to the dock. 
+        Use Qt.BottomToolBarArea, Qt.LeftToolBarArea, etc., for positioning.
+        """
         self.inner_window.addToolBar(area, toolbar)
+
+    def set_status_bar(self, status_bar: QStatusBar):
+        """Attaches a true QStatusBar to the absolute bottom of the dock."""
+        self.inner_window.setStatusBar(status_bar)
+
+    def get_payload(self) -> QWidget:
+        """Returns the encapsulated main widget."""
+        return self.payload_widget
+
+    def closeEvent(self, event):
+        """
+        Intercepts the dock closing and forwards the event to the payload.
+        Critical for widgets that need to stop threads or save state (like TimerWindow).
+        """
+        if hasattr(self.payload_widget, 'closeEvent'):
+            self.payload_widget.closeEvent(event)
+        super().closeEvent(event)
