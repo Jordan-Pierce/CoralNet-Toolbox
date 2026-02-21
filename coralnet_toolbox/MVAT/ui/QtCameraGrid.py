@@ -195,6 +195,7 @@ class CameraImageWidget(QWidget):
     double_clicked = pyqtSignal(object)   # (widget)
     hovered = pyqtSignal(str)             # (image_path)
     unhovered = pyqtSignal(str)           # (image_path)
+    select_image_requested = pyqtSignal(str)  # (image_path) - emitted when "Select Image" chosen from context menu
     
     def __init__(self, data_item, model, widget_size=256, parent=None):
         """
@@ -418,12 +419,26 @@ class CameraImageWidget(QWidget):
                             MARKER_SIZE, MARKER_SIZE)
             
     def mousePressEvent(self, event):
-        """Handle mouse press for selection."""
-        self.clicked.emit(self, event)
+        """Handle mouse press for selection (left-click only)."""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self, event)
+        # Right-click handled by contextMenuEvent
         
     def mouseDoubleClickEvent(self, event):
-        """Handle double-click for single selection."""
-        self.double_clicked.emit(self)
+        """Handle double-click for highlighting (left-click only)."""
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self)
+    
+    def contextMenuEvent(self, event):
+        """Show context menu on right-click."""
+        menu = QMenu(self)
+        
+        # Select Image action (primary action)
+        select_action = QAction("Select Image", self)
+        select_action.triggered.connect(lambda: self.select_image_requested.emit(self.data_item.image_path))
+        menu.addAction(select_action)
+        
+        menu.exec_(event.globalPos())
         
     def enterEvent(self, event):
         """Handle mouse enter for hover detection."""
@@ -632,6 +647,7 @@ class CameraGrid(QWidget):
                 widget = CameraImageWidget(data_item, self.model, self.thumbnail_size, self.content_widget)
                 widget.clicked.connect(self._on_widget_clicked)
                 widget.double_clicked.connect(self._on_widget_double_clicked)
+                widget.select_image_requested.connect(self._on_widget_select_image_requested)
                 widget.hovered.connect(self.camera_hovered)
                 widget.unhovered.connect(self.camera_unhovered)
                 self.widgets_by_path[path] = widget
@@ -912,12 +928,18 @@ class CameraGrid(QWidget):
         self.last_clicked_index = clicked_index
         
     def _on_widget_double_clicked(self, widget):
-        """Handle widget double-click for single selection via SelectionManager."""
+        """Handle widget double-click for highlighting only (no image load)."""
         path = widget.data_item.image_path
-
+        # Double-click now acts like single-click - just highlights
+        # Plain click: request single selection
+        self.selection_requested.emit([path])
+        # Emit single highlight intent (for 3D view perspective change)
+        self.camera_highlighted_single.emit(path)
+    
+    def _on_widget_select_image_requested(self, path):
+        """Handle 'Select Image' from context menu - sets active camera and loads image."""
         # Emit request to set active camera (SelectionManager should act)
         self.active_requested.emit(path)
-
         # Emit grid-level signal (still used to trigger image load)
         self.camera_selected.emit(path)
 
@@ -1095,7 +1117,14 @@ class CameraGrid(QWidget):
         menu.addAction(header)
         menu.addSeparator()
         
-        # Go to first highlighted image
+        # Select Image action (sets active camera and loads)
+        select_action = QAction("Select First Image", self)
+        select_action.triggered.connect(self._select_first_image)
+        menu.addAction(select_action)
+        
+        menu.addSeparator()
+        
+        # Go to first highlighted image (deprecated, kept for backwards compatibility)
         goto_action = QAction("Go to First Image", self)
         goto_action.triggered.connect(self._goto_first_highlighted)
         menu.addAction(goto_action)
@@ -1106,6 +1135,15 @@ class CameraGrid(QWidget):
         menu.addAction(clear_action)
         
         menu.exec_(event.globalPos())
+        
+    def _select_first_image(self):
+        """Select and load the first highlighted camera's image."""
+        selected_set = self.model.get_selected_list() if self.model else []
+        if selected_set:
+            first_path = selected_set[0]
+            # Request to set active camera and load image
+            self.active_requested.emit(first_path)
+            self.camera_selected.emit(first_path)
         
     def _goto_first_highlighted(self):
         """Navigate to the first highlighted camera's image."""
