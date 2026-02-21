@@ -1400,7 +1400,7 @@ class MainWindow(QMainWindow):
         
         self.annotation_dock.setWidget(self.annotation_dock_container)
 
-        # Setup Timer Dock (Left, below Labels)
+        # Setup Timer Dock (Left, below Labels) using DockWrapper
         # Wrap the window in the standardized DockWrapper
         self.timer_dock = DockWrapper(
             title="Timer Window", 
@@ -1408,21 +1408,29 @@ class MainWindow(QMainWindow):
             main_widget=self.timer_window, 
             parent=self
         )
+        # Set the size policy to fixed vertically
         self.timer_dock.setMaximumHeight(100)  # Set height
 
-        # Setup Label Dock (Left)
-        self.left_dock = QDockWidget("Label Window", self)
-        self.left_dock.setObjectName("LabelDock")
-        self.left_container = QWidget()
-        self.left_layout = QVBoxLayout(self.left_container)
-        self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.addWidget(self.label_window)
-        self.left_dock.setWidget(self.left_container)
-        self.left_dock.setFeatures(QDockWidget.DockWidgetMovable | 
-                                   QDockWidget.DockWidgetFloatable |
-                                   QDockWidget.DockWidgetClosable)
+        # Setup Label Dock (Left) using DockWrapper
+        self.left_dock = DockWrapper(
+            title="Label Window", 
+            object_name="LabelDock", 
+            main_widget=self.label_window, 
+            parent=self
+        )
+        # Add the Actions to the Top Area
+        if hasattr(self.label_window, 'create_action_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_action_toolbar(), Qt.TopToolBarArea)
+        # Add a line break so the next toolbar drops to row 2
+        self.left_dock.add_toolbar_break(Qt.TopToolBarArea)
+        # Add the Filter to the Top Area (Row 2)
+        if hasattr(self.label_window, 'create_filter_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_filter_toolbar(), Qt.TopToolBarArea)
+        # Add the Counts to the Bottom Area
+        if hasattr(self.label_window, 'create_bottom_toolbar'):
+            self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
-        # Setup Image Dock (Right)
+        # Setup Image Dock (Right) using DockWrapper
         self.right_dock = QDockWidget("Image Window", self)
         self.right_dock.setObjectName("ImageDock")
         self.right_container = QWidget()
@@ -3480,11 +3488,9 @@ class MainWindow(QMainWindow):
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
             
-            # Move the label_window from the left dock to the explorer
-            if hasattr(self, 'left_layout'):
-                self.left_layout.removeWidget(self.label_window)
-            self.label_window.setParent(self.explorer_window.left_panel)  # Re-parent
-            self.explorer_window.label_layout.insertWidget(1, self.label_window)  # Add to explorer layout
+            # Move the wrapper's entire inner QMainWindow (Payload + Toolbars) into the explorer
+            self.left_dock.inner_window.setParent(self.explorer_window.left_panel)
+            self.explorer_window.label_layout.insertWidget(1, self.left_dock.inner_window)
 
             # Add a spacer to push the timer to the bottom of the left panel while explorer is open
             self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
@@ -3523,12 +3529,10 @@ class MainWindow(QMainWindow):
                 self.left_layout.removeItem(self.explorer_spacer)
                 del self.explorer_spacer
 
-            # Move the label_window back to the left dock's layout
-            self.label_window.setParent(self.left_container)  # Re-parent back
-            # Insert at index 0 to maintain original order: label_window first
-            if hasattr(self, 'left_layout'):
-                self.left_layout.insertWidget(0, self.label_window)
-            self.label_window.show()
+            # Move the wrapper's inner QMainWindow back to the dock
+            self.left_dock.inner_window.setParent(self.left_dock)
+            self.left_dock.setWidget(self.left_dock.inner_window)
+            self.left_dock.inner_window.show()
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
             

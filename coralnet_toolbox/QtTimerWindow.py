@@ -81,25 +81,6 @@ class TimerWindow(QWidget):
 
         self.setup_ui()
 
-    def stop_threads(self):
-        """Stop the worker threads safely."""
-        self.worker.stop()
-        self.background_worker.stop()
-        
-        # Safely disconnect signals (ignores TypeError if already disconnected)
-        try:
-            self.worker.update_signal.disconnect()
-        except TypeError:
-            pass
-            
-        try:
-            self.background_worker.update_signal.disconnect()
-        except TypeError:
-            pass
-            
-        self.worker.wait()
-        self.background_worker.wait()
-        
     def setup_ui(self):
         """Set up the user interface."""
         # Compact layout and spacing to minimize height
@@ -140,6 +121,25 @@ class TimerWindow(QWidget):
 
         # Make the widget request a reasonable minimum height but allow growth
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        
+    def stop_threads(self):
+        """Stop the worker threads safely."""
+        self.worker.stop()
+        self.background_worker.stop()
+        
+        # Safely disconnect signals (ignores TypeError if already disconnected)
+        try:
+            self.worker.update_signal.disconnect()
+        except TypeError:
+            pass
+            
+        try:
+            self.background_worker.update_signal.disconnect()
+        except TypeError:
+            pass
+            
+        self.worker.wait()
+        self.background_worker.wait()
 
     def start_timer(self):
         """Start the timer."""

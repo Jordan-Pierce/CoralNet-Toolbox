@@ -235,7 +235,7 @@ class ConfidenceWindow(QWidget):
         # Set initial state of buttons
         self.set_navigation_enabled(False)
         
-    # --- FUTURE PROOFING HOOKS FOR DOCK WRAPPER ---
+    # --- DOCK WRAPPER HOOKS ---
     
     def create_menu(self) -> QMenu:
         """Create a contextual menu specific to this Window."""
