@@ -4,8 +4,9 @@ import time
 from datetime import datetime
 
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import QTimer, QThread, pyqtSignal
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSizePolicy
+from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+                             QMenu, QAction)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
@@ -47,11 +48,17 @@ class TimerWorker(QThread):
         self.stop_flag = True
 
 
-class TimerWidget(QWidget):
-    """A timer widget with start, stop, and reset buttons."""
+class TimerWindow(QWidget):
+    """A timer widget with start, stop, and reset buttons.
+    Tracks and saves total duration across sessions and logs all timer actions."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        # Bring over the tooltip from the old wrapper class
+        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n"
+                        "Tracks and saves total duration across sessions and logs all timer actions.")
+        
         self.time_elapsed = 0  # Time in seconds
 
         # Worker thread for user interactive timing
@@ -74,14 +81,24 @@ class TimerWidget(QWidget):
 
         self.setup_ui()
 
+    def create_timer_menu(self) -> QMenu:
+        """
+        Creates a contextual menu specific to the Timer.
+        This will be attached to the DockWrapper's internal menu bar.
+        """
+        timer_menu = QMenu("Timer Options", self)
+        
+        # Example action: Export Timer Log
+        export_action = QAction("Export Session Log...", self)
+        export_action.setToolTip("Export the background timer events to a file.")
+        # export_action.triggered.connect(self.export_log) # Wire this up to a future method
+        timer_menu.addAction(export_action)
+        
+        return timer_menu
+
     def closeEvent(self, event):
         """Stop the worker threads when closing."""
-        self.worker.stop()
-        self.background_worker.stop()
-        self.worker.update_signal.disconnect()
-        self.background_worker.update_signal.disconnect()
-        self.worker.wait()
-        self.background_worker.wait()
+        self.stop_threads()
         super().closeEvent(event)
 
     def stop_threads(self):
@@ -115,7 +132,6 @@ class TimerWidget(QWidget):
 
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_timer)
-        # Let the button size itself; allow horizontal shrinking but fixed height
         self.start_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         buttons_layout.addWidget(self.start_button)
 
@@ -211,51 +227,4 @@ class TimerWidget(QWidget):
         instance.total_duration = data['total_duration']
         instance.background_total_duration = data.get('background_total_duration', data['total_duration'])
         # Note: time_elapsed is reset to 0, as it's the current session display
-        return instance
-
-
-class TimerWindow(QWidget):
-    """A simple container widget containing the timer widget.
-
-    Note: this used to be a checkable QGroupBox; hiding/collapsing is
-    removed per UI changes — the timer is always visible in its dock.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setToolTip("A timer to track work sessions with start, stop, and reset functionality.\n"
-                        "Tracks and saves total duration across sessions and logs all timer actions.")
-        self.timer_widget = TimerWidget(self)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.timer_widget)
-        # Allow the container to be at least the preferred height but not smaller.
-        # Use the widget's sizeHint after activating the layout so the minimal
-        # height is based on the actual widget metrics rather than hardcoded pixels.
-        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
-        layout.activate()
-        self.timer_widget.adjustSize()
-        self.adjustSize()
-        self.setMinimumHeight(self.timer_widget.sizeHint().height())
-
-    def to_dict(self):
-        """Serialize the timer widget data to a dictionary."""
-        return self.timer_widget.to_dict()
-
-    @classmethod
-    def from_dict(cls, data):
-        instance = cls()
-        # Replace timer widget with deserialized one
-        layout = instance.layout()
-        # Remove old widget
-        if layout and layout.count() > 0:
-            old_widget = layout.itemAt(0).widget()
-            if old_widget and hasattr(old_widget, 'stop_threads'):
-                old_widget.stop_threads()
-            if old_widget:
-                layout.removeWidget(old_widget)
-                old_widget.setParent(None)
-
-        instance.timer_widget = TimerWidget.from_dict(data)
-        layout.addWidget(instance.timer_widget)
         return instance
