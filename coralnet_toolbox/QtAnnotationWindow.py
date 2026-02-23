@@ -9,10 +9,8 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
-from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem,     
-                             QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
-                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, 
-                             QComboBox, QToolButton, QToolBar, QSizePolicy)
+from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -44,7 +42,6 @@ from coralnet_toolbox.Tools import (
 )
 
 from coralnet_toolbox.QtActions import (
-    Action,
     AddAnnotationAction,
     DeleteAnnotationAction,
     ActionStack,

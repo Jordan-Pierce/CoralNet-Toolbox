@@ -2,21 +2,18 @@ import warnings
 
 import os
 import re
-import ctypes
 import requests
 
 from packaging import version
 
-import numpy as np
 import torch
 
 from PyQt5.QtGui import QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
-from PyQt5.QtWidgets import (QListWidget, QComboBox)
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
+from PyQt5.QtWidgets import QListWidget
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
-                             QSpacerItem, QDockWidget)
+                             QSpinBox, QSlider, QDialog, QPushButton)
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
@@ -136,11 +133,7 @@ from coralnet_toolbox.BreakTime import (
     LightCycleGame
 )
 
-from coralnet_toolbox.utilities import convert_scale_units
-
-from coralnet_toolbox.Icons import (get_icon,
-                                    ColorComboBox,
-                                    ColormapDelegate)
+from coralnet_toolbox.Icons import get_icon
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
