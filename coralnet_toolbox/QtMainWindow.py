@@ -1192,10 +1192,6 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         # Setup connections
         # --------------------------------------------------
-        # # Connect signals to update status bar
-        # self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
-        # self.annotation_window.mouseMoved.connect(self.update_mouse_position)
-        # self.annotation_window.viewChanged.connect(self.update_view_dimensions)
 
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
@@ -1233,15 +1229,6 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.global_event_filter = GlobalEventFilter(self)
         QApplication.instance().installEventFilter(self.global_event_filter)
-        
-        # --------------------------------------------------
-        # Update the scaled view dimensions label
-        # --------------------------------------------------
-        # self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
-        # self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
-        # self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
-        # self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
-        # self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
         # Check for updates on opening
