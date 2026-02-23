@@ -5,11 +5,11 @@ from contextlib import contextmanager
 
 import rasterio
 
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel, QModelIndex, QEvent
-from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
-                             QMenu, QButtonGroup, QGroupBox, QPushButton, QStyle, 
-                             QFormLayout, QFrame, QLineEdit, QListWidget, QListWidgetItem, QFileDialog)
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
+                             QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
+                             QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
+                             QLineEdit, QFileDialog, QToolBar)
 
 from coralnet_toolbox.Rasters import RasterManager
 from coralnet_toolbox.Rasters import ImageFilter
@@ -229,33 +229,31 @@ class ImageWindow(QWidget):
         self.show_confirmation_dialog = True
         
     def setup_ui(self):
-        """Set up the user interface."""
+        """Set up the user interface. The payload is ONLY the table view now."""
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         
-        # Create UI sections
-        self.setup_filter_section()
-        self.setup_image_section()
+        # Instantiate the widgets so __init__ can connect signals
+        self._init_filter_widgets()
+        self._init_info_widgets()
+        self._init_table_widget()
+        self._init_action_widgets()
+        
+        # Build and add the payload (the table) to the main layout
+        self.layout.addWidget(self.tableView)
         
         # Create the tooltip for previews
         self.preview_tooltip = ImagePreviewTooltip()
-        
-    def setup_filter_section(self):
-        """Set up the filter section of the UI."""
-        # Create a simple container for search and filters (always visible)
+
+    def _init_filter_widgets(self):
+        """Set up the filter section widgets without adding to main layout."""
         self.filter_content_widget = QWidget()
         self.filter_layout = QVBoxLayout(self.filter_content_widget)
-        self.filter_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout = QVBoxLayout()
-        # Remove padding so it looks seamless inside the container
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Create a form layout for the search bars
+        self.filter_layout.setContentsMargins(4, 4, 4, 4) # Add slight padding for toolbar aesthetics
+        
         self.search_layout = QFormLayout()
-        # --- Add search_layout to the new content_layout ---
-        self.content_layout.addLayout(self.search_layout)
+        self.filter_layout.addLayout(self.search_layout)
 
-        # Set fixed width for search bars (big effect on layout width)
         fixed_width = 125
 
         # --- Setup Filter ComboBox ---
@@ -264,10 +262,9 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Predictions")
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("No Annotations")
-        
         self.filter_combo.setCurrentIndex(-1)  
-        
         self.filter_combo.filterChanged.connect(self.schedule_filter)
+        self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # --- Create containers for search bars and buttons ---
         self.image_search_container = QWidget()
@@ -303,7 +300,6 @@ class ImageWindow(QWidget):
         self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
         self.label_search_layout.addWidget(self.search_bar_labels)
 
-        # Add top-k combo box
         self.top_k_combo = QComboBox(self)
         self.top_k_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
         self.top_k_combo.setCurrentText("Top1")
@@ -315,87 +311,53 @@ class ImageWindow(QWidget):
         self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.label_search_button.clicked.connect(self.filter_images)
         self.label_search_layout.addWidget(self.label_search_button)
-        
-        # --- Set horizontal policy to expand and fill the layout column ---
-        self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Add rows to form layout
         self.search_layout.addRow("Filters:", self.filter_combo)
         self.search_layout.addRow("Search Images:", self.image_search_container)
         self.search_layout.addRow("Search Labels:", self.label_search_container)
 
-        # Add the content layout into the filter container and add to main layout
-        self.filter_layout.addLayout(self.content_layout)
-        self.layout.addWidget(self.filter_content_widget)
-        
-    def setup_image_section(self):
-        """Set up the image list section of the UI."""
-        # Create a container widget for the Image Window header/info (removed QGroupBox wrapper)
-        self.info_table_group = QWidget(self)
-        info_table_layout = QVBoxLayout()
-        self.info_table_group.setLayout(info_table_layout)
-
-        # Create a horizontal layout for the labels
-        self.info_layout = QHBoxLayout()
-        info_table_layout.addLayout(self.info_layout)
-        
-        # Add Home button to the info_layout
+    def _init_info_widgets(self):
+        """Instantiate info labels and home button."""
         self.home_button = QPushButton("", self)
         self.home_button.setToolTip("Center table on current image")
         self.home_button.setIcon(get_icon("home.svg"))  
         self.home_button.setFixedSize(24, 24)             
         self.home_button.setFlat(True)    
         self.home_button.clicked.connect(self.center_table_on_current_image)
-        self.info_layout.addWidget(self.home_button)
 
-        # Optionally add spacing after the button
-        self.info_layout.addSpacing(10)
-
-        # Add a label to display the index of the currently selected image
         self.current_image_index_label = QLabel("Current: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
         self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.current_image_index_label.setFixedHeight(24)
-        self.info_layout.addWidget(self.current_image_index_label)
 
-        # Add a label to display the number of highlighted images
         self.highlighted_count_label = QLabel("Highlighted: 0", self)
         self.highlighted_count_label.setAlignment(Qt.AlignCenter)
         self.highlighted_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.highlighted_count_label.setFixedHeight(24)
-        self.info_layout.addWidget(self.highlighted_count_label)
 
-        # Add a label to display the total number of images
         self.image_count_label = QLabel("Total: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
         self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.image_count_label.setFixedHeight(24)
-        self.info_layout.addWidget(self.image_count_label)
 
-        # Create and setup table view
+    def _init_table_widget(self):
+        """Instantiate and configure the central table view."""
         self.tableView = NoArrowKeyTableView(self)
         self.tableView.setSelectionBehavior(QTableView.SelectRows)
-        self.tableView.setSelectionMode(QTableView.ExtendedSelection)  # Support multiple selection
+        self.tableView.setSelectionMode(QTableView.ExtendedSelection)
         self.tableView.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tableView.customContextMenuRequested.connect(self.show_context_menu)
         self.tableView.setMouseTracking(True)
         self.tableView.viewport().installEventFilter(self)
-        
-        # Install event filter for wheel events on the table view
         self.tableView.installEventFilter(self)
         
-        # Set the model for the table view
         self.table_model = RasterTableModel(self.raster_manager, self)
         self.tableView.setModel(self.table_model)
         
-        # Set column widths
-        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Checkmark column
-        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Z column
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Filename column
-        self.tableView.setColumnWidth(3, 120)  # Annotation column
+        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) 
+        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) 
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch) 
+        self.tableView.setColumnWidth(3, 120) 
         self.tableView.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         
-        # Style the header
         self.tableView.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
             background-color: #E0E0E0;
@@ -404,29 +366,70 @@ class ImageWindow(QWidget):
             }
         """)
         
-        # Connect signals for clicking
         self.tableView.leftClicked.connect(self.on_table_pressed)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
-        
-        # Add table view to the layout
-        info_table_layout.addWidget(self.tableView)
 
-        # Add a new horizontal layout below the table widget to hold the buttons
-        self.button_layout = QHBoxLayout()
-        info_table_layout.addLayout(self.button_layout)
-
-        # Add 'Highlight All' button to the new layout
+    def _init_action_widgets(self):
+        """Instantiate bulk action buttons."""
         self.highlight_all_button = QPushButton("Highlight All", self)
         self.highlight_all_button.clicked.connect(self.highlight_all_rows)
-        self.button_layout.addWidget(self.highlight_all_button)
 
-        # Add 'Unhighlight All' button to the new layout
         self.unhighlight_all_button = QPushButton("Unhighlight All", self)
         self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
-        self.button_layout.addWidget(self.unhighlight_all_button)
+        
+    # --- DOCK WRAPPER HOOKS ---
 
-        # Add the group box to the main layout
-        self.layout.addWidget(self.info_table_group)
+    def create_filter_toolbar(self) -> QToolBar:
+        """Create the top toolbar containing the search and filter form."""
+        toolbar = QToolBar("Image Filters")
+        toolbar.setMovable(False)
+        
+        # Simply mount the entire filter widget into the toolbar
+        self.filter_content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        toolbar.addWidget(self.filter_content_widget)
+        
+        return toolbar
+
+    def create_info_toolbar(self) -> QToolBar:
+        """Create a toolbar for the table statistics and home button."""
+        toolbar = QToolBar("Image Info")
+        toolbar.setMovable(False)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(10)
+
+        layout.addWidget(self.home_button)
+        layout.addWidget(self.current_image_index_label)
+        layout.addWidget(self.highlighted_count_label)
+        layout.addWidget(self.image_count_label)
+
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        toolbar.addWidget(container)
+
+        return toolbar
+
+    def create_action_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar for bulk table actions."""
+        toolbar = QToolBar("Image Actions")
+        toolbar.setMovable(False)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        self.highlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.unhighlight_all_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout.addWidget(self.highlight_all_button)
+        layout.addWidget(self.unhighlight_all_button)
+
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        toolbar.addWidget(container)
+
+        return toolbar
         
     def setup_signals(self):
         """Set up signal connections."""

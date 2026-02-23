@@ -10,14 +10,13 @@ from packaging import version
 import numpy as np
 import torch
 
-from PyQt5 import sip
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize
 from PyQt5.QtWidgets import (QListWidget, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
-                             QGroupBox, QSpacerItem, QStatusBar, QDockWidget)
+                             QSpacerItem, QDockWidget)
 
 # Utilities
 from coralnet_toolbox.QtEventFilter import GlobalEventFilter
@@ -1425,16 +1424,23 @@ class MainWindow(QMainWindow):
             self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock (Right) using DockWrapper
-        self.right_dock = QDockWidget("Image Window", self)
-        self.right_dock.setObjectName("ImageDock")
-        self.right_container = QWidget()
-        self.right_layout = QVBoxLayout(self.right_container)
-        self.right_layout.setContentsMargins(0, 0, 0, 0)
-        self.right_layout.addWidget(self.image_window)
-        self.right_dock.setWidget(self.right_container)
-        self.right_dock.setFeatures(QDockWidget.DockWidgetMovable | 
-                                    QDockWidget.DockWidgetFloatable | 
-                                    QDockWidget.DockWidgetClosable)
+        self.right_dock = DockWrapper(
+            title="Image Window", 
+            object_name="ImageDock", 
+            main_widget=self.image_window, 
+            parent=self
+        )
+        # Add the Filter Form to the Top Area
+        if hasattr(self.image_window, 'create_filter_toolbar'):
+            self.right_dock.add_toolbar(self.image_window.create_filter_toolbar(), Qt.TopToolBarArea)
+        # Add a line break so the info labels drop to row 2
+        self.right_dock.add_toolbar_break(Qt.TopToolBarArea)
+        # Add the Info Labels to the Top Area (Row 2)
+        if hasattr(self.image_window, 'create_info_toolbar'):
+            self.right_dock.add_toolbar(self.image_window.create_info_toolbar(), Qt.TopToolBarArea)
+        # Add the Bulk Action buttons to the Bottom Area
+        if hasattr(self.image_window, 'create_action_toolbar'):
+            self.right_dock.add_toolbar(self.image_window.create_action_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Confidence Dock (Right) using DockWrapper
         self.confidence_dock = DockWrapper(
@@ -1607,10 +1613,10 @@ class MainWindow(QMainWindow):
         all_widgets = [
             self.toolbar,
             self.menu_bar,
-            self.image_window,
-            self.label_window,
-            self.confidence_window,
-            self.annotation_window,
+            self.right_dock,       # Was: self.image_window
+            self.left_dock,        # Was: self.label_window
+            self.confidence_dock,  # Was: self.confidence_window
+            self.annotation_dock,  # Was: self.annotation_window
             # Status bar widgets
             *tuple(self.status_bar_widgets)
         ]
@@ -2190,23 +2196,6 @@ class MainWindow(QMainWindow):
         
         # Update label tooltips with current counts
         self.label_window.update_tooltips()
-            
-    def on_image_window_filter_toggled(self, is_expanded):
-        """
-        Adjusts the vertical stretch between ImageWindow and ConfidenceWindow
-        when the filter group in ImageWindow is toggled.
-        """
-        if is_expanded:
-            # Reset to default stretch factors (54 / 46)
-            if hasattr(self, 'right_layout'):
-                self.right_layout.setStretch(0, 54)  # index 0 is image_window
-                self.right_layout.setStretch(1, 46)  # index 1 is confidence_window
-        else:
-            # Filters are hidden, give less space to image_window
-            # and more to confidence_window.
-            if hasattr(self, 'right_layout'):
-                self.right_layout.setStretch(0, 54)
-                self.right_layout.setStretch(1, 66)
             
     def enable_z_visualization_controls(self, enabled):
         """
@@ -3484,21 +3473,19 @@ class MainWindow(QMainWindow):
             # Move the wrapper's entire inner QMainWindow (Payload + Toolbars) into the explorer
             self.left_dock.inner_window.setParent(self.explorer_window.left_panel)
             self.explorer_window.label_layout.insertWidget(1, self.left_dock.inner_window)
-
-            # Add a spacer to push the timer to the bottom of the left panel while explorer is open
-            self.explorer_spacer = QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
-            if hasattr(self, 'left_layout'):
-                self.left_layout.insertItem(0, self.explorer_spacer)
+            
+            # Hide the empty dock shell so the Timer dock naturally takes over the space
+            self.left_dock.hide()
                 
             # Disable all main window widgets except select few
             self.set_main_window_enabled_state(
-                enable_list=[self.annotation_window, 
-                             self.label_window,
+                enable_list=[self.annotation_dock, 
+                             self.left_dock.inner_window, # Enable the traveling toolbars!
                              self.transparency_widget],
                 disable_list=[self.toolbar, 
                               self.menu_bar, 
-                              self.image_window, 
-                              self.confidence_window]
+                              self.right_dock, 
+                              self.confidence_dock]
             )
             
             self.explorer_window.showMaximized()
@@ -3517,15 +3504,15 @@ class MainWindow(QMainWindow):
     def close_explorer_window(self):
         """Handle the explorer window being closed."""
         if self.explorer_window:
-            # Remove the spacer that was added when explorer opened
-            if hasattr(self, 'explorer_spacer') and hasattr(self, 'left_layout'):
-                self.left_layout.removeItem(self.explorer_spacer)
-                del self.explorer_spacer
-
             # Move the wrapper's inner QMainWindow back to the dock
             self.left_dock.inner_window.setParent(self.left_dock)
             self.left_dock.setWidget(self.left_dock.inner_window)
             self.left_dock.inner_window.show()
+            
+            # Reveal the dock shell again
+            self.left_dock.show()
+
+            # Force a resize update to ensure the layout snaps back correctly
             self.label_window.resizeEvent(None)
             self.resizeEvent(None)
             
