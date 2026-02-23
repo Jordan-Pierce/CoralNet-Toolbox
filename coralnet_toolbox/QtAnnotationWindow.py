@@ -47,6 +47,10 @@ from coralnet_toolbox.QtActions import (
     AddAnnotationsAction,
     DeleteAnnotationsAction,
     ActionStack,
+    ChangeLabelAction,
+    ChangeLabelsAction,
+    ResizeAnnotationAction,
+    AnnotationGeometryEditAction,
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -71,12 +75,21 @@ class AnnotationWindow(QGraphicsView):
     viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
+    
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
+    
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
     annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
     annotationModified = pyqtSignal(str)  # Signal to emit when annotation is modified
+    annotationMoved = pyqtSignal(str, object)  # annotation_id, {'old_center': QPointF, 'new_center': QPointF}
+    annotationLabelChanged = pyqtSignal(str, str)  # annotation_id, new_label
+    annotationsLabelsChanged = pyqtSignal(object)  # list of (annotation_id, old_label, new_label)
+    annotationCut = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
+    annotationsMerged = pyqtSignal(object)  # {'original_ids':[...], 'merged': merged_annotation}
+    annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
+    annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -956,15 +969,20 @@ class AnnotationWindow(QGraphicsView):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         self.selected_label = label
-        
+
+        # Collect changes for action stack
+        changes = []  # list of (annotation_id, old_label, new_label)
+
         # Handle both valid labels and None (no label selected)
         if label is not None:
 
             for annotation in self.selected_annotations:
                 if annotation.label.id != label.id:
+                    old_label = annotation.label
                     annotation.update_user_confidence(self.selected_label)
                     annotation.create_cropped_image(self.rasterio_image)
                     self.main_window.confidence_window.display_cropped_image(annotation)
+                    changes.append((annotation.id, old_label, self.selected_label))
 
             if self.cursor_annotation:
                 if self.cursor_annotation.label.id != label.id:
@@ -973,6 +991,27 @@ class AnnotationWindow(QGraphicsView):
             # Clear cursor annotation when no label is selected
             if self.cursor_annotation:
                 self.toggle_cursor_annotation()
+
+        # Record action(s)
+        try:
+            if changes:
+                if len(changes) == 1:
+                    ann_id, old_label, new_label = changes[0]
+                    action = ChangeLabelAction(self, ann_id, old_label, new_label)
+                    self.action_stack.push(action)
+                    try:
+                        self.annotationLabelChanged.emit(ann_id, new_label.id if hasattr(new_label, 'id') else str(new_label))
+                    except Exception:
+                        pass
+                else:
+                    action = ChangeLabelsAction(self, changes)
+                    self.action_stack.push(action)
+                    try:
+                        self.annotationsLabelsChanged.emit(changes)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
                 
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
@@ -1047,25 +1086,90 @@ class AnnotationWindow(QGraphicsView):
             annotation = self.selected_annotations[0]
             if not self.is_annotation_moveable(annotation):
                 return
-
+            
             # Disconnect the confidence window from the annotation, so it won't update while resizing
-            annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
-            annotation.annotationUpdated.disconnect(self.on_annotation_updated)
+            try:
+                annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+                annotation.annotationUpdated.disconnect(self.on_annotation_updated)
+            except Exception:
+                pass
 
+            # Record previous state for undo/redo
             if isinstance(annotation, PatchAnnotation):
+                old_size = getattr(annotation, 'annotation_size', None)
                 annotation.update_annotation_size(self.annotation_size)
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(self.annotation_size)
+                new_size = getattr(annotation, 'annotation_size', None)
+                # Push a resize action; ActionStack will coalesce consecutive resizes
+                if old_size is not None and new_size is not None and old_size != new_size:
+                    try:
+                        action = ResizeAnnotationAction(self, annotation.id, old_size, new_size)
+                        self.action_stack.push(action)
+                    except Exception:
+                        pass
             elif isinstance(annotation, RectangleAnnotation):
                 scale_factor = 1 + delta / 100.0
+                # Capture old geometry (top_left, bottom_right)
+                try:
+                    old_tl = QPointF(annotation.top_left.x(), annotation.top_left.y())
+                    old_br = QPointF(annotation.bottom_right.x(), annotation.bottom_right.y())
+                    old_geom = (old_tl, old_br)
+                except Exception:
+                    old_geom = None
+
                 annotation.update_annotation_size(scale_factor)
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(scale_factor)
+
+                # Capture new geometry and push geometry-edit action
+                try:
+                    new_tl = QPointF(annotation.top_left.x(), annotation.top_left.y())
+                    new_br = QPointF(annotation.bottom_right.x(), annotation.bottom_right.y())
+                    new_geom = (new_tl, new_br)
+                except Exception:
+                    new_geom = None
+
+                if old_geom is not None and new_geom is not None and old_geom != new_geom:
+                    try:
+                        action = AnnotationGeometryEditAction(self, annotation.id, old_geom, new_geom)
+                        self.action_stack.push(action)
+                    except Exception:
+                        pass
             elif isinstance(annotation, PolygonAnnotation):
                 scale_factor = 1 + delta / 100.0
+                # Capture old polygon points and holes
+                try:
+                    pts = [QPointF(p.x(), p.y()) for p in annotation.points]
+                    holes = []
+                    if hasattr(annotation, 'holes') and annotation.holes:
+                        for hole in annotation.holes:
+                            holes.append([QPointF(p.x(), p.y()) for p in hole])
+                    old_geom = (pts, holes)
+                except Exception:
+                    old_geom = None
+
                 annotation.update_annotation_size(scale_factor)
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(scale_factor)
+
+                # Capture new polygon geometry
+                try:
+                    pts = [QPointF(p.x(), p.y()) for p in annotation.points]
+                    holes = []
+                    if hasattr(annotation, 'holes') and annotation.holes:
+                        for hole in annotation.holes:
+                            holes.append([QPointF(p.x(), p.y()) for p in hole])
+                    new_geom = (pts, holes)
+                except Exception:
+                    new_geom = None
+
+                if old_geom is not None and new_geom is not None and old_geom != new_geom:
+                    try:
+                        action = AnnotationGeometryEditAction(self, annotation.id, old_geom, new_geom)
+                        self.action_stack.push(action)
+                    except Exception:
+                        pass
 
             # Create and display the cropped image in the confidence window
             annotation.create_cropped_image(self.rasterio_image)

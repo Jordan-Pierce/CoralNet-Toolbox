@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QGraphicsPathItem, QMessageBox
 from coralnet_toolbox.Tools.QtSubTool import SubTool
 
 from coralnet_toolbox.Annotations import MultiPolygonAnnotation
+from coralnet_toolbox.QtActions import SplitAnnotationAction
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -183,9 +184,26 @@ class CutSubTool(SubTool):
     def _break_apart_multipolygon(self):
         """Handle the special case of 'cutting' a MultiPolygonAnnotation."""
         new_annotations = self.target_annotation.cut()
-        self.annotation_window.delete_annotation(self.target_annotation.id)
+        # Add new annotations without recording individual actions, then remove original
         for new_anno in new_annotations:
-            self.annotation_window.add_annotation_from_tool(new_anno)
+            self.annotation_window.add_annotation_from_tool(new_anno, record_action=False)
+        try:
+            self.annotation_window.delete_annotation(self.target_annotation.id, record_action=False)
+        except Exception:
+            pass
+
+        # Record as a single split action
+        try:
+            action = SplitAnnotationAction(self.annotation_window, self.target_annotation, new_annotations)
+            self.annotation_window.action_stack.push(action)
+        except Exception:
+            pass
+
+        # Emit split signal
+        try:
+            self.annotation_window.annotationSplit.emit(self.target_annotation.id, new_annotations)
+        except Exception:
+            pass
         self.parent_tool.deactivate_subtool()
 
     def _finish_and_perform_cut(self):

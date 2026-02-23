@@ -12,11 +12,13 @@ from coralnet_toolbox.Tools.QtResizeSubTool import ResizeSubTool
 from coralnet_toolbox.Tools.QtSelectSubTool import SelectSubTool
 from coralnet_toolbox.Tools.QtCutSubTool import CutSubTool
 from coralnet_toolbox.Tools.QtSubtractSubTool import SubtractSubTool
+from coralnet_toolbox.QtActions import AnnotationGeometryEditAction
 
 from coralnet_toolbox.Annotations import (PatchAnnotation, 
                                           PolygonAnnotation, 
                                           RectangleAnnotation,
                                           MultiPolygonAnnotation)
+from coralnet_toolbox.QtActions import MergeAnnotationsAction, CutAnnotationAction
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -213,7 +215,40 @@ class SelectTool(Tool):
         if modifiers & Qt.ControlModifier and modifiers & Qt.ShiftModifier:
             if len(self.selected_annotations) == 1:
                 annotation = self.selected_annotations[0]
+                # Capture old geometry
+                try:
+                    if hasattr(annotation, 'points'):
+                        old_pts = [p for p in annotation.points]
+                        old_holes = [list(h) for h in getattr(annotation, 'holes', [])]
+                        old_geom = (old_pts, old_holes)
+                    else:
+                        old_geom = None
+                except Exception:
+                    old_geom = None
+
                 annotation.update_polygon(delta=1 if delta > 0 else -1)
+
+                # Capture new geometry and push action
+                try:
+                    if hasattr(annotation, 'points'):
+                        new_pts = [p for p in annotation.points]
+                        new_holes = [list(h) for h in getattr(annotation, 'holes', [])]
+                        new_geom = (new_pts, new_holes)
+                    else:
+                        new_geom = None
+                except Exception:
+                    new_geom = None
+
+                if old_geom is not None and new_geom is not None and old_geom != new_geom:
+                    try:
+                        action = AnnotationGeometryEditAction(self.annotation_window, annotation.id, old_geom, new_geom)
+                        self.annotation_window.action_stack.push(action)
+                    except Exception:
+                        pass
+                    try:
+                        self.annotation_window.annotationGeometryEdited.emit(annotation.id, {'old_geom': old_geom, 'new_geom': new_geom})
+                    except Exception:
+                        pass
                 if self.resize_handles_visible:
                     self._show_resize_handles()
         elif modifiers & Qt.ControlModifier:
@@ -415,11 +450,23 @@ class SelectTool(Tool):
             return  # Failed to combine annotations
         
         # Add the new combined annotation to the scene
-        self.annotation_window.add_annotation_from_tool(combined_annotation)
-        
-        # Delete the original annotations
-        self.annotation_window.delete_selected_annotations()
-        
+        # Add the new combined annotation to the scene WITHOUT recording (we'll record a single merge action)
+        self.annotation_window.add_annotation_from_tool(combined_annotation, record_action=False)
+
+        # Push a MergeAnnotationsAction and perform deletions without recording
+        try:
+            action = MergeAnnotationsAction(self.annotation_window, selected_annotations.copy(), combined_annotation)
+            self.annotation_window.action_stack.push(action)
+        except Exception:
+            pass
+
+        # Delete originals without recording separate actions
+        for ann in selected_annotations:
+            try:
+                self.annotation_window.delete_annotation(ann.id, record_action=False)
+            except Exception:
+                pass
+
         # Select the new combined annotation
         self.annotation_window.select_annotation(combined_annotation)
         
@@ -450,12 +497,30 @@ class SelectTool(Tool):
         if not new_annotations:
             return
 
-        # Remove the original annotation
-        self.annotation_window.delete_selected_annotations()
+        # Remove the original annotation (without recording) and add newly created annotations (also without recording)
+        try:
+            # add new annotations first so UI updates properly
+            for new_anno in new_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno, record_action=False)
 
-        # Add the newly created annotations from the cut.
-        for new_anno in new_annotations:
-            self.annotation_window.add_annotation_from_tool(new_anno)
+            self.annotation_window.delete_annotation(annotation_to_cut.id, record_action=False)
+
+            # Push a single CutAnnotationAction to record the operation
+            action = CutAnnotationAction(self.annotation_window, annotation_to_cut, new_annotations)
+            try:
+                self.annotation_window.action_stack.push(action)
+            except Exception:
+                pass
+
+            try:
+                self.annotation_window.annotationCut.emit(annotation_to_cut.id, new_annotations)
+            except Exception:
+                pass
+        except Exception:
+            # Fallback to previous behavior if something fails
+            self.annotation_window.delete_selected_annotations()
+            for new_anno in new_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno)
             
     def cancel_cutting_mode(self):
         """Safely cancels cutting mode."""

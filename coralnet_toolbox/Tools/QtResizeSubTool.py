@@ -3,6 +3,8 @@ from PyQt5.QtGui import QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsEllipseItem
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
+from coralnet_toolbox.QtActions import AnnotationGeometryEditAction
+from copy import deepcopy
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -35,6 +37,28 @@ class ResizeSubTool(SubTool):
         if not self.target_annotation or not self.resize_handle_name:
             # Invalid activation, immediately deactivate.
             self.parent_tool.deactivate_subtool()
+            return
+
+        # Capture original geometry for undo
+        try:
+            if hasattr(self.target_annotation, 'points'):
+                # store shallow copies of points and holes
+                pts = [QPointF(p.x(), p.y()) for p in self.target_annotation.points]
+                holes = []
+                if hasattr(self.target_annotation, 'holes') and self.target_annotation.holes:
+                    for hole in self.target_annotation.holes:
+                        holes.append([QPointF(p.x(), p.y()) for p in hole])
+                self._orig_geom = (pts, holes)
+            else:
+                # rectangles: store top_left/bottom_right
+                try:
+                    tl = QPointF(self.target_annotation.top_left.x(), self.target_annotation.top_left.y())
+                    br = QPointF(self.target_annotation.bottom_right.x(), self.target_annotation.bottom_right.y())
+                    self._orig_geom = (tl, br)
+                except Exception:
+                    self._orig_geom = None
+        except Exception:
+            self._orig_geom = None
 
     def deactivate(self):
         super().deactivate()
@@ -70,6 +94,40 @@ class ResizeSubTool(SubTool):
             self.target_annotation.create_cropped_image(self.annotation_window.rasterio_image)
             self.parent_tool.main_window.confidence_window.display_cropped_image(self.target_annotation)
             self.annotation_window.annotationModified.emit(self.target_annotation.id)  # Emit modified signal
+
+            # Capture new geometry and push geometry-edit action
+            try:
+                new_geom = None
+                if hasattr(self.target_annotation, 'points'):
+                    pts = [QPointF(p.x(), p.y()) for p in self.target_annotation.points]
+                    holes = []
+                    if hasattr(self.target_annotation, 'holes') and self.target_annotation.holes:
+                        for hole in self.target_annotation.holes:
+                            holes.append([QPointF(p.x(), p.y()) for p in hole])
+                    new_geom = (pts, holes)
+                else:
+                    try:
+                        tl = QPointF(self.target_annotation.top_left.x(), self.target_annotation.top_left.y())
+                        br = QPointF(self.target_annotation.bottom_right.x(), self.target_annotation.bottom_right.y())
+                        new_geom = (tl, br)
+                    except Exception:
+                        new_geom = None
+
+                if self._orig_geom is not None and new_geom is not None:
+                    action = AnnotationGeometryEditAction(self.annotation_window, 
+                                                          self.target_annotation.id, 
+                                                          self._orig_geom, new_geom)
+                    try:
+                        self.annotation_window.action_stack.push(action)
+                    except Exception:
+                        pass
+                    try:
+                        # Use the generic geometry-edited signal for resize operations
+                        self.annotation_window.annotationGeometryEdited.emit(self.target_annotation.id, {'old_geom': self._orig_geom, 'new_geom': new_geom})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             
         self.parent_tool.deactivate_subtool()
 
