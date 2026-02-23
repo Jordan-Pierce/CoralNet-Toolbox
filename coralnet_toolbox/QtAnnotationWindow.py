@@ -44,6 +44,8 @@ from coralnet_toolbox.Tools import (
 from coralnet_toolbox.QtActions import (
     AddAnnotationAction,
     DeleteAnnotationAction,
+    AddAnnotationsAction,
+    DeleteAnnotationsAction,
     ActionStack,
 )
 
@@ -2401,7 +2403,7 @@ class AnnotationWindow(QGraphicsView):
         # Emit the signal that an annotation was created
         self.annotationCreated.emit(annotation.id)
         
-    def add_annotations(self, annotations_list: list):
+    def add_annotations(self, annotations_list: list, record_action: bool = True):
         """
         Efficiently adds a list of annotations to the data models and then
         updates the relevant UI components in a single batch.
@@ -2438,6 +2440,15 @@ class AnnotationWindow(QGraphicsView):
             # Update the global annotation counts in the LabelWindow once
             self.main_window.label_window.update_annotation_count()
 
+        # Record this bulk addition as a single undoable action (if requested)
+        try:
+            if record_action and annotations_list:
+                # store a shallow copy to avoid mutation side-effects
+                self.action_stack.push(AddAnnotationsAction(self, list(annotations_list)))
+        except Exception:
+            # Non-fatal: action stack is a convenience; ignore failures
+            pass
+
     def delete_annotation(self, annotation_id, record_action=True):
         """Delete an annotation by its ID from dicts."""
         # Check if the annotation ID exists
@@ -2458,6 +2469,16 @@ class AnnotationWindow(QGraphicsView):
             annotation.delete()
             # Remove the annotation from the annotations dict
             del self.annotations_dict[annotation_id]
+            # Update image window counts for the affected image
+            try:
+                self.main_window.image_window.update_image_annotations(annotation.image_path)
+            except Exception:
+                pass
+            # Update global label counts
+            try:
+                self.main_window.label_window.update_annotation_count()
+            except Exception:
+                pass
             # Emit the annotation deleted signal
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
@@ -2471,9 +2492,17 @@ class AnnotationWindow(QGraphicsView):
         """Delete a list of annotations."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+        # Record the bulk deletion as a single undoable action (store copy)
+        try:
+            if annotations:
+                self.action_stack.push(DeleteAnnotationsAction(self, list(annotations)))
+        except Exception:
+            # ignore action stack failures
+            pass
+
         for annotation in annotations:
-            self.delete_annotation(annotation.id)
+            # suppress per-annotation action recording since we recorded bulk action
+            self.delete_annotation(annotation.id, record_action=False)
             
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
