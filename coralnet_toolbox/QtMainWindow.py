@@ -1073,32 +1073,7 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         # Create the Docks & Containers
         # --------------------------------------------------
-
-        # Setup the Annotation Dock using DockWrapper
-        self.annotation_dock = DockWrapper(
-            title="Annotation Workspace", 
-            object_name="AnnotationDock", 
-            main_widget=self.annotation_window, 
-            parent=self
-        )
         
-        # Mount the fully-encapsulated toolbars
-        if hasattr(self.annotation_window, 'create_top_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar(), Qt.TopToolBarArea)
-        if hasattr(self.annotation_window, 'create_bottom_toolbar'):
-            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
-
-        # Setup Timer Dock (Left, below Labels) using DockWrapper
-        # Wrap the window in the standardized DockWrapper
-        self.timer_dock = DockWrapper(
-            title="Timer Window", 
-            object_name="TimerDock", 
-            main_widget=self.timer_window, 
-            parent=self
-        )
-        # Set the size policy to fixed vertically
-        self.timer_dock.setMaximumHeight(100)  # Set height
-
         # Setup Label Dock (Left) using DockWrapper
         self.left_dock = DockWrapper(
             title="Label Window", 
@@ -1117,6 +1092,29 @@ class MainWindow(QMainWindow):
         # Add the Counts to the Bottom Area
         if hasattr(self.label_window, 'create_bottom_toolbar'):
             self.left_dock.add_toolbar(self.label_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            
+        # Setup Timer Dock (Left, below Labels) using DockWrapper
+        self.timer_dock = DockWrapper(
+            title="Timer Window", 
+            object_name="TimerDock", 
+            main_widget=self.timer_window, 
+            parent=self
+        )
+        # Set the size policy to fixed vertically
+        self.timer_dock.setMaximumHeight(100)  # Set height
+
+        # Setup the Annotation Dock using DockWrapper
+        self.annotation_dock = DockWrapper(
+            title="Annotation Workspace", 
+            object_name="AnnotationDock", 
+            main_widget=self.annotation_window, 
+            parent=self
+        )
+        # Mount the fully-encapsulated toolbars
+        if hasattr(self.annotation_window, 'create_top_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar(), Qt.TopToolBarArea)
+        if hasattr(self.annotation_window, 'create_bottom_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Image Dock (Right) using DockWrapper
         self.right_dock = DockWrapper(
@@ -1145,7 +1143,7 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        # Setup Performance Dock (Right, tabbed with Confidence) using DockWrapper
+        # Setup Performance Dock (Right) using DockWrapper
         self.performance_dock = DockWrapper(
             title="Performance Window",
             object_name="PerformanceWindowDock",
@@ -2796,7 +2794,6 @@ class MainWindow(QMainWindow):
 
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
-            # Show the explorer window maximized and bring it to the front
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
