@@ -8,9 +8,11 @@ import numpy as np
 
 import pyqtgraph as pg
 from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
-from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene,
-                             QMessageBox, QGraphicsPixmapItem)
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
+from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem,     
+                             QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
+                             QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, 
+                             QComboBox, QToolButton, QToolBar, QSizePolicy)
 
 from coralnet_toolbox.MVAT.core.Marker import Marker
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
@@ -41,7 +43,6 @@ from coralnet_toolbox.Tools import (
     PatchSamplingTool,
 )
 
-
 from coralnet_toolbox.QtActions import (
     Action,
     AddAnnotationAction,
@@ -51,7 +52,12 @@ from coralnet_toolbox.QtActions import (
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Icons import ColorComboBox
+from coralnet_toolbox.Icons import ColormapDelegate
+
 from coralnet_toolbox.utilities import rasterio_open
+from coralnet_toolbox.utilities import convert_scale_units 
 
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -59,8 +65,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
-
 
 
 class AnnotationWindow(QGraphicsView):
@@ -86,6 +90,12 @@ class AnnotationWindow(QGraphicsView):
         # Reference to the global animation manager
         self.animation_manager = None
         self.set_animation_manager(main_window.animation_manager)
+        
+        # Initialize the action stack for undo/redo
+        self.action_stack = ActionStack()
+        
+        # MVAT visisualization attributes
+        self.marker = Marker()  # Marker for focal point display from MVAT
 
         self.annotation_size = 224
         self.transparency = 128
@@ -130,23 +140,489 @@ class AnnotationWindow(QGraphicsView):
         self.dynamic_range_timer.setSingleShot(True)
         self.dynamic_range_timer.timeout.connect(self.update_dynamic_range)
         self.dynamic_range_update_delay = 100  # milliseconds
-        
-        # MVAT visisualization attributes
-        self.marker = Marker()  # Marker for focal point display from MVAT
 
         # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
         
         self.tools = {}
         self.mask_tools = {}
-
-        # Initialize the action stack for undo/redo
-        self.action_stack = ActionStack()
         
-    def set_incoming_marker(self, u, v, color):
-        """Set the incoming marker position and color from MVAT."""
-        self.marker.set_position(u, v, color)
-        self.scene.addItem(self.marker.marker_item)
+        # Initialize toolbar and status bar widgets
+        self._init_toolbar_widgets()  # Likely causes an error
+        
+    def _init_toolbar_widgets(self):
+        """Instantiate all status and toolbar widgets previously held by MainWindow."""
+        # --- State Properties ---
+        self.scaled_view_width_m = 0.0
+        self.scaled_view_height_m = 0.0
+        self.current_unit_scale = 'm'
+        self.current_unit_z = 'm'
+        self.current_z_value = None
+        self.current_mouse_x = 0
+        self.current_mouse_y = 0
+
+        # --- Transparency ---
+        self.transparency_slider = QSlider(Qt.Horizontal)
+        self.transparency_slider.setRange(0, 255)
+        self.transparency_slider.setValue(128)
+        self.transparency_slider.setMinimumWidth(100)
+        self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+
+        # --- Annotation Size ---
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(1)
+        self.annotation_size_spinbox.setMaximum(5000)
+        self.annotation_size_spinbox.setValue(self.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.set_annotation_size)
+        self.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+
+        # --- Positional/Dimensional Labels ---
+        self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
+        self.mouse_position_label.setFixedWidth(150)
+        self.image_dimensions_label = QLabel("Image: 0 x 0")
+        self.image_dimensions_label.setFixedWidth(150)
+        self.view_dimensions_label = QLabel("View: 0 x 0")
+        self.view_dimensions_label.setFixedWidth(150)
+
+        # --- Scale ---
+        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
+        self.scaled_dimensions_label.setFixedWidth(220)
+        self.scaled_dimensions_label.setEnabled(False)
+        self.scale_unit_dropdown = QComboBox()
+        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.scale_unit_dropdown.setCurrentIndex(2)
+        self.scale_unit_dropdown.setFixedWidth(72)
+        self.scale_unit_dropdown.setEnabled(False)
+        self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
+
+        # --- Z-Channel Controls ---
+        self.z_unit_dropdown = QComboBox()
+        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
+        self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
+        self.z_unit_dropdown.addItem('px')
+        self.z_unit_dropdown.setCurrentIndex(2)
+        self.z_unit_dropdown.setFixedWidth(72)
+        self.z_unit_dropdown.setEnabled(False)
+        self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
+
+        self.z_label = QLabel("Z: -----")
+        self.z_label.setFixedWidth(140)
+        self.z_label.setEnabled(False)
+
+        self.z_colormap_dropdown = ColorComboBox()
+        delegate = ColormapDelegate(self.z_colormap_dropdown)
+        self.z_colormap_dropdown.setItemDelegate(delegate)
+        self.z_colormap_dropdown.addItems(['None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo'])
+        self.z_colormap_dropdown.setCurrentIndex(0)
+        self.z_colormap_dropdown.setFixedWidth(100)
+        self.z_colormap_dropdown.setEnabled(False)
+        self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+
+        self.z_transparency_widget = QSlider(Qt.Horizontal)
+        self.z_transparency_widget.setRange(0, 255)
+        self.z_transparency_widget.setValue(128)
+        self.z_transparency_widget.setMaximumWidth(150)
+        self.z_transparency_widget.setEnabled(False)
+        self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
+
+        self.z_dynamic_button = QToolButton()
+        self.z_dynamic_button.setCheckable(True)
+        self.z_dynamic_button.setIcon(get_icon("dynamic.svg"))
+        self.z_dynamic_button.setEnabled(False)
+        self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
+
+        # --- Internal Signal Connections ---
+        self.mouseMoved.connect(self.update_mouse_position)
+        self.imageLoaded.connect(self.update_image_dimensions)
+        self.viewChanged.connect(self.update_view_dimensions)
+        
+    # --- UI LOGIC METHODS (Moved from MainWindow) ---
+    def update_mouse_position(self, x, y):
+        """Update the mouse position label in the status bar"""
+        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+        
+        # Store current mouse position for z-channel lookup
+        self.current_mouse_x = x
+        self.current_mouse_y = y
+        
+        # Update z-channel value at new mouse position
+        raster = None
+        if self.current_image_path:
+            raster = self.main_window.image_window.raster_manager.get_raster(
+                self.current_image_path
+            )
+        self.update_z_value_at_mouse_position(raster)
+
+    def update_image_dimensions(self, width, height):
+        """Update the image dimensions label in the status bar"""
+        self.image_dimensions_label.setText(f"Image: {height} x {width}")
+
+    def update_view_dimensions(self, original_width, original_height):
+        """Update the view dimensions label in the status bar"""
+        # Current extent (view)
+        extent = self.viewportToScene()
+
+        top = round(extent.top())
+        left = round(extent.left())
+        width = round(extent.width())
+        height = round(extent.height())
+
+        bottom = top + height
+        right = left + width
+
+        # If the current extent includes areas outside the
+        # original image, reduce it to be only the original image
+        if top < 0:
+            top = 0
+        if left < 0:
+            left = 0
+        if bottom > original_height:
+            bottom = original_height
+        if right > original_width:
+            right = original_width
+
+        width = right - left
+        height = bottom - top
+
+        # Update the pixel-based view dimensions
+        self.view_dimensions_label.setText(f"View: {height} x {width}")
+        
+        raster = None
+        if self.current_image_path:
+            raster = self.main_window.image_window.raster_manager.get_raster(
+                self.current_image_path
+            )
+
+        if raster and raster.scale_units:
+            # Scale exists and is always in meters (standardized internally)
+            # Calculate dimensions in meters
+            self.scaled_view_width_m = width * raster.scale_x
+            self.scaled_view_height_m = height * raster.scale_y
+            
+            # Check if the scale unit dropdown was previously disabled
+            was_disabled = not self.scale_unit_dropdown.isEnabled()
+
+            # Enable the scale widgets
+            self.scaled_dimensions_label.setEnabled(True)
+            self.scale_unit_dropdown.setEnabled(True)
+            
+            # If it was disabled before, set to the last selected unit by default
+            if was_disabled:
+                self.scale_unit_dropdown.blockSignals(True)
+                self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
+                self.scale_unit_dropdown.blockSignals(False)
+
+            # Manually call the update function to display the new values
+            self.on_scale_unit_changed(self.scale_unit_dropdown.currentText())
+
+        else:
+            # No scale, disable and reset
+            self.scaled_view_width_m = 0.0
+            self.scaled_view_height_m = 0.0
+            
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
+            self.scaled_dimensions_label.setEnabled(False)
+            self.scale_unit_dropdown.setEnabled(False)
+            
+        # Update z_label with z-channel value at current mouse position
+        self.update_z_value_at_mouse_position(raster)
+
+    def update_z_value_at_mouse_position(self, raster):  
+        """Update the z_label with z-channel value at current mouse position."""
+        if raster and raster.z_channel_lazy is not None:
+            # Check if mouse coordinates are within image bounds
+            if (0 <= self.current_mouse_x < raster.width and 
+                0 <= self.current_mouse_y < raster.height):
+                
+                try:
+                    # Get raw z-value
+                    z_value = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
+                    
+                    if z_value is None:
+                        # Value is NaN or nodata
+                        self.z_label.setText("Z: ----")
+                        self.z_label.setToolTip("No valid Z-value at this location")
+                    else:
+                        # Cache the z-value for unit conversion
+                        self.current_z_value = z_value
+                        
+                        # Get the original unit from the raster
+                        original_unit = raster.z_unit if raster.z_unit else 'm'
+                        
+                        # Convert to selected unit if different from original
+                        display_value = z_value
+                        if self.current_unit_z != original_unit:
+                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+                        
+                        # Format the display based on data type
+                        if raster.z_channel.dtype == np.float32:
+                            self.z_label.setText(f"Z: {display_value:.3f}")
+                        else:
+                            self.z_label.setText(f"Z: {int(display_value)}")
+                        
+                        # Set simple tooltip with data type and unit
+                        z_type = raster.z_data_type if raster.z_data_type else 'Z-channel'
+                        tooltip_text = f"{z_type.capitalize()} data in {original_unit}"
+                        self.z_label.setToolTip(tooltip_text)
+                    
+                    # Enable the z_label and dropdown since we have valid data
+                    self.z_label.setEnabled(True)
+                    self.z_unit_dropdown.setEnabled(True)
+                    self.z_colormap_dropdown.setEnabled(True)
+                    # Only enable dynamic button if colormap is not set to "None"
+                    if self.z_colormap_dropdown.currentText() != "None":
+                        self.z_dynamic_button.setEnabled(True)
+                    
+                except (IndexError, ValueError):
+                    pass
+
+    def enable_z_visualization_controls(self, enabled):
+        """
+        Centralized method to enable or disable all Z-channel visualization controls.
+        
+        Args:
+            enabled (bool): True to enable controls, False to disable them
+        """
+        self.z_label.setEnabled(enabled)
+        self.z_unit_dropdown.setEnabled(enabled)
+        self.z_colormap_dropdown.setEnabled(enabled)
+        self.z_transparency_widget.setEnabled(enabled)
+        
+        # Dynamic button is only enabled when a colormap is active (not "None")
+        if enabled and self.z_colormap_dropdown.currentText() != "None":
+            self.z_dynamic_button.setEnabled(True)
+        else:
+            self.z_dynamic_button.setEnabled(False)
+
+    def on_image_loaded_check_z_channel(self, image_path):
+        """
+        Check if the newly loaded image has a z-channel.
+        If it doesn't, disable all z-channel UI elements.
+        
+        Args:
+            image_path (str): Path of the loaded image
+        """
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+        if raster and raster.z_channel is None:
+            # Image has no z-channel, disable UI elements
+            self.z_label.setText("Z: -----")
+            self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
+        elif raster and raster.z_channel is not None:
+            # Image has z-channel, enable UI elements
+            self.enable_z_visualization_controls(True)
+            
+            # Force status bar Z-value refresh at current mouse position
+            # This ensures z_nodata is properly reflected when switching images
+            self.update_z_value_at_mouse_position(raster)
+
+    def on_z_channel_removed(self, image_path):
+        """
+        Handle z-channel removal for a raster.
+        
+        Args:
+            image_path (str): Path of the raster with removed z-channel
+        """
+        # If the removed z-channel belongs to the currently displayed image,
+        # clear the z-label in the status bar and disable the dropdown
+        if image_path == self.current_image_path:
+            self.z_label.setText("Z: -----")
+            self.z_colormap_dropdown.setCurrentText("None")
+            self.enable_z_visualization_controls(False)
+
+    def on_scale_unit_changed(self, to_unit):
+        """
+        Converts stored meter values to the selected unit and updates the label.
+        """
+        if not self.scale_unit_dropdown.isEnabled():
+            self.scaled_dimensions_label.setText("Scale: 0 x 0")
+            return
+
+        # Convert the stored meter values
+        converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
+        converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
+
+        # Update the dimensions label
+        self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
+
+        # Remember the selected unit
+        self.current_unit_scale = to_unit
+        
+        # Refresh the confidence window if an annotation is selected
+        # This is the only refresh needed, as it's the only
+        # change that can happen *while* an annotation is displayed.
+        if self.main_window.confidence_window.annotation:
+            self.main_window.confidence_window.refresh_display()
+
+    def on_z_unit_changed(self, selected_unit):
+        """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
+        # Update the selected unit
+        self.current_unit_z = selected_unit
+        
+        # Re-convert and display the cached z-value in the new unit
+        if self.current_z_value is not None:
+            # Use the current image path to get the correct raster for unit info
+            image_path = self.main_window.image_window.selected_image_path
+            try:
+                # Get the current raster to fetch original unit and data type info
+                raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+                if raster and raster.z_channel_lazy is not None:
+                    original_unit = raster.z_unit if raster.z_unit else 'm'
+                    z_channel = raster.z_channel_lazy
+                    
+                    # Convert from original unit to selected unit
+                    converted_value = convert_scale_units(
+                        self.current_z_value, 
+                        original_unit, 
+                        selected_unit
+                    )
+                    
+                    # Format the display based on data type
+                    if z_channel.dtype == np.float32:
+                        self.z_label.setText(f"Z: {converted_value:.3f}")
+                    else:
+                        self.z_label.setText(f"Z: {int(converted_value)}")
+            except Exception:
+                pass  # If conversion fails, keep last value displayed
+        
+        # Refresh the confidence window if an annotation is selected
+        if self.main_window.confidence_window.annotation:
+            self.main_window.confidence_window.refresh_display()
+
+    def on_z_colormap_changed(self, colormap_name):
+        """Handle z-colormap dropdown changes by updating the annotation window."""
+        self.update_z_colormap(colormap_name)
+        
+        # Enable/disable z_transparency_widget based on colormap selection
+        if colormap_name == "None":
+            self.z_transparency_widget.setEnabled(False)
+            self.z_dynamic_button.setEnabled(False)
+            self.z_dynamic_button.setChecked(False)
+        else:
+            # Enable the transparency slider and dynamic range button if Z data is available
+            if self.z_data_raw is not None:
+                self.z_transparency_widget.setEnabled(True)
+                self.z_dynamic_button.setEnabled(True)
+
+    def update_z_transparency(self, value):
+        """
+        Update the Z-channel visualization opacity.
+        
+        Args:
+            value (int): Slider value from 0-255
+        """
+        # Convert slider value (0-255) to opacity (0.0-1.0)
+        opacity = value / 255.0
+        
+        # Update the annotation window's z-channel opacity
+        self.set_z_opacity(opacity)
+
+    def on_z_dynamic_toggled(self, checked):
+        """Handle z-dynamic scaling button toggle."""
+        self.toggle_dynamic_z_scaling(checked)
+
+    def update_label_transparency(self, value):
+        """Update the transparency for all annotations in the current image."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Clamp the transparency value to valid range
+        transparency = max(0, min(255, value))
+        
+        # Update transparency slider position
+        if self.transparency_slider.value() != transparency:
+            # Temporarily block signals to prevent infinite recursion
+            self.transparency_slider.blockSignals(True)
+            self.transparency_slider.setValue(transparency)
+            self.transparency_slider.blockSignals(False)
+
+        # Update transparency for ALL vector annotations in the current image
+        # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
+        for annotation in self.get_image_annotations():
+            annotation.update_transparency(transparency)
+
+        try:
+            # Handle mask annotation updates
+            mask = self.current_mask_annotation
+            if mask:
+                self.main_window.label_window.set_mask_transparency(transparency)
+        except Exception as e:
+            pass
+
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+        
+    # --- DOCK WRAPPER HOOKS ---
+    def create_top_toolbar(self) -> QToolBar:
+        """Create the top toolbar with annotation tools, transparency slider,
+        and patch size control.
+        """
+        toolbar = QToolBar("Annotation Tools")
+        toolbar.setMovable(False)
+        
+        # Transparency widget
+        trans_widget = QWidget()
+        trans_layout = QHBoxLayout(trans_widget)
+        trans_layout.setContentsMargins(4, 0, 4, 0)
+        t_icon = QLabel()
+        t_icon.setPixmap(get_icon("transparent.svg").pixmap(QSize(16, 16)))
+        o_icon = QLabel()
+        o_icon.setPixmap(get_icon("opaque.svg").pixmap(QSize(16, 16)))
+        trans_layout.addWidget(t_icon)
+        trans_layout.addWidget(self.transparency_slider)
+        trans_layout.addWidget(o_icon)
+        toolbar.addWidget(trans_widget)
+        
+        toolbar.addSeparator()
+        
+        # Patch Size widget
+        size_widget = QWidget()
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(4, 0, 4, 0)
+        size_layout.addWidget(QLabel("Patch Size"))
+        size_layout.addWidget(self.annotation_size_spinbox)
+        toolbar.addWidget(size_widget)
+        
+        return toolbar
+
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar with mouse position, image/view dimensions, 
+        scale, and z-channel info.
+        """
+        toolbar = QToolBar("Annotation Status")
+        toolbar.setMovable(False)
+        
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(12)
+        
+        def make_group(*widgets):
+            g = QWidget()
+            l = QHBoxLayout(g)
+            l.setContentsMargins(0, 0, 0, 0)
+            l.setSpacing(6)
+            for w in widgets: l.addWidget(w)
+            return g
+            
+        group_mouse = make_group(self.mouse_position_label)
+        group_image = make_group(self.image_dimensions_label)
+        group_view = make_group(self.view_dimensions_label)
+        group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
+        group_z = make_group(self.z_unit_dropdown, self.z_label, self.z_transparency_widget, self.z_dynamic_button, self.z_colormap_dropdown)
+        
+        layout.addWidget(group_mouse)
+        layout.addStretch(1)
+        layout.addWidget(group_image)
+        layout.addStretch(1)
+        layout.addWidget(group_view)
+        layout.addStretch(1)
+        layout.addWidget(group_scale)
+        layout.addStretch(1)
+        layout.addWidget(group_z)
+        
+        toolbar.addWidget(container)
+        return toolbar
         
     def initialize_tools(self):
         """Initialize tools"""
@@ -189,6 +665,11 @@ class AnnotationWindow(QGraphicsView):
         """Check if the annotation window is currently in mask editing mode."""
         return self.selected_tool and self.selected_tool in self.mask_tools
     
+    def set_incoming_marker(self, u, v, color):
+        """Set the incoming marker position and color from MVAT."""
+        self.marker.set_position(u, v, color)
+        self.scene.addItem(self.marker.marker_item)
+    
     def on_annotation_updated(self, updated_annotation):
         """
         Handle annotation update signal - refresh graphics if annotation is currently displayed.
@@ -199,6 +680,14 @@ class AnnotationWindow(QGraphicsView):
         if (updated_annotation.image_path == self.current_image_path and 
             updated_annotation.is_graphics_item_valid()):
             updated_annotation.update_graphics_item()
+            
+    def showEvent(self, event):
+        """Handle show events to fit the view to the image."""
+        super().showEvent(event)
+        
+        # Connect to ImageWindow signals
+        self.main_window.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)
+        self.main_window.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
     
     def resizeEvent(self, event):
         """Handle resize events to maintain proper view fitting."""

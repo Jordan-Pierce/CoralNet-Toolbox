@@ -99,13 +99,13 @@ class Base(QDialog):
 
         # Create a table widget to display labels
         self.labels_table = QTableWidget()
-        self.labels_table.setColumnCount(4)
-        self.labels_table.setHorizontalHeaderLabels(["✓", "Status", "Short Label", "Long Label"])
+        # Removed disabled checkbox column (was unused). Use 3 columns: Status, Short Label, Long Label
+        self.labels_table.setColumnCount(3)
+        self.labels_table.setHorizontalHeaderLabels(["Status", "Short Label", "Long Label"])
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.labels_table.horizontalHeader().setStretchLastSection(True)
-        self.labels_table.setColumnWidth(0, 50)
-        self.labels_table.setColumnWidth(1, 60)
-        self.labels_table.setColumnWidth(2, 120)
+        self.labels_table.setColumnWidth(0, 60)
+        self.labels_table.setColumnWidth(1, 140)
         layout.addWidget(self.labels_table)
 
         # Add status label
@@ -321,34 +321,24 @@ class Base(QDialog):
 
             # Store mapping of row to class name for checkbox tracking
             self.label_to_class_name[row] = class_name
-
-            # Add checkbox in first column (initially checked and disabled)
-            checkbox_item = QTableWidgetItem()
-            checkbox_item.setFlags(checkbox_item.flags() | Qt.ItemIsUserCheckable)
-            flags = checkbox_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled
-            checkbox_item.setFlags(flags)
-            checkbox_item.setCheckState(Qt.Checked)
-            checkbox_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 0, checkbox_item)
-
-            # Add items to table with status in column 1
+            # Add items to table: status in col 0, short label in col 1, long label in col 2
             status_item = QTableWidgetItem(status_emoji)
             status_item.setToolTip(status_text)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             status_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 1, status_item)
-            
+            self.labels_table.setItem(row, 0, status_item)
+
             short_label_item = QTableWidgetItem(short_label)
             short_label_item.setToolTip(f"Short Label: {short_label}")
             short_label_item.setFlags(short_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             short_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 2, short_label_item)
-            
+            self.labels_table.setItem(row, 1, short_label_item)
+
             long_label_item = QTableWidgetItem(long_label)
             long_label_item.setToolTip(f"Long Label: {long_label}")
             long_label_item.setFlags(long_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             long_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 3, long_label_item)
+            self.labels_table.setItem(row, 2, long_label_item)
 
         # Show warning if there are missing labels
         if missing_labels:
@@ -443,13 +433,12 @@ class Base(QDialog):
         
         :return: List of class names that have checked checkboxes
         """
-        checked_classes = []
+        # The checkbox column was removed; return all class names present in the table in row order.
+        class_names = []
         for row in range(self.labels_table.rowCount()):
-            checkbox_item = self.labels_table.item(row, 0)
-            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
-                if row in self.label_to_class_name:
-                    checked_classes.append(self.label_to_class_name[row])
-        return checked_classes
+            if row in self.label_to_class_name:
+                class_names.append(self.label_to_class_name[row])
+        return class_names
 
     def get_checked_labels(self):
         """

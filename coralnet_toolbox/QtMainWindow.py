@@ -219,29 +219,12 @@ class MainWindow(QMainWindow):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
         
-        # Store view dimensions in base unit (meters)
-        self.scaled_view_width_m = 0.0
-        self.scaled_view_height_m = 0.0
-
         # Set the default uncertainty threshold and IoU threshold
         self.max_detections = 500
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
-
-        # Set the default scale unit
-        self.current_unit_scale = 'm'
-        # Set the default z-channel unit
-        self.current_unit_z = 'm'
-        
-        # Cache the raw z-value at current mouse position to enable re-conversion
-        # when user changes z-unit dropdown, without needing to re-read from raster
-        self.current_z_value = None
-
-        # Store current mouse position for z-channel lookup
-        self.current_mouse_x = 0
-        self.current_mouse_y = 0
 
         # Create main windows
         self.annotation_window = AnnotationWindow(self)
@@ -340,43 +323,6 @@ class MainWindow(QMainWindow):
         self.snake_game_dialog = SnakeGame(self)
         self.breakout_game_dialog = BreakoutGame(self)
         self.lightcycle_game_dialog = LightCycleGame(self)
-
-        # Connect signals to update status bar
-        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
-        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
-        self.annotation_window.viewChanged.connect(self.update_view_dimensions)
-
-        # Connect the toolChanged signal (to the AnnotationWindow)
-        self.toolChanged.connect(self.annotation_window.set_selected_tool)
-        # Connect the toolChanged signal to the LabelWindow update_label_count_state method
-        self.toolChanged.connect(self.label_window.update_annotation_count_state)
-        # Connect the toolChanged signal (to the Toolbar)
-        self.annotation_window.toolChanged.connect(self.handle_tool_changed)
-        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
-        self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the annotationSelected to the LabelWindow's update_annotation_count
-        self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
-        # Connect the annotationCreated and annotationDeleted to update tooltips
-        self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
-        self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
-        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
-        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
-        # Connect the labelSelected signal from LabelWindow to update the transparency slider
-        self.label_window.transparencyChanged.connect(self.update_label_transparency)
-        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
-        # Connect the imageChanged signal from ImageWindow to cancel SAM working area
-        self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Previously there was a toggle for filter group; filters are always visible now
-        # Connect the zChannelRemoved signal from ImageWindow to update status bar
-        self.image_window.zChannelRemoved.connect(self.on_z_channel_removed)
-        # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
-        self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
-        # Connect the imageLoaded signal from ImageWindow to check z-channel status
-        self.image_window.imageLoaded.connect(self.on_image_loaded_check_z_channel)        
-        
-        # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
-        self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
 
         # ----------------------------------------
         # Create the menu bar
@@ -996,8 +942,8 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
         
         # --------------------------------------------------
-        # Create collapsible Parameters section (open topright by default)
-        # --------------------------------------------------
+        # Create collapsible Parameters section
+        # --------------------------------------------------        
         self.parameters_section = CollapsibleSection("Parameters", "parameters.svg", position='topright')
 
         # Max detections spinbox
@@ -1102,247 +1048,6 @@ class MainWindow(QMainWindow):
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
 
-        # ----------------------------------------
-        # Create and add the top 'status' toolbar (keeps a fixed height,
-        # spans the full window width and sits under the menu bar).
-        # ----------------------------------------
-        # Use a QToolBar as a top fixed-height status area so it always
-        # appears under the menu bar and above all docks/central widget.
-        self.top_status_toolbar = QToolBar()
-        self.top_status_toolbar.setMovable(False)
-        self.top_status_toolbar.setFloatable(False)
-        self.top_status_toolbar.setAllowedAreas(Qt.TopToolBarArea)
-        # Make the toolbar visually like a status bar and prevent height changes
-        # Compute a fixed toolbar height based on font metrics so it scales
-        # sensibly with DPI/font size but remains constant at runtime.
-        fm = self.fontMetrics()
-        toolbar_height = max(64, int(fm.height() * 3.6))
-        self.top_status_toolbar.setFixedHeight(toolbar_height)
-        self.top_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.top_status_toolbar.setObjectName("topStatusToolbar")
-        # Light background so the toolbar reads like a status area but remains
-        # visually subtle. Use an RGBA color so it works with dark/light themes
-        # while remaining slightly lighter than the default window background.
-        self.top_status_toolbar.setStyleSheet(
-            "QToolBar#topStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}\n"
-            "QToolButton{background:transparent;border:0px;padding:0px;margin:0px;}"
-        )
-
-        # Keep an explicit list of widgets placed into the top toolbar so other
-        # code can iterate/enable/disable them (replaces layout.itemAt usage).
-        self.status_bar_widgets = []
-
-        # Image and view dimensions and mouse position
-        self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.mouse_position_label.setFixedWidth(150)
-
-        self.image_dimensions_label = QLabel("Image: 0 x 0")
-        self.image_dimensions_label.setFixedWidth(150)
-
-        self.view_dimensions_label = QLabel("View: 0 x 0")
-        self.view_dimensions_label.setFixedWidth(150)
-
-        # Slider
-        transparency_layout = QHBoxLayout()
-        self.transparency_slider = QSlider(Qt.Horizontal)
-        self.transparency_slider.setRange(0, 255)
-        self.transparency_slider.setValue(128)  # Default transparency
-        self.transparency_slider.setMinimumWidth(100)  # Prevent slider from being completely squished
-        self.transparency_slider.setTickPosition(QSlider.TicksBelow)
-        self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
-        self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-
-        # Left icon (transparent)
-        transparent_icon = QLabel()
-        transparent_icon.setPixmap(self.transparent_icon.pixmap(QSize(16, 16)))
-        transparent_icon.setToolTip("Transparent")
-
-        # Right icon (opaque)
-        opaque_icon = QLabel()
-        opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
-        opaque_icon.setToolTip("Opaque")
-
-        # Add widgets to the transparency layout
-        transparency_layout.addWidget(transparent_icon)
-        transparency_layout.addWidget(self.transparency_slider)
-        transparency_layout.addWidget(opaque_icon)
-
-        # Create widget to hold the layout
-        self.transparency_widget = QWidget()
-        self.transparency_widget.setLayout(transparency_layout)
-        
-        # Scale labels and dropdowns
-        self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
-        # Increase fixed width so long scale strings are not truncated
-        self.scaled_dimensions_label.setFixedWidth(220)
-        self.scaled_dimensions_label.setEnabled(False)  # Disabled by default
-        
-        self.scale_unit_dropdown = QComboBox()
-        self.scale_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
-        self.scale_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
-        self.scale_unit_dropdown.setFixedWidth(72)
-        self.scale_unit_dropdown.setEnabled(False)  # Disabled by default
-
-        # Z unit dropdown
-        self.z_unit_dropdown = QComboBox()
-        self.z_unit_dropdown.addItems(['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'])
-        self.z_unit_dropdown.insertSeparator(self.z_unit_dropdown.count())
-        self.z_unit_dropdown.addItem('px')
-        self.z_unit_dropdown.setCurrentIndex(2)  # Default to 'm'
-        # Make unit dropdowns wider to avoid truncation (e.g., 'mm')
-        self.z_unit_dropdown.setFixedWidth(72)
-        self.z_unit_dropdown.setEnabled(False)  # Disabled by default until Z data is available
-        
-        # Z label for depth information
-        self.z_label = QLabel("Z: -----")
-        # Increase width to avoid truncation of formatted Z values
-        self.z_label.setFixedWidth(140)  # Fixed width to prevent shifting
-        self.z_label.setEnabled(False)  # Disabled by default until Z data is available
-
-        # Use the Custom ComboBox Class
-        self.z_colormap_dropdown = ColorComboBox()
-        
-        # Apply the Delegate (Handles the actual painting logic for both list and button)
-        delegate = ColormapDelegate(self.z_colormap_dropdown)
-        self.z_colormap_dropdown.setItemDelegate(delegate)
-        
-        # Add items normally (Logic will still see "Viridis", but user sees swatches)
-        self.z_colormap_dropdown.addItems([
-            'None', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Turbo',
-        ])
-        
-        self.z_colormap_dropdown.setCurrentIndex(0)
-        self.z_colormap_dropdown.setFixedWidth(100)
-        self.z_colormap_dropdown.setEnabled(False)
-        self.z_colormap_dropdown.setToolTip("Select colormap for Z-channel visualization")
-        
-        # Z-channel transparency slider (compact version without icons)
-        self.z_transparency_widget = QSlider(Qt.Horizontal)
-        self.z_transparency_widget.setRange(0, 255)
-        self.z_transparency_widget.setValue(128)  # Default to 50% opacity (matches hardcoded 0.5)
-        self.z_transparency_widget.setMinimumWidth(100)  # Prevent slider from being completely squished
-        self.z_transparency_widget.setMaximumWidth(150)  # Compact width
-        self.z_transparency_widget.setTickPosition(QSlider.TicksBelow)
-        self.z_transparency_widget.setTickInterval(32)  # Fewer ticks due to compact size
-        self.z_transparency_widget.setEnabled(False)  # Disabled by default until Z visualization is active
-        self.z_transparency_widget.setToolTip("Z-channel visualization opacity")
-
-        # Z dynamic scaling button
-        self.z_dynamic_button = QToolButton()
-        self.z_dynamic_button.setCheckable(True)
-        self.z_dynamic_button.setChecked(False)
-        self.z_dynamic_button.setIcon(self.dynamic_icon)
-        self.z_dynamic_button.setToolTip("Toggle dynamic Z-range scaling based on visible area")
-        self.z_dynamic_button.setEnabled(False)  # Disabled by default until Z data is available
-
-        # Patch Annotation Size
-        annotation_size_label = QLabel("Patch Size")
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000)
-        self.annotation_size_spinbox.setEnabled(False)
-        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
-        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-
-        annotation_size_layout = QHBoxLayout()
-        annotation_size_layout.addWidget(annotation_size_label)
-        annotation_size_layout.addWidget(self.annotation_size_spinbox)
-
-        self.annotation_size_widget = QWidget()
-        self.annotation_size_widget.setLayout(annotation_size_layout)
-        
-        # Add widgets to the top toolbar and track them
-        # Keep only the compact controls in the top status bar. Move
-        # positional/scale/z widgets to a dedicated bottom status bar
-        for w in (
-            self.transparency_widget,
-            self.annotation_size_widget,
-        ):
-            # Use addWidget so widgets appear left-to-right; store for later
-            self.top_status_toolbar.addWidget(w)
-            self.status_bar_widgets.append(w)
-
-        # --------------------------------------------------
-        # Create bottom status toolbar for annotation-specific status
-        # --------------------------------------------------
-        # This toolbar sits at the bottom of the annotation dock and
-        # contains grouped status widgets which are evenly spaced.
-        self.bottom_status_toolbar = QToolBar()
-        self.bottom_status_toolbar.setMovable(False)
-        self.bottom_status_toolbar.setFloatable(False)
-        self.bottom_status_toolbar.setAllowedAreas(Qt.BottomToolBarArea)
-        self.bottom_status_toolbar.setFixedHeight(max(40, int(fm.height() * 2.4)))
-        self.bottom_status_toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.bottom_status_toolbar.setObjectName("bottomStatusToolbar")
-        self.bottom_status_toolbar.setStyleSheet(
-            "QToolBar#bottomStatusToolbar{border:0px;padding:2px;background-color:rgba(248,249,250,230);}"
-        )
-
-        # Create a container widget with an HBoxLayout to control spacing
-        self.bottom_status_container = QWidget()
-        bottom_layout = QHBoxLayout(self.bottom_status_container)
-        bottom_layout.setContentsMargins(6, 2, 6, 2)
-        bottom_layout.setSpacing(12)
-
-        # Helper to create small grouped widgets so we can keep tuples together
-        def make_group(*widgets):
-            g = QWidget()
-            l = QHBoxLayout(g)
-            l.setContentsMargins(0, 0, 0, 0)
-            l.setSpacing(6)
-            for ww in widgets:
-                l.addWidget(ww)
-            return g
-
-        # Groups (keep tuples together as requested)
-        group_mouse = make_group(self.mouse_position_label)
-        group_image = make_group(self.image_dimensions_label)
-        group_view = make_group(self.view_dimensions_label)
-        group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
-        # Tighten spacing inside the scale group so the dropdown sits closer
-        if group_scale.layout() is not None:
-            group_scale.layout().setSpacing(2)
-            group_scale.layout().setContentsMargins(0, 0, 0, 0)
-        # Combine Z label, unit dropdown, transparency, dynamic toggle and colormap
-        group_z = make_group(
-            self.z_unit_dropdown,
-            self.z_label,
-            self.z_transparency_widget,
-            self.z_dynamic_button,
-            self.z_colormap_dropdown,
-        )
-
-        # Add groups and stretches so groups are evenly spaced across the bar
-        bottom_layout.addWidget(group_mouse)
-        bottom_layout.addStretch(1)
-        bottom_layout.addWidget(group_image)
-        bottom_layout.addStretch(1)
-        bottom_layout.addWidget(group_view)
-        bottom_layout.addStretch(1)
-        bottom_layout.addWidget(group_scale)
-        bottom_layout.addStretch(1)
-        bottom_layout.addWidget(group_z)
-
-        # Put the container into the toolbar
-        self.bottom_status_toolbar.addWidget(self.bottom_status_container)
-
-        # Track the widgets in status_bar_widgets so existing logic can find them
-        for w in (
-            self.mouse_position_label,
-            self.image_dimensions_label,
-            self.view_dimensions_label,
-            self.scaled_dimensions_label,
-            self.scale_unit_dropdown,
-            self.z_label,
-            self.z_unit_dropdown,
-            self.z_colormap_dropdown,
-            self.z_transparency_widget,
-            self.z_dynamic_button,
-        ):
-            self.status_bar_widgets.append(w)
-
         # --------------------------------------------------
         # Setup Main Docking Layout (With Vacant Center Trick)
         # --------------------------------------------------
@@ -1369,29 +1074,19 @@ class MainWindow(QMainWindow):
         # Create the Docks & Containers
         # --------------------------------------------------
 
-        # Setup the Annotation Container & Dock (Combines Canvas + Status Bar)
-        self.annotation_group_box = QWidget()
-        group_layout = QVBoxLayout(self.annotation_group_box)
-        group_layout.setContentsMargins(0, 0, 0, 0)
-        group_layout.addWidget(self.annotation_window)
-
-        self.annotation_dock_container = QWidget()
-        annotation_container_layout = QVBoxLayout(self.annotation_dock_container)
-        annotation_container_layout.setContentsMargins(0, 0, 0, 0)
-        annotation_container_layout.addWidget(self.top_status_toolbar)
-        annotation_container_layout.addWidget(self.annotation_group_box)
-        # Add the bottom status toolbar (contains grouped status widgets)
-        if hasattr(self, 'bottom_status_toolbar'):
-            annotation_container_layout.addWidget(self.bottom_status_toolbar)
-
-        self.annotation_dock = QDockWidget("Annotation Window", self)
-        self.annotation_dock.setObjectName("AnnotationDock")
-        self.annotation_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.annotation_dock.setFeatures(QDockWidget.DockWidgetMovable | 
-                                         QDockWidget.DockWidgetFloatable |
-                                         QDockWidget.DockWidgetClosable)
+        # Setup the Annotation Dock using DockWrapper
+        self.annotation_dock = DockWrapper(
+            title="Annotation Workspace", 
+            object_name="AnnotationDock", 
+            main_widget=self.annotation_window, 
+            parent=self
+        )
         
-        self.annotation_dock.setWidget(self.annotation_dock_container)
+        # Mount the fully-encapsulated toolbars
+        if hasattr(self.annotation_window, 'create_top_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_top_toolbar(), Qt.TopToolBarArea)
+        if hasattr(self.annotation_window, 'create_bottom_toolbar'):
+            self.annotation_dock.add_toolbar(self.annotation_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
         # Setup Timer Dock (Left, below Labels) using DockWrapper
         # Wrap the window in the standardized DockWrapper
@@ -1490,24 +1185,63 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
         
         # --------------------------------------------------
-        # Setup global event filter for shortcuts
-        # --------------------------------------------------
-        self.global_event_filter = GlobalEventFilter(self)
-        QApplication.instance().installEventFilter(self.global_event_filter)
-
-        # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
         self.setAcceptDrops(True)
         
         # --------------------------------------------------
+        # Setup connections
+        # --------------------------------------------------
+        # # Connect signals to update status bar
+        # self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
+        # self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+        # self.annotation_window.viewChanged.connect(self.update_view_dimensions)
+
+        # Connect the toolChanged signal (to the AnnotationWindow)
+        self.toolChanged.connect(self.annotation_window.set_selected_tool)
+        # Connect the toolChanged signal to the LabelWindow update_label_count_state method
+        self.toolChanged.connect(self.label_window.update_annotation_count_state)
+        # Connect the toolChanged signal (to the Toolbar)
+        self.annotation_window.toolChanged.connect(self.handle_tool_changed)
+        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
+        self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
+        # Connect the annotationSelected to the LabelWindow's update_annotation_count
+        self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
+        # Connect the annotationCreated and annotationDeleted to update tooltips
+        self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
+        self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
+        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
+        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
+        # Connect the labelSelected signal from LabelWindow to update the transparency slider
+        self.label_window.transparencyChanged.connect(self.annotation_window.update_label_transparency)
+        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
+        # Connect the imageChanged signal from ImageWindow to cancel SAM working area
+        self.image_window.imageChanged.connect(self.handle_image_changed)
+        # Previously there was a toggle for filter group; filters are always visible now
+        # Connect the zChannelRemoved signal from ImageWindow to update status bar
+        self.image_window.zChannelRemoved.connect(self.annotation_window.on_z_channel_removed)
+        # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
+        self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
+        # Connect the imageLoaded signal from ImageWindow to check z-channel status
+        self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)        
+        # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
+        self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
+        
+        # --------------------------------------------------
+        # Setup global event filter for shortcuts
+        # --------------------------------------------------
+        self.global_event_filter = GlobalEventFilter(self)
+        QApplication.instance().installEventFilter(self.global_event_filter)
+        
+        # --------------------------------------------------
         # Update the scaled view dimensions label
         # --------------------------------------------------
-        self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
-        self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
-        self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
-        self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
-        self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
+        # self.scale_unit_dropdown.currentTextChanged.connect(self.on_scale_unit_changed)
+        # self.z_unit_dropdown.currentTextChanged.connect(self.on_z_unit_changed)
+        # self.z_colormap_dropdown.currentTextChanged.connect(self.on_z_colormap_changed)
+        # self.z_transparency_widget.valueChanged.connect(self.update_z_transparency)
+        # self.z_dynamic_button.toggled.connect(self.on_z_dynamic_toggled)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -1516,6 +1250,49 @@ class MainWindow(QMainWindow):
         
         # Process events
         QApplication.processEvents()
+        
+    # --- Backwards Compatibility Aliases for Tools ---
+    
+    @property
+    def current_unit_scale(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.current_unit_scale
+        
+    @property
+    def current_unit_z(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.current_unit_z
+        
+    def get_transparency_value(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.transparency_slider.value()
+
+    # Redirect widget references for ScaleTool, ZImportDialog, etc.
+    @property
+    def scale_unit_dropdown(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.scale_unit_dropdown
+
+    @property
+    def z_colormap_dropdown(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.z_colormap_dropdown
+
+    @property
+    def z_transparency_widget(self):
+        if not hasattr(self, 'annotation_window') or self.annotation_window is None:
+            return None
+        return self.annotation_window.z_transparency_widget
+    
+    def update_z_value_at_mouse_position(self, raster):
+        """Pass-through for ImageWindow to update the Z-value label."""
+        if hasattr(self, 'annotation_window') and self.annotation_window is not None:
+            self.annotation_window.update_z_value_at_mouse_position(raster)
 
     def showEvent(self, event):
         """Show the main window maximized."""
@@ -1601,49 +1378,6 @@ class MainWindow(QMainWindow):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragMoveEvent(event)
-                
-    def set_main_window_enabled_state(self, enable_list=None, disable_list=None):
-        """
-        Modular method to enable/disable widgets and actions in the main window.
-        - enable_list: list of widgets/actions to enable
-        - disable_list: list of widgets/actions to disable
-        If both are None, enables everything.
-        """
-        # All main widgets/actions to consider
-        all_widgets = [
-            self.toolbar,
-            self.menu_bar,
-            self.right_dock,       # Was: self.image_window
-            self.left_dock,        # Was: self.label_window
-            self.confidence_dock,  # Was: self.confidence_window
-            self.annotation_dock,  # Was: self.annotation_window
-            # Status bar widgets
-            *tuple(self.status_bar_widgets)
-        ]
-        # Remove None entries (in case any status bar slot is empty)
-        all_widgets = [w for w in all_widgets if w is not None]
-
-        # If neither list is provided, enable everything
-        if enable_list is None and disable_list is None:
-            for w in all_widgets:
-                w.setEnabled(True)
-            return
-
-        # Disable everything by default
-        for w in all_widgets:
-            w.setEnabled(False)
-            
-        # Enable specified widgets/actions
-        if enable_list:
-            for w in enable_list:
-                if w is not None:
-                    w.setEnabled(True)
-                    
-        # Disable specified widgets/actions (overrides enable if both present)
-        if disable_list:
-            for w in disable_list:
-                if w is not None:
-                    w.setEnabled(False)
                 
     def switch_back_to_tool(self):
         """Switches back to the tool used to create the currently selected annotation."""        
@@ -2186,70 +1920,60 @@ class MainWindow(QMainWindow):
 
             self.device_tool_action.setIcon(device_icon)
             self.device_tool_action.setToolTip(device_tooltip)
-
-    def handle_image_changed(self):
-        """Handle actions needed when the image is changed."""
-        if self.annotation_window.selected_tool == 'sam':
-            self.annotation_window.tools['sam'].cancel_working_area()
-        if self.annotation_window.selected_tool == 'see_anything':
-            self.annotation_window.tools['see_anything'].cancel_working_area()
-        
-        # Update label tooltips with current counts
-        self.label_window.update_tooltips()
             
-    def enable_z_visualization_controls(self, enabled):
-        """
-        Centralized method to enable or disable all Z-channel visualization controls.
+    # def enable_z_visualization_controls(self, enabled):
+    #     """
+    #     Centralized method to enable or disable all Z-channel visualization controls.
         
-        Args:
-            enabled (bool): True to enable controls, False to disable them
-        """
-        self.z_label.setEnabled(enabled)
-        self.z_unit_dropdown.setEnabled(enabled)
-        self.z_colormap_dropdown.setEnabled(enabled)
-        self.z_transparency_widget.setEnabled(enabled)
+    #     Args:
+    #         enabled (bool): True to enable controls, False to disable them
+    #     """
+    #     self.z_label.setEnabled(enabled)
+    #     self.z_unit_dropdown.setEnabled(enabled)
+    #     self.z_colormap_dropdown.setEnabled(enabled)
+    #     self.z_transparency_widget.setEnabled(enabled)
         
-        # Dynamic button is only enabled when a colormap is active (not "None")
-        if enabled and self.z_colormap_dropdown.currentText() != "None":
-            self.z_dynamic_button.setEnabled(True)
-        else:
-            self.z_dynamic_button.setEnabled(False)
+    #     # Dynamic button is only enabled when a colormap is active (not "None")
+    #     if enabled and self.z_colormap_dropdown.currentText() != "None":
+    #         self.z_dynamic_button.setEnabled(True)
+    #     else:
+    #         self.z_dynamic_button.setEnabled(False)
     
-    def on_image_loaded_check_z_channel(self, image_path):
-        """
-        Check if the newly loaded image has a z-channel.
-        If it doesn't, disable all z-channel UI elements.
+    # def on_image_loaded_check_z_channel(self, image_path):
+    #     """
+    #     Check if the newly loaded image has a z-channel.
+    #     If it doesn't, disable all z-channel UI elements.
         
-        Args:
-            image_path (str): Path of the loaded image
-        """
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        if raster and raster.z_channel is None:
-            # Image has no z-channel, disable UI elements
-            self.z_label.setText("Z: -----")
-            self.z_colormap_dropdown.setCurrentText("None")
-            self.enable_z_visualization_controls(False)
-        elif raster and raster.z_channel is not None:
-            # Image has z-channel, enable UI elements
-            self.enable_z_visualization_controls(True)
+    #     Args:
+    #         image_path (str): Path of the loaded image
+    #     """
+    #     raster = self.image_window.raster_manager.get_raster(image_path)
+    #     if raster and raster.z_channel is None:
+    #         # Image has no z-channel, disable UI elements
+    #         self.z_label.setText("Z: -----")
+    #         self.z_colormap_dropdown.setCurrentText("None")
+    #         self.enable_z_visualization_controls(False)
+    #     elif raster and raster.z_channel is not None:
+    #         # Image has z-channel, enable UI elements
+    #         self.enable_z_visualization_controls(True)
             
-            # Force status bar Z-value refresh at current mouse position
-            # This ensures z_nodata is properly reflected when switching images
-            self.update_z_value_at_mouse_position(raster)
+    #         # Force status bar Z-value refresh at current mouse position
+    #         # This ensures z_nodata is properly reflected when switching images
+    #         self.update_z_value_at_mouse_position(raster)
 
-    def on_z_channel_removed(self, image_path):
-        """
-        Handle z-channel removal for a raster.
+    # def on_z_channel_removed(self, image_path):
+    #     """
+    #     Handle z-channel removal for a raster.
         
-        Args:
-            image_path (str): Path of the raster with removed z-channel
-        """
-        # If the removed z-channel belongs to the currently displayed image,
-        # clear the z-label in the status bar and disable the dropdown
-        if image_path == self.annotation_window.current_image_path:
-            self.z_label.setText("Z: -----")
-            self.z_colormap_dropdown.setCurrentText("None")
-            self.enable_z_visualization_controls(False)
+    #     Args:
+    #         image_path (str): Path of the raster with removed z-channel
+    #     """
+    #     # If the removed z-channel belongs to the currently displayed image,
+    #     # clear the z-label in the status bar and disable the dropdown
+    #     if image_path == self.annotation_window.current_image_path:
+    #         self.z_label.setText("Z: -----")
+    #         self.z_colormap_dropdown.setCurrentText("None")
+    #         self.enable_z_visualization_controls(False)
 
     def update_project_label(self):
         """Update the project label in the status bar"""
@@ -2261,272 +1985,264 @@ class MainWindow(QMainWindow):
         # Update the window title
         self.setWindowTitle(text)
 
-    def update_mouse_position(self, x, y):
-        """Update the mouse position label in the status bar"""
-        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+    # def update_mouse_position(self, x, y):
+    #     """Update the mouse position label in the status bar"""
+    #     self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
         
-        # Store current mouse position for z-channel lookup
-        self.current_mouse_x = x
-        self.current_mouse_y = y
+    #     # Store current mouse position for z-channel lookup
+    #     self.current_mouse_x = x
+    #     self.current_mouse_y = y
         
-        # Update z-channel value at new mouse position
-        raster = None
-        if self.annotation_window.current_image_path:
-            raster = self.image_window.raster_manager.get_raster(
-                self.annotation_window.current_image_path
-            )
-        self.update_z_value_at_mouse_position(raster)
+    #     # Update z-channel value at new mouse position
+    #     raster = None
+    #     if self.annotation_window.current_image_path:
+    #         raster = self.image_window.raster_manager.get_raster(
+    #             self.annotation_window.current_image_path
+    #         )
+    #     self.update_z_value_at_mouse_position(raster)
         
-    def update_image_dimensions(self, width, height):
-        """Update the image dimensions label in the status bar"""
-        self.image_dimensions_label.setText(f"Image: {height} x {width}")
+    # def update_image_dimensions(self, width, height):
+    #     """Update the image dimensions label in the status bar"""
+    #     self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
-    def update_view_dimensions(self, original_width, original_height):
-        """Update the view dimensions label in the status bar"""
-        # Current extent (view)
-        extent = self.annotation_window.viewportToScene()
+    # def update_view_dimensions(self, original_width, original_height):
+    #     """Update the view dimensions label in the status bar"""
+    #     # Current extent (view)
+    #     extent = self.annotation_window.viewportToScene()
 
-        top = round(extent.top())
-        left = round(extent.left())
-        width = round(extent.width())
-        height = round(extent.height())
+    #     top = round(extent.top())
+    #     left = round(extent.left())
+    #     width = round(extent.width())
+    #     height = round(extent.height())
 
-        bottom = top + height
-        right = left + width
+    #     bottom = top + height
+    #     right = left + width
 
-        # If the current extent includes areas outside the
-        # original image, reduce it to be only the original image
-        if top < 0:
-            top = 0
-        if left < 0:
-            left = 0
-        if bottom > original_height:
-            bottom = original_height
-        if right > original_width:
-            right = original_width
+    #     # If the current extent includes areas outside the
+    #     # original image, reduce it to be only the original image
+    #     if top < 0:
+    #         top = 0
+    #     if left < 0:
+    #         left = 0
+    #     if bottom > original_height:
+    #         bottom = original_height
+    #     if right > original_width:
+    #         right = original_width
 
-        width = right - left
-        height = bottom - top
+    #     width = right - left
+    #     height = bottom - top
 
-        # Update the pixel-based view dimensions
-        self.view_dimensions_label.setText(f"View: {height} x {width}")
+    #     # Update the pixel-based view dimensions
+    #     self.view_dimensions_label.setText(f"View: {height} x {width}")
         
-        raster = None
-        if self.annotation_window.current_image_path:
-            raster = self.image_window.raster_manager.get_raster(
-                self.annotation_window.current_image_path
-            )
+    #     raster = None
+    #     if self.annotation_window.current_image_path:
+    #         raster = self.image_window.raster_manager.get_raster(
+    #             self.annotation_window.current_image_path
+    #         )
 
-        if raster and raster.scale_units:
-            # Scale exists and is always in meters (standardized internally)
-            # Calculate dimensions in meters
-            self.scaled_view_width_m = width * raster.scale_x
-            self.scaled_view_height_m = height * raster.scale_y
+    #     if raster and raster.scale_units:
+    #         # Scale exists and is always in meters (standardized internally)
+    #         # Calculate dimensions in meters
+    #         self.scaled_view_width_m = width * raster.scale_x
+    #         self.scaled_view_height_m = height * raster.scale_y
             
-            # Check if the scale unit dropdown was previously disabled
-            was_disabled = not self.scale_unit_dropdown.isEnabled()
+    #         # Check if the scale unit dropdown was previously disabled
+    #         was_disabled = not self.scale_unit_dropdown.isEnabled()
 
-            # Enable the scale widgets
-            self.scaled_dimensions_label.setEnabled(True)
-            self.scale_unit_dropdown.setEnabled(True)
+    #         # Enable the scale widgets
+    #         self.scaled_dimensions_label.setEnabled(True)
+    #         self.scale_unit_dropdown.setEnabled(True)
             
-            # If it was disabled before, set to the last selected unit by default
-            if was_disabled:
-                self.scale_unit_dropdown.blockSignals(True)
-                self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
-                self.scale_unit_dropdown.blockSignals(False)
+    #         # If it was disabled before, set to the last selected unit by default
+    #         if was_disabled:
+    #             self.scale_unit_dropdown.blockSignals(True)
+    #             self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
+    #             self.scale_unit_dropdown.blockSignals(False)
 
-            # Manually call the update function to display the new values
-            self.on_scale_unit_changed(self.scale_unit_dropdown.currentText())
+    #         # Manually call the update function to display the new values
+    #         self.on_scale_unit_changed(self.scale_unit_dropdown.currentText())
 
-        else:
-            # No scale, disable and reset
-            self.scaled_view_width_m = 0.0
-            self.scaled_view_height_m = 0.0
+    #     else:
+    #         # No scale, disable and reset
+    #         self.scaled_view_width_m = 0.0
+    #         self.scaled_view_height_m = 0.0
             
-            self.scaled_dimensions_label.setText("Scale: 0 x 0")
-            self.scaled_dimensions_label.setEnabled(False)
-            self.scale_unit_dropdown.setEnabled(False)
+    #         self.scaled_dimensions_label.setText("Scale: 0 x 0")
+    #         self.scaled_dimensions_label.setEnabled(False)
+    #         self.scale_unit_dropdown.setEnabled(False)
             
-        # Update z_label with z-channel value at current mouse position
-        self.update_z_value_at_mouse_position(raster)
+    #     # Update z_label with z-channel value at current mouse position
+    #     self.update_z_value_at_mouse_position(raster)
     
-    def update_z_value_at_mouse_position(self, raster):  
-        """Update the z_label with z-channel value at current mouse position."""
-        if raster and raster.z_channel_lazy is not None:
-            # Check if mouse coordinates are within image bounds
-            if (0 <= self.current_mouse_x < raster.width and 
-                0 <= self.current_mouse_y < raster.height):
+    # def update_z_value_at_mouse_position(self, raster):  
+    #     """Update the z_label with z-channel value at current mouse position."""
+    #     if raster and raster.z_channel_lazy is not None:
+    #         # Check if mouse coordinates are within image bounds
+    #         if (0 <= self.current_mouse_x < raster.width and 
+    #             0 <= self.current_mouse_y < raster.height):
                 
-                try:
-                    # Get raw z-value
-                    z_value = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
+    #             try:
+    #                 # Get raw z-value
+    #                 z_value = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
                     
-                    if z_value is None:
-                        # Value is NaN or nodata
-                        self.z_label.setText("Z: ----")
-                        self.z_label.setToolTip("No valid Z-value at this location")
-                    else:
-                        # Cache the z-value for unit conversion
-                        self.current_z_value = z_value
+    #                 if z_value is None:
+    #                     # Value is NaN or nodata
+    #                     self.z_label.setText("Z: ----")
+    #                     self.z_label.setToolTip("No valid Z-value at this location")
+    #                 else:
+    #                     # Cache the z-value for unit conversion
+    #                     self.current_z_value = z_value
                         
-                        # Get the original unit from the raster
-                        original_unit = raster.z_unit if raster.z_unit else 'm'
+    #                     # Get the original unit from the raster
+    #                     original_unit = raster.z_unit if raster.z_unit else 'm'
                         
-                        # Convert to selected unit if different from original
-                        display_value = z_value
-                        if self.current_unit_z != original_unit:
-                            display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
+    #                     # Convert to selected unit if different from original
+    #                     display_value = z_value
+    #                     if self.current_unit_z != original_unit:
+    #                         display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
                         
-                        # Format the display based on data type
-                        if raster.z_channel.dtype == np.float32:
-                            self.z_label.setText(f"Z: {display_value:.3f}")
-                        else:
-                            self.z_label.setText(f"Z: {int(display_value)}")
+    #                     # Format the display based on data type
+    #                     if raster.z_channel.dtype == np.float32:
+    #                         self.z_label.setText(f"Z: {display_value:.3f}")
+    #                     else:
+    #                         self.z_label.setText(f"Z: {int(display_value)}")
                         
-                        # Set simple tooltip with data type and unit
-                        z_type = raster.z_data_type if raster.z_data_type else 'Z-channel'
-                        tooltip_text = f"{z_type.capitalize()} data in {original_unit}"
-                        self.z_label.setToolTip(tooltip_text)
+    #                     # Set simple tooltip with data type and unit
+    #                     z_type = raster.z_data_type if raster.z_data_type else 'Z-channel'
+    #                     tooltip_text = f"{z_type.capitalize()} data in {original_unit}"
+    #                     self.z_label.setToolTip(tooltip_text)
                     
-                    # Enable the z_label and dropdown since we have valid data
-                    self.z_label.setEnabled(True)
-                    self.z_unit_dropdown.setEnabled(True)
-                    self.z_colormap_dropdown.setEnabled(True)
-                    # Only enable dynamic button if colormap is not set to "None"
-                    if self.z_colormap_dropdown.currentText() != "None":
-                        self.z_dynamic_button.setEnabled(True)
+    #                 # Enable the z_label and dropdown since we have valid data
+    #                 self.z_label.setEnabled(True)
+    #                 self.z_unit_dropdown.setEnabled(True)
+    #                 self.z_colormap_dropdown.setEnabled(True)
+    #                 # Only enable dynamic button if colormap is not set to "None"
+    #                 if self.z_colormap_dropdown.currentText() != "None":
+    #                     self.z_dynamic_button.setEnabled(True)
                     
-                except (IndexError, ValueError):
-                    pass
+    #             except (IndexError, ValueError):
+    #                 pass
             
-    def on_scale_unit_changed(self, to_unit):
-        """
-        Converts stored meter values to the selected unit and updates the label.
-        """
-        if not self.scale_unit_dropdown.isEnabled():
-            self.scaled_dimensions_label.setText("Scale: 0 x 0")
-            return
+    # def on_scale_unit_changed(self, to_unit):
+    #     """
+    #     Converts stored meter values to the selected unit and updates the label.
+    #     """
+    #     if not self.scale_unit_dropdown.isEnabled():
+    #         self.scaled_dimensions_label.setText("Scale: 0 x 0")
+    #         return
 
-        # Convert the stored meter values
-        converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
-        converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
+    #     # Convert the stored meter values
+    #     converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
+    #     converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
 
-        # Update the dimensions label
-        self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
+    #     # Update the dimensions label
+    #     self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
 
-        # Remember the selected unit
-        self.current_unit_scale = to_unit
+    #     # Remember the selected unit
+    #     self.current_unit_scale = to_unit
         
-        # Refresh the confidence window if an annotation is selected
-        # This is the only refresh needed, as it's the only
-        # change that can happen *while* an annotation is displayed.
-        if self.confidence_window.annotation:
-            self.confidence_window.refresh_display()
+    #     # Refresh the confidence window if an annotation is selected
+    #     # This is the only refresh needed, as it's the only
+    #     # change that can happen *while* an annotation is displayed.
+    #     if self.confidence_window.annotation:
+    #         self.confidence_window.refresh_display()
     
-    def on_z_unit_changed(self, selected_unit):
-        """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
-        # Update the selected unit
-        self.current_unit_z = selected_unit
+    # def on_z_unit_changed(self, selected_unit):
+    #     """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
+    #     # Update the selected unit
+    #     self.current_unit_z = selected_unit
         
-        # Re-convert and display the cached z-value in the new unit
-        if self.current_z_value is not None:
-            try:
-                # Get the current raster to fetch original unit and data type info
-                raster = self.image_window.raster_manager.get_raster(self.image_window.selected_image_path)
-                if raster and raster.z_channel_lazy is not None:
-                    original_unit = raster.z_unit if raster.z_unit else 'm'
-                    z_channel = raster.z_channel_lazy
+    #     # Re-convert and display the cached z-value in the new unit
+    #     if self.current_z_value is not None:
+    #         try:
+    #             # Get the current raster to fetch original unit and data type info
+    #             raster = self.image_window.raster_manager.get_raster(self.image_window.selected_image_path)
+    #             if raster and raster.z_channel_lazy is not None:
+    #                 original_unit = raster.z_unit if raster.z_unit else 'm'
+    #                 z_channel = raster.z_channel_lazy
                     
-                    # Convert from original unit to selected unit
-                    converted_value = convert_scale_units(
-                        self.current_z_value, 
-                        original_unit, 
-                        selected_unit
-                    )
+    #                 # Convert from original unit to selected unit
+    #                 converted_value = convert_scale_units(
+    #                     self.current_z_value, 
+    #                     original_unit, 
+    #                     selected_unit
+    #                 )
                     
-                    # Format the display based on data type
-                    if z_channel.dtype == np.float32:
-                        self.z_label.setText(f"Z: {converted_value:.3f}")
-                    else:
-                        self.z_label.setText(f"Z: {int(converted_value)}")
-            except Exception:
-                pass  # If conversion fails, keep last value displayed
+    #                 # Format the display based on data type
+    #                 if z_channel.dtype == np.float32:
+    #                     self.z_label.setText(f"Z: {converted_value:.3f}")
+    #                 else:
+    #                     self.z_label.setText(f"Z: {int(converted_value)}")
+    #         except Exception:
+    #             pass  # If conversion fails, keep last value displayed
         
-        # Refresh the confidence window if an annotation is selected
-        if self.confidence_window.annotation:
-            self.confidence_window.refresh_display()
+    #     # Refresh the confidence window if an annotation is selected
+    #     if self.confidence_window.annotation:
+    #         self.confidence_window.refresh_display()
         
-    def on_z_colormap_changed(self, colormap_name):
-        """Handle z-colormap dropdown changes by updating the annotation window."""
-        self.annotation_window.update_z_colormap(colormap_name)
+    # def on_z_colormap_changed(self, colormap_name):
+    #     """Handle z-colormap dropdown changes by updating the annotation window."""
+    #     self.annotation_window.update_z_colormap(colormap_name)
         
-        # Enable/disable z_transparency_widget based on colormap selection
-        if colormap_name == "None":
-            self.z_transparency_widget.setEnabled(False)
-            self.z_dynamic_button.setEnabled(False)
-            self.z_dynamic_button.setChecked(False)
-        else:
-            # Enable the transparency slider and dynamic range button if Z data is available
-            if self.annotation_window.z_data_raw is not None:
-                self.z_transparency_widget.setEnabled(True)
-                self.z_dynamic_button.setEnabled(True)
+    #     # Enable/disable z_transparency_widget based on colormap selection
+    #     if colormap_name == "None":
+    #         self.z_transparency_widget.setEnabled(False)
+    #         self.z_dynamic_button.setEnabled(False)
+    #         self.z_dynamic_button.setChecked(False)
+    #     else:
+    #         # Enable the transparency slider and dynamic range button if Z data is available
+    #         if self.annotation_window.z_data_raw is not None:
+    #             self.z_transparency_widget.setEnabled(True)
+    #             self.z_dynamic_button.setEnabled(True)
     
-    def update_z_transparency(self, value):
-        """
-        Update the Z-channel visualization opacity.
+    # def update_z_transparency(self, value):
+    #     """
+    #     Update the Z-channel visualization opacity.
         
-        Args:
-            value (int): Slider value from 0-255
-        """
-        # Convert slider value (0-255) to opacity (0.0-1.0)
-        opacity = value / 255.0
+    #     Args:
+    #         value (int): Slider value from 0-255
+    #     """
+    #     # Convert slider value (0-255) to opacity (0.0-1.0)
+    #     opacity = value / 255.0
         
-        # Update the annotation window's z-channel opacity
-        self.annotation_window.set_z_opacity(opacity)
+    #     # Update the annotation window's z-channel opacity
+    #     self.annotation_window.set_z_opacity(opacity)
     
-    def on_z_dynamic_toggled(self, checked):
-        """Handle z-dynamic scaling button toggle."""
-        self.annotation_window.toggle_dynamic_z_scaling(checked)
+    # def on_z_dynamic_toggled(self, checked):
+    #     """Handle z-dynamic scaling button toggle."""
+    #     self.annotation_window.toggle_dynamic_z_scaling(checked)
+
+    # def update_label_transparency(self, value):
+    #     """Update the transparency for all annotations in the current image."""
+    #     # Make cursor busy
+    #     QApplication.setOverrideCursor(Qt.WaitCursor)
         
-    def get_transparency_value(self):
-        """Get the current transparency value from the slider"""
-        return self.transparency_slider.value()
-
-    def update_transparency_slider(self, transparency):
-        """"Update the transparency slider value"""
-        self.transparency_slider.setValue(transparency)
-
-    def update_label_transparency(self, value):
-        """Update the transparency for all annotations in the current image."""
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+    #     # Clamp the transparency value to valid range
+    #     transparency = max(0, min(255, value))
         
-        # Clamp the transparency value to valid range
-        transparency = max(0, min(255, value))
-        
-        # Update transparency slider position
-        if self.transparency_slider.value() != transparency:
-            # Temporarily block signals to prevent infinite recursion
-            self.transparency_slider.blockSignals(True)
-            self.transparency_slider.setValue(transparency)
-            self.transparency_slider.blockSignals(False)
+    #     # Update transparency slider position
+    #     if self.transparency_slider.value() != transparency:
+    #         # Temporarily block signals to prevent infinite recursion
+    #         self.transparency_slider.blockSignals(True)
+    #         self.transparency_slider.setValue(transparency)
+    #         self.transparency_slider.blockSignals(False)
 
-        # Update transparency for ALL vector annotations in the current image
-        # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
-        for annotation in self.annotation_window.get_image_annotations():
-            annotation.update_transparency(transparency)
+    #     # Update transparency for ALL vector annotations in the current image
+    #     # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
+    #     for annotation in self.annotation_window.get_image_annotations():
+    #         annotation.update_transparency(transparency)
 
-        try:
-            # Handle mask annotation updates
-            mask = self.annotation_window.current_mask_annotation
-            if mask:
-                self.label_window.set_mask_transparency(transparency)
-        except Exception as e:
-            pass
+    #     try:
+    #         # Handle mask annotation updates
+    #         mask = self.annotation_window.current_mask_annotation
+    #         if mask:
+    #             self.label_window.set_mask_transparency(transparency)
+    #     except Exception as e:
+    #         pass
 
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
+    #     # Restore cursor
+    #     QApplication.restoreOverrideCursor()
     
     def get_max_detections(self):
         """Get the current max detections value"""
@@ -3411,25 +3127,7 @@ class MainWindow(QMainWindow):
 
             # Recreate the explorer window, passing the main window instance
             self.explorer_window = ExplorerWindow(self)
-            
-            # Move the wrapper's entire inner QMainWindow (Payload + Toolbars) into the explorer
-            self.left_dock.inner_window.setParent(self.explorer_window.left_panel)
-            self.explorer_window.label_layout.insertWidget(1, self.left_dock.inner_window)
-            
-            # Hide the empty dock shell so the Timer dock naturally takes over the space
-            self.left_dock.hide()
-                
-            # Disable all main window widgets except select few
-            self.set_main_window_enabled_state(
-                enable_list=[self.annotation_dock, 
-                             self.left_dock.inner_window, # Enable the traveling toolbars!
-                             self.transparency_widget],
-                disable_list=[self.toolbar, 
-                              self.menu_bar, 
-                              self.right_dock, 
-                              self.confidence_dock]
-            )
-            
+            # Show the explorer window maximized and bring it to the front
             self.explorer_window.showMaximized()
             self.explorer_window.activateWindow()
             self.explorer_window.raise_()
@@ -3440,27 +3138,10 @@ class MainWindow(QMainWindow):
                 self.explorer_window.close()  # Ensure cleanup
                 
             self.explorer_window = None
-            # Re-enable everything if there was an error
-            self.set_main_window_enabled_state()
     
     def close_explorer_window(self):
         """Handle the explorer window being closed."""
-        if self.explorer_window:
-            # Move the wrapper's inner QMainWindow back to the dock
-            self.left_dock.inner_window.setParent(self.left_dock)
-            self.left_dock.setWidget(self.left_dock.inner_window)
-            self.left_dock.inner_window.show()
-            
-            # Reveal the dock shell again
-            self.left_dock.show()
-
-            # Force a resize update to ensure the layout snaps back correctly
-            self.label_window.resizeEvent(None)
-            self.resizeEvent(None)
-            
-            # Re-enable all main window widgets
-            self.set_main_window_enabled_state()
-            
+        if self.explorer_window:           
             # Clean up reference
             self.explorer_window = None
         
@@ -3516,6 +3197,16 @@ class MainWindow(QMainWindow):
             if selected_tool == "rugosity":
                 self.annotation_window.tools[selected_tool].dialog.cleanup()
                 self.annotation_window.set_selected_tool(None)
+    
+    def handle_image_changed(self):
+        """Handle actions needed when the image is changed."""
+        if self.annotation_window.selected_tool == 'sam':
+            self.annotation_window.tools['sam'].cancel_working_area()
+        if self.annotation_window.selected_tool == 'see_anything':
+            self.annotation_window.tools['see_anything'].cancel_working_area()
+        
+        # Update label tooltips with current counts
+        self.label_window.update_tooltips()
 
 
 class DeviceSelectionDialog(QDialog):

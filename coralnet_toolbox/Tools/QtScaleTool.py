@@ -377,7 +377,7 @@ class ScaleTool(Tool):
         if current_path in highlighted_paths:
             # Refresh view dimensions
             w, h = self.annotation_window.get_image_dimensions()
-            self.main_window.update_view_dimensions(w, h)
+            self.annotation_window.update_view_dimensions(w, h)
             
         QMessageBox.information(self.dialog, "Applied", f"Scale applied to {len(highlighted_paths)} images.")
         self.stop_current_drawing()
@@ -402,7 +402,7 @@ class ScaleTool(Tool):
                 
         if current_path in highlighted_paths:
             w, h = self.annotation_window.get_image_dimensions()
-            self.main_window.update_view_dimensions(w, h)
+            self.annotation_window.update_view_dimensions(w, h)
         
         self.load_existing_scale()
 

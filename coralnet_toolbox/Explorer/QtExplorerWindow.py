@@ -218,13 +218,9 @@ class ExplorerWindow(QMainWindow):
         middle_splitter.addWidget(embedding_group)
         middle_splitter.setSizes([500, 500])
 
-        # Left panel: Reuse existing if it has the LabelWindow, otherwise create new
-        if not hasattr(self, 'left_panel') or not self.left_panel:
-            self.left_panel = QWidget()
-            self.label_layout = QVBoxLayout(self.left_panel)
-        
-        # Add the LabelWindow above the settings toolbox
-        self.label_layout.addWidget(self.label_window)
+        # Create a fixed left panel for settings and add the toolbox to it
+        self.left_panel = QWidget()
+        self.label_layout = QVBoxLayout(self.left_panel)
         # Add the settings toolbox below the label_layout
         self.label_layout.addWidget(settings_toolbox)
         
