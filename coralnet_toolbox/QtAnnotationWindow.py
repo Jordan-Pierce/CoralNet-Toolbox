@@ -745,9 +745,6 @@ class AnnotationWindow(QGraphicsView):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Calculate GDIs for Windows if needed
-        self.main_window.check_windows_gdi_count()
-        
         # Stop any current drawing operation before switching images
         if self.selected_tool and self.selected_tool in self.tools:
             self.tools[self.selected_tool].stop_current_drawing()
