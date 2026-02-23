@@ -1,4 +1,6 @@
 from coralnet_toolbox.Tools.QtSubTool import SubTool
+from coralnet_toolbox.QtActions import MoveAnnotationAction
+from PyQt5.QtCore import QPointF
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -20,6 +22,13 @@ class MoveSubTool(SubTool):
         """
         super().activate(event)
         self.move_start_pos = self.annotation_window.mapToScene(event.pos())
+        # Capture original center for undo
+        try:
+            selected_annotation = self.parent_tool.selected_annotations[0]
+            # copy QPointF
+            self.orig_center = QPointF(selected_annotation.center_xy.x(), selected_annotation.center_xy.y())
+        except Exception:
+            self.orig_center = None
         # The parent tool is responsible for ensuring annotations are selected.
 
     def deactivate(self):
@@ -51,4 +60,21 @@ class MoveSubTool(SubTool):
 
     def mouseReleaseEvent(self, event):
         """Finalize the move and deactivate this sub-tool."""
+        # Record action (single-selection expected)
+        try:
+            selected_annotation = self.parent_tool.selected_annotations[0]
+            new_center = selected_annotation.center_xy
+            if self.orig_center is not None:
+                action = MoveAnnotationAction(self.annotation_window, selected_annotation.id, self.orig_center, new_center)
+                try:
+                    self.annotation_window.action_stack.push(action)
+                except Exception:
+                    pass
+                try:
+                    self.annotation_window.annotationMoved.emit(selected_annotation.id, {'old_center': self.orig_center, 'new_center': new_center})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         self.parent_tool.deactivate_subtool()

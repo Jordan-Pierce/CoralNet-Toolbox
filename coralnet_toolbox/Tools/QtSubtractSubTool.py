@@ -1,6 +1,7 @@
 from coralnet_toolbox.Tools.QtSubTool import SubTool
 from coralnet_toolbox.Annotations import PolygonAnnotation
 from coralnet_toolbox.Annotations import MultiPolygonAnnotation
+from coralnet_toolbox.QtActions import SubtractAnnotationsAction
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -49,13 +50,25 @@ class SubtractSubTool(SubTool):
             return
 
         # --- 4. Update the Annotation Window ---
-        # Delete the original annotations that were used in the operation
-        for anno in selected_annotations:
-            self.annotation_window.delete_annotation(anno.id)
-        
-        # Add the new resulting annotations to the scene
-        for new_anno in result_annotations:
-            self.annotation_window.add_annotation_from_tool(new_anno)
+        # Replace originals with results as a single undoable action
+        try:
+            # Add results without recording and delete originals without recording
+            for new_anno in result_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno, record_action=False)
+            for anno in selected_annotations:
+                self.annotation_window.delete_annotation(anno.id, record_action=False)
+
+            action = SubtractAnnotationsAction(self.annotation_window, selected_annotations.copy(), result_annotations)
+            try:
+                self.annotation_window.action_stack.push(action)
+            except Exception:
+                pass
+        except Exception:
+            # Fallback to previous behavior
+            for anno in selected_annotations:
+                self.annotation_window.delete_annotation(anno.id)
+            for new_anno in result_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno)
         
         # Select the new annotations
         self.annotation_window.unselect_annotations()

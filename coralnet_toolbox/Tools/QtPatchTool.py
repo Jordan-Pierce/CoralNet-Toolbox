@@ -24,12 +24,12 @@ class PatchTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
-        self.annotation_window.main_window.annotation_size_spinbox.setEnabled(True)
+        self.annotation_window.annotation_size_spinbox.setEnabled(True)
 
     def deactivate(self):
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
-        self.annotation_window.main_window.annotation_size_spinbox.setEnabled(False)
+        self.annotation_window.annotation_size_spinbox.setEnabled(False)
         self.clear_cursor_annotation()
         
         # Call parent deactivate to ensure crosshair is properly cleared

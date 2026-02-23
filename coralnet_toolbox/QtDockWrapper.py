@@ -37,6 +37,16 @@ class DockWrapper(QDockWidget):
         self.inner_window.setCentralWidget(self.payload_widget)
         
         self.setWidget(self.inner_window)
+        
+        # This applies the specific background color to ANY QToolBar 
+        # that gets attached to this specific dock's inner window.
+        self.inner_window.setStyleSheet("""
+            QToolBar {
+                background-color: rgb(248, 249, 250);
+                border: none;
+                spacing: 4px; /* Optional: adds a nice default gap between items */
+            }
+        """)
 
     # --- UI COMPONENT MOUNTING ---
 
