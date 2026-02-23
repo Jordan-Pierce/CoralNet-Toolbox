@@ -609,7 +609,11 @@ class AnnotationWindow(QGraphicsView):
         group_image = make_group(self.image_dimensions_label)
         group_view = make_group(self.view_dimensions_label)
         group_scale = make_group(self.scale_unit_dropdown, self.scaled_dimensions_label)
-        group_z = make_group(self.z_unit_dropdown, self.z_label, self.z_transparency_widget, self.z_dynamic_button, self.z_colormap_dropdown)
+        group_z = make_group(self.z_unit_dropdown, 
+                             self.z_label, 
+                             self.z_transparency_widget, 
+                             self.z_dynamic_button, 
+                             self.z_colormap_dropdown)
         
         layout.addWidget(group_mouse)
         layout.addStretch(1)

@@ -647,9 +647,9 @@ class ImageWindow(QWidget):
             
             # Force status bar Z-value refresh at current mouse position
             # This ensures changes to z_nodata are immediately reflected
-            if hasattr(self.main_window, 'update_z_value_at_mouse_position'):
+            if hasattr(self.annotation_window, 'update_z_value_at_mouse_position'):
                 raster = self.raster_manager.get_raster(path)
-                self.main_window.update_z_value_at_mouse_position(raster)
+                self.annotation_window.update_z_value_at_mouse_position(raster)
         
     def on_filtering_started(self):
         """Handler for when filtering starts."""

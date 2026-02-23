@@ -1288,11 +1288,94 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'annotation_window') or self.annotation_window is None:
             return None
         return self.annotation_window.z_transparency_widget
+            
+    def update_project_label(self):
+        """Update the project label in the status bar"""
+
+        text = f"CoralNet-Toolbox v{self.version} "
+        if self.current_project_path:
+            text += f"[Project: {self.current_project_path}]"
+
+        # Update the window title
+        self.setWindowTitle(text)
     
-    def update_z_value_at_mouse_position(self, raster):
-        """Pass-through for ImageWindow to update the Z-value label."""
-        if hasattr(self, 'annotation_window') and self.annotation_window is not None:
-            self.annotation_window.update_z_value_at_mouse_position(raster)
+    def get_max_detections(self):
+        """Get the current max detections value"""
+        return self.max_detections
+    
+    def update_max_detections(self, value):
+        """Update the max detections value"""
+        if self.max_detections != value:
+            self.max_detections = value
+            self.max_detections_spinbox.setValue(self.max_detections)
+            self.maxDetectionsChanged.emit(value)
+        
+    def get_uncertainty_thresh(self):
+        """Get the current uncertainty threshold value"""
+        return self.uncertainty_thresh
+
+    def update_uncertainty_thresh(self, value):
+        """Update the uncertainty threshold value"""
+        if self.uncertainty_thresh != value:
+            self.uncertainty_thresh = value
+            self.uncertainty_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
+            self.uncertaintyChanged.emit(value)
+
+    def update_uncertainty_label(self, value):
+        """Update uncertainty threshold label when slider value changes"""
+        self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
+        self.uncertainty_value_label.setText(f"{self.uncertainty_thresh:.2f}")
+        self.update_uncertainty_thresh(self.uncertainty_thresh)
+
+    def get_iou_thresh(self):
+        """Get the current IoU threshold value"""
+        return self.iou_thresh
+
+    def update_iou_thresh(self, value):
+        """Update the IoU threshold value"""
+        if self.iou_thresh != value:
+            self.iou_thresh = value
+            self.iou_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
+            self.iouChanged.emit(value)
+
+    def update_iou_label(self, value):
+        """Update IoU threshold label when slider value changes"""
+        self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
+        self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
+        self.update_iou_thresh(self.iou_thresh)
+
+    def get_area_thresh(self):
+        """Get the current area threshold values"""
+        return self.area_thresh_min, self.area_thresh_max
+
+    def get_area_thresh_min(self):
+        """Get the current minimum area threshold value"""
+        return self.area_thresh_min
+
+    def get_area_thresh_max(self):
+        """Get the current maximum area threshold value"""
+        return self.area_thresh_max
+
+    def update_area_thresh(self, min_val, max_val):
+        """Update the area threshold values"""
+        if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
+            self.area_thresh_min = min_val
+            self.area_thresh_max = max_val
+            self.area_threshold_min_slider.setValue(int(min_val * 100))
+            self.area_threshold_max_slider.setValue(int(max_val * 100))
+            self.areaChanged.emit(min_val, max_val)
+
+    def update_area_label(self):
+        """Handle changes to area threshold range slider"""
+        min_val = self.area_threshold_min_slider.value()
+        max_val = self.area_threshold_max_slider.value()
+        if min_val > max_val:
+            min_val = max_val
+            self.area_threshold_min_slider.setValue(min_val)
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def showEvent(self, event):
         """Show the main window maximized."""
@@ -1921,407 +2004,6 @@ class MainWindow(QMainWindow):
             self.device_tool_action.setIcon(device_icon)
             self.device_tool_action.setToolTip(device_tooltip)
             
-    # def enable_z_visualization_controls(self, enabled):
-    #     """
-    #     Centralized method to enable or disable all Z-channel visualization controls.
-        
-    #     Args:
-    #         enabled (bool): True to enable controls, False to disable them
-    #     """
-    #     self.z_label.setEnabled(enabled)
-    #     self.z_unit_dropdown.setEnabled(enabled)
-    #     self.z_colormap_dropdown.setEnabled(enabled)
-    #     self.z_transparency_widget.setEnabled(enabled)
-        
-    #     # Dynamic button is only enabled when a colormap is active (not "None")
-    #     if enabled and self.z_colormap_dropdown.currentText() != "None":
-    #         self.z_dynamic_button.setEnabled(True)
-    #     else:
-    #         self.z_dynamic_button.setEnabled(False)
-    
-    # def on_image_loaded_check_z_channel(self, image_path):
-    #     """
-    #     Check if the newly loaded image has a z-channel.
-    #     If it doesn't, disable all z-channel UI elements.
-        
-    #     Args:
-    #         image_path (str): Path of the loaded image
-    #     """
-    #     raster = self.image_window.raster_manager.get_raster(image_path)
-    #     if raster and raster.z_channel is None:
-    #         # Image has no z-channel, disable UI elements
-    #         self.z_label.setText("Z: -----")
-    #         self.z_colormap_dropdown.setCurrentText("None")
-    #         self.enable_z_visualization_controls(False)
-    #     elif raster and raster.z_channel is not None:
-    #         # Image has z-channel, enable UI elements
-    #         self.enable_z_visualization_controls(True)
-            
-    #         # Force status bar Z-value refresh at current mouse position
-    #         # This ensures z_nodata is properly reflected when switching images
-    #         self.update_z_value_at_mouse_position(raster)
-
-    # def on_z_channel_removed(self, image_path):
-    #     """
-    #     Handle z-channel removal for a raster.
-        
-    #     Args:
-    #         image_path (str): Path of the raster with removed z-channel
-    #     """
-    #     # If the removed z-channel belongs to the currently displayed image,
-    #     # clear the z-label in the status bar and disable the dropdown
-    #     if image_path == self.annotation_window.current_image_path:
-    #         self.z_label.setText("Z: -----")
-    #         self.z_colormap_dropdown.setCurrentText("None")
-    #         self.enable_z_visualization_controls(False)
-
-    def update_project_label(self):
-        """Update the project label in the status bar"""
-
-        text = f"CoralNet-Toolbox v{self.version} "
-        if self.current_project_path:
-            text += f"[Project: {self.current_project_path}]"
-
-        # Update the window title
-        self.setWindowTitle(text)
-
-    # def update_mouse_position(self, x, y):
-    #     """Update the mouse position label in the status bar"""
-    #     self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
-        
-    #     # Store current mouse position for z-channel lookup
-    #     self.current_mouse_x = x
-    #     self.current_mouse_y = y
-        
-    #     # Update z-channel value at new mouse position
-    #     raster = None
-    #     if self.annotation_window.current_image_path:
-    #         raster = self.image_window.raster_manager.get_raster(
-    #             self.annotation_window.current_image_path
-    #         )
-    #     self.update_z_value_at_mouse_position(raster)
-        
-    # def update_image_dimensions(self, width, height):
-    #     """Update the image dimensions label in the status bar"""
-    #     self.image_dimensions_label.setText(f"Image: {height} x {width}")
-
-    # def update_view_dimensions(self, original_width, original_height):
-    #     """Update the view dimensions label in the status bar"""
-    #     # Current extent (view)
-    #     extent = self.annotation_window.viewportToScene()
-
-    #     top = round(extent.top())
-    #     left = round(extent.left())
-    #     width = round(extent.width())
-    #     height = round(extent.height())
-
-    #     bottom = top + height
-    #     right = left + width
-
-    #     # If the current extent includes areas outside the
-    #     # original image, reduce it to be only the original image
-    #     if top < 0:
-    #         top = 0
-    #     if left < 0:
-    #         left = 0
-    #     if bottom > original_height:
-    #         bottom = original_height
-    #     if right > original_width:
-    #         right = original_width
-
-    #     width = right - left
-    #     height = bottom - top
-
-    #     # Update the pixel-based view dimensions
-    #     self.view_dimensions_label.setText(f"View: {height} x {width}")
-        
-    #     raster = None
-    #     if self.annotation_window.current_image_path:
-    #         raster = self.image_window.raster_manager.get_raster(
-    #             self.annotation_window.current_image_path
-    #         )
-
-    #     if raster and raster.scale_units:
-    #         # Scale exists and is always in meters (standardized internally)
-    #         # Calculate dimensions in meters
-    #         self.scaled_view_width_m = width * raster.scale_x
-    #         self.scaled_view_height_m = height * raster.scale_y
-            
-    #         # Check if the scale unit dropdown was previously disabled
-    #         was_disabled = not self.scale_unit_dropdown.isEnabled()
-
-    #         # Enable the scale widgets
-    #         self.scaled_dimensions_label.setEnabled(True)
-    #         self.scale_unit_dropdown.setEnabled(True)
-            
-    #         # If it was disabled before, set to the last selected unit by default
-    #         if was_disabled:
-    #             self.scale_unit_dropdown.blockSignals(True)
-    #             self.scale_unit_dropdown.setCurrentText(self.current_unit_scale)
-    #             self.scale_unit_dropdown.blockSignals(False)
-
-    #         # Manually call the update function to display the new values
-    #         self.on_scale_unit_changed(self.scale_unit_dropdown.currentText())
-
-    #     else:
-    #         # No scale, disable and reset
-    #         self.scaled_view_width_m = 0.0
-    #         self.scaled_view_height_m = 0.0
-            
-    #         self.scaled_dimensions_label.setText("Scale: 0 x 0")
-    #         self.scaled_dimensions_label.setEnabled(False)
-    #         self.scale_unit_dropdown.setEnabled(False)
-            
-    #     # Update z_label with z-channel value at current mouse position
-    #     self.update_z_value_at_mouse_position(raster)
-    
-    # def update_z_value_at_mouse_position(self, raster):  
-    #     """Update the z_label with z-channel value at current mouse position."""
-    #     if raster and raster.z_channel_lazy is not None:
-    #         # Check if mouse coordinates are within image bounds
-    #         if (0 <= self.current_mouse_x < raster.width and 
-    #             0 <= self.current_mouse_y < raster.height):
-                
-    #             try:
-    #                 # Get raw z-value
-    #                 z_value = raster.get_z_value(self.current_mouse_x, self.current_mouse_y)
-                    
-    #                 if z_value is None:
-    #                     # Value is NaN or nodata
-    #                     self.z_label.setText("Z: ----")
-    #                     self.z_label.setToolTip("No valid Z-value at this location")
-    #                 else:
-    #                     # Cache the z-value for unit conversion
-    #                     self.current_z_value = z_value
-                        
-    #                     # Get the original unit from the raster
-    #                     original_unit = raster.z_unit if raster.z_unit else 'm'
-                        
-    #                     # Convert to selected unit if different from original
-    #                     display_value = z_value
-    #                     if self.current_unit_z != original_unit:
-    #                         display_value = convert_scale_units(z_value, original_unit, self.current_unit_z)
-                        
-    #                     # Format the display based on data type
-    #                     if raster.z_channel.dtype == np.float32:
-    #                         self.z_label.setText(f"Z: {display_value:.3f}")
-    #                     else:
-    #                         self.z_label.setText(f"Z: {int(display_value)}")
-                        
-    #                     # Set simple tooltip with data type and unit
-    #                     z_type = raster.z_data_type if raster.z_data_type else 'Z-channel'
-    #                     tooltip_text = f"{z_type.capitalize()} data in {original_unit}"
-    #                     self.z_label.setToolTip(tooltip_text)
-                    
-    #                 # Enable the z_label and dropdown since we have valid data
-    #                 self.z_label.setEnabled(True)
-    #                 self.z_unit_dropdown.setEnabled(True)
-    #                 self.z_colormap_dropdown.setEnabled(True)
-    #                 # Only enable dynamic button if colormap is not set to "None"
-    #                 if self.z_colormap_dropdown.currentText() != "None":
-    #                     self.z_dynamic_button.setEnabled(True)
-                    
-    #             except (IndexError, ValueError):
-    #                 pass
-            
-    # def on_scale_unit_changed(self, to_unit):
-    #     """
-    #     Converts stored meter values to the selected unit and updates the label.
-    #     """
-    #     if not self.scale_unit_dropdown.isEnabled():
-    #         self.scaled_dimensions_label.setText("Scale: 0 x 0")
-    #         return
-
-    #     # Convert the stored meter values
-    #     converted_height = convert_scale_units(self.scaled_view_height_m, 'm', to_unit)
-    #     converted_width = convert_scale_units(self.scaled_view_width_m, 'm', to_unit)
-
-    #     # Update the dimensions label
-    #     self.scaled_dimensions_label.setText(f"Scale: {converted_height:.2f} x {converted_width:.2f}")
-
-    #     # Remember the selected unit
-    #     self.current_unit_scale = to_unit
-        
-    #     # Refresh the confidence window if an annotation is selected
-    #     # This is the only refresh needed, as it's the only
-    #     # change that can happen *while* an annotation is displayed.
-    #     if self.confidence_window.annotation:
-    #         self.confidence_window.refresh_display()
-    
-    # def on_z_unit_changed(self, selected_unit):
-    #     """Handle z-unit dropdown changes by re-displaying cached z-value in new unit."""
-    #     # Update the selected unit
-    #     self.current_unit_z = selected_unit
-        
-    #     # Re-convert and display the cached z-value in the new unit
-    #     if self.current_z_value is not None:
-    #         try:
-    #             # Get the current raster to fetch original unit and data type info
-    #             raster = self.image_window.raster_manager.get_raster(self.image_window.selected_image_path)
-    #             if raster and raster.z_channel_lazy is not None:
-    #                 original_unit = raster.z_unit if raster.z_unit else 'm'
-    #                 z_channel = raster.z_channel_lazy
-                    
-    #                 # Convert from original unit to selected unit
-    #                 converted_value = convert_scale_units(
-    #                     self.current_z_value, 
-    #                     original_unit, 
-    #                     selected_unit
-    #                 )
-                    
-    #                 # Format the display based on data type
-    #                 if z_channel.dtype == np.float32:
-    #                     self.z_label.setText(f"Z: {converted_value:.3f}")
-    #                 else:
-    #                     self.z_label.setText(f"Z: {int(converted_value)}")
-    #         except Exception:
-    #             pass  # If conversion fails, keep last value displayed
-        
-    #     # Refresh the confidence window if an annotation is selected
-    #     if self.confidence_window.annotation:
-    #         self.confidence_window.refresh_display()
-        
-    # def on_z_colormap_changed(self, colormap_name):
-    #     """Handle z-colormap dropdown changes by updating the annotation window."""
-    #     self.annotation_window.update_z_colormap(colormap_name)
-        
-    #     # Enable/disable z_transparency_widget based on colormap selection
-    #     if colormap_name == "None":
-    #         self.z_transparency_widget.setEnabled(False)
-    #         self.z_dynamic_button.setEnabled(False)
-    #         self.z_dynamic_button.setChecked(False)
-    #     else:
-    #         # Enable the transparency slider and dynamic range button if Z data is available
-    #         if self.annotation_window.z_data_raw is not None:
-    #             self.z_transparency_widget.setEnabled(True)
-    #             self.z_dynamic_button.setEnabled(True)
-    
-    # def update_z_transparency(self, value):
-    #     """
-    #     Update the Z-channel visualization opacity.
-        
-    #     Args:
-    #         value (int): Slider value from 0-255
-    #     """
-    #     # Convert slider value (0-255) to opacity (0.0-1.0)
-    #     opacity = value / 255.0
-        
-    #     # Update the annotation window's z-channel opacity
-    #     self.annotation_window.set_z_opacity(opacity)
-    
-    # def on_z_dynamic_toggled(self, checked):
-    #     """Handle z-dynamic scaling button toggle."""
-    #     self.annotation_window.toggle_dynamic_z_scaling(checked)
-
-    # def update_label_transparency(self, value):
-    #     """Update the transparency for all annotations in the current image."""
-    #     # Make cursor busy
-    #     QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-    #     # Clamp the transparency value to valid range
-    #     transparency = max(0, min(255, value))
-        
-    #     # Update transparency slider position
-    #     if self.transparency_slider.value() != transparency:
-    #         # Temporarily block signals to prevent infinite recursion
-    #         self.transparency_slider.blockSignals(True)
-    #         self.transparency_slider.setValue(transparency)
-    #         self.transparency_slider.blockSignals(False)
-
-    #     # Update transparency for ALL vector annotations in the current image
-    #     # (regardless of visibility - this ensures hidden annotations have correct transparency when shown)
-    #     for annotation in self.annotation_window.get_image_annotations():
-    #         annotation.update_transparency(transparency)
-
-    #     try:
-    #         # Handle mask annotation updates
-    #         mask = self.annotation_window.current_mask_annotation
-    #         if mask:
-    #             self.label_window.set_mask_transparency(transparency)
-    #     except Exception as e:
-    #         pass
-
-    #     # Restore cursor
-    #     QApplication.restoreOverrideCursor()
-    
-    def get_max_detections(self):
-        """Get the current max detections value"""
-        return self.max_detections
-    
-    def update_max_detections(self, value):
-        """Update the max detections value"""
-        if self.max_detections != value:
-            self.max_detections = value
-            self.max_detections_spinbox.setValue(self.max_detections)
-            self.maxDetectionsChanged.emit(value)
-        
-    def get_uncertainty_thresh(self):
-        """Get the current uncertainty threshold value"""
-        return self.uncertainty_thresh
-
-    def update_uncertainty_thresh(self, value):
-        """Update the uncertainty threshold value"""
-        if self.uncertainty_thresh != value:
-            self.uncertainty_thresh = value
-            self.uncertainty_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
-            self.uncertaintyChanged.emit(value)
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold label when slider value changes"""
-        self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
-        self.uncertainty_value_label.setText(f"{self.uncertainty_thresh:.2f}")
-        self.update_uncertainty_thresh(self.uncertainty_thresh)
-
-    def get_iou_thresh(self):
-        """Get the current IoU threshold value"""
-        return self.iou_thresh
-
-    def update_iou_thresh(self, value):
-        """Update the IoU threshold value"""
-        if self.iou_thresh != value:
-            self.iou_thresh = value
-            self.iou_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
-            self.iouChanged.emit(value)
-
-    def update_iou_label(self, value):
-        """Update IoU threshold label when slider value changes"""
-        self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
-        self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
-        self.update_iou_thresh(self.iou_thresh)
-
-    def get_area_thresh(self):
-        """Get the current area threshold values"""
-        return self.area_thresh_min, self.area_thresh_max
-
-    def get_area_thresh_min(self):
-        """Get the current minimum area threshold value"""
-        return self.area_thresh_min
-
-    def get_area_thresh_max(self):
-        """Get the current maximum area threshold value"""
-        return self.area_thresh_max
-
-    def update_area_thresh(self, min_val, max_val):
-        """Update the area threshold values"""
-        if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
-            self.area_thresh_min = min_val
-            self.area_thresh_max = max_val
-            self.area_threshold_min_slider.setValue(int(min_val * 100))
-            self.area_threshold_max_slider.setValue(int(max_val * 100))
-            self.areaChanged.emit(min_val, max_val)
-
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val = self.area_threshold_min_slider.value()
-        max_val = self.area_threshold_max_slider.value()
-        if min_val > max_val:
-            min_val = max_val
-            self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-
     def open_new_project(self):
         """Confirm user wants to create a new project before closing window."""
         reply = QMessageBox.question(self, "New Project",
