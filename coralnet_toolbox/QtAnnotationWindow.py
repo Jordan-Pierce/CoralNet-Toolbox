@@ -2096,7 +2096,14 @@ class AnnotationWindow(QGraphicsView):
         return None
 
     def select_annotation(self, annotation, multi_select=False, quiet_mode=False):
-        """Select an annotation and update the UI accordingly."""
+        """Select an annotation and update the UI accordingly.
+        
+        Args:
+            annotation: The annotation to select.
+            multi_select: If True, add to selection without clearing. If False, clear first.
+            quiet_mode: If True, skip label window and confidence window updates.
+                       Used when SelectionManager handles those updates centrally.
+        """
         # If the annotation is already selected and Ctrl is pressed, unselect it
         if annotation in self.selected_annotations and multi_select:
             self.unselect_annotation(annotation)
@@ -2119,11 +2126,10 @@ class AnnotationWindow(QGraphicsView):
             self.annotationSelected.emit(annotation.id)
             
             # If this is the only selected annotation, update label window and confidence window
-            if len(self.selected_annotations) == 1:
-                if not quiet_mode:
-                    # Emit the label selected signal, unless in quiet mode.
-                    # This is in Explorer to avoid overwriting preview label.
-                    self.labelSelected.emit(annotation.label.id)
+            # (unless in quiet_mode, which means SelectionManager handles these centrally)
+            if len(self.selected_annotations) == 1 and not quiet_mode:
+                # Emit the label selected signal
+                self.labelSelected.emit(annotation.label.id)
                 
                 # Make sure we have a cropped image
                 if not annotation.cropped_image:
@@ -2134,8 +2140,8 @@ class AnnotationWindow(QGraphicsView):
                 annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
         
-        # Special handling for multiple selected annotations
-        if len(self.selected_annotations) > 1:
+        # Special handling for multiple selected annotations (unless in quiet_mode)
+        if len(self.selected_annotations) > 1 and not quiet_mode:
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
         

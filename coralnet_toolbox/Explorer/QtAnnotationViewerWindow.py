@@ -146,18 +146,12 @@ class AnnotationViewerWindow(QWidget):
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         
-        # Isolate/Show All buttons
+        # Isolate Selection button
         self.isolate_button = QPushButton("Isolate Selection")
-        self.isolate_button.setToolTip("Hide all non-selected annotations")
+        self.isolate_button.setToolTip("Show only selected annotations (double-click to exit)")
         self.isolate_button.clicked.connect(self._isolate_selection)
         self.isolate_button.setEnabled(False)
         toolbar.addWidget(self.isolate_button)
-        
-        self.show_all_button = QPushButton("Show All")
-        self.show_all_button.setToolTip("Show all filtered annotations")
-        self.show_all_button.clicked.connect(self._show_all_annotations)
-        self.show_all_button.hide()
-        toolbar.addWidget(self.show_all_button)
         
         toolbar.addSeparator()
         
@@ -1083,14 +1077,10 @@ class AnnotationViewerWindow(QWidget):
     def _update_toolbar_state(self):
         """Update toolbar button states."""
         selection_exists = bool(self.selected_widgets)
-        if self.isolated_mode:
-            self.isolate_button.hide()
-            self.show_all_button.show()
-            self.show_all_button.setEnabled(True)
-        else:
-            self.isolate_button.show()
-            self.show_all_button.hide()
-            self.isolate_button.setEnabled(selection_exists)
+        
+        # Isolate button: enabled only when NOT in isolation mode AND has selection
+        # When isolated, button is disabled (user exits via double-click)
+        self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -1214,23 +1204,32 @@ class AnnotationViewerWindow(QWidget):
         """Handle right-click context menu on annotation."""
         if event.modifiers() == Qt.ControlModifier:
             # Ctrl+right-click: locate in annotation window
-            ann = widget.annotation
+            ann_id = widget.data_item.annotation.id
             
-            self.clear_selection()
-            self.select_widget(widget)
-            # Switch to Select tool when selecting annotations
-            if hasattr(self.main_window, 'select_tool_action'):
-                self.main_window.select_tool_action.setChecked(True)
-            self.selection_changed.emit([ann.id])
-            
-            # Change image if needed
-            if self.annotation_window.current_image_path != ann.image_path:
-                self.annotation_window.set_image(ann.image_path)
-            
-            # Select and center on annotation
-            self.annotation_window.select_annotation(ann, quiet_mode=True)
-            if hasattr(self.annotation_window, 'center_on_annotation'):
-                self.annotation_window.center_on_annotation(ann)
+            # Use SelectionManager if available for context menu navigation
+            if hasattr(self.main_window, 'selection_manager'):
+                self.main_window.selection_manager.handle_context_menu_selection(
+                    ann_id, navigate_to=True
+                )
+            else:
+                # Fallback: manual handling
+                ann = widget.data_item.annotation
+                
+                self.clear_selection()
+                self.select_widget(widget)
+                # Switch to Select tool when selecting annotations
+                if hasattr(self.main_window, 'select_tool_action'):
+                    self.main_window.select_tool_action.setChecked(True)
+                self.selection_changed.emit([ann_id])
+                
+                # Change image if needed
+                if self.annotation_window.current_image_path != ann.image_path:
+                    self.annotation_window.set_image(ann.image_path)
+                
+                # Select and center on annotation
+                self.annotation_window.select_annotation(ann, quiet_mode=True)
+                if hasattr(self.annotation_window, 'center_on_annotation'):
+                    self.annotation_window.center_on_annotation(ann)
             
             event.accept()
     
@@ -1438,6 +1437,7 @@ class AnnotationViewerWindow(QWidget):
         
         self.render_selection_from_ids(ids_to_isolate)
         self._recalculate_layout()
+        self._update_toolbar_state()
     
     def display_and_isolate_ordered_results(self, ordered_ids):
         """Display annotations in a specific order (e.g., similarity results)."""

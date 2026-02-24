@@ -30,6 +30,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 # Special Windows
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
+from coralnet_toolbox.Explorer import SelectionManager
 from coralnet_toolbox.MVAT import MVATWindow
 
 # Other Dialogs
@@ -236,6 +237,14 @@ class MainWindow(QMainWindow):
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
+        
+        # Create the centralized selection manager for explorer windows
+        self.selection_manager = SelectionManager(self)
+        self.selection_manager.register_annotation_viewer(self.annotation_viewer_window)
+        self.selection_manager.register_embedding_viewer(self.embedding_viewer_window)
+        self.selection_manager.register_annotation_window(self.annotation_window)
+        self.selection_manager.register_label_window(self.label_window)
+        self.selection_manager.register_confidence_window(self.confidence_window)
         
         # Initialize after other windows are created
         self.annotation_window.initialize_tools()
@@ -1259,18 +1268,16 @@ class MainWindow(QMainWindow):
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationDeleted.connect(self.annotation_viewer_window.on_annotation_deleted)
         self.annotation_window.annotationModified.connect(self.annotation_viewer_window.on_annotation_modified)
-        # Connect annotation selection changes to sync with viewers
-        self.annotation_window.annotationSelectionChanged.connect(self._on_annotation_selection_changed)
+        # NOTE: Selection syncing is handled by SelectionManager (registered above)
         # Connect label changed signal to viewers
         self.annotation_window.annotationLabelChanged.connect(self.annotation_viewer_window.on_annotation_label_changed)
         self.annotation_window.annotationLabelChanged.connect(self.embedding_viewer_window.on_annotation_label_changed)
-        # Connect gallery selection changes to sync selection highlights
-        self.annotation_viewer_window.selection_changed.connect(self._on_gallery_selection_changed)
+        # NOTE: Gallery selection syncing is handled by SelectionManager
         # Connect embedding viewer signals
         self.annotation_window.annotationCreated.connect(self.embedding_viewer_window.on_annotation_created)
         self.annotation_window.annotationDeleted.connect(self.embedding_viewer_window.on_annotation_deleted)
         self.annotation_window.annotationModified.connect(self.embedding_viewer_window.on_annotation_modified)
-        self.embedding_viewer_window.selection_changed.connect(self._on_embedding_selection_changed)
+        # NOTE: Embedding selection syncing is handled by SelectionManager
         self.annotation_viewer_window.annotations_filtered.connect(self.embedding_viewer_window.set_working_set)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
@@ -1289,6 +1296,8 @@ class MainWindow(QMainWindow):
         self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)        
         # Connect imageLoaded signal to refresh annotation gallery filters
         self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
+        # Connect imageLoaded signal to clear/update embedding viewer when image changes
+        self.image_window.imageLoaded.connect(self.embedding_viewer_window.on_image_loaded)
         # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
         
@@ -2839,75 +2848,42 @@ class MainWindow(QMainWindow):
     
     def _on_gallery_selection_changed(self, selected_ids):
         """
-        Handle selection changes from the annotation gallery dock.
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
         
-        Syncs selection between the gallery and the main annotation canvas.
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
         
         Args:
             selected_ids: List of annotation IDs that are now selected.
         """
-        # Set sync flag to prevent infinite loops
-        self.annotation_window._syncing_selection = True
-        try:
-            # Sync with embedding viewer
-            if hasattr(self, 'embedding_viewer_window'):
-                self.embedding_viewer_window.highlight_points(selected_ids)
-            
-            # Always unselect first to handle switching between annotations
-            if hasattr(self.annotation_window, 'unselect_annotations'):
-                self.annotation_window.unselect_annotations()
-            
-            if len(selected_ids) >= 1:
-                # Select all annotations (single or multiple)
-                if hasattr(self.annotation_window, 'annotations_dict'):
-                    for ann_id in selected_ids:
-                        if ann_id in self.annotation_window.annotations_dict:
-                            ann = self.annotation_window.annotations_dict[ann_id]
-                            self.annotation_window.select_annotation(ann, quiet_mode=True)
-        finally:
-            self.annotation_window._syncing_selection = False
+        # SelectionManager handles all selection syncing automatically
+        pass
     
     def _on_embedding_selection_changed(self, selected_ids):
         """
-        Handle selection changes from the embedding viewer dock.
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
         
-        Syncs selection between the embedding viewer and other components.
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
         
         Args:
             selected_ids: List of annotation IDs that are now selected.
         """
-        # Set sync flag to prevent infinite loops
-        self.annotation_window._syncing_selection = True
-        try:
-            # Sync with gallery viewer
-            if hasattr(self, 'annotation_viewer_window'):
-                self.annotation_viewer_window.highlight_annotations(selected_ids)
-            
-            # Always unselect first to handle switching between annotations
-            if hasattr(self.annotation_window, 'unselect_annotations'):
-                self.annotation_window.unselect_annotations()
-            
-            if len(selected_ids) >= 1:
-                # Select all annotations (single or multiple)
-                if hasattr(self.annotation_window, 'annotations_dict'):
-                    for ann_id in selected_ids:
-                        if ann_id in self.annotation_window.annotations_dict:
-                            ann = self.annotation_window.annotations_dict[ann_id]
-                            self.annotation_window.select_annotation(ann, quiet_mode=True)
-        finally:
-            self.annotation_window._syncing_selection = False
+        # SelectionManager handles all selection syncing automatically
+        pass
     
     def _on_annotation_selection_changed(self, selected_ids):
         """
-        Handle selection changes from AnnotationWindow - sync to viewers.
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
+        
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
         
         Args:
             selected_ids: List of annotation IDs that are now selected.
         """
-        if hasattr(self, 'annotation_viewer_window'):
-            self.annotation_viewer_window.on_annotation_selection_changed(selected_ids)
-        if hasattr(self, 'embedding_viewer_window'):
-            self.embedding_viewer_window.on_annotation_selection_changed(selected_ids)
+        # SelectionManager handles all selection syncing automatically
+        pass
         
     def open_mvat_window(self):
         """Open the Multi-View Annotation Tool (MVAT) window."""

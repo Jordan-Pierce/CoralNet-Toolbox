@@ -191,18 +191,12 @@ class EmbeddingViewerWindow(QWidget):
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         
-        # Isolate/Show All buttons
+        # Isolate Selection button
         self.isolate_button = QPushButton("Isolate Selection")
-        self.isolate_button.setToolTip("Hide all non-selected points")
+        self.isolate_button.setToolTip("Show only selected points (double-click to exit)")
         self.isolate_button.clicked.connect(self._isolate_selection)
         self.isolate_button.setEnabled(False)
         toolbar.addWidget(self.isolate_button)
-        
-        self.show_all_button = QPushButton("Show All")
-        self.show_all_button.setToolTip("Show all embedding points")
-        self.show_all_button.clicked.connect(self._show_all_points)
-        self.show_all_button.hide()
-        toolbar.addWidget(self.show_all_button)
         
         toolbar.addSeparator()
         
@@ -436,10 +430,26 @@ class EmbeddingViewerWindow(QWidget):
         
         Called by MainWindow when the gallery filter changes.
         
+        If the embedding viewer currently has points displayed, this will
+        check if the new working set matches the current embedding. If not,
+        it will clear the display and show the placeholder.
+        
         Args:
             annotation_ids: List of annotation IDs to use for embedding.
         """
         self.working_set_ids = list(annotation_ids)
+        
+        # If we have points currently displayed, check if they match the new working set
+        if self.points_by_id:
+            working_set = set(annotation_ids)
+            displayed_ids = set(self.points_by_id.keys())
+            
+            # If the working set doesn't exactly match what's displayed,
+            # or if any annotation in working set is missing from display,
+            # clear the embedding viewer
+            if working_set != displayed_ids:
+                self._clear_points()
+                self._show_placeholder()
     
     def get_selected_annotation_ids(self):
         """Get list of currently selected annotation IDs."""
@@ -521,6 +531,37 @@ class EmbeddingViewerWindow(QWidget):
         Args:
             annotation_id: ID of the newly created annotation.
         """
+        self._embeddings_stale = True
+    
+    @pyqtSlot(str)
+    def on_image_loaded(self, image_path):
+        """
+        Handle when a new image is loaded in ImageWindow.
+        
+        Clears the embedding viewer since the displayed embeddings are no longer
+        relevant to the current image (unless filter is "All Images").
+        
+        Args:
+            image_path: Path to the loaded image.
+        """
+        # Check if annotation viewer is filtering by specific image or showing all
+        annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+        if annotation_viewer and hasattr(annotation_viewer, 'image_filter_combo'):
+            current_filter = annotation_viewer.image_filter_combo.currentData()
+            
+            # If filter is "All Images", the embedding viewer can stay as-is
+            # since it may contain annotations from multiple images
+            if current_filter == "all":
+                return
+        
+        # Clear the embedding viewer since we're filtering by specific image
+        # and the current embeddings are from a different image
+        self._clear_points()
+        self._show_placeholder()
+        
+        # Reset state
+        self.current_data_items = []
+        self.current_features = None
         self._embeddings_stale = True
     
     # -------------------------------------------------------------------------
@@ -608,13 +649,25 @@ class EmbeddingViewerWindow(QWidget):
                 QMessageBox.warning(self, "Error", "No features could be extracted.")
                 return
             
-            # Assemble final feature matrix
+            # Assemble final feature matrix - ALL annotations must have features
             final_features = []
             final_data_items = []
+            missing_features = []
             for item in data_items:
                 if item.annotation.id in cached_features:
                     final_features.append(cached_features[item.annotation.id])
                     final_data_items.append(item)
+                else:
+                    missing_features.append(item.annotation.id)
+            
+            # If any annotations are missing features, don't show partial results
+            if missing_features:
+                QMessageBox.warning(
+                    self, "Incomplete Features",
+                    f"{len(missing_features)} annotation(s) could not have features extracted.\n"
+                    "All annotations must have features to display the embedding."
+                )
+                return
             
             features = np.array(final_features)
             self.current_data_items = final_data_items
@@ -1069,25 +1122,28 @@ class EmbeddingViewerWindow(QWidget):
     
     def _update_toolbar_state(self):
         """Update toolbar button states based on current state."""
-        if not hasattr(self, 'find_anomalies_button'):
+        # Check for isolate button
+        if not hasattr(self, 'isolate_button'):
             return
         
         selection_exists = bool(self.graphics_scene.selectedItems())
         points_exist = bool(self.points_by_id)
         
-        self.find_anomalies_button.setEnabled(points_exist)
-        self.find_similar_button.setEnabled(points_exist and selection_exists)
-        self.find_duplicates_button.setEnabled(points_exist)
-        self.locate_button.setEnabled(points_exist and selection_exists)
-        self.center_button.setEnabled(points_exist and selection_exists)
+        # Update analysis buttons if they exist
+        if hasattr(self, 'find_anomalies_button'):
+            self.find_anomalies_button.setEnabled(points_exist)
+        if hasattr(self, 'find_similar_button'):
+            self.find_similar_button.setEnabled(points_exist and selection_exists)
+        if hasattr(self, 'find_duplicates_button'):
+            self.find_duplicates_button.setEnabled(points_exist)
+        if hasattr(self, 'locate_button'):
+            self.locate_button.setEnabled(points_exist and selection_exists)
+        if hasattr(self, 'center_button'):
+            self.center_button.setEnabled(points_exist and selection_exists)
         
-        if self.isolated_mode:
-            self.isolate_button.hide()
-            self.show_all_button.show()
-        else:
-            self.isolate_button.show()
-            self.show_all_button.hide()
-            self.isolate_button.setEnabled(selection_exists)
+        # Isolate button: enabled only when NOT in isolation mode AND has selection
+        # When isolated, button is disabled (user exits via double-click)
+        self.isolate_button.setEnabled(not self.isolated_mode and selection_exists)
     
     def _schedule_view_update(self):
         """Schedule delayed view update for virtualization."""
@@ -1366,10 +1422,39 @@ class EmbeddingViewerWindow(QWidget):
             event.ignore()
             return
         
-        # Ctrl+Right-Click for rotation
+        # Ctrl+Right-Click for rotation (on empty space) or context menu (on point)
         if event.button() == Qt.RightButton and event.modifiers() == Qt.ControlModifier:
             item_at_pos = self.graphics_view.itemAt(event.pos())
-            if not isinstance(item_at_pos, EmbeddingPointItem) and self.is_3d_data:
+            
+            # Ctrl+Right-Click on a point: navigate to annotation in AnnotationWindow
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                self.graphics_scene.clearSelection()
+                item_at_pos.setSelected(True)
+                self._on_selection_changed()
+                
+                # Use SelectionManager if available for context menu navigation
+                ann_id = item_at_pos.data_item.annotation.id
+                if hasattr(self.main_window, 'selection_manager'):
+                    self.main_window.selection_manager.handle_context_menu_selection(
+                        ann_id, navigate_to=True
+                    )
+                else:
+                    # Fallback: manually navigate to the annotation
+                    annotation = item_at_pos.data_item.annotation
+                    if hasattr(self, 'annotation_window') and self.annotation_window:
+                        if self.annotation_window.current_image_path != annotation.image_path:
+                            if hasattr(self.annotation_window, 'set_image'):
+                                self.annotation_window.set_image(annotation.image_path)
+                        if hasattr(self.annotation_window, 'select_annotation'):
+                            self.annotation_window.select_annotation(annotation)
+                        if hasattr(self.annotation_window, 'center_on_annotation'):
+                            self.annotation_window.center_on_annotation(annotation)
+                
+                event.accept()
+                return
+            
+            # Ctrl+Right-Click on empty space with 3D data: rotate
+            if self.is_3d_data:
                 self.is_rotating = True
                 self.last_mouse_pos = event.pos()
                 self.graphics_view.setCursor(Qt.ClosedHandCursor)
@@ -1406,21 +1491,46 @@ class EmbeddingViewerWindow(QWidget):
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
             )
             QGraphicsView.mousePressEvent(self.graphics_view, left_event)
+        
+        # Left-click (no modifiers) - clear selection when clicking empty space,
+        # but DO NOT reset viewers (stay in isolated subset)
+        elif event.button() == Qt.LeftButton and not event.modifiers():
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            
+            # If clicked on a point, let default handling toggle selection
+            if isinstance(item_at_pos, EmbeddingPointItem):
+                self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+                QGraphicsView.mousePressEvent(self.graphics_view, event)
+            else:
+                # Clicked on empty space - just clear selection without resetting viewers
+                if self.graphics_scene.selectedItems():
+                    self.graphics_scene.clearSelection()
+                    self._on_selection_changed()
+                event.accept()
         else:
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             QGraphicsView.mousePressEvent(self.graphics_view, event)
     
     def _mouse_double_click_event(self, event):
-        """Handle double-click to clear selection and reset view."""
+        """Handle double-click on empty space to clear selection and reset viewers (Show All)."""
         if self.selection_blocked:
             event.ignore()
             return
         
         if event.button() == Qt.LeftButton:
-            if self.graphics_scene.selectedItems():
-                self.graphics_scene.clearSelection()
-            self.reset_view_requested.emit()
-            event.accept()
+            item_at_pos = self.graphics_view.itemAt(event.pos())
+            
+            # Only reset viewers if double-clicking on empty space
+            if not isinstance(item_at_pos, EmbeddingPointItem):
+                if self.graphics_scene.selectedItems():
+                    self.graphics_scene.clearSelection()
+                # Emit reset signal to exit isolation mode and show all in both viewers
+                self.reset_view_requested.emit()
+                event.accept()
+            else:
+                # Double-click on a point - could be used for other functionality
+                # For now, just accept the event
+                event.accept()
         else:
             QGraphicsView.mouseDoubleClickEvent(self.graphics_view, event)
     
