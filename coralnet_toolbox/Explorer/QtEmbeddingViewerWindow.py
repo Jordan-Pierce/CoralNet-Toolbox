@@ -342,7 +342,7 @@ class EmbeddingViewerWindow(QWidget):
         toolbar.addWidget(technique_label)
         
         self.technique_combo = QComboBox()
-        self.technique_combo.addItems(["UMAP", "TSNE", "PCA", "LDA"])
+        self.technique_combo.addItems(["PCA", "LDA", "UMAP", "TSNE"])
         toolbar.addWidget(self.technique_combo)
         
         # Dimensions

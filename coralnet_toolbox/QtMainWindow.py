@@ -233,11 +233,11 @@ class MainWindow(QMainWindow):
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
-        self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
+        self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
         
-        # Initialize after main windows are created
+        # Initialize after other windows are created
         self.annotation_window.initialize_tools()
 
         # TODO update IO classes to have dialogs
@@ -1095,6 +1095,8 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.timer_dock.setMaximumHeight(100)  # Set height
+        # Hide timer by default (don't show on startup)
+        self.timer_dock.hide()
 
         # Setup the Annotation Dock using DockWrapper
         self.annotation_dock = DockWrapper(
@@ -1145,6 +1147,8 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.performance_dock.setMaximumHeight(125)  # Set height
+        # Hide performance window by default (don't show on startup)
+        self.performance_dock.hide()
         
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
         self.annotation_gallery_dock = DockWrapper(
@@ -1155,9 +1159,11 @@ class MainWindow(QMainWindow):
         )
         # Add toolbars from the viewer window
         if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar(), Qt.TopToolBarArea)
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar(), 
+                                                     Qt.TopToolBarArea)
         if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
-            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
+                                                     Qt.BottomToolBarArea)
 
         # Setup Embedding Viewer Dock (Right) using DockWrapper
         self.embedding_viewer_dock = DockWrapper(
@@ -1167,21 +1173,28 @@ class MainWindow(QMainWindow):
             parent=self
         )
         if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar(), Qt.TopToolBarArea)
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar(), 
+                                                   Qt.TopToolBarArea)
         if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
-            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), Qt.BottomToolBarArea)
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
+                                                   Qt.BottomToolBarArea)
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
         # --------------------------------------------------
 
-        # 3. Add the side docks to their respective areas
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+        # 3. Add the side docks to the right area: Image+Label tab group above Confidence
+        # Add Image dock first
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        
-        # Add Confidence and Performance Window docks to the Right side
+        # Add Confidence dock and split it under the Image dock so it sits below the tab group
         self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
+        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+        # Add Performance dock under Confidence (hidden by default)
         self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
+        self.splitDockWidget(self.confidence_dock, self.performance_dock, Qt.Vertical)
+        # Now add the Label dock and tabify it with the Image dock (so Image/Label are tabs above Confidence)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
+        self.tabifyDockWidget(self.right_dock, self.left_dock)
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
@@ -1191,12 +1204,18 @@ class MainWindow(QMainWindow):
         # 5. Add the Annotation Gallery dock to the Bottom area
         self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
         
-        # 6. Add the Embedding Viewer dock to the Right area
-        self.addDockWidget(Qt.RightDockWidgetArea, self.embedding_viewer_dock)
+        # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
+        # Place both viewer docks in the Bottom area and split them horizontally
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
         
-        # 7. Split the side panels vertically (Timer below Labels, Confidence below Image)
-        self.splitDockWidget(self.left_dock, self.timer_dock, Qt.Vertical)
-        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+        # 7. Place the Timer under the Confidence/Performance area and tabify it with Performance
+        # Timer is hidden by default.
+        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
+        # Tabify Performance and Timer so they share a tab group under Confidence
+        try:
+            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
+        except Exception:
+            pass
 
         # 8. Shrink the default width of the side docks.
         # This tells Qt to assign N pixels of width to the left side and right side,
@@ -1206,6 +1225,14 @@ class MainWindow(QMainWindow):
         # Give the Workspace dock the absolute maximum vertical space available
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
         
+        # Split the two viewer docks (annotation gallery and embedding viewer) horizontally
+        try:
+            self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
+            # Make them approximately equal width
+            self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
+        except Exception:
+            # If splitting fails for any reason (e.g. docks not in same area), ignore silently
+            pass
         # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
