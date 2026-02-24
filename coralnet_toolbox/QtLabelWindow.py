@@ -591,24 +591,23 @@ class LabelWindow(QWidget):
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
-        # Check if we're in Explorer mode
-        explorer_window = self.main_window.explorer_window if self.main_window else None
-        if explorer_window and hasattr(explorer_window, 'annotation_viewer'):
-            annotation_viewer = explorer_window.annotation_viewer
+        # Check if we're using the dock-based annotation gallery viewer
+        annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None) if self.main_window else None
+        if annotation_viewer:
            
-            # Priority 1: Always check for a selection in Explorer first.
-            explorer_selected_count = len(annotation_viewer.selected_widgets)
-            if explorer_selected_count > 0:
-                if explorer_selected_count == 1:
+            # Priority 1: Always check for a selection in Gallery first.
+            gallery_selected_count = len(annotation_viewer.selected_widgets) if hasattr(annotation_viewer, 'selected_widgets') else 0
+            if gallery_selected_count > 0:
+                if gallery_selected_count == 1:
                     text = "Annotation: 1"
                 else:
-                    text = f"Annotations: {explorer_selected_count}"
+                    text = f"Annotations: {gallery_selected_count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early, selection count is most important.
             
             # Priority 2: If no selection, THEN check for isolation mode.
-            if annotation_viewer.isolated_mode:
-                count = len(annotation_viewer.isolated_widgets)
+            if hasattr(annotation_viewer, 'isolated_mode') and annotation_viewer.isolated_mode:
+                count = len(annotation_viewer.isolated_widgets) if hasattr(annotation_viewer, 'isolated_widgets') else 0
                 text = f"Annotations: {count}"
                 self.annotation_count_display.setText(text)
                 return  # Exit early
@@ -657,28 +656,18 @@ class LabelWindow(QWidget):
                     # Center on the selected annotation
                     self.annotation_window.center_on_annotation(annotations[zero_based_index])
                     
-                    # Sync selection back to Explorer viewers if available
-                    explorer_window = (
-                        self.main_window.explorer_window
-                        if hasattr(self, 'main_window') and self.main_window else None
-                    )
-                    if explorer_window and hasattr(explorer_window, 'current_data_items'):
-                        selected_annotation = annotations[zero_based_index]
-                        # Find the corresponding data item and select it
-                        for data_item in explorer_window.current_data_items:
-                            if data_item.annotation.id == selected_annotation.id:
-                                data_item.set_selected(True)
-                        # Update viewers to reflect the selection
-                        if hasattr(explorer_window, 'annotation_viewer') and explorer_window.annotation_viewer:
-                            explorer_window.annotation_viewer.render_selection_from_ids(
-                                {selected_annotation.id}
-                            )
-                        if hasattr(explorer_window, 'embedding_viewer') and explorer_window.embedding_viewer:
-                            explorer_window.embedding_viewer.render_selection_from_ids(
-                                {selected_annotation.id}
-                            )
-                        # Update the label window
-                        explorer_window.update_label_window_selection()
+                    # Sync selection back to dock-based viewers if available
+                    selected_annotation = annotations[zero_based_index]
+                    annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None) if self.main_window else None
+                    embedding_viewer = getattr(self.main_window, 'embedding_viewer_window', None) if self.main_window else None
+                    
+                    # Update gallery viewer to reflect the selection
+                    if annotation_viewer and hasattr(annotation_viewer, 'render_selection_from_ids'):
+                        annotation_viewer.render_selection_from_ids({selected_annotation.id})
+                    
+                    # Update embedding viewer to reflect the selection
+                    if embedding_viewer and hasattr(embedding_viewer, 'render_selection_from_ids'):
+                        embedding_viewer.render_selection_from_ids({selected_annotation.id})
             except (ValueError, IndexError):
                 # In case of parsing error or index out of range
                 pass
@@ -867,12 +856,7 @@ class LabelWindow(QWidget):
         self.annotation_window.update_scene()
         
         # Update annotation count in case visibility changes affect displayed count
-        explorer_window = (
-            self.main_window.explorer_window
-            if hasattr(self, 'main_window') and self.main_window else None
-        )
-        if explorer_window and hasattr(explorer_window, 'label_window'):
-            explorer_window.label_window.update_annotation_count()
+        self.update_annotation_count()
     
     def get_visible_labels(self):
         """Get a list of all labels whose visibility checkbox is checked."""

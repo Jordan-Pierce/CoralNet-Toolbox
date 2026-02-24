@@ -30,27 +30,7 @@ class GlobalEventFilter(QObject):
         
     def eventFilter(self, obj, event):
         try:
-            # Check for explorer window first - this applies to all event types
-            if hasattr(self.main_window, 'explorer_window') and self.main_window.explorer_window:
-                # Special exception for WASD keys which should always work
-                cond = (
-                    event.type() == QEvent.KeyPress and
-                    (event.key() == Qt.Key_Up or event.key() == Qt.Key_Down) and
-                    (event.modifiers() & Qt.ControlModifier)
-                )
-                if cond:
-                    # Handle Ctrl+Up and Ctrl+Down for cycling labels
-                    if event.key() == Qt.Key_Up:
-                        self.label_window.cycle_labels(-1)  # Cycle up/previous
-                        return True
-                    if event.key() == Qt.Key_Down:
-                        self.label_window.cycle_labels(1)  # Cycle down/next
-                        return True
-
-                # For all other events when explorer is visible, pass them through
-                return False
-
-            # Now handle keyboard events
+            # Handle keyboard events
             if event.type() == QEvent.KeyPress:
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
@@ -144,13 +124,15 @@ class GlobalEventFilter(QObject):
                     # First check if the select tool is active
                     if self.main_window.select_tool_action.isChecked():
                         selected_tool = self.annotation_window.selected_tool
-                        select_tool = self.annotation_window.tools[selected_tool]
-                        # Get the active subtool if it exists, pass to its keyPressEvent
-                        if hasattr(select_tool, 'active_subtool') and select_tool.active_subtool:
-                            select_tool.active_subtool.keyPressEvent(event)
-                            return True
+                        # Check if selected_tool is valid before accessing tools dict
+                        if selected_tool and selected_tool in self.annotation_window.tools:
+                            select_tool = self.annotation_window.tools[selected_tool]
+                            # Get the active subtool if it exists, pass to its keyPressEvent
+                            if hasattr(select_tool, 'active_subtool') and select_tool.active_subtool:
+                                select_tool.active_subtool.keyPressEvent(event)
+                                return True
 
-                        # Otherwise, proceed with deletion if there are selected annotations
+                        # Proceed with deletion if there are selected annotations
                         if self.annotation_window.selected_annotations:
                             self.annotation_window.delete_selected_annotations()
                             return True

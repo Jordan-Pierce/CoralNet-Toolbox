@@ -90,6 +90,7 @@ class AnnotationWindow(QGraphicsView):
     annotationsMerged = pyqtSignal(object)  # {'original_ids':[...], 'merged': merged_annotation}
     annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
+    annotationSelectionChanged = pyqtSignal(object)  # list of annotation IDs when selection changes
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -125,6 +126,7 @@ class AnnotationWindow(QGraphicsView):
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
+        self._syncing_selection = False  # Flag to prevent selection sync loops
                 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -2094,7 +2096,14 @@ class AnnotationWindow(QGraphicsView):
         return None
 
     def select_annotation(self, annotation, multi_select=False, quiet_mode=False):
-        """Select an annotation and update the UI accordingly."""
+        """Select an annotation and update the UI accordingly.
+        
+        Args:
+            annotation: The annotation to select.
+            multi_select: If True, add to selection without clearing. If False, clear first.
+            quiet_mode: If True, skip label window and confidence window updates.
+                       Used when SelectionManager handles those updates centrally.
+        """
         # If the annotation is already selected and Ctrl is pressed, unselect it
         if annotation in self.selected_annotations and multi_select:
             self.unselect_annotation(annotation)
@@ -2117,11 +2126,10 @@ class AnnotationWindow(QGraphicsView):
             self.annotationSelected.emit(annotation.id)
             
             # If this is the only selected annotation, update label window and confidence window
-            if len(self.selected_annotations) == 1:
-                if not quiet_mode:
-                    # Emit the label selected signal, unless in quiet mode.
-                    # This is in Explorer to avoid overwriting preview label.
-                    self.labelSelected.emit(annotation.label.id)
+            # (unless in quiet_mode, which means SelectionManager handles these centrally)
+            if len(self.selected_annotations) == 1 and not quiet_mode:
+                # Emit the label selected signal
+                self.labelSelected.emit(annotation.label.id)
                 
                 # Make sure we have a cropped image
                 if not annotation.cropped_image:
@@ -2132,8 +2140,8 @@ class AnnotationWindow(QGraphicsView):
                 annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
         
-        # Special handling for multiple selected annotations
-        if len(self.selected_annotations) > 1:
+        # Special handling for multiple selected annotations (unless in quiet_mode)
+        if len(self.selected_annotations) > 1 and not quiet_mode:
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
         
@@ -2141,6 +2149,9 @@ class AnnotationWindow(QGraphicsView):
         self.set_annotation_visibility(annotation)
         # Always update the viewport
         self.viewport().update()
+        
+        # Emit selection changed signal
+        self._emit_selection_changed()
         
     def select_annotations(self):
         """Select all annotations in the current image."""
@@ -2199,6 +2210,9 @@ class AnnotationWindow(QGraphicsView):
             
             # Update the viewport
             self.viewport().update()
+            
+            # Emit selection changed signal
+            self._emit_selection_changed()
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
@@ -2238,6 +2252,16 @@ class AnnotationWindow(QGraphicsView):
         
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
+        
+        # Emit selection changed signal
+        self._emit_selection_changed()
+    
+    def _emit_selection_changed(self):
+        """Emit the annotationSelectionChanged signal with current selection IDs."""
+        if self._syncing_selection:
+            return  # Prevent infinite loops
+        selected_ids = [ann.id for ann in self.selected_annotations]
+        self.annotationSelectionChanged.emit(selected_ids)
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""

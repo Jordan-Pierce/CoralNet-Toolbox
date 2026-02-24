@@ -1,7 +1,11 @@
 # coralnet_toolbox/Explorer/__init__.py
 
-from .QtExplorerWindow import ExplorerWindow
+from .ui.QtAnnotationViewerWindow import AnnotationViewerWindow
+from .ui.QtEmbeddingViewerWindow import EmbeddingViewerWindow
+from .managers.QtSelectionManager import SelectionManager
 
 __all__ = [
-    'ExplorerWindow',
+    'AnnotationViewerWindow',
+    'EmbeddingViewerWindow',
+    'SelectionManager',
 ]

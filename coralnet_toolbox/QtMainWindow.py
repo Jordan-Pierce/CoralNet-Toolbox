@@ -28,7 +28,9 @@ from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
 # Special Windows
-from coralnet_toolbox.Explorer import ExplorerWindow
+from coralnet_toolbox.Explorer import AnnotationViewerWindow
+from coralnet_toolbox.Explorer import EmbeddingViewerWindow
+from coralnet_toolbox.Explorer import SelectionManager
 from coralnet_toolbox.MVAT import MVATWindow
 
 # Other Dialogs
@@ -227,11 +229,24 @@ class MainWindow(QMainWindow):
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self) 
          
-        # Initialized in open_explorer_window
-        self.explorer_window = None  
         # Initialized in open_mvat_window
         self.mvat_window = None  
-        # Initialize after main windows are created
+        
+        # Create dock-based explorer windows
+        self.annotation_viewer_window = AnnotationViewerWindow(self)
+        self.embedding_viewer_window = EmbeddingViewerWindow(self)
+        self.annotation_viewer_window.set_animation_manager(self.animation_manager)
+        self.embedding_viewer_window.set_animation_manager(self.animation_manager)
+        
+        # Create the centralized selection manager for explorer windows
+        self.selection_manager = SelectionManager(self)
+        self.selection_manager.register_annotation_viewer(self.annotation_viewer_window)
+        self.selection_manager.register_embedding_viewer(self.embedding_viewer_window)
+        self.selection_manager.register_annotation_window(self.annotation_window)
+        self.selection_manager.register_label_window(self.label_window)
+        self.selection_manager.register_confidence_window(self.confidence_window)
+        
+        # Initialize after other windows are created
         self.annotation_window.initialize_tools()
 
         # TODO update IO classes to have dialogs
@@ -691,12 +706,6 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # ========== EXPLORER ACTION ==========
-        # Explorer action
-        self.open_explorer_action = QAction("Explorer", self)
-        self.open_explorer_action.triggered.connect(self.open_explorer_window)
-        self.menu_bar.addAction(self.open_explorer_action)
-
         # ========== MVAT ACTION ==========
         # MVAT (Multi-View Annotation Tool) action
         self.open_mvat_action = QAction("MVAT", self)
@@ -1095,6 +1104,8 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.timer_dock.setMaximumHeight(100)  # Set height
+        # Hide timer by default (don't show on startup)
+        self.timer_dock.hide()
 
         # Setup the Annotation Dock using DockWrapper
         self.annotation_dock = DockWrapper(
@@ -1145,29 +1156,83 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.performance_dock.setMaximumHeight(125)  # Set height
+        # Hide performance window by default (don't show on startup)
+        self.performance_dock.hide()
+        
+        # Setup Annotation Gallery Dock (Bottom) using DockWrapper
+        self.annotation_gallery_dock = DockWrapper(
+            title="Annotation Gallery",
+            object_name="AnnotationGalleryDock",
+            main_widget=self.annotation_viewer_window,
+            parent=self
+        )
+        # Add toolbars from the viewer window
+        if hasattr(self.annotation_viewer_window, 'create_top_toolbar'):
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_top_toolbar(), 
+                                                     Qt.TopToolBarArea)
+        if hasattr(self.annotation_viewer_window, 'create_bottom_toolbar'):
+            self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
+                                                     Qt.BottomToolBarArea)
+
+        # Setup Embedding Viewer Dock (Right) using DockWrapper
+        self.embedding_viewer_dock = DockWrapper(
+            title="Embedding Viewer",
+            object_name="EmbeddingViewerDock",
+            main_widget=self.embedding_viewer_window,
+            parent=self
+        )
+        if hasattr(self.embedding_viewer_window, 'create_top_toolbar'):
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_top_toolbar(), 
+                                                   Qt.TopToolBarArea)
+        if hasattr(self.embedding_viewer_window, 'create_bottom_toolbar'):
+            self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
+                                                   Qt.BottomToolBarArea)
+
+        # By default hide the bottom explorer docks so the Annotation workspace
+        # takes the full vertical space when the main window is shown.
+        # These can be shown later by the user via the View menu or programmatically.
+        self.annotation_gallery_dock.hide()
+        self.embedding_viewer_dock.hide()
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
         # --------------------------------------------------
 
-        # 3. Add the side docks to their respective areas
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+        # 3. Add the side docks to the right area: Image+Label tab group above Confidence
+        # Add Image dock first
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        
-        # Add Confidence and Performance Window docks to the Right side
+        # Add Confidence dock and split it under the Image dock so it sits below the tab group
         self.addDockWidget(Qt.RightDockWidgetArea, self.confidence_dock)
+        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+        # Add Performance dock under Confidence (hidden by default)
         self.addDockWidget(Qt.RightDockWidgetArea, self.performance_dock)
+        self.splitDockWidget(self.confidence_dock, self.performance_dock, Qt.Vertical)
+        # Now add the Label dock and tabify it with the Image dock (so Image/Label are tabs above Confidence)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
+        self.tabifyDockWidget(self.right_dock, self.left_dock)
         
         # 4. Add the Workspace dock to the TOP area. 
         # Because we locked the corners above, "Top" now effectively means 
         # "Top of the center column", sitting perfectly above our invisible central widget!
         self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
         
-        # 5. Split the side panels vertically (Timer below Labels, Confidence below Image)
-        self.splitDockWidget(self.left_dock, self.timer_dock, Qt.Vertical)
-        self.splitDockWidget(self.right_dock, self.confidence_dock, Qt.Vertical)
+        # 5. Add the Annotation Gallery dock to the Bottom area
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
+        
+        # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
+        # Place both viewer docks in the Bottom area and split them horizontally
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
+        
+        # 7. Place the Timer under the Confidence/Performance area and tabify it with Performance
+        # Timer is hidden by default.
+        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
+        # Tabify Performance and Timer so they share a tab group under Confidence
+        try:
+            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
+        except Exception:
+            pass
 
-        # 6. Shrink the default width of the side docks.
+        # 8. Shrink the default width of the side docks.
         # This tells Qt to assign N pixels of width to the left side and right side,
         # leaving the vast majority of the screen for your center column.
         self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
@@ -1175,6 +1240,14 @@ class MainWindow(QMainWindow):
         # Give the Workspace dock the absolute maximum vertical space available
         self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
         
+        # Split the two viewer docks (annotation gallery and embedding viewer) horizontally
+        try:
+            self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
+            # Make them approximately equal width
+            self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
+        except Exception:
+            # If splitting fails for any reason (e.g. docks not in same area), ignore silently
+            pass
         # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
@@ -1197,6 +1270,21 @@ class MainWindow(QMainWindow):
         # Connect the annotationCreated and annotationDeleted to update tooltips
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
+        # Connect annotation signals to the Annotation Gallery
+        self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
+        self.annotation_window.annotationDeleted.connect(self.annotation_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationModified.connect(self.annotation_viewer_window.on_annotation_modified)
+        # NOTE: Selection syncing is handled by SelectionManager (registered above)
+        # Connect label changed signal to viewers
+        self.annotation_window.annotationLabelChanged.connect(self.annotation_viewer_window.on_annotation_label_changed)
+        self.annotation_window.annotationLabelChanged.connect(self.embedding_viewer_window.on_annotation_label_changed)
+        # NOTE: Gallery selection syncing is handled by SelectionManager
+        # Connect embedding viewer signals
+        self.annotation_window.annotationCreated.connect(self.embedding_viewer_window.on_annotation_created)
+        self.annotation_window.annotationDeleted.connect(self.embedding_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationModified.connect(self.embedding_viewer_window.on_annotation_modified)
+        # NOTE: Embedding selection syncing is handled by SelectionManager
+        self.annotation_viewer_window.annotations_filtered.connect(self.embedding_viewer_window.set_working_set)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
@@ -1212,6 +1300,10 @@ class MainWindow(QMainWindow):
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
         # Connect the imageLoaded signal from ImageWindow to check z-channel status
         self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)        
+        # Connect imageLoaded signal to refresh annotation gallery filters
+        self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
+        # Connect imageLoaded signal to clear/update embedding viewer when image changes
+        self.image_window.imageLoaded.connect(self.embedding_viewer_window.on_image_loaded)
         # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
         
@@ -1362,12 +1454,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
-        if self.explorer_window:
-            # Setting parent to None prevents it from being deleted with main window
-            # before it can be properly handled.
-            self.explorer_window.setParent(None)
-            self.explorer_window.close()
-            
         if self.mvat_window:
             self.mvat_window.setParent(None)
             self.mvat_window.close()
@@ -2766,43 +2852,44 @@ class MainWindow(QMainWindow):
     
     # Special Windows
     
-    def open_explorer_window(self):
-        """Open the Explorer window, moving the LabelWindow into it."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening Explorer.")
-            return
-
-        # Check if there are any annotations
-        if not self.annotation_window.annotations_dict:
-            QMessageBox.warning(self,
-                                "Explorer",
-                                "No annotations are present in the project.")
-            return
+    def _on_gallery_selection_changed(self, selected_ids):
+        """
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
         
-        try:
-            self.untoggle_all_tools()
-
-            # Recreate the explorer window, passing the main window instance
-            self.explorer_window = ExplorerWindow(self)
-            self.explorer_window.showMaximized()
-            self.explorer_window.activateWindow()
-            self.explorer_window.raise_()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            if self.explorer_window:
-                self.explorer_window.close()  # Ensure cleanup
-                
-            self.explorer_window = None
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
+        
+        Args:
+            selected_ids: List of annotation IDs that are now selected.
+        """
+        # SelectionManager handles all selection syncing automatically
+        pass
     
-    def close_explorer_window(self):
-        """Handle the explorer window being closed."""
-        if self.explorer_window:           
-            # Clean up reference
-            self.explorer_window = None
+    def _on_embedding_selection_changed(self, selected_ids):
+        """
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
+        
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
+        
+        Args:
+            selected_ids: List of annotation IDs that are now selected.
+        """
+        # SelectionManager handles all selection syncing automatically
+        pass
+    
+    def _on_annotation_selection_changed(self, selected_ids):
+        """
+        DEPRECATED: Selection syncing is now handled by SelectionManager.
+        
+        This method is kept for backward compatibility but selection
+        synchronization is managed centrally by self.selection_manager.
+        
+        Args:
+            selected_ids: List of annotation IDs that are now selected.
+        """
+        # SelectionManager handles all selection syncing automatically
+        pass
         
     def open_mvat_window(self):
         """Open the Multi-View Annotation Tool (MVAT) window."""

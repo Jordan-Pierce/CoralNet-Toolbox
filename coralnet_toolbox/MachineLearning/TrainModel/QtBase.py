@@ -465,7 +465,7 @@ class Base(QDialog):
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(8)
+        self.workers_spinbox.setValue(0)
         form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Save
