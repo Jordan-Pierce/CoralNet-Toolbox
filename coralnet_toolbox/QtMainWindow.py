@@ -2826,17 +2826,17 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'embedding_viewer_window'):
                 self.embedding_viewer_window.highlight_points(selected_ids)
             
-            if len(selected_ids) == 1:
-                # Single selection - highlight in annotation window
-                ann_id = selected_ids[0]
+            # Always unselect first to handle switching between annotations
+            if hasattr(self.annotation_window, 'unselect_annotations'):
+                self.annotation_window.unselect_annotations()
+            
+            if len(selected_ids) >= 1:
+                # Select all annotations (single or multiple)
                 if hasattr(self.annotation_window, 'annotations_dict'):
-                    if ann_id in self.annotation_window.annotations_dict:
-                        ann = self.annotation_window.annotations_dict[ann_id]
-                        self.annotation_window.select_annotation(ann, quiet_mode=True)
-            elif len(selected_ids) == 0:
-                # No selection - clear annotation window selection
-                if hasattr(self.annotation_window, 'unselect_annotations'):
-                    self.annotation_window.unselect_annotations()
+                    for ann_id in selected_ids:
+                        if ann_id in self.annotation_window.annotations_dict:
+                            ann = self.annotation_window.annotations_dict[ann_id]
+                            self.annotation_window.select_annotation(ann, quiet_mode=True)
         finally:
             self.annotation_window._syncing_selection = False
     
@@ -2856,15 +2856,17 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'annotation_viewer_window'):
                 self.annotation_viewer_window.highlight_annotations(selected_ids)
             
-            if len(selected_ids) == 1:
-                ann_id = selected_ids[0]
+            # Always unselect first to handle switching between annotations
+            if hasattr(self.annotation_window, 'unselect_annotations'):
+                self.annotation_window.unselect_annotations()
+            
+            if len(selected_ids) >= 1:
+                # Select all annotations (single or multiple)
                 if hasattr(self.annotation_window, 'annotations_dict'):
-                    if ann_id in self.annotation_window.annotations_dict:
-                        ann = self.annotation_window.annotations_dict[ann_id]
-                        self.annotation_window.select_annotation(ann, quiet_mode=True)
-            elif len(selected_ids) == 0:
-                if hasattr(self.annotation_window, 'unselect_annotations'):
-                    self.annotation_window.unselect_annotations()
+                    for ann_id in selected_ids:
+                        if ann_id in self.annotation_window.annotations_dict:
+                            ann = self.annotation_window.annotations_dict[ann_id]
+                            self.annotation_window.select_annotation(ann, quiet_mode=True)
         finally:
             self.annotation_window._syncing_selection = False
     

@@ -331,15 +331,23 @@ class AnnotationViewerWindow(QWidget):
         Args:
             image_path: Path to the loaded image.
         """
-        # Refresh filters to include new image and set it as default
+        # Remember current filter selection before refreshing
+        current_data = "all"
+        if hasattr(self, 'image_filter_combo'):
+            current_data = self.image_filter_combo.currentData()
+        
+        # Refresh filters to include any new images
         self._populate_filter_combos()
         
-        # Set current image as default in filter
-        if image_path:
+        # Only update filter if a specific image was selected (not "All Images")
+        # This allows filtering by specific image to follow the user as they switch images
+        if current_data != "all" and image_path:
             image_name = os.path.basename(image_path)
             index = self.image_filter_combo.findData(image_name)
             if index >= 0:
                 self.image_filter_combo.setCurrentIndex(index)
+            # Clear stale widgets and refresh with new image's annotations
+            self.refresh_annotations()
     
     # -------------------------------------------------------------------------
     # UI Setup
@@ -1197,6 +1205,9 @@ class AnnotationViewerWindow(QWidget):
             self.last_selected_item_id = widget.data_item.annotation.id
         
         if changed_ids:
+            # Switch to Select tool when selecting annotations
+            if hasattr(self.main_window, 'select_tool_action'):
+                self.main_window.select_tool_action.setChecked(True)
             self.selection_changed.emit(changed_ids)
     
     def handle_annotation_context_menu(self, widget, event):
@@ -1207,6 +1218,9 @@ class AnnotationViewerWindow(QWidget):
             
             self.clear_selection()
             self.select_widget(widget)
+            # Switch to Select tool when selecting annotations
+            if hasattr(self.main_window, 'select_tool_action'):
+                self.main_window.select_tool_action.setChecked(True)
             self.selection_changed.emit([ann.id])
             
             # Change image if needed
@@ -1266,6 +1280,7 @@ class AnnotationViewerWindow(QWidget):
                 if self.selected_widgets:
                     changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                     self.clear_selection()
+                    # No need to switch tool on deselection
                     self.selection_changed.emit(changed_ids)
                 return True
         
@@ -1280,6 +1295,7 @@ class AnnotationViewerWindow(QWidget):
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                 self.clear_selection()
+                # No need to switch tool on deselection/double-click
                 self.selection_changed.emit(changed_ids)
             if self.isolated_mode:
                 self._show_all_annotations()
@@ -1331,6 +1347,9 @@ class AnnotationViewerWindow(QWidget):
                     changed_ids.append(widget.data_item.annotation.id)
         
         if changed_ids:
+            # Switch to Select tool when selecting annotations via rubber band
+            if hasattr(self.main_window, 'select_tool_action'):
+                self.main_window.select_tool_action.setChecked(True)
             self.selection_changed.emit(changed_ids)
         
         return True
