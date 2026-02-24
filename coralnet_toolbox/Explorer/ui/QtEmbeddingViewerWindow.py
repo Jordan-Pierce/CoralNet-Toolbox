@@ -33,20 +33,16 @@ except ImportError:
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, pyqtSlot, QSignalBlocker
 from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QPainterPath, QMouseEvent
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QToolBar, QToolButton, QComboBox,
-    QLabel, QSlider, QPushButton, QGraphicsView, QGraphicsScene,
-    QGraphicsRectItem, QSizePolicy, QAction, QMenu, QWidgetAction,
-    QMessageBox, QApplication, QFormLayout, QFileDialog, QLineEdit,
-    QTabWidget, QGroupBox
+    QWidget, QVBoxLayout, QToolBar, QComboBox,
+    QLabel, QPushButton, QGraphicsView, QGraphicsScene,
+    QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
-from coralnet_toolbox.Explorer.QtDataItem import EmbeddingPointItem, AnnotationDataItem
-from coralnet_toolbox.Explorer.QtFeatureStore import FeatureStore
-from coralnet_toolbox.Explorer.QtSettingsWidgets import (
-    SimilaritySettingsWidget, AnomalySettingsWidget, DuplicateSettingsWidget
-)
-from coralnet_toolbox.Explorer.yolo_models import YOLO_MODELS, is_yolo_model
-from coralnet_toolbox.Explorer.transformer_models import TRANSFORMER_MODELS, is_transformer_model
+from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem
+from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
+from coralnet_toolbox.Explorer.managers.QtFeatureStore import FeatureStore
+from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
+from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -79,20 +75,11 @@ class EmbeddingViewerWindow(QWidget):
     Signals:
         selection_changed (list): Emitted when points are selected/deselected.
         embedding_complete (): Emitted when embedding pipeline finishes.
-        find_similar_requested (): Emitted when Find Similar is clicked.
-        find_anomalies_requested (): Emitted when Find Anomalies is clicked.
-        find_duplicates_requested (): Emitted when Find Duplicates is clicked.
     """
     
     selection_changed = pyqtSignal(list)  # List of annotation IDs
     embedding_complete = pyqtSignal()
     reset_view_requested = pyqtSignal()
-    find_similar_requested = pyqtSignal()
-    find_anomalies_requested = pyqtSignal()
-    find_duplicates_requested = pyqtSignal()
-    similarity_parameters_changed = pyqtSignal(dict)
-    anomaly_parameters_changed = pyqtSignal(dict)
-    duplicate_parameters_changed = pyqtSignal(dict)
     
     def __init__(self, main_window, parent=None):
         """
@@ -199,78 +186,6 @@ class EmbeddingViewerWindow(QWidget):
         toolbar.addWidget(self.isolate_button)
         
         toolbar.addSeparator()
-        
-        # Find Similar button with settings dropdown
-        self.find_similar_button = QToolButton()
-        self.find_similar_button.setText("Find Similar")
-        self.find_similar_button.setToolTip(
-            "Find annotations with similar visual features to the selection"
-        )
-        self.find_similar_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_similar_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        
-        run_similar_action = QAction("Find Similar", self)
-        run_similar_action.triggered.connect(self.find_similar_requested.emit)
-        self.find_similar_button.setDefaultAction(run_similar_action)
-        
-        self.similarity_settings_widget = SimilaritySettingsWidget()
-        similarity_menu = QMenu(self)
-        similarity_widget_action = QWidgetAction(similarity_menu)
-        similarity_widget_action.setDefaultWidget(self.similarity_settings_widget)
-        similarity_menu.addAction(similarity_widget_action)
-        self.find_similar_button.setMenu(similarity_menu)
-        self.similarity_settings_widget.parameters_changed.connect(
-            self.similarity_parameters_changed.emit
-        )
-        toolbar.addWidget(self.find_similar_button)
-        
-        # Find Duplicates button
-        self.find_duplicates_button = QToolButton()
-        self.find_duplicates_button.setText("Find Duplicates")
-        self.find_duplicates_button.setToolTip(
-            "Find annotations that are likely duplicates based on feature similarity"
-        )
-        self.find_duplicates_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_duplicates_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        
-        run_duplicates_action = QAction("Find Duplicates", self)
-        run_duplicates_action.triggered.connect(self.find_duplicates_requested.emit)
-        self.find_duplicates_button.setDefaultAction(run_duplicates_action)
-        
-        self.duplicate_settings_widget = DuplicateSettingsWidget()
-        duplicate_menu = QMenu(self)
-        duplicate_widget_action = QWidgetAction(duplicate_menu)
-        duplicate_widget_action.setDefaultWidget(self.duplicate_settings_widget)
-        duplicate_menu.addAction(duplicate_widget_action)
-        self.find_duplicates_button.setMenu(duplicate_menu)
-        self.duplicate_settings_widget.parameters_changed.connect(
-            self.duplicate_parameters_changed.emit
-        )
-        toolbar.addWidget(self.find_duplicates_button)
-        
-        # Find Anomalies button
-        self.find_anomalies_button = QToolButton()
-        self.find_anomalies_button.setText("Find Anomalies")
-        self.find_anomalies_button.setToolTip(
-            "Detect anomalous annotations using LOF and Isolation Forest"
-        )
-        self.find_anomalies_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.find_anomalies_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        
-        run_anomalies_action = QAction("Find Anomalies", self)
-        run_anomalies_action.triggered.connect(self.find_anomalies_requested.emit)
-        self.find_anomalies_button.setDefaultAction(run_anomalies_action)
-        
-        self.anomaly_settings_widget = AnomalySettingsWidget()
-        anomaly_menu = QMenu(self)
-        anomaly_widget_action = QWidgetAction(anomaly_menu)
-        anomaly_widget_action.setDefaultWidget(self.anomaly_settings_widget)
-        anomaly_menu.addAction(anomaly_widget_action)
-        self.find_anomalies_button.setMenu(anomaly_menu)
-        self.anomaly_settings_widget.parameters_changed.connect(
-            self.anomaly_parameters_changed.emit
-        )
-        toolbar.addWidget(self.find_anomalies_button)
         
         # Spacer
         spacer = QWidget()
@@ -1107,12 +1022,6 @@ class EmbeddingViewerWindow(QWidget):
     
     def _disable_analysis_buttons(self):
         """Disable analysis buttons when no data."""
-        if hasattr(self, 'find_anomalies_button'):
-            self.find_anomalies_button.setEnabled(False)
-        if hasattr(self, 'find_similar_button'):
-            self.find_similar_button.setEnabled(False)
-        if hasattr(self, 'find_duplicates_button'):
-            self.find_duplicates_button.setEnabled(False)
         if hasattr(self, 'locate_button'):
             self.locate_button.setEnabled(False)
         if hasattr(self, 'center_button'):
@@ -1130,12 +1039,6 @@ class EmbeddingViewerWindow(QWidget):
         points_exist = bool(self.points_by_id)
         
         # Update analysis buttons if they exist
-        if hasattr(self, 'find_anomalies_button'):
-            self.find_anomalies_button.setEnabled(points_exist)
-        if hasattr(self, 'find_similar_button'):
-            self.find_similar_button.setEnabled(points_exist and selection_exists)
-        if hasattr(self, 'find_duplicates_button'):
-            self.find_duplicates_button.setEnabled(points_exist)
         if hasattr(self, 'locate_button'):
             self.locate_button.setEnabled(points_exist and selection_exists)
         if hasattr(self, 'center_button'):

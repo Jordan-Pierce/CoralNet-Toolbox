@@ -9,9 +9,10 @@ ExplorerWindow implementation.
 """
 
 import warnings
-from typing import List, Set, Optional
 
-from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QSignalBlocker
+from typing import List, Set
+
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

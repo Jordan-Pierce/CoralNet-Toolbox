@@ -7,27 +7,20 @@ that integrates directly with MainWindow as a dockable widget. It combines
 the gallery display functionality with built-in filtering capabilities.
 """
 
-import os
 import warnings
 
-import numpy as np
-
-try:
-    import jenkspy
-    JENKSPY_AVAILABLE = True
-except ImportError:
-    JENKSPY_AVAILABLE = False
+import os
 
 from PyQt5.QtCore import Qt, QTimer, QRect, pyqtSignal, pyqtSlot, QEvent
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QToolBar, QToolButton, QComboBox,
+    QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QSlider, QPushButton, QScrollArea, QRubberBand,
     QSizePolicy
 )
 
-from coralnet_toolbox.Explorer.QtDataItem import AnnotationImageWidget, AnnotationDataItem
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
+from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationImageWidget
+
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -95,13 +88,10 @@ class AnnotationViewerWindow(QWidget):
         
         # Sorting state
         self.active_ordered_ids = []
-        self.is_confidence_sort_available = True
-        self.confidence_breaks = None
         self._group_headers = []
         
         # Display options
         self.current_widget_size = 96
-        self.show_confidence = False
         
         # Selection blocking (for external wizards)
         self.selection_blocked = False
@@ -160,7 +150,7 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Quality", "Anomaly", "Confidence"])
+        self.sort_combo.addItems(["None", "Label", "Image"])
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         toolbar.addWidget(self.sort_combo)
@@ -186,15 +176,6 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(self.size_value_label)
         
         toolbar.addSeparator()
-        
-        # Confidence toggle
-        self.confidence_toggle_button = QToolButton()
-        self.confidence_toggle_button.setIcon(get_icon("percentage.svg"))
-        self.confidence_toggle_button.setToolTip("Toggle confidence badge visibility")
-        self.confidence_toggle_button.setCheckable(True)
-        self.confidence_toggle_button.setChecked(False)
-        self.confidence_toggle_button.clicked.connect(self._on_confidence_toggle_changed)
-        toolbar.addWidget(self.confidence_toggle_button)
         
         return toolbar
     
@@ -845,12 +826,6 @@ class AnnotationViewerWindow(QWidget):
             items.sort(key=lambda i: (i.effective_label.short_label_code, i.get_effective_confidence()))
         elif sort_type == "Image":
             items.sort(key=lambda i: (os.path.basename(i.annotation.image_path), i.get_effective_confidence()))
-        elif sort_type == "Confidence":
-            items.sort(key=lambda i: i.get_effective_confidence(), reverse=False)
-        elif sort_type == "Quality":
-            items.sort(key=lambda i: i.quality_score if i.quality_score is not None else 0.5, reverse=False)
-        elif sort_type == "Anomaly":
-            items.sort(key=lambda i: i.anomaly_score if i.anomaly_score is not None else 0.0, reverse=True)
         
         return items
     
@@ -860,9 +835,6 @@ class AnnotationViewerWindow(QWidget):
         
         if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
             return [("", None, data_items)]
-        
-        if sort_type in ("Quality", "Anomaly", "Confidence"):
-            return self._group_by_score_ranges(data_items, sort_type)
         
         # Group by Label or Image
         groups = []
@@ -892,87 +864,6 @@ class AnnotationViewerWindow(QWidget):
         
         if current_group:
             groups.append((current_key, current_color, current_group))
-        
-        return groups
-    
-    def _group_by_score_ranges(self, data_items, score_type):
-        """Group items by score ranges for Quality, Anomaly, or Confidence."""
-        if score_type == "Quality":
-            ranges = [
-                ("Poor Quality (<40%)", QColor(220, 20, 60), lambda s: s is not None and s < 0.4),
-                ("Fair Quality (40-60%)", QColor(255, 215, 0), lambda s: s is not None and 0.4 <= s < 0.6),
-                ("Good Quality (60-80%)", QColor(144, 238, 144), lambda s: s is not None and 0.6 <= s < 0.8),
-                ("Excellent Quality (≥80%)", QColor(34, 139, 34), lambda s: s is not None and s >= 0.8),
-                ("Unknown Quality", None, lambda s: s is None),
-            ]
-            get_score = lambda i: i.quality_score
-        elif score_type == "Anomaly":
-            ranges = [
-                ("Very Anomalous (≥80%)", QColor(220, 20, 60), lambda s: s is not None and s >= 0.8),
-                ("Anomalous (60-80%)", QColor(255, 140, 0), lambda s: s is not None and 0.6 <= s < 0.8),
-                ("Slightly Anomalous (40-60%)", QColor(255, 215, 0), lambda s: s is not None and 0.4 <= s < 0.6),
-                ("Normal (<40%)", QColor(144, 238, 144), lambda s: s is not None and s < 0.4),
-                ("Unknown Anomaly", None, lambda s: s is None),
-            ]
-            get_score = lambda i: i.anomaly_score
-        else:  # Confidence
-            return self._group_by_confidence(data_items)
-        
-        groups = []
-        for label, color, condition in ranges:
-            items = [i for i in data_items if condition(get_score(i))]
-            if items:
-                groups.append((label, color, items))
-        return groups
-    
-    def _group_by_confidence(self, data_items):
-        """Group items by confidence score using Jenks breaks."""
-        confidences = [i.get_effective_confidence() for i in data_items if i.get_effective_confidence() > 0]
-        
-        if not confidences:
-            return [("", None, data_items)]
-        
-        confidences = np.array(confidences)
-        
-        # Calculate breaks
-        try:
-            if JENKSPY_AVAILABLE and len(confidences) >= 5:
-                breaks = jenkspy.jenks_breaks(confidences, n_classes=6)[1:-1]
-            else:
-                breaks = [float(np.quantile(confidences, q)) for q in [0.17, 0.33, 0.50, 0.67, 0.83]]
-            breaks = sorted(list(set(breaks)))
-        except Exception:
-            breaks = None
-        
-        self.confidence_breaks = breaks
-        
-        if not breaks:
-            return [("", None, data_items)]
-        
-        # Create bins
-        bins = [-0.001] + breaks + [1.001]
-        bin_groups = [[] for _ in range(len(bins) - 1)]
-        
-        for item in data_items:
-            conf = item.get_effective_confidence()
-            for i in range(len(bins) - 1):
-                if bins[i] < conf <= bins[i + 1]:
-                    bin_groups[i].append(item)
-                    break
-        
-        groups = []
-        color_map = [
-            QColor(220, 20, 60), QColor(255, 99, 71), QColor(255, 165, 0),
-            QColor(255, 215, 0), QColor(144, 238, 144), QColor(34, 139, 34)
-        ]
-        
-        for i, items in enumerate(bin_groups):
-            if items:
-                min_pct = int(max(0, bins[i]) * 100)
-                max_pct = int(min(1, bins[i + 1]) * 100)
-                label = f"Confidence: {min_pct}-{max_pct}%"
-                color = color_map[min(i, len(color_map) - 1)]
-                groups.append((label, color, items))
         
         return groups
     
@@ -1019,8 +910,6 @@ class AnnotationViewerWindow(QWidget):
     def _on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []
-        if sort_type != "Confidence":
-            self.confidence_breaks = None
         self._recalculate_layout()
     
     def _on_size_changed(self, value):
@@ -1030,12 +919,6 @@ class AnnotationViewerWindow(QWidget):
         self.current_widget_size = value
         self.size_value_label.setText(str(value))
         self._recalculate_layout()
-    
-    def _on_confidence_toggle_changed(self):
-        """Handle confidence badge toggle."""
-        self.show_confidence = self.confidence_toggle_button.isChecked()
-        for widget in self.annotation_widgets_by_id.values():
-            widget.update()
     
     def _isolate_selection(self):
         """Hide non-selected annotations."""
