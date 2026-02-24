@@ -1,7 +1,13 @@
 # coralnet_toolbox/Explorer/__init__.py
 
-from .QtExplorerWindow import ExplorerWindow
+from .QtAnnotationViewerWindow import AnnotationViewerWindow
+from .QtEmbeddingViewerWindow import EmbeddingViewerWindow
+from .QtGalleryItemModel import GalleryItemModel
+from .QtEmbeddingPointModel import EmbeddingPointModel
 
 __all__ = [
-    'ExplorerWindow',
+    'AnnotationViewerWindow',
+    'EmbeddingViewerWindow',
+    'GalleryItemModel',
+    'EmbeddingPointModel',
 ]

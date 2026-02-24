@@ -90,6 +90,7 @@ class AnnotationWindow(QGraphicsView):
     annotationsMerged = pyqtSignal(object)  # {'original_ids':[...], 'merged': merged_annotation}
     annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
+    annotationSelectionChanged = pyqtSignal(object)  # list of annotation IDs when selection changes
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -125,6 +126,7 @@ class AnnotationWindow(QGraphicsView):
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
+        self._syncing_selection = False  # Flag to prevent selection sync loops
                 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -2142,6 +2144,9 @@ class AnnotationWindow(QGraphicsView):
         # Always update the viewport
         self.viewport().update()
         
+        # Emit selection changed signal
+        self._emit_selection_changed()
+        
     def select_annotations(self):
         """Select all annotations in the current image."""
         # Make cursor busy
@@ -2199,6 +2204,9 @@ class AnnotationWindow(QGraphicsView):
             
             # Update the viewport
             self.viewport().update()
+            
+            # Emit selection changed signal
+            self._emit_selection_changed()
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
@@ -2238,6 +2246,16 @@ class AnnotationWindow(QGraphicsView):
         
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
+        
+        # Emit selection changed signal
+        self._emit_selection_changed()
+    
+    def _emit_selection_changed(self):
+        """Emit the annotationSelectionChanged signal with current selection IDs."""
+        if self._syncing_selection:
+            return  # Prevent infinite loops
+        selected_ids = [ann.id for ann in self.selected_annotations]
+        self.annotationSelectionChanged.emit(selected_ids)
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""

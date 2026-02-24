@@ -30,27 +30,7 @@ class GlobalEventFilter(QObject):
         
     def eventFilter(self, obj, event):
         try:
-            # Check for explorer window first - this applies to all event types
-            if hasattr(self.main_window, 'explorer_window') and self.main_window.explorer_window:
-                # Special exception for WASD keys which should always work
-                cond = (
-                    event.type() == QEvent.KeyPress and
-                    (event.key() == Qt.Key_Up or event.key() == Qt.Key_Down) and
-                    (event.modifiers() & Qt.ControlModifier)
-                )
-                if cond:
-                    # Handle Ctrl+Up and Ctrl+Down for cycling labels
-                    if event.key() == Qt.Key_Up:
-                        self.label_window.cycle_labels(-1)  # Cycle up/previous
-                        return True
-                    if event.key() == Qt.Key_Down:
-                        self.label_window.cycle_labels(1)  # Cycle down/next
-                        return True
-
-                # For all other events when explorer is visible, pass them through
-                return False
-
-            # Now handle keyboard events
+            # Handle keyboard events
             if event.type() == QEvent.KeyPress:
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
