@@ -3,6 +3,6 @@ Explorer.managers package
 """
 
 __all__ = [
-    'QtFeatureStore',
+    'QtCacheManager',
     'QtSelectionManager',
 ]

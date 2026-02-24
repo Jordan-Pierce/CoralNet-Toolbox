@@ -11,23 +11,17 @@ import os
 import warnings
 
 import numpy as np
+import torch
+
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from sklearn.preprocessing import StandardScaler
 
 try:
-    import torch
-except ImportError:
-    torch = None
-
-try:
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.decomposition import PCA
-    from sklearn.manifold import TSNE
-    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+    # Sometimes hard to install on Mac
     from umap import UMAP
 except ImportError:
-    StandardScaler = None
-    PCA = None
-    TSNE = None
-    LDA = None
     UMAP = None
 
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, pyqtSlot, QSignalBlocker
@@ -40,7 +34,7 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.Explorer.core.QtDataItem import EmbeddingPointItem
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.managers.QtFeatureStore import FeatureStore
+from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
 from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
 from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
 
@@ -69,7 +63,7 @@ class EmbeddingViewerWindow(QWidget):
     Standalone embedding visualization window for ML-based annotation exploration.
     
     This widget is designed to be wrapped by DockWrapper and integrated into
-    MainWindow as a persistent dock. It owns the FeatureStore, handles feature
+    MainWindow as a persistent dock. It owns the CacheManager, handles feature
     extraction, dimensionality reduction, and visualization.
     
     Signals:
@@ -100,8 +94,8 @@ class EmbeddingViewerWindow(QWidget):
         self._syncing_selection = False  # Flag to prevent selection sync loops
         self._embeddings_stale = False  # Flag indicating new annotations need embedding
         
-        # Feature store for caching extracted features
-        self.feature_store = FeatureStore()
+        # Cache manager for caching extracted features
+        self.cache_manager = CacheManager()
         
         # Data model
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
@@ -117,7 +111,7 @@ class EmbeddingViewerWindow(QWidget):
         self._cached_transformer_model_name = None
         
         # Device and image size settings
-        self.device = 'cuda' if torch and torch.cuda.is_available() else 'cpu'
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.imgsz = 224
         
         # Points tracking
@@ -250,8 +244,18 @@ class EmbeddingViewerWindow(QWidget):
         technique_label = QLabel(" Technique: ")
         toolbar.addWidget(technique_label)
         
+        available_techniques = []
+        if PCA:
+            available_techniques.append("PCA")
+        if LDA:
+            available_techniques.append("LDA")
+        if TSNE:
+            available_techniques.append("TSNE")
+        if UMAP:
+            available_techniques.append("UMAP")
+            
         self.technique_combo = QComboBox()
-        self.technique_combo.addItems(["PCA", "LDA", "UMAP", "TSNE"])
+        self.technique_combo.addItems(available_techniques)
         toolbar.addWidget(self.technique_combo)
         
         # Dimensions
@@ -403,7 +407,7 @@ class EmbeddingViewerWindow(QWidget):
             del self.points_by_id[annotation_id]
         
         # Invalidate cached features
-        self.feature_store.remove_features_for_annotation(annotation_id)
+        self.cache_manager.remove_features_for_annotation(annotation_id)
         
         self._update_toolbar_state()
     
@@ -417,7 +421,7 @@ class EmbeddingViewerWindow(QWidget):
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
         """Handle annotation modification - invalidates cached features."""
-        self.feature_store.remove_features_for_annotation(annotation_id)
+        self.cache_manager.remove_features_for_annotation(annotation_id)
         
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
@@ -543,7 +547,7 @@ class EmbeddingViewerWindow(QWidget):
         try:
             # Check feature cache
             progress_bar.set_busy_mode("Checking feature cache...")
-            cached_features, items_to_process = self.feature_store.get_features(
+            cached_features, items_to_process = self.cache_manager.get_features(
                 data_items, model_key
             )
             
@@ -554,7 +558,7 @@ class EmbeddingViewerWindow(QWidget):
                 )
                 if len(newly_extracted_features) > 0:
                     progress_bar.set_busy_mode("Saving features to cache...")
-                    self.feature_store.add_features(
+                    self.cache_manager.add_features(
                         valid_items, newly_extracted_features, model_key
                     )
                     for item, vec in zip(valid_items, newly_extracted_features):
@@ -753,7 +757,7 @@ class EmbeddingViewerWindow(QWidget):
             QMessageBox.warning(self, "Error", f"Feature extraction failed: {e}")
             return np.array([]), []
         finally:
-            if torch and torch.cuda.is_available():
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
     def _extract_transformer_features(self, data_items, model_name, progress_bar=None):
@@ -801,7 +805,7 @@ class EmbeddingViewerWindow(QWidget):
             QMessageBox.warning(self, "Error", f"Transformer extraction failed: {e}")
             return np.array([]), []
         finally:
-            if torch and torch.cuda.is_available():
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
     def _prepare_images(self, data_items, progress_bar, format_type):
@@ -1529,5 +1533,5 @@ class EmbeddingViewerWindow(QWidget):
     
     def closeEvent(self, event):
         """Handle close event - cleanup resources."""
-        self.feature_store.close()
+        self.cache_manager.close()
         super().closeEvent(event)

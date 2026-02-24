@@ -13,12 +13,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class FeatureStore:
+class CacheManager:
     """
     Manages storing and retrieving annotation features for MULTIPLE models
     using a single SQLite database and multiple, model-specific FAISS indexes.
     """
-    def __init__(self, db_path='feature_store.db', index_path_base='features'):
+    def __init__(self, db_path='cache_manager.db', index_path_base='features'):
         self.db_path = db_path
         self.index_path_base = index_path_base  # Base name for index files, e.g., 'features'
         self.conn = sqlite3.connect(self.db_path)
