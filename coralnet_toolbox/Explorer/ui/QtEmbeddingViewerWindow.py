@@ -37,9 +37,9 @@ from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
 from coralnet_toolbox.Explorer.managers.QtCacheManager import CacheManager
 from coralnet_toolbox.Explorer.models.yolo_models import YOLO_MODELS, is_yolo_model
 from coralnet_toolbox.Explorer.models.transformer_models import TRANSFORMER_MODELS, is_transformer_model
+from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 
 from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_pil
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -154,6 +154,10 @@ class EmbeddingViewerWindow(QWidget):
         self.view_update_timer = QTimer(self)
         self.view_update_timer.setSingleShot(True)
         self.view_update_timer.timeout.connect(self._update_visible_points)
+        
+        # Background worker for embedding pipeline
+        self._pipeline_worker = None
+        self._pipeline_running = False
         
         # Build UI
         self._setup_ui()
@@ -452,6 +456,114 @@ class EmbeddingViewerWindow(QWidget):
         """
         self._embeddings_stale = True
     
+    @pyqtSlot(object)
+    def on_annotations_labels_changed(self, changes):
+        """
+        Handle batch label changes - just update visuals, don't invalidate features.
+        
+        Args:
+            changes: List of tuples (annotation_id, old_label, new_label)
+        """
+        # Just update point visuals
+        for annotation_id, old_label, new_label in changes:
+            if annotation_id in self.points_by_id:
+                point = self.points_by_id[annotation_id]
+                point.update()
+    
+    @pyqtSlot(str, object)
+    def on_annotation_moved(self, annotation_id, move_data):
+        """
+        Handle annotation being moved - might need to invalidate features if moved significantly.
+        
+        Args:
+            annotation_id: ID of the moved annotation
+            move_data: Dict with 'old_center' and 'new_center' QPointF
+        """
+        # For now, invalidate features on any move since the crop might change
+        self.cache_manager.remove_features_for_annotation(annotation_id)
+        if annotation_id in self.data_item_cache:
+            del self.data_item_cache[annotation_id]
+        self._embeddings_stale = True
+    
+    @pyqtSlot(str, object)
+    def on_annotation_geometry_edited(self, annotation_id, geometry_data):
+        """
+        Handle annotation geometry being edited - invalidate cached features.
+        
+        Args:
+            annotation_id: ID of the annotation
+            geometry_data: Dict with 'old_geom' and 'new_geom'
+        """
+        self.cache_manager.remove_features_for_annotation(annotation_id)
+        if annotation_id in self.data_item_cache:
+            del self.data_item_cache[annotation_id]
+        self._embeddings_stale = True
+    
+    @pyqtSlot(str, object)
+    def on_annotation_cut(self, original_annotation_id, new_annotations):
+        """
+        Handle annotation being cut - remove original and mark stale.
+        
+        Args:
+            original_annotation_id: ID of the original annotation
+            new_annotations: List of new annotation objects
+        """
+        # Remove original from cache
+        self.cache_manager.remove_features_for_annotation(original_annotation_id)
+        if original_annotation_id in self.data_item_cache:
+            del self.data_item_cache[original_annotation_id]
+        
+        # Remove from working set
+        if original_annotation_id in self.working_set_ids:
+            self.working_set_ids.remove(original_annotation_id)
+        
+        # Remove point from scene
+        if original_annotation_id in self.points_by_id:
+            point = self.points_by_id[original_annotation_id]
+            self.graphics_scene.removeItem(point)
+            del self.points_by_id[original_annotation_id]
+        
+        self._embeddings_stale = True
+    
+    @pyqtSlot(object)
+    def on_annotations_merged(self, merge_data):
+        """
+        Handle multiple annotations being merged - remove originals and mark stale.
+        
+        Args:
+            merge_data: Dict with 'original_ids' list and 'merged' annotation object
+        """
+        original_ids = merge_data['original_ids']
+        
+        # Remove originals from cache
+        for ann_id in original_ids:
+            self.cache_manager.remove_features_for_annotation(ann_id)
+            if ann_id in self.data_item_cache:
+                del self.data_item_cache[ann_id]
+            
+            # Remove from working set
+            if ann_id in self.working_set_ids:
+                self.working_set_ids.remove(ann_id)
+            
+            # Remove point from scene
+            if ann_id in self.points_by_id:
+                point = self.points_by_id[ann_id]
+                self.graphics_scene.removeItem(point)
+                del self.points_by_id[ann_id]
+        
+        self._embeddings_stale = True
+    
+    @pyqtSlot(str, object)
+    def on_annotation_split(self, original_annotation_id, new_annotations):
+        """
+        Handle annotation being split - same as cut.
+        
+        Args:
+            original_annotation_id: ID of the original annotation
+            new_annotations: List of new annotation objects
+        """
+        self.on_annotation_cut(original_annotation_id, new_annotations)
+    
     @pyqtSlot(str)
     def on_image_loaded(self, image_path):
         """
@@ -489,12 +601,17 @@ class EmbeddingViewerWindow(QWidget):
     
     def run_embedding_pipeline(self):
         """
-        Execute the full embedding pipeline:
+        Execute the full embedding pipeline in a background thread:
         1. Get working set from gallery
         2. Extract features
         3. Run dimensionality reduction
         4. Update visualization
         """
+        # Cancel any existing pipeline
+        if self._pipeline_running and self._pipeline_worker:
+            self._pipeline_worker.cancel()
+            self._pipeline_worker.wait()
+        
         # Get working set from gallery if available
         if hasattr(self.main_window, 'annotation_viewer_window'):
             self.working_set_ids = (
@@ -540,80 +657,99 @@ class EmbeddingViewerWindow(QWidget):
         sanitized_model_name = sanitized_model_name.replace(' ', '_').replace('/', '_')
         model_key = sanitized_model_name
         
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, "Processing Annotations")
-        progress_bar.show()
+        # Create worker with callable extractors
+        self._pipeline_worker = EmbeddingPipelineWorker(
+            data_items=data_items,
+            model_name=model_name,
+            model_key=model_key,
+            embedding_params=embedding_params,
+            cache_manager=self.cache_manager,
+            feature_extractor_fn=self._extract_features_for_worker,
+            dim_reduction_fn=self._run_dimensionality_reduction
+        )
         
+        # Connect signals
+        self._pipeline_worker.progress.connect(self._on_pipeline_progress)
+        self._pipeline_worker.finished.connect(self._on_pipeline_finished)
+        self._pipeline_worker.error.connect(self._on_pipeline_error)
+        
+        # Start worker
+        self._pipeline_running = True
+        
+        # Update status bar if available
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.main_window.status_bar.showMessage("Running embedding pipeline...")
+        
+        self._disable_analysis_buttons()
+        self._pipeline_worker.start()
+        
+    def _extract_features_for_worker(self, model_name, data_items):
+        """
+        Wrapper for _extract_features that works with the worker thread.
+        Note: This runs in the worker thread.
+        
+        Args:
+            model_name: Name/path of the feature extraction model
+            data_items: List of AnnotationDataItem objects
+            
+        Returns:
+            tuple: (features_array, valid_items_list)
+        """
+        return self._extract_features(data_items, model_name, progress_bar=None)
+    
+    def _on_pipeline_progress(self, message):
+        """Handle progress updates from the worker."""
+        # Update main window status bar if available
+        self.main_window.status_bar.showMessage(message)
+    
+    def _on_pipeline_finished(self, results):
+        """Handle successful completion of the embedding pipeline."""
         try:
-            # Check feature cache
-            progress_bar.set_busy_mode("Checking feature cache...")
-            cached_features, items_to_process = self.cache_manager.get_features(
-                data_items, model_key
-            )
+            # Extract results
+            final_data_items = results['data_items']
+            features = results['features']
+            embedded_features = results['embedded_features']
+            model_key = results['model_key']
             
-            # Extract features for uncached items
-            if items_to_process:
-                newly_extracted_features, valid_items = self._extract_features(
-                    items_to_process, model_name, progress_bar
-                )
-                if len(newly_extracted_features) > 0:
-                    progress_bar.set_busy_mode("Saving features to cache...")
-                    self.cache_manager.add_features(
-                        valid_items, newly_extracted_features, model_key
-                    )
-                    for item, vec in zip(valid_items, newly_extracted_features):
-                        cached_features[item.annotation.id] = vec
-            
-            if not cached_features:
-                QMessageBox.warning(self, "Error", "No features could be extracted.")
-                return
-            
-            # Assemble final feature matrix - ALL annotations must have features
-            final_features = []
-            final_data_items = []
-            missing_features = []
-            for item in data_items:
-                if item.annotation.id in cached_features:
-                    final_features.append(cached_features[item.annotation.id])
-                    final_data_items.append(item)
-                else:
-                    missing_features.append(item.annotation.id)
-            
-            # If any annotations are missing features, don't show partial results
-            if missing_features:
-                QMessageBox.warning(
-                    self, "Incomplete Features",
-                    f"{len(missing_features)} annotation(s) could not have features extracted.\n"
-                    "All annotations must have features to display the embedding."
-                )
-                return
-            
-            features = np.array(final_features)
+            # Update state
             self.current_data_items = final_data_items
             self.current_features = features
             self.current_feature_model_key = model_key
-            
-            # Run dimensionality reduction
-            progress_bar.set_busy_mode("Running dimensionality reduction...")
-            embedded_features = self._run_dimensionality_reduction(features, embedding_params)
-            
-            if embedded_features is None:
-                return
-            
+
+            # Normalize embedded_features to an ndarray and compute dims safely
+            embedded_features = np.asarray(embedded_features)
+            if embedded_features.ndim == 1:
+                # Convert shape (N,) to (N,1) if possible, or treat as single-dim
+                embedded_features = embedded_features.reshape(-1, 1)
+
+            n_dims = 1 if embedded_features.ndim == 1 else embedded_features.shape[1]
+
             # Update visualization
-            progress_bar.set_busy_mode("Updating visualization...")
             self._update_data_items_with_embedding(final_data_items, embedded_features)
-            self._update_embeddings(final_data_items, embedded_features.shape[1])
+            self._update_embeddings(final_data_items, n_dims)
             self._show_embedding()
             self._reset_view()
             
             self.embedding_complete.emit()
             
+            # Update status bar
+            self.main_window.status_bar.showMessage("Embedding complete", 3000)
+                
         finally:
+            self._pipeline_running = False
             QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
+            self._update_toolbar_state()
+    
+    def _on_pipeline_error(self, error_message):
+        """Handle errors from the worker."""
+        QMessageBox.warning(self, "Pipeline Error", error_message)
+        
+        self._pipeline_running = False
+        QApplication.restoreOverrideCursor()
+        self._update_toolbar_state()
+        
+        # Update status bar with error message if available
+        self.main_window.status_bar.showMessage("Embedding failed", 3000)
     
     def _get_selected_model(self):
         """Get the currently selected model name/path."""
@@ -911,16 +1047,36 @@ class EmbeddingViewerWindow(QWidget):
                     if label_name != REVIEW_LABEL:
                         labels.append(label_name)
                         labeled_indices.append(i)
-                
+
                 if len(set(labels)) < 2:
                     QMessageBox.warning(self, "LDA Error", "LDA requires at least 2 labeled classes.")
                     return None
-                
+
                 labeled_features = features_scaled[labeled_indices]
-                n_components_lda = min(n_components, len(set(labels)) - 1)
+                # LDA can produce at most (n_classes - 1) components. Compute that cap.
+                max_lda_components = max(1, len(set(labels)) - 1)
+                n_components_lda = min(n_components, max_lda_components)
                 reducer = LDA(n_components=n_components_lda)
                 reducer.fit(labeled_features, labels)
-                return reducer.transform(features_scaled)
+                lda_transformed = reducer.transform(features_scaled)
+
+                # If LDA produced fewer components than requested, pad the remainder
+                # using PCA on the original (scaled) features so callers can still
+                # request e.g. 3D output even when LDA intrinsically yields <3 dims.
+                if lda_transformed.shape[1] < n_components:
+                    needed = n_components - lda_transformed.shape[1]
+                    # Ensure we don't ask PCA for more components than available
+                    available_dim = min(needed, features_scaled.shape[1])
+                    if available_dim > 0:
+                        pca = PCA(n_components=available_dim, random_state=42)
+                        pca_components = pca.fit_transform(features_scaled)
+                        # Concatenate LDA components with PCA extras
+                        combined = np.hstack([lda_transformed, pca_components[:, :available_dim]])
+                        return combined
+                    else:
+                        return lda_transformed
+
+                return lda_transformed
             
             # Other techniques
             if technique == "UMAP":
@@ -957,7 +1113,12 @@ class EmbeddingViewerWindow(QWidget):
         """Update data items with embedding coordinates."""
         if embedded_features is None:
             return
-        
+
+        # Ensure numpy array of shape (N, D). Convert 1D -> (N,1) to simplify downstream logic.
+        embedded_features = np.asarray(embedded_features)
+        if embedded_features.ndim == 1:
+            embedded_features = embedded_features.reshape(-1, 1)
+
         n_dims = embedded_features.shape[1]
         scale_factor = 4000
         min_vals = np.min(embedded_features, axis=0)
@@ -969,13 +1130,17 @@ class EmbeddingViewerWindow(QWidget):
             norm_coords = (embedded_features[i] - min_vals) / range_vals
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
             
-            if n_dims == 3:
+            if n_dims >= 3:
                 item.embedding_x_3d = scaled_coords[0]
                 item.embedding_y_3d = scaled_coords[1]
                 item.embedding_z_3d = scaled_coords[2]
-            else:
+            elif n_dims == 2:
                 item.embedding_x_3d = scaled_coords[0]
                 item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = 0.0
+            else:  # n_dims == 1
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = 0.0
                 item.embedding_z_3d = 0.0
             
             item.embedding_x = item.embedding_x_3d

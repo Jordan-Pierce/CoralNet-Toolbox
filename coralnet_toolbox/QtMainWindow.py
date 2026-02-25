@@ -234,8 +234,8 @@ class MainWindow(QMainWindow):
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
-        self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.annotation_viewer_window.set_animation_manager(self.animation_manager)
+        self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
         
         # Create the centralized selection manager for explorer windows
@@ -1191,8 +1191,8 @@ class MainWindow(QMainWindow):
         # By default hide the bottom explorer docks so the Annotation workspace
         # takes the full vertical space when the main window is shown.
         # These can be shown later by the user via the View menu or programmatically.
-        self.annotation_gallery_dock.hide()
-        self.embedding_viewer_dock.hide()
+        # self.annotation_gallery_dock.hide()
+        # self.embedding_viewer_dock.hide()
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1248,6 +1248,7 @@ class MainWindow(QMainWindow):
         except Exception:
             # If splitting fails for any reason (e.g. docks not in same area), ignore silently
             pass
+        
         # --------------------------------------------------
         # Enable drag and drop
         # --------------------------------------------------
@@ -1257,54 +1258,146 @@ class MainWindow(QMainWindow):
         # Setup connections
         # --------------------------------------------------
 
-        # Connect the toolChanged signal (to the AnnotationWindow)
+        # ---------------------------------------------------------------------
+        # Tool & toolbar synchronization
+        # - Emit the chosen tool name (str) to the annotation window so it
+        #   can activate the corresponding tool implementation.
+        # - Keep the label window's internal "annotation count state" in sync
+        #   with the active tool (some tools affect label counts UI).
+        # - Ensure toolbar UI updates when the AnnotationWindow requests a
+        #   tool change (two-way synchronization).
+        # ---------------------------------------------------------------------
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
-        # Connect the toolChanged signal to the LabelWindow update_label_count_state method
         self.toolChanged.connect(self.label_window.update_annotation_count_state)
-        # Connect the toolChanged signal (to the Toolbar)
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
-        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
+
+        # ---------------------------------------------------------------------
+        # Label and annotation selection flows
+        # - When AnnotationWindow reports a label was selected, forward that
+        #   selection to the LabelWindow so its UI reflects the selection.
+        # - Keep the label-window annotation counts updated when annotations
+        #   are selected in the annotation canvas.
+        # ---------------------------------------------------------------------
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the annotationSelected to the LabelWindow's update_annotation_count
         self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
-        # Connect the annotationCreated and annotationDeleted to update tooltips
+
+        # ---------------------------------------------------------------------
+        # Annotation lifecycle -> Label/Viewer updates
+        # - Update label tooltips whenever annotations are created/deleted.
+        # - Notify gallery/embedding viewers about annotation creation,
+        #   deletion, and modification so they can maintain their datasets.
+        # ---------------------------------------------------------------------
         self.annotation_window.annotationCreated.connect(self.label_window.update_tooltips)
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
-        # Connect annotation signals to the Annotation Gallery
+
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
         self.annotation_window.annotationDeleted.connect(self.annotation_viewer_window.on_annotation_deleted)
         self.annotation_window.annotationModified.connect(self.annotation_viewer_window.on_annotation_modified)
-        # NOTE: Selection syncing is handled by SelectionManager (registered above)
-        # Connect label changed signal to viewers
-        self.annotation_window.annotationLabelChanged.connect(self.annotation_viewer_window.on_annotation_label_changed)
-        self.annotation_window.annotationLabelChanged.connect(self.embedding_viewer_window.on_annotation_label_changed)
-        # NOTE: Gallery selection syncing is handled by SelectionManager
-        # Connect embedding viewer signals
+
         self.annotation_window.annotationCreated.connect(self.embedding_viewer_window.on_annotation_created)
         self.annotation_window.annotationDeleted.connect(self.embedding_viewer_window.on_annotation_deleted)
         self.annotation_window.annotationModified.connect(self.embedding_viewer_window.on_annotation_modified)
-        # NOTE: Embedding selection syncing is handled by SelectionManager
-        self.annotation_viewer_window.annotations_filtered.connect(self.embedding_viewer_window.set_working_set)
-        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
+
+        # ---------------------------------------------------------------------
+        # Annotation label changes -> update viewers
+        # - When an annotation's label is changed, both gallery and embedding
+        #   viewers need to update any cached label/display state.
+        # ---------------------------------------------------------------------
+        self.annotation_window.annotationLabelChanged.connect(
+            self.annotation_viewer_window.on_annotation_label_changed)
+        self.annotation_window.annotationLabelChanged.connect(
+            self.embedding_viewer_window.on_annotation_label_changed)
+        
+        # Batch label changes
+        self.annotation_window.annotationsLabelsChanged.connect(
+            self.annotation_viewer_window.on_annotations_labels_changed)
+        self.annotation_window.annotationsLabelsChanged.connect(
+            self.embedding_viewer_window.on_annotations_labels_changed)
+        
+        # ---------------------------------------------------------------------
+        # Annotation geometry changes -> update viewers
+        # - When annotations are moved, resized, cut, merged, split, or have
+        #   their geometry edited, viewers need to update accordingly.
+        # ---------------------------------------------------------------------
+        self.annotation_window.annotationMoved.connect(
+            self.annotation_viewer_window.on_annotation_moved)
+        self.annotation_window.annotationMoved.connect(
+            self.embedding_viewer_window.on_annotation_moved)
+        
+        self.annotation_window.annotationGeometryEdited.connect(
+            self.annotation_viewer_window.on_annotation_geometry_edited)
+        self.annotation_window.annotationGeometryEdited.connect(
+            self.embedding_viewer_window.on_annotation_geometry_edited)
+        
+        self.annotation_window.annotationCut.connect(
+            self.annotation_viewer_window.on_annotation_cut)
+        self.annotation_window.annotationCut.connect(
+            self.embedding_viewer_window.on_annotation_cut)
+        
+        self.annotation_window.annotationsMerged.connect(
+            self.annotation_viewer_window.on_annotations_merged)
+        self.annotation_window.annotationsMerged.connect(
+            self.embedding_viewer_window.on_annotations_merged)
+        
+        self.annotation_window.annotationSplit.connect(
+            self.annotation_viewer_window.on_annotation_split)
+        self.annotation_window.annotationSplit.connect(
+            self.embedding_viewer_window.on_annotation_split)
+        
+        # ---------------------------------------------------------------------
+        # NOTE: Selection synchronization across AnnotationWindow, Viewer
+        # Windows and Embedding viewer is handled centrally by
+        # SelectionManager (registered earlier). Do not duplicate selection
+        # syncing here to avoid inconsistent state.
+        # ---------------------------------------------------------------------
+
+        # ---------------------------------------------------------------------
+        # Filter -> embedding working set
+        # - When the annotation gallery emits a filtered set of annotations,
+        #   update the embedding viewer's working set so embeddings reflect
+        #   the current gallery filter.
+        # ---------------------------------------------------------------------
+        self.annotation_viewer_window.annotations_filtered.connect(
+            self.embedding_viewer_window.set_working_set)
+
+        # ---------------------------------------------------------------------
+        # LabelWindow -> AnnotationWindow flows
+        # - Selecting a label in the LabelWindow should change the selected
+        #   label in the AnnotationWindow (affects subsequent annotations).
+        # - Changing label transparency in the LabelWindow should update
+        #   the annotation visualization in the AnnotationWindow.
+        # ---------------------------------------------------------------------
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
-        # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.annotation_window.update_label_transparency)
-        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
+
+        # ---------------------------------------------------------------------
+        # Image-related signals
+        # - When the active image selection changes, tell the AnnotationWindow
+        #   to update its current image path & state.
+        # - When images change, perform higher-level cleanup (e.g. cancel SAM
+        #   or YOLOE working areas) via handle_image_changed().
+        # ---------------------------------------------------------------------
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
-        # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Previously there was a toggle for filter group; filters are always visible now
-        # Connect the zChannelRemoved signal from ImageWindow to update status bar
+
+        # ---------------------------------------------------------------------
+        # Z-channel handling
+        # - If a Z channel is removed from an image, let the AnnotationWindow
+        #   update its status and clear any Z visualizations it was showing.
+        # ---------------------------------------------------------------------
         self.image_window.zChannelRemoved.connect(self.annotation_window.on_z_channel_removed)
-        # Connect the zChannelRemoved signal from ImageWindow to clear z-channel visualization in AnnotationWindow
         self.image_window.zChannelRemoved.connect(self.annotation_window.clear_z_channel_visualization)
-        # Connect the imageLoaded signal from ImageWindow to check z-channel status
-        self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)        
-        # Connect imageLoaded signal to refresh annotation gallery filters
+
+        # ---------------------------------------------------------------------
+        # Image loaded handlers
+        # - When a new image is loaded, several viewers need to refresh or
+        #   re-check state (z-channel, gallery filters, embedding context).
+        # - Also close any image-specific dialogs/tools that shouldn't persist
+        #   across images (patch sampling, rugosity, scale dialogs, etc.).
+        # ---------------------------------------------------------------------
+        self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)
         self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
-        # Connect imageLoaded signal to clear/update embedding viewer when image changes
         self.image_window.imageLoaded.connect(self.embedding_viewer_window.on_image_loaded)
-        # Connect imageLoaded signal to close specific dialogs when a new image is set (useful for many dialogs)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
         
         # --------------------------------------------------
@@ -1318,9 +1411,20 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
         
+        # Flash a success message for 3 seconds
+        self.status_bar.showMessage("Ready!", 3000)
+        
         # Process events
         QApplication.processEvents()
         
+    @property
+    def status_bar(self):
+        """
+        Alias for the native QMainWindow status bar. 
+        Creates it automatically on the first call if it doesn't exist.
+        """
+        return self.statusBar()
+    
     # --- Backwards Compatibility Aliases for Tools ---
     
     @property
@@ -1570,16 +1674,18 @@ class MainWindow(QMainWindow):
             # Multiple annotations selected
             pass
         
-    def choose_specific_tool(self, tool):
-        """Choose a specific tool based on the provided tool name."""
-        # Untoggle all tools first (clear buttons)
-        self.untoggle_all_tools()
-        # Trigger the select tool action in the main window to set the button
-        self.select_tool_action.trigger()
-        # Switch to select tool in main window (sets button)
+    def choose_specific_tool(self, tool, preserve_selection=False):
+        """Choose a specific tool based on the provided tool name.
+        
+        Args:
+            tool: The tool name to activate.
+            preserve_selection: If True, existing selections will be preserved during tool switch.
+        """
+        # Update button states to reflect the new tool
         self.handle_tool_changed(tool)
-        # Set the select tool in the annotation window (sets tool)
-        self.annotation_window.set_selected_tool(tool)
+        
+        # Set the tool in the annotation window
+        self.annotation_window.set_selected_tool(tool, preserve_selection=preserve_selection)
         
     def toggle_tool(self, state):
         """Toggle the selected tool and emit the toolChanged signal."""

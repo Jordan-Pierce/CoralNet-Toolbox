@@ -645,10 +645,24 @@ class AnnotationViewerWindow(QWidget):
             annotation_id: ID of the modified annotation.
         """
         if annotation_id in self.annotation_widgets_by_id:
-            widget = self.annotation_widgets_by_id[annotation_id]
-            widget.recalculate_aspect_ratio()
-            widget.unload_image()
-            self._recalculate_layout()
+            # Get the updated annotation
+            if hasattr(self.annotation_window, 'annotations_dict'):
+                ann = self.annotation_window.annotations_dict.get(annotation_id)
+                if ann:
+                    # Regenerate the cropped image
+                    self._ensure_cropped_images([ann])
+                    
+                    # Update data item cache
+                    if annotation_id in self.data_item_cache:
+                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                    
+                    # Update the widget
+                    widget = self.annotation_widgets_by_id[annotation_id]
+                    widget.data_item = self.data_item_cache[annotation_id]
+                    widget.recalculate_aspect_ratio()
+                    widget.unload_image()  # Unload old image
+                    widget.load_image()  # Load new regenerated image
+                    self._recalculate_layout()
     
     @pyqtSlot(object)
     def on_annotation_selection_changed(self, selected_ids):
@@ -665,6 +679,169 @@ class AnnotationViewerWindow(QWidget):
             self.render_selection_from_ids(set(selected_ids) if selected_ids else set())
         finally:
             self._syncing_selection = False
+    
+    @pyqtSlot(object)
+    def on_annotations_labels_changed(self, changes):
+        """
+        Handle batch label changes.
+        
+        Args:
+            changes: List of tuples (annotation_id, old_label, new_label)
+        """
+        # Update widgets for all changed annotations
+        for annotation_id, old_label, new_label in changes:
+            if annotation_id in self.annotation_widgets_by_id:
+                widget = self.annotation_widgets_by_id[annotation_id]
+                widget.update()
+                widget.update_tooltip()
+        
+        # Recalculate layout if sorting by label
+        if self.sort_combo.currentText() == "Label":
+            self._recalculate_layout()
+        
+        # Refresh label filter options
+        self._populate_label_filter()
+    
+    @pyqtSlot(str, object)
+    def on_annotation_moved(self, annotation_id, move_data):
+        """
+        Handle annotation being moved.
+        
+        Args:
+            annotation_id: ID of the moved annotation
+            move_data: Dict with 'old_center' and 'new_center' QPointF
+        """
+        # Moved annotations need crop regeneration since position changed
+        if annotation_id in self.annotation_widgets_by_id:
+            # Get the updated annotation
+            if hasattr(self.annotation_window, 'annotations_dict'):
+                ann = self.annotation_window.annotations_dict.get(annotation_id)
+                if ann:
+                    # Regenerate the cropped image
+                    self._ensure_cropped_images([ann])
+                    
+                    # Update data item cache
+                    if annotation_id in self.data_item_cache:
+                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                    
+                    # Update the widget
+                    widget = self.annotation_widgets_by_id[annotation_id]
+                    widget.data_item = self.data_item_cache[annotation_id]
+                    widget.recalculate_aspect_ratio()
+                    widget.unload_image()  # Unload old image
+                    widget.load_image()  # Load new regenerated image
+                    widget.update_tooltip()
+                    self._recalculate_layout()
+    
+    @pyqtSlot(str, object)
+    def on_annotation_geometry_edited(self, annotation_id, geometry_data):
+        """
+        Handle annotation geometry being edited.
+        
+        Args:
+            annotation_id: ID of the annotation
+            geometry_data: Dict with 'old_geom' and 'new_geom'
+        """
+        # Geometry changed - need to regenerate the crop
+        if annotation_id in self.annotation_widgets_by_id:
+            # Get the updated annotation
+            if hasattr(self.annotation_window, 'annotations_dict'):
+                ann = self.annotation_window.annotations_dict.get(annotation_id)
+                if ann:
+                    # Regenerate the cropped image
+                    self._ensure_cropped_images([ann])
+                    
+                    # Update data item cache
+                    if annotation_id in self.data_item_cache:
+                        self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
+                    
+                    # Update the widget
+                    widget = self.annotation_widgets_by_id[annotation_id]
+                    widget.data_item = self.data_item_cache[annotation_id]
+                    widget.recalculate_aspect_ratio()
+                    widget.unload_image()  # Unload old image
+                    widget.load_image()  # Load new regenerated image
+                    self._recalculate_layout()
+    
+    @pyqtSlot(str, object)
+    def on_annotation_cut(self, original_annotation_id, new_annotations):
+        """
+        Handle annotation being cut into multiple pieces.
+        
+        Args:
+            original_annotation_id: ID of the original annotation
+            new_annotations: List of new annotation objects
+        """
+        # Remove original
+        if original_annotation_id in self.data_item_cache:
+            del self.data_item_cache[original_annotation_id]
+        if original_annotation_id in self.annotation_widgets_by_id:
+            widget = self.annotation_widgets_by_id[original_annotation_id]
+            if widget in self.selected_widgets:
+                self.selected_widgets.remove(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+            del self.annotation_widgets_by_id[original_annotation_id]
+        
+        # Add new annotations
+        self._ensure_cropped_images(new_annotations)
+        for ann in new_annotations:
+            if ann.id not in self.data_item_cache:
+                self.data_item_cache[ann.id] = AnnotationDataItem(ann)
+            data_item = self.data_item_cache[ann.id]
+            if data_item not in self.all_data_items:
+                self.all_data_items.append(data_item)
+        
+        self._recalculate_layout()
+    
+    @pyqtSlot(object)
+    def on_annotations_merged(self, merge_data):
+        """
+        Handle multiple annotations being merged into one.
+        
+        Args:
+            merge_data: Dict with 'original_ids' list and 'merged' annotation object
+        """
+        original_ids = merge_data['original_ids']
+        merged_annotation = merge_data['merged']
+        
+        # Remove originals
+        for ann_id in original_ids:
+            if ann_id in self.data_item_cache:
+                del self.data_item_cache[ann_id]
+            if ann_id in self.annotation_widgets_by_id:
+                widget = self.annotation_widgets_by_id[ann_id]
+                if widget in self.selected_widgets:
+                    self.selected_widgets.remove(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.annotation_widgets_by_id[ann_id]
+            
+            # Remove from all_data_items
+            self.all_data_items = [item for item in self.all_data_items 
+                                   if item.annotation.id != ann_id]
+        
+        # Add merged annotation
+        self._ensure_cropped_images([merged_annotation])
+        if merged_annotation.id not in self.data_item_cache:
+            self.data_item_cache[merged_annotation.id] = AnnotationDataItem(merged_annotation)
+        data_item = self.data_item_cache[merged_annotation.id]
+        if data_item not in self.all_data_items:
+            self.all_data_items.append(data_item)
+        
+        self._recalculate_layout()
+    
+    @pyqtSlot(str, object)
+    def on_annotation_split(self, original_annotation_id, new_annotations):
+        """
+        Handle annotation being split into multiple pieces.
+        
+        Args:
+            original_annotation_id: ID of the original annotation
+            new_annotations: List of new annotation objects
+        """
+        # Same as cut - remove original and add new ones
+        self.on_annotation_cut(original_annotation_id, new_annotations)
     
     # -------------------------------------------------------------------------
     # Gallery Display Logic
@@ -1078,9 +1255,7 @@ class AnnotationViewerWindow(QWidget):
             self.last_selected_item_id = widget.data_item.annotation.id
         
         if changed_ids:
-            # Switch to Select tool when selecting annotations
-            if hasattr(self.main_window, 'select_tool_action'):
-                self.main_window.select_tool_action.setChecked(True)
+            # Emit selection change - SelectionManager will handle tool switching
             self.selection_changed.emit(changed_ids)
     
     def handle_annotation_context_menu(self, widget, event):
@@ -1100,9 +1275,7 @@ class AnnotationViewerWindow(QWidget):
                 
                 self.clear_selection()
                 self.select_widget(widget)
-                # Switch to Select tool when selecting annotations
-                if hasattr(self.main_window, 'select_tool_action'):
-                    self.main_window.select_tool_action.setChecked(True)
+                # Emit selection change - SelectionManager will handle tool switching
                 self.selection_changed.emit([ann_id])
                 
                 # Change image if needed
@@ -1162,7 +1335,6 @@ class AnnotationViewerWindow(QWidget):
                 if self.selected_widgets:
                     changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                     self.clear_selection()
-                    # No need to switch tool on deselection
                     self.selection_changed.emit(changed_ids)
                 return True
         
@@ -1177,7 +1349,6 @@ class AnnotationViewerWindow(QWidget):
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                 self.clear_selection()
-                # No need to switch tool on deselection/double-click
                 self.selection_changed.emit(changed_ids)
             if self.isolated_mode:
                 self._show_all_annotations()
@@ -1229,9 +1400,7 @@ class AnnotationViewerWindow(QWidget):
                     changed_ids.append(widget.data_item.annotation.id)
         
         if changed_ids:
-            # Switch to Select tool when selecting annotations via rubber band
-            if hasattr(self.main_window, 'select_tool_action'):
-                self.main_window.select_tool_action.setChecked(True)
+            # Emit selection change - SelectionManager will handle tool switching
             self.selection_changed.emit(changed_ids)
         
         return True
@@ -1254,51 +1423,6 @@ class AnnotationViewerWindow(QWidget):
             self.rubber_band_origin = None
             return True
         return False
-    
-    # -------------------------------------------------------------------------
-    # Preview Label Support
-    # -------------------------------------------------------------------------
-    
-    def apply_preview_label_to_selected(self, preview_label):
-        """Apply a preview label to selected annotations."""
-        if not self.selected_widgets or not preview_label:
-            return
-        
-        changed_ids = []
-        for widget in self.selected_widgets:
-            widget.data_item.set_preview_label(preview_label)
-            widget.update()
-            changed_ids.append(widget.data_item.annotation.id)
-        
-        if self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-        
-        if changed_ids:
-            self.preview_changed.emit(changed_ids)
-    
-    def clear_preview_states(self):
-        """Clear all preview label states."""
-        changed = False
-        for widget in self.annotation_widgets_by_id.values():
-            if widget.data_item.has_preview_changes():
-                widget.data_item.clear_preview_label()
-                widget.update()
-                changed = True
-        
-        if changed and self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-    
-    def has_preview_changes(self):
-        """Check if there are any preview changes."""
-        return any(w.data_item.has_preview_changes() for w in self.annotation_widgets_by_id.values())
-    
-    def apply_preview_changes_permanently(self):
-        """Apply all preview changes permanently."""
-        applied = []
-        for widget in self.annotation_widgets_by_id.values():
-            if widget.data_item.apply_preview_permanently():
-                applied.append(widget.annotation)
-        return applied
     
     # -------------------------------------------------------------------------
     # Utility Methods

@@ -21,43 +21,42 @@ class CacheManager:
     def __init__(self, db_path='cache_manager.db', index_path_base='features'):
         self.db_path = db_path
         self.index_path_base = index_path_base  # Base name for index files, e.g., 'features'
-        self.conn = sqlite3.connect(self.db_path)
-        self.cursor = self.conn.cursor()
+        # Note: do NOT keep a long-lived sqlite3 connection here — sqlite3
+        # connections are thread-affine. Open connections per-call instead.
         self._create_table()
 
-        # A dictionary to hold multiple FAISS indexes, keyed by model_key
-        self.faiss_indexes = {}
+        # We do not keep in-memory FAISS indexes to avoid sharing
+        # FAISS objects across threads. Index files are read from and
+        # written to disk as needed.
 
     def _create_table(self):
         """Create the metadata table if it doesn't exist."""
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS features (
-                annotation_id TEXT NOT NULL,
-                model_key TEXT NOT NULL,
-                faiss_index INTEGER NOT NULL,
-                PRIMARY KEY (annotation_id, model_key)
-            )
-        ''')
-        self.conn.commit()
+        # Use a short-lived connection to avoid cross-thread usage
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS features (
+                    annotation_id TEXT NOT NULL,
+                    model_key TEXT NOT NULL,
+                    faiss_index INTEGER NOT NULL,
+                    PRIMARY KEY (annotation_id, model_key)
+                )
+            ''')
+            conn.commit()
 
     def _get_or_load_index(self, model_key):
         """
         Retrieves an index from memory or loads it from disk if it exists.
         Returns the index object or None if not found in memory or on disk.
         """
-        # 1. Check if the index is already loaded in memory
-        if model_key in self.faiss_indexes:
-            return self.faiss_indexes[model_key]
-
-        # 2. If not in memory, check for a corresponding file on disk
+        # Check for a corresponding file on disk and load it afresh.
         index_path = f"{self.index_path_base}_{model_key}.faiss"
         if os.path.exists(index_path):
-            print(f"Loading existing FAISS index from {index_path}")
+            print(f"Loading FAISS index from {index_path}")
             index = faiss.read_index(index_path)
-            self.faiss_indexes[model_key] = index  # Cache it in memory
             return index
 
-        # 3. If not in memory or on disk, return None
+        # If not on disk, return None
         return None
 
     def add_features(self, data_items, features, model_key):
@@ -68,59 +67,68 @@ class CacheManager:
             return
 
         # Get the specific index for this model, loading it if necessary
+        # Load index from disk if it exists, otherwise create a new index
         index = self._get_or_load_index(model_key)
-
-        # If no index exists yet, create one
         if index is None:
             feature_dim = features.shape[1]
             print(f"Creating new FAISS index for model '{model_key}' with dimension {feature_dim}.")
             index = faiss.IndexFlatL2(feature_dim)
-            self.faiss_indexes[model_key] = index
 
-        # Add vectors to the specific FAISS index
+        # Add vectors to the FAISS index
         start_index = index.ntotal
         index.add(features.astype('float32'))
 
-        # Add metadata to SQLite. The table already supports multiple models.
-        for i, item in enumerate(data_items):
-            faiss_row_index = start_index + i
-            self.cursor.execute(
-                "INSERT OR REPLACE INTO features (annotation_id, model_key, faiss_index) VALUES (?, ?, ?)",
-                (item.annotation.id, model_key, faiss_row_index)
-            )
-        self.conn.commit()
-        self.save_faiss_index(model_key)  # Save the specific index that was modified
+        # Add metadata to SQLite using a short-lived connection
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            for i, item in enumerate(data_items):
+                faiss_row_index = start_index + i
+                cur.execute(
+                    "INSERT OR REPLACE INTO features (annotation_id, model_key, faiss_index) VALUES (?, ?, ?)",
+                    (item.annotation.id, model_key, faiss_row_index)
+                )
+            conn.commit()
+
+        # Persist FAISS index to disk immediately
+        index_path = f"{self.index_path_base}_{model_key}.faiss"
+        faiss.write_index(index, index_path)
 
     def get_features(self, data_items, model_key):
         """
         Retrieves features for given data items and a specific model.
         """
         # Get the specific index for this model
-        index = self._get_or_load_index(model_key)
+        # Query SQLite using a short-lived connection to find faiss indices
+        ids_to_query = [item.annotation.id for item in data_items]
+        if not ids_to_query:
+            return {}, []
 
+        placeholders = ','.join('?' for _ in ids_to_query)
+        query = (f"SELECT annotation_id, faiss_index FROM features "
+                 f"WHERE model_key=? AND annotation_id IN ({placeholders})")
+        params = [model_key] + ids_to_query
+
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        if not rows:
+            return {}, data_items
+
+        faiss_map = {ann_id: faiss_idx for ann_id, faiss_idx in rows}
+
+        # Load the FAISS index fresh from disk
+        index = self._get_or_load_index(model_key)
         if index is None:
-            # No features have ever been stored for this model
+            # Index file should exist for these rows; if not, treat as not found
             return {}, data_items
 
         found_features = {}
         not_found_items = []
 
-        ids_to_query = [item.annotation.id for item in data_items]
-
-        # Query SQLite for the given model_key
-        placeholders = ','.join('?' for _ in ids_to_query)
-        query = (f"SELECT annotation_id, faiss_index FROM features "
-                 f"WHERE model_key=? AND annotation_id IN ({placeholders})")
-        params = [model_key] + ids_to_query
-        self.cursor.execute(query, params)
-
-        faiss_map = {ann_id: faiss_idx for ann_id, faiss_idx in self.cursor.fetchall()}
-
-        if not faiss_map:
-            return {}, data_items
-
-        # Reconstruct vectors from the correct FAISS index
         faiss_indices = list(faiss_map.values())
+
         retrieved_vectors = index.reconstruct_batch(faiss_indices)
 
         id_to_vector = {ann_id: retrieved_vectors[i] for i, ann_id in enumerate(faiss_map.keys())}
@@ -139,16 +147,18 @@ class CacheManager:
         Retrieves a mapping from FAISS row index to annotation_id for a given model.
         """
         query = "SELECT faiss_index, annotation_id FROM features WHERE model_key = ?"
-        self.cursor.execute(query, (model_key,))
-        return {faiss_idx: ann_id for faiss_idx, ann_id in self.cursor.fetchall()}
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute(query, (model_key,))
+            rows = cur.fetchall()
+        return {faiss_idx: ann_id for faiss_idx, ann_id in rows}
 
     def save_faiss_index(self, model_key):
         """Saves a specific FAISS index to disk."""
-        if model_key in self.faiss_indexes:
-            index_to_save = self.faiss_indexes[model_key]
-            index_path = f"{self.index_path_base}_{model_key}.faiss"
-            print(f"Saving FAISS index for '{model_key}' to {index_path}")
-            faiss.write_index(index_to_save, index_path)
+        # Indexes are written to disk immediately after modification in
+        # add_features(), so this method is a no-op but kept for API
+        # compatibility.
+        return
             
     def remove_features_for_annotation(self, annotation_id):
         """
@@ -156,18 +166,21 @@ class CacheManager:
         This effectively orphans the vector in the FAISS index, invalidating it.
         """
         try:
-            self.cursor.execute(
-                "DELETE FROM features WHERE annotation_id = ?",
-                (annotation_id,)
-            )
-            self.conn.commit()
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "DELETE FROM features WHERE annotation_id = ?",
+                    (annotation_id,)
+                )
+                conn.commit()
             print(f"Invalidated features for annotation_id: {annotation_id}")
         except sqlite3.Error as e:
             print(f"Error removing feature for annotation {annotation_id}: {e}")
 
     def close(self):
         """Closes the database connection."""
-        self.conn.close()
+        # Nothing to close for sqlite (we use short-lived connections)
+        return
 
     def delete_storage(self):
         """

@@ -399,7 +399,11 @@ class ResultsProcessor:
         :param conf: The top confidence score.
         :param predictions: Dictionary of all class predictions.
         """
+        # Store the old label ID to verify if a change actually occurred
+        old_label_id = annotation.label.id
+
         # Update the machine confidence values with all predictions (top5)
+        # Note: update_machine_confidence already sets annotation.label to the top prediction
         annotation.update_machine_confidence(predictions)
 
         # Get the current uncertainty threshold from the UI (not the cached value)
@@ -413,10 +417,14 @@ class ResultsProcessor:
             annotation.label = final_label
             annotation.verified = False
             annotation.update_graphics_item()
-        else:
-            # Otherwise keep the label that was set by update_machine_confidence (top1 class)
-            # Note: update_machine_confidence already set annotation.label to the top prediction
-            pass
+
+        # FIX: Emit the label change signal so the Gallery and Embedding viewers
+        # instantly update their sorting categories and colors for this annotation.
+        if old_label_id != annotation.label.id:
+            try:
+                self.annotation_window.annotationLabelChanged.emit(annotation.id, annotation.label.id)
+            except Exception as e:
+                print(f"Warning: Failed to emit label change for {annotation.id}: {e}")
 
         # If the annotation's image is currently displayed, refresh its visual state
         if annotation.image_path == self.annotation_window.current_image_path:
