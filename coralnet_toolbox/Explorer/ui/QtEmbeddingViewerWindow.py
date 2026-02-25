@@ -675,9 +675,11 @@ class EmbeddingViewerWindow(QWidget):
         
         # Start worker
         self._pipeline_running = True
+        
+        # Update status bar if available
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        if hasattr(self.main_window, 'statusBar') and callable(self.main_window.statusBar):
-            self.main_window.statusBar().showMessage("Running embedding pipeline...")
+        self.main_window.status_bar.showMessage("Running embedding pipeline...")
+        
         self._disable_analysis_buttons()
         self._pipeline_worker.start()
         
@@ -698,8 +700,7 @@ class EmbeddingViewerWindow(QWidget):
     def _on_pipeline_progress(self, message):
         """Handle progress updates from the worker."""
         # Update main window status bar if available
-        if hasattr(self.main_window, 'statusBar') and callable(self.main_window.statusBar):
-            self.main_window.statusBar().showMessage(message)
+        self.main_window.status_bar.showMessage(message)
     
     def _on_pipeline_finished(self, results):
         """Handle successful completion of the embedding pipeline."""
@@ -731,8 +732,8 @@ class EmbeddingViewerWindow(QWidget):
             
             self.embedding_complete.emit()
             
-            if hasattr(self.main_window, 'statusBar') and callable(self.main_window.statusBar):
-                self.main_window.statusBar().showMessage("Embedding complete", 3000)
+            # Update status bar
+            self.main_window.status_bar.showMessage("Embedding complete", 3000)
                 
         finally:
             self._pipeline_running = False
@@ -747,8 +748,8 @@ class EmbeddingViewerWindow(QWidget):
         QApplication.restoreOverrideCursor()
         self._update_toolbar_state()
         
-        if hasattr(self.main_window, 'statusBar') and callable(self.main_window.statusBar):
-            self.main_window.statusBar().showMessage("Embedding failed", 3000)
+        # Update status bar with error message if available
+        self.main_window.status_bar.showMessage("Embedding failed", 3000)
     
     def _get_selected_model(self):
         """Get the currently selected model name/path."""

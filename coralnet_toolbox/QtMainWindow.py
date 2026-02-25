@@ -234,8 +234,8 @@ class MainWindow(QMainWindow):
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
-        self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.annotation_viewer_window.set_animation_manager(self.animation_manager)
+        self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
         
         # Create the centralized selection manager for explorer windows
@@ -1411,9 +1411,20 @@ class MainWindow(QMainWindow):
         # --------------------------------------------------
         self.open_check_for_updates_dialog(on_open=True)
         
+        # Flash a success message for 3 seconds
+        self.status_bar.showMessage("Ready!", 3000)
+        
         # Process events
         QApplication.processEvents()
         
+    @property
+    def status_bar(self):
+        """
+        Alias for the native QMainWindow status bar. 
+        Creates it automatically on the first call if it doesn't exist.
+        """
+        return self.statusBar()
+    
     # --- Backwards Compatibility Aliases for Tools ---
     
     @property
