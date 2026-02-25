@@ -1307,7 +1307,43 @@ class MainWindow(QMainWindow):
             self.annotation_viewer_window.on_annotation_label_changed)
         self.annotation_window.annotationLabelChanged.connect(
             self.embedding_viewer_window.on_annotation_label_changed)
-
+        
+        # Batch label changes
+        self.annotation_window.annotationsLabelsChanged.connect(
+            self.annotation_viewer_window.on_annotations_labels_changed)
+        self.annotation_window.annotationsLabelsChanged.connect(
+            self.embedding_viewer_window.on_annotations_labels_changed)
+        
+        # ---------------------------------------------------------------------
+        # Annotation geometry changes -> update viewers
+        # - When annotations are moved, resized, cut, merged, split, or have
+        #   their geometry edited, viewers need to update accordingly.
+        # ---------------------------------------------------------------------
+        self.annotation_window.annotationMoved.connect(
+            self.annotation_viewer_window.on_annotation_moved)
+        self.annotation_window.annotationMoved.connect(
+            self.embedding_viewer_window.on_annotation_moved)
+        
+        self.annotation_window.annotationGeometryEdited.connect(
+            self.annotation_viewer_window.on_annotation_geometry_edited)
+        self.annotation_window.annotationGeometryEdited.connect(
+            self.embedding_viewer_window.on_annotation_geometry_edited)
+        
+        self.annotation_window.annotationCut.connect(
+            self.annotation_viewer_window.on_annotation_cut)
+        self.annotation_window.annotationCut.connect(
+            self.embedding_viewer_window.on_annotation_cut)
+        
+        self.annotation_window.annotationsMerged.connect(
+            self.annotation_viewer_window.on_annotations_merged)
+        self.annotation_window.annotationsMerged.connect(
+            self.embedding_viewer_window.on_annotations_merged)
+        
+        self.annotation_window.annotationSplit.connect(
+            self.annotation_viewer_window.on_annotation_split)
+        self.annotation_window.annotationSplit.connect(
+            self.embedding_viewer_window.on_annotation_split)
+        
         # ---------------------------------------------------------------------
         # NOTE: Selection synchronization across AnnotationWindow, Viewer
         # Windows and Embedding viewer is handled centrally by
