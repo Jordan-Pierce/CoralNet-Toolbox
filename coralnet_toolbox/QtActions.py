@@ -479,6 +479,13 @@ class AnnotationGeometryEditAction(Action):
                     self.annotation_window.main_window.confidence_window.display_cropped_image(ann)
                 except Exception:
                     pass
+                
+                # Emit signals to notify viewers of geometry change
+                self.annotation_window.annotationGeometryEdited.emit(
+                    self.annotation_id,
+                    {'old_geom': self.old_geom, 'new_geom': self.new_geom}
+                )
+                self.annotation_window.annotationModified.emit(self.annotation_id)
                 return
 
             if kind == 'rect' and not hasattr(ann, 'points'):
@@ -498,11 +505,24 @@ class AnnotationGeometryEditAction(Action):
                     self.annotation_window.main_window.confidence_window.display_cropped_image(ann)
                 except Exception:
                     pass
+                
+                # Emit signals to notify viewers of geometry change
+                self.annotation_window.annotationGeometryEdited.emit(
+                    self.annotation_id,
+                    {'old_geom': self.old_geom, 'new_geom': self.new_geom}
+                )
+                self.annotation_window.annotationModified.emit(self.annotation_id)
                 return
 
             # Fallback: try update_polygon with original form
             try:
                 ann.update_polygon(geom_serialized)
+                # Even for fallback, notify viewers
+                self.annotation_window.annotationGeometryEdited.emit(
+                    self.annotation_id,
+                    {'old_geom': self.old_geom, 'new_geom': self.new_geom}
+                )
+                self.annotation_window.annotationModified.emit(self.annotation_id)
             except Exception:
                 pass
         except Exception:

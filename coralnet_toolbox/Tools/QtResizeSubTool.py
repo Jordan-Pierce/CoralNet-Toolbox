@@ -93,11 +93,10 @@ class ResizeSubTool(SubTool):
                 
             self.target_annotation.create_cropped_image(self.annotation_window.rasterio_image)
             self.parent_tool.main_window.confidence_window.display_cropped_image(self.target_annotation)
-            self.annotation_window.annotationModified.emit(self.target_annotation.id)  # Emit modified signal
-
-            # Capture new geometry and push geometry-edit action
+            
+            # Capture new geometry and emit signals
+            new_geom = None
             try:
-                new_geom = None
                 if hasattr(self.target_annotation, 'points'):
                     pts = [QPointF(p.x(), p.y()) for p in self.target_annotation.points]
                     holes = []
@@ -106,28 +105,30 @@ class ResizeSubTool(SubTool):
                             holes.append([QPointF(p.x(), p.y()) for p in hole])
                     new_geom = (pts, holes)
                 else:
-                    try:
-                        tl = QPointF(self.target_annotation.top_left.x(), self.target_annotation.top_left.y())
-                        br = QPointF(self.target_annotation.bottom_right.x(), self.target_annotation.bottom_right.y())
-                        new_geom = (tl, br)
-                    except Exception:
-                        new_geom = None
+                    tl = QPointF(self.target_annotation.top_left.x(), self.target_annotation.top_left.y())
+                    br = QPointF(self.target_annotation.bottom_right.x(), self.target_annotation.bottom_right.y())
+                    new_geom = (tl, br)
+            except Exception:
+                new_geom = None
 
-                if self._orig_geom is not None and new_geom is not None:
+            # Push undo action and emit signals
+            if self._orig_geom is not None and new_geom is not None:
+                try:
                     action = AnnotationGeometryEditAction(self.annotation_window, 
                                                           self.target_annotation.id, 
                                                           self._orig_geom, new_geom)
-                    try:
-                        self.annotation_window.action_stack.push(action)
-                    except Exception:
-                        pass
-                    try:
-                        # Use the generic geometry-edited signal for resize operations
-                        self.annotation_window.annotationGeometryEdited.emit(self.target_annotation.id, {'old_geom': self._orig_geom, 'new_geom': new_geom})
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    self.annotation_window.action_stack.push(action)
+                except Exception:
+                    pass
+                
+                # Always emit geometry edited signal (critical for viewer updates)
+                self.annotation_window.annotationGeometryEdited.emit(
+                    self.target_annotation.id, 
+                    {'old_geom': self._orig_geom, 'new_geom': new_geom}
+                )
+            
+            # Also emit the general modified signal for backwards compatibility
+            self.annotation_window.annotationModified.emit(self.target_annotation.id)
             
         self.parent_tool.deactivate_subtool()
 
