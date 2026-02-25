@@ -714,10 +714,18 @@ class EmbeddingViewerWindow(QWidget):
             self.current_data_items = final_data_items
             self.current_features = features
             self.current_feature_model_key = model_key
-            
+
+            # Normalize embedded_features to an ndarray and compute dims safely
+            embedded_features = np.asarray(embedded_features)
+            if embedded_features.ndim == 1:
+                # Convert shape (N,) to (N,1) if possible, or treat as single-dim
+                embedded_features = embedded_features.reshape(-1, 1)
+
+            n_dims = 1 if embedded_features.ndim == 1 else embedded_features.shape[1]
+
             # Update visualization
             self._update_data_items_with_embedding(final_data_items, embedded_features)
-            self._update_embeddings(final_data_items, embedded_features.shape[1])
+            self._update_embeddings(final_data_items, n_dims)
             self._show_embedding()
             self._reset_view()
             
@@ -1038,16 +1046,36 @@ class EmbeddingViewerWindow(QWidget):
                     if label_name != REVIEW_LABEL:
                         labels.append(label_name)
                         labeled_indices.append(i)
-                
+
                 if len(set(labels)) < 2:
                     QMessageBox.warning(self, "LDA Error", "LDA requires at least 2 labeled classes.")
                     return None
-                
+
                 labeled_features = features_scaled[labeled_indices]
-                n_components_lda = min(n_components, len(set(labels)) - 1)
+                # LDA can produce at most (n_classes - 1) components. Compute that cap.
+                max_lda_components = max(1, len(set(labels)) - 1)
+                n_components_lda = min(n_components, max_lda_components)
                 reducer = LDA(n_components=n_components_lda)
                 reducer.fit(labeled_features, labels)
-                return reducer.transform(features_scaled)
+                lda_transformed = reducer.transform(features_scaled)
+
+                # If LDA produced fewer components than requested, pad the remainder
+                # using PCA on the original (scaled) features so callers can still
+                # request e.g. 3D output even when LDA intrinsically yields <3 dims.
+                if lda_transformed.shape[1] < n_components:
+                    needed = n_components - lda_transformed.shape[1]
+                    # Ensure we don't ask PCA for more components than available
+                    available_dim = min(needed, features_scaled.shape[1])
+                    if available_dim > 0:
+                        pca = PCA(n_components=available_dim, random_state=42)
+                        pca_components = pca.fit_transform(features_scaled)
+                        # Concatenate LDA components with PCA extras
+                        combined = np.hstack([lda_transformed, pca_components[:, :available_dim]])
+                        return combined
+                    else:
+                        return lda_transformed
+
+                return lda_transformed
             
             # Other techniques
             if technique == "UMAP":
@@ -1084,7 +1112,12 @@ class EmbeddingViewerWindow(QWidget):
         """Update data items with embedding coordinates."""
         if embedded_features is None:
             return
-        
+
+        # Ensure numpy array of shape (N, D). Convert 1D -> (N,1) to simplify downstream logic.
+        embedded_features = np.asarray(embedded_features)
+        if embedded_features.ndim == 1:
+            embedded_features = embedded_features.reshape(-1, 1)
+
         n_dims = embedded_features.shape[1]
         scale_factor = 4000
         min_vals = np.min(embedded_features, axis=0)
@@ -1096,13 +1129,17 @@ class EmbeddingViewerWindow(QWidget):
             norm_coords = (embedded_features[i] - min_vals) / range_vals
             scaled_coords = (norm_coords * scale_factor) - (scale_factor / 2)
             
-            if n_dims == 3:
+            if n_dims >= 3:
                 item.embedding_x_3d = scaled_coords[0]
                 item.embedding_y_3d = scaled_coords[1]
                 item.embedding_z_3d = scaled_coords[2]
-            else:
+            elif n_dims == 2:
                 item.embedding_x_3d = scaled_coords[0]
                 item.embedding_y_3d = scaled_coords[1]
+                item.embedding_z_3d = 0.0
+            else:  # n_dims == 1
+                item.embedding_x_3d = scaled_coords[0]
+                item.embedding_y_3d = 0.0
                 item.embedding_z_3d = 0.0
             
             item.embedding_x = item.embedding_x_3d
