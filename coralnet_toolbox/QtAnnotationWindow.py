@@ -2554,6 +2554,10 @@ class AnnotationWindow(QGraphicsView):
             if annotation is None or annotation.id in self.annotations_dict:
                 continue
 
+            # --- Parity Fix: Set animation manager and scale ---
+            annotation.set_animation_manager(self.animation_manager)
+            self.set_annotation_scale(annotation)
+
             # --- Core Logic: Only update data dictionaries ---
             self.annotations_dict[annotation.id] = annotation
             if annotation.image_path not in self.image_annotations_dict:
@@ -2566,6 +2570,18 @@ class AnnotationWindow(QGraphicsView):
             # --- Connect signals for future interaction ---
             annotation.selected.connect(self.select_annotation)
             annotation.annotationDeleted.connect(self.delete_annotation)
+            
+            # Ensure annotation updates (like move/resize) propagate to UI
+            annotation.annotationUpdated.connect(self.on_annotation_updated)
+
+            # Register MaskAnnotations directly to their raster
+            if isinstance(annotation, MaskAnnotation):
+                raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
+                if raster:
+                    raster.mask_annotation = annotation
+
+            # Emit creation signal so Explorer docks (Gallery) update dynamically
+            self.annotationCreated.emit(annotation.id)
 
         # --- Final UI Updates (after all annotations are processed) ---
         if images_to_update:
