@@ -372,7 +372,8 @@ class SelectTool(Tool):
 
     def combine_selected_annotations(self):
         """Combine multiple selected annotations of the same type."""
-        selected_annotations = self.annotation_window.selected_annotations
+        # Work on a shallow copy to avoid mutations while deleting originals
+        selected_annotations = self.annotation_window.selected_annotations.copy()
         
         if len(selected_annotations) <= 1:
             print("Need at least 2 annotations to combine.")
