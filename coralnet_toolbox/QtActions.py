@@ -7,7 +7,8 @@ these in a separate module avoids cluttering the large
 """
 
 from typing import Any
-from PyQt5.QtCore import QPointF
+from PyQt5.QtCore import QPointF, Qt
+from PyQt5.QtWidgets import QApplication
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -585,37 +586,62 @@ class ActionStack:
         self.redo_stack = []
 
     def push(self, action: Action):
-        # Try to merge with the last undo action if possible
-        if self.undo_stack:
-            last = None
-            try:
-                last = self.undo_stack[-1]
-            except Exception:
-                last = None
+        # Show busy cursor while manipulating stacks to keep UI responsive
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
+            # Try to merge with the last undo action if possible
+            if self.undo_stack:
+                last = None
+                try:
+                    last = self.undo_stack[-1]
+                except Exception:
+                    last = None
+
+                try:
+                    if last and last.merge_with(action):
+                        # Merged into last action; clear redo and do not push
+                        self.redo_stack.clear()
+                        return
+                except Exception:
+                    # If merge check fails, fall back to normal push
+                    pass
+
+            self.undo_stack.append(action)
+            self.redo_stack.clear()
+        finally:
             try:
-                if last and last.merge_with(action):
-                    # Merged into last action; clear redo and do not push
-                    self.redo_stack.clear()
-                    return
+                QApplication.restoreOverrideCursor()
             except Exception:
-                # If merge check fails, fall back to normal push
                 pass
 
-        self.undo_stack.append(action)
-        self.redo_stack.clear()
-
     def undo(self):
-        if self.undo_stack:
-            action = self.undo_stack.pop()
-            action.undo()
-            self.redo_stack.append(action)
+        # Use a busy cursor while performing undo to indicate work
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            if self.undo_stack:
+                action = self.undo_stack.pop()
+                action.undo()
+                self.redo_stack.append(action)
+        finally:
+            try:
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
 
     def redo(self):
-        if self.redo_stack:
-            action = self.redo_stack.pop()
-            action.do()
-            self.undo_stack.append(action)
+        # Use a busy cursor while performing redo to indicate work
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            if self.redo_stack:
+                action = self.redo_stack.pop()
+                action.do()
+                self.undo_stack.append(action)
+        finally:
+            try:
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
 
 
 __all__ = [
