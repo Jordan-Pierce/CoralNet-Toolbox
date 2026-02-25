@@ -440,14 +440,14 @@ class SelectionManager(QObject):
         This is the single, centralized point of logic for label window updates:
         - Single selection: Set active label to that annotation's label
         - Multiple selection: Deselect active label
-        - No selection: Deselect active label
+        - No selection: Keep active label (don't interfere with normal annotation workflow)
         """
         if not self._label_window or self._block_label_updates:
             return
         
         if not self._selected_ids:
-            # No selection - deselect active label
-            self._label_window.deselect_active_label()
+            # No selection - don't deselect active label
+            # This preserves the user's selected label when switching tools or clearing selections
             self._label_window.update_annotation_count()
             return
         
