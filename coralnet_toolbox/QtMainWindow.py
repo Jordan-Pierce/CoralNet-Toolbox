@@ -1191,8 +1191,8 @@ class MainWindow(QMainWindow):
         # By default hide the bottom explorer docks so the Annotation workspace
         # takes the full vertical space when the main window is shown.
         # These can be shown later by the user via the View menu or programmatically.
-        self.annotation_gallery_dock.hide()
-        self.embedding_viewer_dock.hide()
+        # self.annotation_gallery_dock.hide()
+        # self.embedding_viewer_dock.hide()
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
