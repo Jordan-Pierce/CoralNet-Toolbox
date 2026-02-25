@@ -922,8 +922,14 @@ class AnnotationWindow(QGraphicsView):
         """Get the currently selected tool."""
         return self.selected_tool
 
-    def set_selected_tool(self, tool):
-        """Set the currently active tool and update the UI layers for the correct editing mode."""
+    def set_selected_tool(self, tool, preserve_selection=False):
+        """Set the currently active tool and update the UI layers for the correct editing mode.
+        
+        Args:
+            tool: The tool name to activate.
+            preserve_selection: If True, existing selections will be preserved during tool switch.
+                               Use this when switching to select tool with existing selections from viewers.
+        """
         
         previous_tool = self.selected_tool
         
@@ -933,7 +939,8 @@ class AnnotationWindow(QGraphicsView):
             
         if tool is None or tool not in self.tools:
             self.selected_tool = None
-            self.unselect_annotations()
+            if not preserve_selection:
+                self.unselect_annotations()
             return
         
         self.selected_tool = tool
@@ -952,6 +959,7 @@ class AnnotationWindow(QGraphicsView):
             self.unrasterize_annotations()
 
         # If we are transitioning between either mode, unselect annotations
+        # (Mode switching always clears selection, even if preserve_selection=True)
         if is_entering_mask_mode or is_leaving_mask_mode:
             self.unselect_annotations()
         # --------------------------------------------------------
@@ -959,8 +967,8 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
         
-        # Unselect annotations unless we are in select mode.
-        if self.selected_tool != "select":
+        # Unselect annotations unless we are in select mode or preserve_selection is True
+        if self.selected_tool != "select" and not preserve_selection:
             self.unselect_annotations()
 
         self.toggle_cursor_annotation()

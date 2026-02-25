@@ -415,17 +415,23 @@ class SelectionManager(QObject):
                 self._annotation_window.select_annotation(ann, multi_select=True, quiet_mode=True)
     
     def _switch_to_select_tool(self):
-        """Switch to the Select tool when annotations are selected."""
+        """Switch to the Select tool when annotations are selected, preserving the selection.
+        
+        This is called after selection synchronization completes. The preserve_selection
+        parameter ensures that the synchronized selections are not cleared by the tool switch.
+        """
         if not self._selected_ids:
             return
         
-        # Use the same pattern as MainWindow.choose_specific_tool
+        # Check if already on select tool - if so, no need to switch
+        if hasattr(self.main_window, 'annotation_window'):
+            current_tool = self.main_window.annotation_window.get_selected_tool()
+            if current_tool == 'select':
+                return  # Already on select tool
+        
+        # Switch to select tool with preserve_selection=True to keep synchronized selections
         if hasattr(self.main_window, 'choose_specific_tool'):
-            # Check if select tool is already active to avoid redundant switching
-            if hasattr(self.main_window, 'select_tool_action'):
-                if self.main_window.select_tool_action.isChecked():
-                    return  # Already on select tool
-            self.main_window.choose_specific_tool('select')
+            self.main_window.choose_specific_tool('select', preserve_selection=True)
     
     def _update_label_window_selection(self):
         """

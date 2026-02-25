@@ -1078,9 +1078,7 @@ class AnnotationViewerWindow(QWidget):
             self.last_selected_item_id = widget.data_item.annotation.id
         
         if changed_ids:
-            # Switch to Select tool when selecting annotations
-            if hasattr(self.main_window, 'select_tool_action'):
-                self.main_window.select_tool_action.setChecked(True)
+            # Emit selection change - SelectionManager will handle tool switching
             self.selection_changed.emit(changed_ids)
     
     def handle_annotation_context_menu(self, widget, event):
@@ -1100,9 +1098,7 @@ class AnnotationViewerWindow(QWidget):
                 
                 self.clear_selection()
                 self.select_widget(widget)
-                # Switch to Select tool when selecting annotations
-                if hasattr(self.main_window, 'select_tool_action'):
-                    self.main_window.select_tool_action.setChecked(True)
+                # Emit selection change - SelectionManager will handle tool switching
                 self.selection_changed.emit([ann_id])
                 
                 # Change image if needed
@@ -1162,7 +1158,6 @@ class AnnotationViewerWindow(QWidget):
                 if self.selected_widgets:
                     changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                     self.clear_selection()
-                    # No need to switch tool on deselection
                     self.selection_changed.emit(changed_ids)
                 return True
         
@@ -1177,7 +1172,6 @@ class AnnotationViewerWindow(QWidget):
             if self.selected_widgets:
                 changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
                 self.clear_selection()
-                # No need to switch tool on deselection/double-click
                 self.selection_changed.emit(changed_ids)
             if self.isolated_mode:
                 self._show_all_annotations()
@@ -1229,9 +1223,7 @@ class AnnotationViewerWindow(QWidget):
                     changed_ids.append(widget.data_item.annotation.id)
         
         if changed_ids:
-            # Switch to Select tool when selecting annotations via rubber band
-            if hasattr(self.main_window, 'select_tool_action'):
-                self.main_window.select_tool_action.setChecked(True)
+            # Emit selection change - SelectionManager will handle tool switching
             self.selection_changed.emit(changed_ids)
         
         return True
