@@ -243,9 +243,6 @@ class SelectionManager(QObject):
             # Switch to Select tool
             self._switch_to_select_tool()
             
-            # Ensure Select tool handles are hidden for multi-select
-            self._update_select_tool_state()
-            
             # Update the label window based on the new selection
             self._update_label_window_selection()
             
@@ -424,27 +421,7 @@ class SelectionManager(QObject):
         
         # Use the same pattern as MainWindow.choose_specific_tool
         if hasattr(self.main_window, 'choose_specific_tool'):
-            # Check if select tool is already active to avoid redundant switching
-            if hasattr(self.main_window, 'select_tool_action'):
-                if self.main_window.select_tool_action.isChecked():
-                    return  # Already on select tool
             self.main_window.choose_specific_tool('select')
-    
-    def _update_select_tool_state(self):
-        """Update the Select tool state based on selection count."""
-        if not self._annotation_window:
-            return
-        
-        select_tool = self._annotation_window.tools.get('select') if hasattr(self._annotation_window, 'tools') else None
-        if not select_tool:
-            return
-        
-        # If the selection is not a single item (empty or multi-selection),
-        # hide the handles and release the lock
-        if len(self._selected_ids) != 1:
-            if hasattr(select_tool, '_hide_resize_handles'):
-                select_tool._hide_resize_handles()
-            select_tool.selection_locked = False
     
     def _update_label_window_selection(self):
         """
