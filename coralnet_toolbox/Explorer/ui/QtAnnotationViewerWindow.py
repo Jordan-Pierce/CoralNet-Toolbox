@@ -1248,51 +1248,6 @@ class AnnotationViewerWindow(QWidget):
         return False
     
     # -------------------------------------------------------------------------
-    # Preview Label Support
-    # -------------------------------------------------------------------------
-    
-    def apply_preview_label_to_selected(self, preview_label):
-        """Apply a preview label to selected annotations."""
-        if not self.selected_widgets or not preview_label:
-            return
-        
-        changed_ids = []
-        for widget in self.selected_widgets:
-            widget.data_item.set_preview_label(preview_label)
-            widget.update()
-            changed_ids.append(widget.data_item.annotation.id)
-        
-        if self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-        
-        if changed_ids:
-            self.preview_changed.emit(changed_ids)
-    
-    def clear_preview_states(self):
-        """Clear all preview label states."""
-        changed = False
-        for widget in self.annotation_widgets_by_id.values():
-            if widget.data_item.has_preview_changes():
-                widget.data_item.clear_preview_label()
-                widget.update()
-                changed = True
-        
-        if changed and self.sort_combo.currentText() == "Label":
-            self._recalculate_layout()
-    
-    def has_preview_changes(self):
-        """Check if there are any preview changes."""
-        return any(w.data_item.has_preview_changes() for w in self.annotation_widgets_by_id.values())
-    
-    def apply_preview_changes_permanently(self):
-        """Apply all preview changes permanently."""
-        applied = []
-        for widget in self.annotation_widgets_by_id.values():
-            if widget.data_item.apply_preview_permanently():
-                applied.append(widget.annotation)
-        return applied
-    
-    # -------------------------------------------------------------------------
     # Utility Methods
     # -------------------------------------------------------------------------
     
