@@ -4,7 +4,6 @@ import sqlite3
 import warnings
 
 import faiss
-import threading
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -26,11 +25,9 @@ class CacheManager:
         # connections are thread-affine. Open connections per-call instead.
         self._create_table()
 
-        # Lock to protect in-memory FAISS index access across threads
-        self._faiss_lock = threading.RLock()
-
-        # A dictionary to hold multiple FAISS indexes, keyed by model_key
-        self.faiss_indexes = {}
+        # We do not keep in-memory FAISS indexes to avoid sharing
+        # FAISS objects across threads. Index files are read from and
+        # written to disk as needed.
 
     def _create_table(self):
         """Create the metadata table if it doesn't exist."""
@@ -52,21 +49,14 @@ class CacheManager:
         Retrieves an index from memory or loads it from disk if it exists.
         Returns the index object or None if not found in memory or on disk.
         """
-        # 1. Check if the index is already loaded in memory
-        with self._faiss_lock:
-            if model_key in self.faiss_indexes:
-                return self.faiss_indexes[model_key]
-
-        # 2. If not in memory, check for a corresponding file on disk
+        # Check for a corresponding file on disk and load it afresh.
         index_path = f"{self.index_path_base}_{model_key}.faiss"
         if os.path.exists(index_path):
-            # Load index into memory and cache it (protected by lock)
-            print(f"Loading existing FAISS index from {index_path}")
+            print(f"Loading FAISS index from {index_path}")
             index = faiss.read_index(index_path)
-            self.faiss_indexes[model_key] = index  # Cache it in memory
             return index
 
-        # 3. If not in memory or on disk, return None
+        # If not on disk, return None
         return None
 
     def add_features(self, data_items, features, model_key):
@@ -77,22 +67,16 @@ class CacheManager:
             return
 
         # Get the specific index for this model, loading it if necessary
-        # Get or create FAISS index (may load from disk). Creation and cache
-        # population are protected by the lock inside _get_or_load_index.
+        # Load index from disk if it exists, otherwise create a new index
         index = self._get_or_load_index(model_key)
-
-        # If no index exists yet, create one under lock and store it
         if index is None:
             feature_dim = features.shape[1]
             print(f"Creating new FAISS index for model '{model_key}' with dimension {feature_dim}.")
-            with self._faiss_lock:
-                index = faiss.IndexFlatL2(feature_dim)
-                self.faiss_indexes[model_key] = index
+            index = faiss.IndexFlatL2(feature_dim)
 
-        # Add vectors to the specific FAISS index (protect operations with lock)
-        with self._faiss_lock:
-            start_index = index.ntotal
-            index.add(features.astype('float32'))
+        # Add vectors to the FAISS index
+        start_index = index.ntotal
+        index.add(features.astype('float32'))
 
         # Add metadata to SQLite using a short-lived connection
         with sqlite3.connect(self.db_path) as conn:
@@ -105,8 +89,9 @@ class CacheManager:
                 )
             conn.commit()
 
-        # Persist FAISS index to disk (protected inside)
-        self.save_faiss_index(model_key)
+        # Persist FAISS index to disk immediately
+        index_path = f"{self.index_path_base}_{model_key}.faiss"
+        faiss.write_index(index, index_path)
 
     def get_features(self, data_items, model_key):
         """
@@ -133,22 +118,18 @@ class CacheManager:
 
         faiss_map = {ann_id: faiss_idx for ann_id, faiss_idx in rows}
 
-        # Load or get the in-memory index
+        # Load the FAISS index fresh from disk
         index = self._get_or_load_index(model_key)
         if index is None:
-            # Index file should exist for these rows; try loading once more
-            index = self._get_or_load_index(model_key)
-            if index is None:
-                return {}, data_items
+            # Index file should exist for these rows; if not, treat as not found
+            return {}, data_items
 
         found_features = {}
         not_found_items = []
 
         faiss_indices = list(faiss_map.values())
 
-        # Reconstruct vectors with protection around FAISS operations
-        with self._faiss_lock:
-            retrieved_vectors = index.reconstruct_batch(faiss_indices)
+        retrieved_vectors = index.reconstruct_batch(faiss_indices)
 
         id_to_vector = {ann_id: retrieved_vectors[i] for i, ann_id in enumerate(faiss_map.keys())}
 
@@ -174,12 +155,10 @@ class CacheManager:
 
     def save_faiss_index(self, model_key):
         """Saves a specific FAISS index to disk."""
-        with self._faiss_lock:
-            if model_key in self.faiss_indexes:
-                index_to_save = self.faiss_indexes[model_key]
-                index_path = f"{self.index_path_base}_{model_key}.faiss"
-                print(f"Saving FAISS index for '{model_key}' to {index_path}")
-                faiss.write_index(index_to_save, index_path)
+        # Indexes are written to disk immediately after modification in
+        # add_features(), so this method is a no-op but kept for API
+        # compatibility.
+        return
             
     def remove_features_for_annotation(self, annotation_id):
         """
@@ -201,9 +180,7 @@ class CacheManager:
     def close(self):
         """Closes the database connection."""
         # Nothing to close for sqlite (we use short-lived connections)
-        # Clear any in-memory FAISS indexes
-        with self._faiss_lock:
-            self.faiss_indexes.clear()
+        return
 
     def delete_storage(self):
         """
