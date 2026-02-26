@@ -1261,22 +1261,15 @@ class EmbeddingViewerWindow(QWidget):
     def _schedule_view_update(self):
         """Schedule delayed view update for virtualization."""
         self.view_update_timer.start(50)
-    
+            
     def _update_visible_points(self):
-        """Update visibility of points based on viewport."""
-        if self.isolated_mode or not self.points_by_id:
-            return
-        
-        visible_rect = self.graphics_view.mapToScene(
-            self.graphics_view.viewport().rect()
-        ).boundingRect()
-        
-        buffer_x = visible_rect.width() * 0.2
-        buffer_y = visible_rect.height() * 0.2
-        buffered_rect = visible_rect.adjusted(-buffer_x, -buffer_y, buffer_x, buffer_y)
-        
-        for point in self.points_by_id.values():
-            point.setVisible(buffered_rect.contains(point.pos()) or point.isSelected())
+        """
+        Qt's QGraphicsScene natively uses a highly optimized C++ BSP tree 
+        to instantly cull off-screen items before rendering. 
+        Manually looping through thousands of points to call .setVisible() 
+        actively fights the engine and causes massive lag!
+        """
+        pass # Let the native C++ engine do its job!
     
     # -------------------------------------------------------------------------
     # Selection Management
@@ -1363,7 +1356,10 @@ class EmbeddingViewerWindow(QWidget):
         self.isolated_points.clear()
         self.graphics_view.setUpdatesEnabled(False)
         try:
-            self._update_visible_points()
+            # --- Explicitly make all points visible again ---
+            for point in self.points_by_id.values():
+                point.setVisible(True)
+            # ------------------------------------------------
         finally:
             self.graphics_view.setUpdatesEnabled(True)
         
