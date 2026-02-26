@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 POINT_SIZE = 15
 POINT_WIDTH = 3
 SPRITE_SIZE = 32
-ANNOTATION_WIDTH = 2
+ANNOTATION_WIDTH = 3
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def paint(self, painter, option, widget):
-        """Custom paint method to draw a modern dot or sprite with animated selection."""
+        """Clean, high-performance data-science aesthetic."""
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
         
@@ -119,16 +119,12 @@ class EmbeddingPointItem(QGraphicsObject):
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             scale_factor = 0.5 + z_normalized
 
-        scaled_pen_width = max(1, min(POINT_WIDTH * scale_factor, 6))
-        
         opacity = 255
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             opacity = int(128 + 127 * z_normalized)
 
         base_color = self.data_item.effective_color
-        effective_brush_color = QColor(base_color)
-        effective_brush_color.setAlpha(opacity)
         
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
@@ -145,60 +141,65 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
             if self.isSelected():
-                # Black contrast stroke
-                bg_pen = QPen(QColor("black"), scaled_pen_width + 2)
-                bg_pen.setCosmetic(True)
+                # High contrast border for selected sprites (inset to prevent clipping)
+                pen_width = max(2, int(3 * scale_factor))
+                half_w = pen_width / 2.0
+                rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
+                
+                bg_pen = QPen(QColor("black"), pen_width + 2)
+                bg_pen.setJoinStyle(Qt.MiterJoin)
                 painter.setPen(bg_pen)
                 painter.setBrush(Qt.NoBrush)
-                painter.drawRect(self.boundingRect())
+                painter.drawRect(rect)
                 
-                # Marching ants stroke
-                border_color = QColor(self.data_item.effective_color)
-                border_pen = QPen(border_color, scaled_pen_width)
-                border_pen.setCosmetic(True)
-                border_pen.setDashPattern([4.0, 4.0])
-                border_pen.setDashOffset(self.animation_offset)
-                painter.setPen(border_pen)
-                painter.drawRect(self.boundingRect())
+                fg_pen = QPen(base_color, pen_width)
+                fg_pen.setJoinStyle(Qt.MiterJoin)
+                fg_pen.setDashPattern([4.0, 4.0])
+                fg_pen.setDashOffset(self.animation_offset)
+                painter.setPen(fg_pen)
+                painter.drawRect(rect)
             else:
-                # Modern unselected sprite: 1px subtle dark border instead of thick black
-                subtle_pen = QPen(QColor(0, 0, 0, 100), 1)
-                subtle_pen.setCosmetic(True)
-                painter.setPen(subtle_pen)
+                # Faint border to give gentle definition to unselected thumbnails
+                painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRect(self.boundingRect())
 
         else:
-            # --- MODERN DOTS RENDERING ---
+            # --- MODERN DATA-SCIENCE DOTS ---
             if self.isSelected():
-                # 1. Draw the solid base dot (no border)
+                # 1. Solid opaque base color so it pops out of the cluster
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(effective_brush_color)
+                painter.setBrush(QBrush(base_color))
                 painter.drawEllipse(self.boundingRect())
                 
-                # 2. Draw a Floating Selection Halo slightly outside the dot
-                halo_margin = 3 + (scale_factor * 2)
-                halo_rect = self.boundingRect().adjusted(-halo_margin, -halo_margin, halo_margin, halo_margin)
+                # 2. Inset Targeting Reticle (Prevents flat-edge clipping bugs)
+                # Black & White layered dash ensures visibility on ANY color dot/background
+                pen_width = max(1.5, 2.0 * scale_factor)
+                half_w = pen_width / 2.0
                 
-                # Black contrast background ring
-                bg_pen = QPen(QColor("black"), scaled_pen_width + 1)
-                bg_pen.setCosmetic(True)
-                painter.setPen(bg_pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(halo_rect)
+                # Shrink rect slightly so the stroke stays strictly inside the bounds
+                draw_rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                # Marching ants colored ring
-                halo_pen = QPen(self.data_item.effective_color, scaled_pen_width)
-                halo_pen.setCosmetic(True)
-                halo_pen.setDashPattern([4.0, 4.0])
-                halo_pen.setDashOffset(self.animation_offset)
-                painter.setPen(halo_pen)
-                painter.drawEllipse(halo_rect)
-            else:
-                # Modern Unselected: Crisp white stroke to beautifully separate overlapping clusters
-                white_pen = QPen(QColor(255, 255, 255, opacity), max(1.0, scaled_pen_width * 0.5))
-                white_pen.setCosmetic(True)
+                # Solid white ring underneath
+                white_pen = QPen(QColor("white"), pen_width + 1)
                 painter.setPen(white_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(draw_rect)
+                
+                # Animated black dash on top (smaller [2.0, 2.0] dashes fit tiny circles better)
+                black_dash = QPen(QColor("black"), pen_width)
+                black_dash.setDashPattern([2.0, 2.0])
+                black_dash.setDashOffset(self.animation_offset)
+                painter.setPen(black_dash)
+                painter.drawEllipse(draw_rect)
+                
+            else:
+                # Pure, borderless alpha-blended dots. 
+                # Overlapping clusters naturally form beautiful density heatmaps.
+                effective_brush_color = QColor(base_color)
+                effective_brush_color.setAlpha(opacity)
+                
+                painter.setPen(Qt.NoPen)
                 painter.setBrush(effective_brush_color)
                 painter.drawEllipse(self.boundingRect())
     
@@ -380,7 +381,6 @@ class AnnotationImageWidget(QWidget):
             self.animate()
         else:
             self.deanimate()
-            self._pulse_alpha = 128  # Reset to default
 
         # Trigger a repaint to show the new selection state (border, etc.)
         self.update()
@@ -422,7 +422,7 @@ class AnnotationImageWidget(QWidget):
             pen_color = QColor("black")
 
         # Determine the base line width
-        base_width = ANNOTATION_WIDTH + 1 if self.is_selected() else ANNOTATION_WIDTH
+        base_width = ANNOTATION_WIDTH
 
         # We adjust the rectangle slightly inward so the thick borders don't get clipped by the widget edges
         half_width = (base_width - 1) // 2
