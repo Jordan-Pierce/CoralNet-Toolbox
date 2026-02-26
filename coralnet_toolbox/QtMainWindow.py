@@ -1340,13 +1340,17 @@ class MainWindow(QMainWindow):
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
+        self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)
         self.annotation_window.annotationDeleted.connect(self.annotation_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationsDeleted.connect(self.annotation_viewer_window.on_annotations_deleted)
         self.annotation_window.annotationModified.connect(self.annotation_viewer_window.on_annotation_modified)
 
         self.annotation_window.annotationCreated.connect(self.embedding_viewer_window.on_annotation_created)
+        self.annotation_window.annotationsCreated.connect(self.embedding_viewer_window.on_annotations_created)
         self.annotation_window.annotationDeleted.connect(self.embedding_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationsDeleted.connect(self.embedding_viewer_window.on_annotations_deleted)
         self.annotation_window.annotationModified.connect(self.embedding_viewer_window.on_annotation_modified)
-
+        
         # ---------------------------------------------------------------------
         # Annotation label changes -> update viewers
         # - When an annotation's label is changed, both gallery and embedding

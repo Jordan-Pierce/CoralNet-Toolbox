@@ -414,6 +414,39 @@ class EmbeddingViewerWindow(QWidget):
         self.cache_manager.remove_features_for_annotation(annotation_id)
         
         self._update_toolbar_state()
+        
+    @pyqtSlot(list)
+    def on_annotations_deleted(self, annotation_ids):
+        """
+        Handle a bulk deletion of annotations.
+        Removes points from the scatter plot instantly.
+        """
+        if not annotation_ids:
+            return
+
+        ids_set = set(annotation_ids)
+
+        for ann_id in annotation_ids:
+            # Remove from cache and working set
+            self.data_item_cache.pop(ann_id, None)
+            if ann_id in self.working_set_ids:
+                self.working_set_ids.remove(ann_id)
+            
+            # Remove point from the 3D scene
+            if ann_id in self.points_by_id:
+                point = self.points_by_id.pop(ann_id)
+                self.graphics_scene.removeItem(point)
+            
+            # Clear ML features
+            self.cache_manager.remove_features_for_annotation(ann_id)
+
+        self.current_data_items = [
+            item for item in self.current_data_items
+            if item.annotation.id not in ids_set
+        ]
+
+        # Update toolbar EXACTLY ONCE at the end
+        self._update_toolbar_state()
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):
@@ -455,6 +488,14 @@ class EmbeddingViewerWindow(QWidget):
             annotation_id: ID of the newly created annotation.
         """
         self._embeddings_stale = True
+
+    @pyqtSlot(list)
+    def on_annotations_created(self, annotation_ids):
+        """
+        Handle bulk annotation creation - flag that embeddings need refresh.
+        """
+        if annotation_ids:
+            self._embeddings_stale = True
     
     @pyqtSlot(object)
     def on_annotations_labels_changed(self, changes):

@@ -613,6 +613,90 @@ class AnnotationViewerWindow(QWidget):
         
         # Refresh layout
         self._recalculate_layout()
+        
+    @pyqtSlot(list)
+    def on_annotations_deleted(self, annotation_ids):
+        """
+        Handle a bulk deletion of annotations.
+        Removes all widgets instantly and recalculates the layout exactly once.
+        """
+        if not annotation_ids:
+            return
+
+        ids_set = set(annotation_ids)
+
+        # 1. Clean up the cache and data items
+        for ann_id in annotation_ids:
+            self.data_item_cache.pop(ann_id, None)
+
+        self.all_data_items = [item for item in self.all_data_items 
+                               if item.annotation.id not in ids_set]
+
+        # 2. Destroy the widgets
+        for ann_id in annotation_ids:
+            if ann_id in self.annotation_widgets_by_id:
+                widget = self.annotation_widgets_by_id[ann_id]
+                if widget in self.selected_widgets:
+                    self.selected_widgets.remove(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.annotation_widgets_by_id[ann_id]
+
+        # 3. Recalculate layout EXACTLY ONCE at the very end
+        self._recalculate_layout()
+
+    @pyqtSlot(list)
+    def on_annotations_created(self, annotation_ids):
+        """
+        Handle a bulk creation of annotations (e.g., from an Undo action).
+        Processes the incoming IDs once, generates crops, updates cache,
+        and recalculates layout a single time.
+        """
+        if not annotation_ids or not hasattr(self.annotation_window, 'annotations_dict'):
+            return
+
+        # Refresh filter options (in case new images/labels were added)
+        self.refresh_filter_options()
+
+        selected_images = self._get_selected_images()
+        selected_types = self._get_selected_types()
+        selected_labels = self._get_selected_labels()
+
+        annotations_to_add = []
+
+        for ann_id in annotation_ids:
+            ann = self.annotation_window.annotations_dict.get(ann_id)
+            if not ann:
+                continue
+
+            image_name = os.path.basename(ann.image_path)
+            type_name = type(ann).__name__
+            label_code = ann.label.short_label_code
+
+            matches_image = selected_images is None or image_name in selected_images
+            matches_type = selected_types is None or type_name in selected_types
+            matches_label = selected_labels is None or label_code in selected_labels
+
+            if matches_image and matches_type and matches_label:
+                annotations_to_add.append(ann)
+
+        if not annotations_to_add:
+            return
+
+        # Create crops for all annotations in one pass
+        self._ensure_cropped_images(annotations_to_add)
+
+        # Add to cache and main list
+        for ann in annotations_to_add:
+            if ann.id not in self.data_item_cache:
+                self.data_item_cache[ann.id] = AnnotationDataItem(ann)
+
+            data_item = self.data_item_cache[ann.id]
+            if data_item not in self.all_data_items:
+                self.all_data_items.append(data_item)
+
+        # Recalculate layout exactly once
+        self._recalculate_layout()
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):

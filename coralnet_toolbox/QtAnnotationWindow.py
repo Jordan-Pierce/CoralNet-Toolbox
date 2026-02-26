@@ -81,7 +81,9 @@ class AnnotationWindow(QGraphicsView):
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
+    annotationsDeleted = pyqtSignal(list)  # Signal to emit when multiple annotations are deleted
     annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
+    annotationsCreated = pyqtSignal(list)  # Signal to emit when multiple annotations are created
     annotationModified = pyqtSignal(str)  # Signal to emit when annotation is modified
     annotationMoved = pyqtSignal(str, object)  # annotation_id, {'old_center': QPointF, 'new_center': QPointF}
     annotationLabelChanged = pyqtSignal(str, str)  # annotation_id, new_label
@@ -2103,124 +2105,93 @@ class AnnotationWindow(QGraphicsView):
             return type(self.selected_annotations[0])
         return None
 
-    def select_annotation(self, annotation, multi_select=False, quiet_mode=False):
-        """Select an annotation and update the UI accordingly.
-        
-        Args:
-            annotation: The annotation to select.
-            multi_select: If True, add to selection without clearing. If False, clear first.
-            quiet_mode: If True, skip label window and confidence window updates.
-                       Used when SelectionManager handles those updates centrally.
-        """
-        # If the annotation is already selected and Ctrl is pressed, unselect it
+    def select_annotation(self, annotation, multi_select=False, quiet_mode=False, bulk_mode=False):
+        """Select an annotation and update the UI accordingly."""
         if annotation in self.selected_annotations and multi_select:
-            self.unselect_annotation(annotation)
+            self.unselect_annotation(annotation, bulk_mode=bulk_mode)
             return
         
-        # If not adding to selection (Ctrl not pressed), deselect all others first
         if not multi_select:
             self.unselect_annotations()
             
-        # Only add if not already selected (shouldn't happen after the checks above, but just to be safe)
         if annotation not in self.selected_annotations:
-            # Add to selection
             self.selected_annotations.append(annotation)
             annotation.select()
-            
-            # Update UI state
             self.selected_label = annotation.label
-            
-            # Emit signal for annotation selection
             self.annotationSelected.emit(annotation.id)
             
-            # If this is the only selected annotation, update label window and confidence window
-            # (unless in quiet_mode, which means SelectionManager handles these centrally)
             if len(self.selected_annotations) == 1 and not quiet_mode:
-                # Emit the label selected signal
                 self.labelSelected.emit(annotation.label.id)
-                
-                # Make sure we have a cropped image
                 if not annotation.cropped_image:
                     annotation.create_cropped_image(self.rasterio_image)
-                
-                # Display in confidence window
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 annotation.annotationUpdated.connect(self.on_annotation_updated)
                 self.main_window.confidence_window.display_cropped_image(annotation)
         
-        # Special handling for multiple selected annotations (unless in quiet_mode)
-        if len(self.selected_annotations) > 1 and not quiet_mode:
-            self.main_window.label_window.deselect_active_label()
-            self.main_window.confidence_window.clear_display()
-        
-        # Set the current visibility of the annotation
         self.set_annotation_visibility(annotation)
-        # Always update the viewport
-        self.viewport().update()
         
-        # Emit selection changed signal
-        self._emit_selection_changed()
-        
+        # --- BULK MODE CHECK ---
+        # Skip these heavy UI operations if we are looping through hundreds of items
+        if not bulk_mode:
+            if len(self.selected_annotations) > 1 and not quiet_mode:
+                self.main_window.label_window.deselect_active_label()
+                self.main_window.confidence_window.clear_display()
+            self.viewport().update()
+            self._emit_selection_changed()
+
     def select_annotations(self):
-        """Select all annotations in the current image."""
-        # Make cursor busy
+        """Select all annotations in the current image (Optimized for Bulk)."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
-        # First unselect any currently selected annotations
         self.unselect_annotations()
         
-        # Get all annotations in the current image
         annotations = self.get_image_annotations()
-        
-        # Check if label is locked
         label_locked = self.main_window.label_window.label_locked
         locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
         
-        # Select all appropriate annotations
+        # Turn on signal blocking for selection
+        self._syncing_selection = True
+        
         for annotation in annotations:
-            # Skip annotations that don't match the locked label
             if label_locked and annotation.label.id != locked_label_id:
                 continue
-                
-            # Use multi_select=True to add to selection without clearing
-            self.select_annotation(annotation, multi_select=True)
+            # Pass bulk_mode=True to prevent viewport repaints on every item
+            self.select_annotation(annotation, multi_select=True, bulk_mode=True)
 
-        # Make cursor normal again
+        self._syncing_selection = False
+        
+        # Perform the UI updates EXACTLY ONCE at the end
+        if len(self.selected_annotations) > 1:
+            self.main_window.label_window.deselect_active_label()
+            self.main_window.confidence_window.clear_display()
+            
+        self.viewport().update()
+        self._emit_selection_changed()
         QApplication.restoreOverrideCursor()
 
-    def unselect_annotation(self, annotation):
+    def unselect_annotation(self, annotation, bulk_mode=False):
         """Unselect a specific annotation."""
         if annotation in self.selected_annotations:
-            # Remove from selected list
             self.selected_annotations.remove(annotation)
             
-            # Disconnect from confidence window if needed
             if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
-                try:
+                try: 
                     annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
-                except TypeError:
-                    # Already disconnected
+                except TypeError: 
                     pass
-                try:
+                try: 
                     annotation.annotationUpdated.disconnect(self.on_annotation_updated)
-                except TypeError:
-                    # Already disconnected
+                except TypeError: 
                     pass
             
-            # Update annotation's internal state
             annotation.deselect()
-            # Set the current visibility of the annotation
             self.set_annotation_visibility(annotation)
             
-            # Clear confidence window if no annotations remain selected
-            if not self.selected_annotations:
-                self.main_window.confidence_window.clear_display()
-            
-            # Update the viewport
-            self.viewport().update()
-            
-            # Emit selection changed signal
-            self._emit_selection_changed()
+            # --- BULK MODE CHECK ---
+            if not bulk_mode:
+                if not self.selected_annotations:
+                    self.main_window.confidence_window.clear_display()
+                self.viewport().update()
+                self._emit_selection_changed()
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
@@ -2580,8 +2551,7 @@ class AnnotationWindow(QGraphicsView):
                 if raster:
                     raster.mask_annotation = annotation
 
-            # Emit creation signal so Explorer docks (Gallery) update dynamically
-            self.annotationCreated.emit(annotation.id)
+            # NOTE: per-annotation emission removed to allow bulk emits
 
         # --- Final UI Updates (after all annotations are processed) ---
         if images_to_update:
@@ -2601,62 +2571,117 @@ class AnnotationWindow(QGraphicsView):
             # Non-fatal: action stack is a convenience; ignore failures
             pass
 
-    def delete_annotation(self, annotation_id, record_action=True):
-        """Delete an annotation by its ID from dicts."""
-        # Check if the annotation ID exists
-        if annotation_id in self.annotations_dict:
-            # Get the annotation from dict
-            annotation = self.annotations_dict[annotation_id]
-            # Unselect the annotation (if selected)
-            self.unselect_annotation(annotation)
+        # Emit a single bulk-created signal with the list of added IDs so
+        # viewers (gallery/embedding) can process the additions once.
+        try:
+            added_ids = [ann.id for ann in annotations_list if ann and ann.id in self.annotations_dict]
+            if added_ids:
+                self.annotationsCreated.emit(added_ids)
+        except Exception:
+            pass
 
-            # Check if the annotation image is still in the image annotations dict (key)
+    def delete_annotation(self, annotation_id, record_action=True, bulk_mode=False):
+        """Delete an annotation by its ID from dicts."""
+        if annotation_id in self.annotations_dict:
+            annotation = self.annotations_dict[annotation_id]
+            # Pass bulk_mode down
+            self.unselect_annotation(annotation, bulk_mode=bulk_mode)
+
             if annotation.image_path in self.image_annotations_dict:
-                # Check if the annotation itself is in the image annotations dict (value)
                 if annotation in self.image_annotations_dict[annotation.image_path]:
-                    # Remove it from the image annotations dict
                     self.image_annotations_dict[annotation.image_path].remove(annotation)
 
-            # Delete the annotation
             annotation.delete()
-            # Remove the annotation from the annotations dict
             del self.annotations_dict[annotation_id]
-            # Update image window counts for the affected image
-            try:
-                self.main_window.image_window.update_image_annotations(annotation.image_path)
-            except Exception:
-                pass
-            # Update global label counts
-            try:
-                self.main_window.label_window.update_annotation_count()
-            except Exception:
-                pass
-            # Emit the annotation deleted signal
             self.annotationDeleted.emit(annotation_id)
-            # Clear the confidence window
-            self.main_window.confidence_window.clear_display()
 
-            # Record action for undo/redo if requested
             if record_action:
                 self.action_stack.push(DeleteAnnotationAction(self, annotation))
 
-    def delete_annotations(self, annotations):
-        """Delete a list of annotations."""
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Record the bulk deletion as a single undoable action (store copy)
-        try:
-            if annotations:
-                self.action_stack.push(DeleteAnnotationsAction(self, list(annotations)))
-        except Exception:
-            # ignore action stack failures
-            pass
+            # --- BULK MODE CHECK ---
+            if not bulk_mode:
+                try: 
+                    self.main_window.image_window.update_image_annotations(annotation.image_path)
+                except Exception: 
+                    pass
+                try: 
+                    self.main_window.label_window.update_annotation_count()
+                except Exception: 
+                    pass
+                self.main_window.confidence_window.clear_display()
 
-        for annotation in annotations:
-            # suppress per-annotation action recording since we recorded bulk action
-            self.delete_annotation(annotation.id, record_action=False)
+    def delete_annotations(self, annotations, record_action=True):
+        """Delete a list of annotations (Ultimate Bulk Optimization)."""
+        if not annotations:
+            return
             
-        # Make cursor normal again
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # 1. Record the action stack once
+        if record_action:
+            try:
+                self.action_stack.push(DeleteAnnotationsAction(self, list(annotations)))
+            except Exception:
+                pass
+
+        # 2. Fast tracking of IDs and affected images
+        ann_ids_to_delete = {ann.id for ann in annotations}
+        affected_images = {ann.image_path for ann in annotations if ann.image_path}
+        
+        # 3. INSTANT LIST REBUILD
+        for image_path in affected_images:
+            if image_path in self.image_annotations_dict:
+                self.image_annotations_dict[image_path] = [
+                    ann for ann in self.image_annotations_dict[image_path] 
+                    if ann.id not in ann_ids_to_delete
+                ]
+                # Clean up empty lists to prevent memory leaks
+                if not self.image_annotations_dict[image_path]:
+                    del self.image_annotations_dict[image_path]
+
+        # 4. Remove from main dict, scene, and emit signals (Optimized)
+        
+        # Suspend the Scene Index and Block Signals
+        self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
+        self.blockSignals(True)
+
+        for ann in annotations:
+            if ann.id in self.annotations_dict:
+                del self.annotations_dict[ann.id]
+                
+            # Block the annotation's own internal signals as well
+            ann.blockSignals(True)
+            ann.delete()
+            ann.blockSignals(False)
+            
+            # Firing this singular signal is safely blocked from triggering UI updates
+            self.annotationDeleted.emit(ann.id)
+
+        # Turn signals and spatial indexing back on
+        self.blockSignals(False)
+        self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
+        
+        # --- Emit the bulk deletion to update the galleries instantly ---
+        self.annotationsDeleted.emit(list(ann_ids_to_delete))
+        # ----------------------------------------------------------------
+            
+        # 5. UI Updates EXACTLY ONCE at the very end
+        for image_path in affected_images:
+            try: 
+                self.main_window.image_window.update_image_annotations(image_path)
+            except Exception: 
+                pass
+            
+        try: 
+            self.main_window.label_window.update_annotation_count()
+        except Exception: 
+            pass
+            
+        self.main_window.confidence_window.clear_display()
+        
+        # A single viewport update after the scene is completely modified
+        self.viewport().update()
+        
         QApplication.restoreOverrideCursor()
 
     def delete_selected_annotations(self):

@@ -77,58 +77,47 @@ class DeleteAnnotationAction(Action):
 
 
 class AddAnnotationsAction(Action):
-    """Add multiple annotations (undo by deleting them)."""
+    """Add multiple annotations (undo by deleting them in bulk)."""
 
     def __init__(self, annotation_window, annotations):
         self.annotation_window = annotation_window
         self.annotations = annotations
 
     def do(self):
-        # Use the bulk add method but suppress recording another bulk action
-        # (the ActionStack already contains this action)
         self.annotation_window.add_annotations(self.annotations, record_action=False)
-
-        # If any of the added annotations belong to the currently displayed image,
-        # (re)load annotations for that image so graphics items are created.
         try:
             current = self.annotation_window.current_image_path
             if current:
                 image_paths = {getattr(a, 'image_path', None) for a in self.annotations}
                 if current in image_paths:
-                    # load_annotations will create graphics for visible labels
                     self.annotation_window.load_annotations(image_path=current)
-                    # Ensure view refresh
                     try:
                         self.annotation_window.scene.update()
                         self.annotation_window.viewport().update()
                     except Exception:
                         pass
         except Exception:
-            # Non-fatal — best-effort to refresh UI
             pass
 
     def undo(self):
-        # Delete each annotation without recording individual undo actions
-        for annotation in self.annotations:
-            self.annotation_window.delete_annotation(annotation.id, record_action=False)
+        # FIX: Use true bulk delete instead of a massive loop
+        self.annotation_window.delete_annotations(self.annotations, record_action=False)
 
 
 class DeleteAnnotationsAction(Action):
-    """Delete multiple annotations (undo by re-adding them)."""
+    """Delete multiple annotations (undo by re-adding them in bulk)."""
 
     def __init__(self, annotation_window, annotations):
         self.annotation_window = annotation_window
         self.annotations = annotations
 
     def do(self):
-        # Delete each annotation without creating separate undo actions
-        for annotation in self.annotations:
-            self.annotation_window.delete_annotation(annotation.id, record_action=False)
+        # FIX: Use true bulk delete instead of a massive loop
+        self.annotation_window.delete_annotations(self.annotations, record_action=False)
 
     def undo(self):
-        # Re-add each annotation without recording actions
-        for annotation in self.annotations:
-            self.annotation_window.add_annotation(annotation, record_action=False)
+        # FIX: Use true bulk add instead of a massive loop
+        self.annotation_window.add_annotations(self.annotations, record_action=False)
 
 
 class MoveAnnotationAction(Action):

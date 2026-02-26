@@ -130,11 +130,28 @@ class SelectSubTool(SubTool):
         rect = self.selection_rectangle.rect()
         locked_label = self.parent_tool.get_locked_label()
 
-        # Iterate through all annotations to check for inclusion
+        # Gather what needs to be selected
+        annotations_to_select = []
         for annotation in self.annotation_window.get_image_annotations():
             if rect.contains(annotation.center_xy):
                 if locked_label and annotation.label.id != locked_label.id:
-                    continue  # Skip if label is locked and doesn't match
+                    continue  
                 if annotation not in self.parent_tool.selected_annotations:
-                    # Append to selection (multi-select is the default for marquee)
-                    self.annotation_window.select_annotation(annotation, multi_select=True)
+                    annotations_to_select.append(annotation)
+
+        # Apply in bulk
+        if annotations_to_select:
+            self.annotation_window._syncing_selection = True
+            
+            for ann in annotations_to_select:
+                self.annotation_window.select_annotation(ann, multi_select=True, bulk_mode=True)
+                
+            self.annotation_window._syncing_selection = False
+            
+            # Fire the UI updates exactly once
+            if len(self.annotation_window.selected_annotations) > 1:
+                self.annotation_window.main_window.label_window.deselect_active_label()
+                self.annotation_window.main_window.confidence_window.clear_display()
+                
+            self.annotation_window.viewport().update()
+            self.annotation_window._emit_selection_changed()
