@@ -6,14 +6,11 @@ import cv2
 import math
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty
-from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
-                             QGraphicsScene, QGraphicsItemGroup, QGraphicsDropShadowEffect)
-
-from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPainterPath
-from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
-                             QGraphicsScene, QGraphicsItemGroup, QGraphicsPathItem)
+from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
+from PyQt5.QtWidgets import (QMessageBox, QGraphicsRectItem, QGraphicsItem,
+                             QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
+                             QGraphicsPathItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -27,6 +24,50 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class FloatingTagItem(QGraphicsSimpleTextItem):
+    def __init__(self, text, bg_color, parent=None):
+        super().__init__(text, parent)
+        self.bg_color = QColor(bg_color)
+        
+        # Ensure the background is fully opaque for readability
+        self.bg_color.setAlpha(255) 
+        
+        # Set text color (white usually looks best against colored labels)
+        self.setBrush(QBrush(Qt.white))
+        
+        # Set a crisp, modern font
+        font = QFont("Arial", 5)
+        self.setFont(font)
+        
+        # THE MAGIC FLAG: Keeps the tag readable at any zoom level
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+        
+        # Force it to render on top of everything else
+        self.setZValue(20)
+
+    def paint(self, painter, option, widget):
+        """Override paint to draw a custom rounded background behind the text."""
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Get the bounding box of the text itself
+        text_rect = self.boundingRect()
+        
+        # Add a few pixels of padding around the text
+        pad_x, pad_y = 3, 1
+        bg_rect = QRectF(text_rect.x() - pad_x, 
+                         text_rect.y() - pad_y, 
+                         text_rect.width() + pad_x * 2, 
+                         text_rect.height() + pad_y * 2)
+        
+        # Draw the rounded pill/badge background
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self.bg_color))
+        painter.drawRoundedRect(bg_rect, 4, 4)  # 4px corner radius
+        
+        # Draw the actual text on top
+        super().paint(painter, option, widget)
+        
+        
 class Annotation(QObject):
     selected = pyqtSignal(object)
     colorChanged = pyqtSignal(QColor)
@@ -78,10 +119,10 @@ class Annotation(QObject):
         self.animation_manager = None
         self.is_animating = False
         
-        # Animation properties
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-
+        # Modern Animation properties (Marching Ants)
+        self._dash_offset = 0.0
+        self._dash_speed = 1.0  # Pixels to move per animation tick
+        
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -733,6 +774,23 @@ class Annotation(QObject):
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
+                                               
+        # --- Add the Floating Class Tag ---
+        tag_text = self.label.short_label_code
+        self.tag_item = FloatingTagItem(tag_text, self.label.color)
+        
+        # Position it just above the top-left corner
+        top_left = self.get_bounding_box_top_left()
+        
+        # Note: Because the tag ignores transformations, we don't need a huge offset. 
+        # A tiny visual bump places it right on the perimeter.
+        self.tag_item.setPos(top_left.x(), top_left.y()) 
+        
+        # Clutter Control (Only show when selected)
+        self.tag_item.setVisible(self.is_selected)
+        
+        self.graphics_item_group.addToGroup(self.tag_item)
+        # ---------------------------------------
         
         scene.addItem(self.graphics_item_group)
         
@@ -764,44 +822,6 @@ class Annotation(QObject):
         """
         self.animation_manager = manager
         
-    def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
-        
-    @pyqtProperty(int)  # Changed to int for QColor compatibility
-    def pulse_alpha(self):
-        """Get the current pulse alpha for animation."""
-        return self._pulse_alpha
-    
-    @pulse_alpha.setter
-    def pulse_alpha(self, value):
-        """Set the pulse alpha and update pen styles."""
-        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
-        self._update_pen_styles()
-    
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_alpha += 30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
-
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
-            self._pulse_direction = 1
-
-        self._update_pen_styles()
-    
     def animate(self, force=False):
         """
         Start the pulsing animation by registering with the global timer.
@@ -813,14 +833,43 @@ class Annotation(QObject):
             self.is_animating = True
             if self.animation_manager:
                 self.animation_manager.register_animating_object(self)
+        
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        self._update_dash_offset()
+        
+    @pyqtProperty(float)
+    def dash_offset(self):
+        """Get the current dash offset for animation."""
+        return self._dash_offset
     
+    @dash_offset.setter
+    def dash_offset(self, value):
+        """Set the dash offset and update pen styles."""
+        self._dash_offset = value
+        self._update_pen_styles()
+    
+    def _update_dash_offset(self):
+        """Increment the dash offset to create the marching ants effect."""
+        self._dash_offset += self._dash_speed
+        
+        # Reset the offset once it completes a full pattern cycle to prevent float overflow.
+        # If our pattern is [4, 4] (4px line, 4px gap), the cycle length is 8.
+        if self._dash_offset >= 8.0:
+            self._dash_offset -= 8.0
+
+        self._update_pen_styles()
+
     def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
+        """Stop the animation by de-registering from the global timer."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
             
-        self._pulse_alpha = 128  # Reset to default
+        self._dash_offset = 0.0  # Reset to default
         self.update_graphics_item()  # Apply the default style
     
     def _create_pen(self, base_color: QColor) -> QPen:
@@ -828,16 +877,24 @@ class Annotation(QObject):
         if self.is_selected or self.is_animating:
             # Use same color if verified, black if not verified
             pen_color = QColor(base_color) if self.verified else QColor(0, 0, 0)
-            pen_color.setAlpha(self._pulse_alpha) 
             
-            # Modernized selected state: Thicker solid line instead of DotLine
-            pen = QPen(pen_color.lighter(130), 3, Qt.SolidLine)
-            pen.setCapStyle(Qt.RoundCap)   # Smooth corners
-            pen.setJoinStyle(Qt.RoundJoin) # Smooth intersections
+            # The line stays fully opaque so you never lose contrast
+            pen_color.setAlpha(255)
+            
+            # Create a thicker, lighter pen for the selected state
+            pen = QPen(pen_color.lighter(130), 2.5) 
+            
+            # Apply the Marching Ants pattern
+            pen.setDashPattern([4, 4])  # 4 pixels painted, 4 pixels empty gap
+            pen.setDashOffset(self._dash_offset)
+            
+            # Use flat caps so the dashes butt up neatly against each other
+            pen.setCapStyle(Qt.FlatCap)
+            pen.setJoinStyle(Qt.MiterJoin)
             pen.setCosmetic(True)
             return pen
         else:
-            # Modernized unselected state: Solid 2px line
+            # Modernized unselected state: Solid opaque line
             pen_color = QColor(base_color)
             pen_color.setAlpha(255)  
             
@@ -852,8 +909,8 @@ class Annotation(QObject):
         # Only update if selected OR if animation is running (for forced animation)
         if not self.is_selected and not self.is_animating:
             return
-            
-        color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  
+        
+        color = QColor(self.label.color).darker(150) if not self.verified else QColor(self.label.color).lighter(150)
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen
