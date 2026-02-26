@@ -736,13 +736,21 @@ class PatchSamplingDialog(QDialog):
                 # Update the raster's annotation info for each processed image
                 self.image_window.update_image_annotations(image_path)
 
-            # Add sampled annotations to the annotation window
-            for sampled_annotation in sampled_annotations:
-                self.annotation_window.add_annotation(sampled_annotation)
-
-            # Refresh the view of the annotation window if the current image has new sampled annotations
-            if image_paths and self.annotation_window.current_image_path in image_paths:
-                self.annotation_window.load_annotations(self.annotation_window.current_image_path)
+            # Add all sampled annotations to the annotation window in one BULK operation
+            if sampled_annotations:
+                self.annotation_window.add_annotations(sampled_annotations, record_action=True)
+                
+                # --- Instantly draw the ones that belong on the current screen ---
+                current_image = self.annotation_window.current_image_path
+                for ann in sampled_annotations:
+                    if ann.image_path == current_image and ann.label.is_visible:
+                        if not ann.graphics_item:
+                            ann.create_graphics_item(self.annotation_window.scene)
+                        self.annotation_window.set_annotation_visibility(ann)
+                
+                # Force a single visual refresh
+                self.annotation_window.viewport().update()
+                # --------------------------------------------------------------------------
 
         except Exception as e:
             QApplication.restoreOverrideCursor()

@@ -1283,15 +1283,30 @@ class EmbeddingViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     
     def render_selection_from_ids(self, selected_ids):
-        """Update visual selection from ID set."""
+        """Update visual selection using set-diffing to minimize updates."""
         blocker = QSignalBlocker(self.graphics_scene)
-        
-        for ann_id, point in self.points_by_id.items():
-            is_selected = ann_id in selected_ids
-            point.data_item.set_selected(is_selected)
-            point.setSelected(is_selected)
-        
-        blocker.unblock()
+        try:
+            selected_ids_set = set(selected_ids) if selected_ids else set()
+            current_selected_ids = {aid for aid, pt in self.points_by_id.items() if pt.data_item.is_selected}
+
+            to_select = selected_ids_set - current_selected_ids
+            to_deselect = current_selected_ids - selected_ids_set
+
+            for ann_id in to_select:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(True)
+                    pt.setSelected(True)
+
+            for ann_id in to_deselect:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(False)
+                    pt.setSelected(False)
+        finally:
+            blocker.unblock()
+
+        # One consolidated update after changes
         self._on_selection_changed()
         self._update_visible_points()
     
@@ -1671,7 +1686,8 @@ class EmbeddingViewerWindow(QWidget):
                 for item in self.selection_at_press:
                     item.setSelected(True)
             self.graphics_scene.blockSignals(False)
-            self._on_selection_changed()
+            # Do not call _on_selection_changed() on every mouse-move while dragging;
+            # emit final selection once on mouse release instead for performance.
         elif event.buttons() == Qt.RightButton:
             left_event = QMouseEvent(
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
@@ -1699,6 +1715,11 @@ class EmbeddingViewerWindow(QWidget):
             return
         
         if self.rubber_band:
+            # Process the final selection exactly once
+            try:
+                self._on_selection_changed()
+            except Exception:
+                pass
             self.graphics_scene.removeItem(self.rubber_band)
             self.rubber_band = None
             self.selection_at_press = None

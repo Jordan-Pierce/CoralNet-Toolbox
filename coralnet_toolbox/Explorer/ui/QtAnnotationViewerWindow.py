@@ -1266,15 +1266,29 @@ class AnnotationViewerWindow(QWidget):
         self._update_toolbar_state()
     
     def render_selection_from_ids(self, selected_ids):
-        """Update visual selection based on ID set."""
+        """Update visual selection using fast set-diffing."""
         self.setUpdatesEnabled(False)
         try:
-            for ann_id, widget in self.annotation_widgets_by_id.items():
-                is_selected = ann_id in selected_ids
-                widget.data_item.set_selected(is_selected)
-                widget.update_selection_visuals()
-            
-            self.selected_widgets = [w for w in self.annotation_widgets_by_id.values() if w.is_selected()]
+            selected_ids_set = set(selected_ids) if selected_ids else set()
+            current_selected_ids = {w.data_item.annotation.id for w in self.selected_widgets}
+
+            to_select = selected_ids_set - current_selected_ids
+            to_deselect = current_selected_ids - selected_ids_set
+
+            for ann_id in to_select:
+                if ann_id in self.annotation_widgets_by_id:
+                    widget = self.annotation_widgets_by_id[ann_id]
+                    widget.data_item.set_selected(True)
+                    widget.update_selection_visuals()
+                    self.selected_widgets.append(widget)
+
+            for ann_id in to_deselect:
+                if ann_id in self.annotation_widgets_by_id:
+                    widget = self.annotation_widgets_by_id[ann_id]
+                    widget.data_item.set_selected(False)
+                    widget.update_selection_visuals()
+                    if widget in self.selected_widgets:
+                        self.selected_widgets.remove(widget)
         finally:
             self.setUpdatesEnabled(True)
         self._update_toolbar_state()
@@ -1477,15 +1491,9 @@ class AnnotationViewerWindow(QWidget):
             should_select = (widget in self.selection_at_press) or is_in_band
             
             if should_select and not widget.is_selected():
-                if self.select_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
+                self.select_widget(widget)
             elif not should_select and widget.is_selected():
-                if self.deselect_widget(widget):
-                    changed_ids.append(widget.data_item.annotation.id)
-        
-        if changed_ids:
-            # Emit selection change - SelectionManager will handle tool switching
-            self.selection_changed.emit(changed_ids)
+                self.deselect_widget(widget)
         
         return True
     
@@ -1504,6 +1512,12 @@ class AnnotationViewerWindow(QWidget):
                 self.rubber_band.hide()
                 self.rubber_band.deleteLater()
                 self.rubber_band = None
+                # Emit the final selection state exactly once
+                try:
+                    changed_ids = [w.data_item.annotation.id for w in self.selected_widgets]
+                    self.selection_changed.emit(changed_ids)
+                except Exception:
+                    pass
             self.rubber_band_origin = None
             return True
         return False

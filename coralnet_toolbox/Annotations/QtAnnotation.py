@@ -32,8 +32,10 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
         # Ensure the background is fully opaque for readability
         self.bg_color.setAlpha(255) 
         
-        # Set text color (white usually looks best against colored labels)
-        self.setBrush(QBrush(Qt.white))
+        # Make the text darker than the background color for contrast
+        text_color = QColor(self.bg_color).darker(200)
+        text_color.setAlpha(255)
+        self.setBrush(QBrush(text_color))
         
         # Set a crisp, modern font
         font = QFont("Arial", 5)
