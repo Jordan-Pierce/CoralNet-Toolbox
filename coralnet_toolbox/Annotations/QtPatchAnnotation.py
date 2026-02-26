@@ -154,12 +154,12 @@ class PatchAnnotation(Annotation):
         Get a QPainterPath representation of the annotation.
         """
         path = QPainterPath()
-
         # Get the square's corners from the existing get_polygon method
         polygon = self.get_polygon()
-
         # Add the polygon to the path
         path.addPolygon(polygon)
+        # Close the subpath to ensure the path is a closed polygon
+        path.closeSubpath()
 
         return path
 

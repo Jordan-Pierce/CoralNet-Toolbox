@@ -9,7 +9,11 @@ import numpy as np
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
-                             QGraphicsScene, QGraphicsItemGroup)
+                             QGraphicsScene, QGraphicsItemGroup, QGraphicsDropShadowEffect)
+
+from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPainterPath
+from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
+                             QGraphicsScene, QGraphicsItemGroup, QGraphicsPathItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -668,14 +672,16 @@ class Annotation(QObject):
     def select(self):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setVisible(True)
         self.update_graphics_item()
-        # Start animation
         self.animate()
 
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
-        # Stop animation
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setVisible(False)
         self.deanimate()
         self.update_graphics_item()
 
@@ -704,19 +710,17 @@ class Annotation(QObject):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the annotation and add them to the scene as a group."""
-        # Remove old group if it exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
+            
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # The subclass has already created self.graphics_item.
-        # This parent method is now only responsible for styling and grouping it.
         if self.graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            # Only set brush and pen if the item supports them (e.g., shape items, not pixmaps)
+            
             if hasattr(self.graphics_item, 'setBrush'):
                 self.graphics_item.setBrush(QBrush(color))
             if hasattr(self.graphics_item, 'setPen'):
@@ -725,13 +729,11 @@ class Annotation(QObject):
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # Create and group the helper graphics (center, bbox, etc.)
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
         
-        # Add the final group to the scene
         scene.addItem(self.graphics_item_group)
         
     def is_graphics_item_valid(self):
@@ -825,22 +827,23 @@ class Annotation(QObject):
         """Create a pen with appropriate style based on selection state."""
         if self.is_selected or self.is_animating:
             # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = QColor(base_color)  # Create a copy
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
+            pen_color = QColor(base_color) if self.verified else QColor(0, 0, 0)
+            pen_color.setAlpha(self._pulse_alpha) 
             
-            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-            
-            pen = QPen(pen_color.lighter(150), 2)  # Changed to lighter for brighter selected appearance
-            pen.setStyle(Qt.DotLine)  # Predefined dotted line
+            # Modernized selected state: Thicker solid line instead of DotLine
+            pen = QPen(pen_color.lighter(130), 3, Qt.SolidLine)
+            pen.setCapStyle(Qt.RoundCap)   # Smooth corners
+            pen.setJoinStyle(Qt.RoundJoin) # Smooth intersections
             pen.setCosmetic(True)
             return pen
         else:
-            # Use label color with solid line for unselected items, always opaque
+            # Modernized unselected state: Solid 2px line
             pen_color = QColor(base_color)
-            pen_color.setAlpha(255)  # Pen should always be fully opaque
-            pen = QPen(pen_color, 1, Qt.SolidLine)  # Consistent width
+            pen_color.setAlpha(255)  
+            
+            pen = QPen(pen_color, 2, Qt.SolidLine) 
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
             pen.setCosmetic(True)
             return pen
     
@@ -863,7 +866,6 @@ class Annotation(QObject):
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
-        # First safely check if the center_graphics_item is still valid
         try:
             has_scene = self.center_graphics_item and self.center_graphics_item.scene()
         except RuntimeError:
@@ -873,14 +875,31 @@ class Annotation(QObject):
         if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
     
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-    
-        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 1, center_xy.y() - 1, 2, 2)
-        self.center_graphics_item.setBrush(color)
-    
-        # Use the consolidated pen creation method
-        self.center_graphics_item.setPen(self._create_pen(color))
+        # Create an open-center crosshair using QPainterPath
+        path = QPainterPath()
+        gap = 1     # Empty space from the center pixel
+        length = 3  # Length of each crosshair arm
+        
+        # Horizontal left arm
+        path.moveTo(center_xy.x() - gap - length, center_xy.y())
+        path.lineTo(center_xy.x() - gap, center_xy.y())
+        # Horizontal right arm
+        path.moveTo(center_xy.x() + gap, center_xy.y())
+        path.lineTo(center_xy.x() + gap + length, center_xy.y())
+        
+        # Vertical top arm
+        path.moveTo(center_xy.x(), center_xy.y() - gap - length)
+        path.lineTo(center_xy.x(), center_xy.y() - gap)
+        # Vertical bottom arm
+        path.moveTo(center_xy.x(), center_xy.y() + gap)
+        path.lineTo(center_xy.x(), center_xy.y() + gap + length)
+        
+        self.center_graphics_item = QGraphicsPathItem(path)
+        
+        # Use a crisp white pen for maximum visibility without obscuring data
+        crosshair_pen = QPen(Qt.white, 1.5, Qt.SolidLine)
+        crosshair_pen.setCosmetic(True)
+        self.center_graphics_item.setPen(crosshair_pen)
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
@@ -888,7 +907,6 @@ class Annotation(QObject):
             scene.addItem(self.center_graphics_item)
     
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene, add_to_group=False):
-        """Create a graphical item representing the annotation's bounding box."""
         try:
             has_scene = self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene()
         except RuntimeError:
@@ -898,17 +916,22 @@ class Annotation(QObject):
         if has_scene:
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
     
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-    
         self.bounding_box_graphics_item = QGraphicsRectItem(
             top_left.x(), top_left.y(),
             bottom_right.x() - top_left.x(),
             bottom_right.y() - top_left.y()
         )
     
-        # Use the consolidated pen creation method
-        self.bounding_box_graphics_item.setPen(self._create_pen(color))
+        # Make the BBox fill totally transparent
+        self.bounding_box_graphics_item.setBrush(QBrush(Qt.transparent))
+        
+        # Use a very subtle, faint white dashed line
+        subtle_pen = QPen(QColor(255, 255, 255, 150), 1, Qt.DashLine)
+        subtle_pen.setCosmetic(True)
+        self.bounding_box_graphics_item.setPen(subtle_pen)
+        
+        # Only make it visible if the item is actively selected
+        self.bounding_box_graphics_item.setVisible(self.is_selected)
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
@@ -981,15 +1004,23 @@ class Annotation(QObject):
 
     def update_center_graphics_item(self, center_xy):
         """Update the position and appearance of the center graphics item."""
-        if self.center_graphics_item:
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-    
-            self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-            self.center_graphics_item.setBrush(color)
-    
-            # Use the consolidated pen creation method
-            self.center_graphics_item.setPen(self._create_pen(color))
+        if self.center_graphics_item and isinstance(self.center_graphics_item, QGraphicsPathItem):
+            path = QPainterPath()
+            gap = 1
+            length = 3
+            
+            # Re-draw paths at the new coordinates
+            path.moveTo(center_xy.x() - gap - length, center_xy.y())
+            path.lineTo(center_xy.x() - gap, center_xy.y())
+            path.moveTo(center_xy.x() + gap, center_xy.y())
+            path.lineTo(center_xy.x() + gap + length, center_xy.y())
+            
+            path.moveTo(center_xy.x(), center_xy.y() - gap - length)
+            path.lineTo(center_xy.x(), center_xy.y() - gap)
+            path.moveTo(center_xy.x(), center_xy.y() + gap)
+            path.lineTo(center_xy.x(), center_xy.y() + gap + length)
+            
+            self.center_graphics_item.setPath(path)
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""

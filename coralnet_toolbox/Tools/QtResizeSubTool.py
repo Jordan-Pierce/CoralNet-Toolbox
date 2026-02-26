@@ -1,10 +1,9 @@
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsEllipseItem
+from PyQt5.QtGui import QPen, QBrush, QColor, QPainter
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
 from coralnet_toolbox.QtActions import AnnotationGeometryEditAction
-from copy import deepcopy
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -14,6 +13,71 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
+class ResizeHandleItem(QGraphicsEllipseItem):
+    def __init__(self, x, y, size, color, handle_name, is_polygon=False):
+        # We initialize the parent ellipse to act as our "invisible hitbox"
+        super().__init__(x, y, size, size)
+        
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
+        
+        self.handle_name = handle_name
+        self.base_color = QColor(color)
+        self.is_polygon = is_polygon
+        self.is_hovered = False
+        self.hitbox_size = size
+
+        # The base item is transparent so it acts purely as a hit-detector
+        self.setPen(QPen(Qt.transparent))
+        self.setBrush(QBrush(Qt.transparent))
+
+    def paint(self, painter, option, widget=None):
+        """Custom drawing logic based on proximity (hover state) and shape type."""
+        painter.setRenderHint(QPainter.Antialiasing)
+        center = self.boundingRect().center()
+        
+        if self.is_hovered:
+            # PROXIMITY WAKE-UP: Crisp white center, colored border
+            radius = self.hitbox_size * 0.35  # Fill about 70% of the hitbox
+            
+            pen = QPen(self.base_color, 2, Qt.SolidLine)
+            pen.setCosmetic(True) # Stays crisp regardless of zoom
+            painter.setPen(pen)
+            
+            painter.setBrush(QBrush(Qt.white))
+            painter.setOpacity(1.0)
+            
+        else:
+            # SLEEP STATE
+            if self.is_polygon:
+                # Polygons: Subdued, tiny dots to completely remove visual clutter
+                radius = self.hitbox_size * 0.15
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.base_color))
+                painter.setOpacity(0.6)
+            else:
+                # Rectangles: Standard un-hovered handles (rectangles have few handles, so we leave them visible)
+                radius = self.hitbox_size * 0.25
+                pen = QPen(self.base_color, 1.5, Qt.SolidLine)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.setBrush(QBrush(Qt.white))
+                painter.setOpacity(1.0)
+
+        # Draw our custom dynamic handle
+        painter.drawEllipse(center, radius, radius)
+
+    def hoverEnterEvent(self, event):
+        self.is_hovered = True
+        self.update()  # Trigger a re-paint
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.is_hovered = False
+        self.update()  # Trigger a re-paint
+        super().hoverLeaveEvent(event)
+        
 
 class ResizeSubTool(SubTool):
     """SubTool for resizing a single annotation using handles."""
@@ -161,28 +225,30 @@ class ResizeSubTool(SubTool):
         scale = self.annotation_window.transform().m11()
         if scale == 0:
             scale = 1  # avoid division by zero
-        desired_screen_size = 15  # Desired handle size in screen pixels
+            
+        # Increase the screen size to create a generous invisible hitbox (e.g., 24 pixels)
+        desired_screen_size = 24  
         handle_size = desired_screen_size / scale
 
+        # Determine if we are styling for a polygon
+        is_poly = isinstance(annotation, PolygonAnnotation)
+
         for handle_name, point in handles.items():
-            ellipse = QGraphicsEllipseItem(point.x() - handle_size / 2,
-                                           point.y() - handle_size / 2,
-                                           handle_size,
-                                           handle_size)
+            # Create our custom proximity-based handle
+            handle_item = ResizeHandleItem(
+                point.x() - handle_size / 2,
+                point.y() - handle_size / 2,
+                handle_size,
+                annotation.label.color,
+                handle_name,
+                is_polygon=is_poly
+            )
             
-            handle_color = QColor(annotation.label.color)
-            border_color = QColor(255 - handle_color.red(), 255 - handle_color.green(), 255 - handle_color.blue())
+            # Keep compatibility with SelectTool logic
+            handle_item.setData(1, handle_name)  
             
-            pen = QPen(border_color, 3)
-            pen.setCosmetic(True)  # Keep pen width constant
-            ellipse.setPen(pen)
-            ellipse.setBrush(QBrush(handle_color))
-            ellipse.setData(1, handle_name)  # Store handle name
-            ellipse.setAcceptHoverEvents(True)
-            ellipse.setAcceptedMouseButtons(Qt.LeftButton)
-            
-            self.annotation_window.scene.addItem(ellipse)
-            self.resize_handles_items.append(ellipse)
+            self.annotation_window.scene.addItem(handle_item)
+            self.resize_handles_items.append(handle_item)
 
     def _on_annotation_updated(self, annotation):
         """Handle annotation updates by refreshing the resize handles."""
