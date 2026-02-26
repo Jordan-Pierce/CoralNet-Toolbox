@@ -16,7 +16,7 @@ from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox,
-    QToolBar, QToolButton, QMenu, QAction
+    QToolBar, QToolButton, QMenu, QAction, QStackedLayout
 )
 
 
@@ -91,7 +91,24 @@ class MVATViewer(QFrame):
         bottom_layout.setContentsMargins(6, 2, 6, 2)
         bottom_layout.setSpacing(12)
         
-        self.layout.addWidget(self.plotter.interactor)
+        # Use a stacked layout so we can show a centered placeholder when
+        # no point cloud is loaded (matches pattern used in other viewers)
+        self._stack_container = QWidget()
+        self._stack = QStackedLayout(self._stack_container)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+        self._stack.addWidget(self.plotter.interactor)
+
+        # Placeholder shown when no point cloud present
+        self._placeholder_label = QLabel("No point cloud loaded")
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setStyleSheet("color: #666;")
+        self._stack.addWidget(self._placeholder_label)
+
+        # Start showing placeholder by default
+        self._stack.setCurrentWidget(self._placeholder_label)
+
+        self.layout.addWidget(self._stack_container)
 
         # Opacity control (for thumbnail/frustum opacity)
         opacity_label = QLabel("Opacity:")
@@ -660,6 +677,11 @@ class MVATViewer(QFrame):
             file_path = event.mimeData().urls()[0].toLocalFile()
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
+            # Hide placeholder now that a point cloud exists
+            try:
+                self._hide_placeholder()
+            except Exception:
+                pass
             # Warm up GPU cache (no rendering yet)
             self.add_point_cloud()
             event.acceptProposedAction()
@@ -694,6 +716,24 @@ class MVATViewer(QFrame):
                 print("⚡ Point cloud GPU cache ready (no rendering yet)")
         finally:
             QApplication.restoreOverrideCursor()
+
+    def _show_placeholder(self, text: str = None):
+        """Show the placeholder widget in the stacked layout."""
+        try:
+            if text:
+                self._placeholder_label.setText(text)
+            if hasattr(self, '_stack'):
+                self._stack.setCurrentWidget(self._placeholder_label)
+        except Exception:
+            pass
+
+    def _hide_placeholder(self):
+        """Hide the placeholder and show the plotter interactor."""
+        try:
+            if hasattr(self, '_stack'):
+                self._stack.setCurrentWidget(self.plotter.interactor)
+        except Exception:
+            pass
 
     def set_point_size(self, size):
         """Update the point size for point clouds."""

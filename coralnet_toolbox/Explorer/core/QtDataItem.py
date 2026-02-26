@@ -3,7 +3,7 @@ import warnings
 import os
 
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPen, QColor, QPainter, QFont
+from PyQt5.QtGui import QPen, QColor, QPainter, QFont, QBrush
 from PyQt5.QtWidgets import QGraphicsObject, QStyle, QWidget, QGraphicsItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -56,9 +56,8 @@ class EmbeddingPointItem(QGraphicsObject):
         self.animation_manager = None
         self.is_animating = False
         
-        # --- Animation properties ---
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
+        # --- Marching Ants offset ---
+        self.animation_offset = 0
         
     def set_animation_manager(self, manager):
         """
@@ -111,22 +110,17 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def paint(self, painter, option, widget):
-        """
-        Custom paint method to draw either a dot or a sprite with a border.
-        """
+        """Custom paint method to draw a modern dot or sprite with animated selection."""
         option.state &= ~QStyle.State_Selected
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Calculate scale_factor for size and opacity
         scale_factor = 1.0
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
-            scale_factor = 0.5 + z_normalized  # From 0.5x to 1.5x
+            scale_factor = 0.5 + z_normalized
 
-        # Calculate scaled pen width for borders (clamp to avoid extremes)
-        scaled_pen_width = max(1, min(POINT_WIDTH * scale_factor, 6))  # Clamp between 1 and 6 for usability
+        scaled_pen_width = max(1, min(POINT_WIDTH * scale_factor, 6))
         
-        # Calculate opacity
         opacity = 255
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
@@ -139,109 +133,110 @@ class EmbeddingPointItem(QGraphicsObject):
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
         if display_mode == 'sprites':
-            # Ensure the pixmap is scaled to the current boundingRect size (handles dynamic scaling during rotation)
             current_size = self.boundingRect().size().toSize()
             if self.thumbnail_pixmap is None or self.thumbnail_pixmap.size() != current_size:
                 source_pixmap = self.data_item.annotation.get_cropped_image_graphic()
                 if source_pixmap and not source_pixmap.isNull():
                     self.thumbnail_pixmap = source_pixmap.scaled(
-                        current_size,
-                        Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        current_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
             
             if self.thumbnail_pixmap:
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
-            # Scaled border pen for sprites
-            border_color = QColor(self.data_item.effective_color)
-            border_color.setAlpha(opacity)
-            border_pen = QPen(border_color, scaled_pen_width)
-            border_pen.setCosmetic(True)
             if self.isSelected():
-                # Tell manager to start animating
-                self.animate()
+                # Black contrast stroke
+                bg_pen = QPen(QColor("black"), scaled_pen_width + 2)
+                bg_pen.setCosmetic(True)
+                painter.setPen(bg_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(self.boundingRect())
                 
-                border_color = QColor(self.data_item.effective_color).darker(150)  
-                border_color.setAlpha(self._pulse_alpha)
+                # Marching ants stroke
+                border_color = QColor(self.data_item.effective_color)
                 border_pen = QPen(border_color, scaled_pen_width)
                 border_pen.setCosmetic(True)
-                border_pen.setStyle(Qt.DotLine)
+                border_pen.setDashPattern([4.0, 4.0])
+                border_pen.setDashOffset(self.animation_offset)
+                painter.setPen(border_pen)
+                painter.drawRect(self.boundingRect())
             else:
-                # Tell manager to stop animating
-                self.deanimate()
+                # Modern unselected sprite: 1px subtle dark border instead of thick black
+                subtle_pen = QPen(QColor(0, 0, 0, 100), 1)
+                subtle_pen.setCosmetic(True)
+                painter.setPen(subtle_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(self.boundingRect())
 
-            painter.setPen(border_pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(self.boundingRect())
         else:
-            # Draw Original Dot with scaled size and pen
+            # --- MODERN DOTS RENDERING ---
             if self.isSelected():
-                # Tell manager to start animating
-                self.animate()
+                # 1. Draw the solid base dot (no border)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(effective_brush_color)
+                painter.drawEllipse(self.boundingRect())
                 
-                darker_color = QColor(self.data_item.effective_color).darker(150)  
-                darker_color.setAlpha(self._pulse_alpha)
-                animated_pen = QPen(darker_color, scaled_pen_width)
-                animated_pen.setCosmetic(True)
-                animated_pen.setStyle(Qt.DotLine)
-                painter.setPen(animated_pen)
+                # 2. Draw a Floating Selection Halo slightly outside the dot
+                halo_margin = 3 + (scale_factor * 2)
+                halo_rect = self.boundingRect().adjusted(-halo_margin, -halo_margin, halo_margin, halo_margin)
+                
+                # Black contrast background ring
+                bg_pen = QPen(QColor("black"), scaled_pen_width + 1)
+                bg_pen.setCosmetic(True)
+                painter.setPen(bg_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(halo_rect)
+                
+                # Marching ants colored ring
+                halo_pen = QPen(self.data_item.effective_color, scaled_pen_width)
+                halo_pen.setCosmetic(True)
+                halo_pen.setDashPattern([4.0, 4.0])
+                halo_pen.setDashOffset(self.animation_offset)
+                painter.setPen(halo_pen)
+                painter.drawEllipse(halo_rect)
             else:
-                # Tell manager to stop animating
+                # Modern Unselected: Crisp white stroke to beautifully separate overlapping clusters
+                white_pen = QPen(QColor(255, 255, 255, opacity), max(1.0, scaled_pen_width * 0.5))
+                white_pen.setCosmetic(True)
+                painter.setPen(white_pen)
+                painter.setBrush(effective_brush_color)
+                painter.drawEllipse(self.boundingRect())
+    
+    def itemChange(self, change, value):
+        """Safely handle selection state changes without spamming the paint loop."""
+        if change == QGraphicsItem.ItemSelectedChange:
+            if value:  # It is being selected
+                self.animate()
+            else:      # It is being deselected
                 self.deanimate()
                 
-                pen_color = QColor("black")
-                pen_color.setAlpha(opacity)
-                pen = QPen(pen_color, scaled_pen_width)
-                pen.setCosmetic(True)
-                painter.setPen(pen)
-
-            painter.setBrush(effective_brush_color)
-            painter.drawEllipse(self.boundingRect())
+        elif change == QGraphicsItem.ItemSceneChange and value is None:
+            # Clean up if it gets deleted from the scene
+            self.deanimate()
             
+        return super().itemChange(change, value)
+    
     def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
-    
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_alpha += 30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
-
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
-            self._pulse_direction = 1
-        
+        """Perform one 'tick' of the marching ants animation."""
+        self.animation_offset = (self.animation_offset + 1) % 8
         self.update()  # Trigger repaint
-    
+        
     def animate(self):
-        """Start the pulsing animation by registering with the global timer."""
+        """Register with the global animation timer."""
         self.is_animating = True
         if self.animation_manager:
             self.animation_manager.register_animating_object(self)
             
     def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
+        """Unregister from the global animation timer and reset."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
             
-        self._pulse_alpha = 128  # Reset to default
+        self.animation_offset = 0  # Reset the dash offset
         try:
-            self.update()  # Apply the default style
+            self.update()  # Trigger a final repaint to draw the solid line
         except RuntimeError:
-            # C++ object has been deleted, safe to ignore
             pass
     
     def __del__(self):
@@ -268,9 +263,8 @@ class AnnotationImageWidget(QWidget):
         self.animation_manager = None
         self.is_animating = False
         
-        # --- Animation properties (no timer) ---
-        self._pulse_alpha = 128
-        self._pulse_direction = 1
+        # --- Marching Ants properties ---
+        self.animation_offset = 0
 
         self.recalculate_aspect_ratio()
         self.update_height(self.widget_height)
@@ -401,12 +395,12 @@ class AnnotationImageWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        """Handle custom drawing for the widget, including the selection border."""
+        """Handle custom drawing for the widget: Image, Contrast Border, and Smart Nametag."""
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw the image
+        # 1. Draw the image (Centered)
         if self.pixmap:
             scaled_pixmap = self.pixmap.scaled(
                 self.width() - 8,
@@ -414,7 +408,9 @@ class AnnotationImageWidget(QWidget):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-            painter.drawPixmap(4, 4, scaled_pixmap)
+            x_offset = (self.width() - scaled_pixmap.width()) // 2
+            y_offset = (self.height() - scaled_pixmap.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
         else:
             painter.setPen(QColor("black"))
             painter.setFont(QFont("Arial", 12))
@@ -423,73 +419,91 @@ class AnnotationImageWidget(QWidget):
         effective_label = self.data_item.effective_label
         pen_color = self.data_item.effective_color
         if effective_label and effective_label.id == "-1":
-            # If the label is a temporary one (e.g., "-1", Review), use black for the pen color
             pen_color = QColor("black")
 
+        # Determine the base line width
+        base_width = ANNOTATION_WIDTH + 1 if self.is_selected() else ANNOTATION_WIDTH
+
+        # We adjust the rectangle slightly inward so the thick borders don't get clipped by the widget edges
+        half_width = (base_width - 1) // 2
+        rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
+
+        # 2a. Draw the Contrast Stroke (Thicker Black Line Underneath)
+        bg_pen = QPen(QColor("black"), base_width + 2)  # +2 makes 1 pixel of black peek out on both sides
+        bg_pen.setCosmetic(True)
+        bg_pen.setJoinStyle(Qt.MiterJoin)
+        painter.setPen(bg_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect)
+
+        # 2b. Draw the Colored Line (On top of the black line)
         if self.is_selected():
-            # Use a darker version of the color for better visibility
-            pen_color = pen_color.darker(150)  # Changed to darker for brighter selected appearance
-            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-            pen = QPen(pen_color, ANNOTATION_WIDTH + 1)
-            pen.setCosmetic(True)
-            pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
+            pen = QPen(pen_color, base_width)
+            # PyQt uses setDashPattern; provide floats for compatibility
+            pen.setDashPattern([4.0, 4.0])
+            pen.setDashOffset(self.animation_offset)
+            pen.setJoinStyle(Qt.MiterJoin)
         else:
-            pen = QPen(pen_color, ANNOTATION_WIDTH)
-            pen.setCosmetic(True)
+            pen = QPen(pen_color, base_width)
             pen.setStyle(Qt.SolidLine)
+            pen.setJoinStyle(Qt.MiterJoin)
 
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-
-        width = pen.width()
-        half_width = (width - 1) // 2
-        rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
         painter.drawRect(rect)
+
+        # 3. Draw the Floating Nametag
+        tag_text = effective_label.short_label_code
+        font = QFont("Arial", 6, QFont.Bold)
+        painter.setFont(font)
+        
+        fm = painter.fontMetrics()
+        text_width = fm.horizontalAdvance(tag_text)
+        text_height = fm.height()
+        
+        pad_x, pad_y = 4, 2
+        
+        # Position at top-left, inset slightly so it anchors nicely to the border
+        bg_rect = QRectF(4, 4, text_width + pad_x * 2, text_height + pad_y * 2)
+        
+        # Draw opaque pill background with a 1px black outline
+        bg_color = QColor(pen_color)
+        bg_color.setAlpha(255) 
+        painter.setPen(QPen(QColor("black"), 1))  # Black outline for the tag
+        painter.setBrush(QBrush(bg_color))
+        painter.drawRoundedRect(bg_rect, 4, 4)
+        
+        # --- SMART TEXT CONTRAST ---
+        # Calculate how bright the label color is (0.0 to 1.0)
+        luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+        
+        # If the background is bright, use black text. If it's dark, use white text!
+        text_color = Qt.black if luminance > 0.5 else Qt.white
+        
+        painter.setPen(text_color)
+        painter.drawText(bg_rect, Qt.AlignCenter, tag_text)
         
     def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
-        
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_alpha += 30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
-
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
-            self._pulse_direction = 1
-        
+        """Perform one 'tick' of the marching ants animation."""
+        # A [4, 4] dash pattern has a period of 8 pixels
+        self.animation_offset = (self.animation_offset + 1) % 8
         self.update()  # Trigger repaint
         
     def animate(self):
-        """Start the pulsing animation by registering with the global timer."""
+        """Start the tick animation by registering with the global timer."""
         self.is_animating = True
         if self.animation_manager:
             self.animation_manager.register_animating_object(self)
             
     def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
+        """Stop the animation by de-registering from the global timer."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
             
-        self._pulse_alpha = 128  # Reset to default
+        self.animation_offset = 0  # Reset to default
         try:
             self.update()  # Apply the default style
         except RuntimeError:
-            # C++ object has been deleted, safe to ignore
             pass
     
     def mousePressEvent(self, event):

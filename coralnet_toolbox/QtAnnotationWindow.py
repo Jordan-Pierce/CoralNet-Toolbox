@@ -140,6 +140,13 @@ class AnnotationWindow(QGraphicsView):
         self.rasterio_image = None
         self.active_image = False
         self.current_image_path = None
+
+        # Placeholder label shown when no image/annotations are loaded
+        self._placeholder_label = QLabel("No image loaded", self.viewport())
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setStyleSheet("color: #666;")
+        self._placeholder_label.hide()
         
         # Z-channel visualization attributes
         self.z_item = None  # QGraphicsPixmapItem for Z-channel visualization
@@ -165,6 +172,11 @@ class AnnotationWindow(QGraphicsView):
         
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
+        # Show placeholder initially until an image is set
+        try:
+            self._show_placeholder("No image loaded")
+        except Exception:
+            pass
         
     def _init_toolbar_widgets(self):
         """Instantiate all status and toolbar widgets previously held by MainWindow."""
@@ -717,6 +729,13 @@ class AnnotationWindow(QGraphicsView):
         if self.active_image and self.pixmap_image and self.scene:
             # No zoom tool or hasn't been used, safe to fit
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+        # Keep placeholder geometry in sync with viewport size
+        try:
+            if hasattr(self, '_placeholder_label') and self._placeholder_label.isVisible():
+                self._placeholder_label.setGeometry(self.viewport().rect())
+        except Exception:
+            pass
 
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
@@ -1283,6 +1302,23 @@ class AnnotationWindow(QGraphicsView):
         self.scene.update()
         self.viewport().update()
         QApplication.processEvents()
+
+    def _show_placeholder(self, text: str = None):
+        """Show the centered placeholder label with optional custom text."""
+        try:
+            if text:
+                self._placeholder_label.setText(text)
+            self._placeholder_label.setGeometry(self.viewport().rect())
+            self._placeholder_label.show()
+        except Exception:
+            pass
+
+    def _hide_placeholder(self):
+        """Hide the placeholder label."""
+        try:
+            self._placeholder_label.hide()
+        except Exception:
+            pass
             
     def clear_scene(self):
         """Clear the graphics scene and reset related variables."""
@@ -1318,6 +1354,9 @@ class AnnotationWindow(QGraphicsView):
                         pass
         except Exception:
             pass
+
+        # Show placeholder when scene is cleared
+        self._show_placeholder("No image loaded")
         
     def reset_scene_view(self):
         """Resets the scene view"""
@@ -1334,6 +1373,9 @@ class AnnotationWindow(QGraphicsView):
         """Display a QImage in the annotation window without setting it."""
         # Clean up
         self.clear_scene()
+
+        # Hide placeholder since we will display an image
+        self._hide_placeholder()
 
         # Display NaN values the image dimensions in status bar
         self.imageLoaded.emit(0, 0)
@@ -1439,6 +1481,9 @@ class AnnotationWindow(QGraphicsView):
         self.pixmap_image = QPixmap.fromImage(q_image)
         self.current_image_path = image_path
         self.active_image = True
+
+        # Hide placeholder now that an image will be displayed
+        self._hide_placeholder()
 
         # --- SWAP IN FULL-RES PIXMAP (NO SCENE CLEAR) ---
         base_image_item.setPixmap(self.pixmap_image)

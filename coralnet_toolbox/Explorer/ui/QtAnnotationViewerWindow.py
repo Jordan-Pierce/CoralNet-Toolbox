@@ -344,10 +344,21 @@ class AnnotationViewerWindow(QWidget):
         self.scroll_area.setWidget(self.content_widget)
         
         layout.addWidget(self.scroll_area)
-        
+
+        # Placeholder label shown when no annotations are available
+        self.placeholder_label = QLabel(
+            "No annotations available.\nUse the gallery filters or load annotations to see results."
+        )
+        self.placeholder_label.setAlignment(Qt.AlignCenter)
+        self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
+        layout.addWidget(self.placeholder_label)
+
+        # Start with the placeholder visible until annotations are populated
+        self._show_placeholder()
+
         # Connect scrollbar for virtualization
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._schedule_update)
-        
+
         # Install event filter for rubber band selection
         self.scroll_area.viewport().installEventFilter(self)
         
@@ -382,6 +393,31 @@ class AnnotationViewerWindow(QWidget):
         """
         ids_set = set(ids)
         self.render_selection_from_ids(ids_set)
+
+    def _show_placeholder(self):
+        """
+        Show the placeholder label and hide the gallery scroll area.
+        Safe to call even if UI not fully initialized.
+        """
+        try:
+            if hasattr(self, 'placeholder_label'):
+                self.placeholder_label.show()
+            if hasattr(self, 'scroll_area'):
+                self.scroll_area.hide()
+        except Exception:
+            pass
+
+    def _show_annotation_gallery(self):
+        """
+        Show the gallery scroll area and hide the placeholder label.
+        """
+        try:
+            if hasattr(self, 'placeholder_label'):
+                self.placeholder_label.hide()
+            if hasattr(self, 'scroll_area'):
+                self.scroll_area.show()
+        except Exception:
+            pass
         
     def refresh_annotations(self):
         """
@@ -437,7 +473,12 @@ class AnnotationViewerWindow(QWidget):
         
         self.all_data_items = data_items
         self._update_annotations_display(data_items)
-        
+        # Toggle placeholder visibility depending on results
+        if not data_items:
+            self._show_placeholder()
+        else:
+            self._show_annotation_gallery()
+
         # Emit signal with filtered IDs
         filtered_ids = [item.annotation.id for item in data_items]
         self.annotations_filtered.emit(filtered_ids)

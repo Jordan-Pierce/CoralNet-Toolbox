@@ -1451,7 +1451,7 @@ class EmbeddingViewerWindow(QWidget):
             QLineF(visible_rect.right(), target_y, target_x, target_y),
         ]
         
-        pen = QPen(QColor(0, 0, 0), 3, Qt.DashLine)
+        pen = QPen(QColor(0, 0, 0), 2, Qt.DashLine)
         pen.setCosmetic(True)
         
         for line_data in lines_data:

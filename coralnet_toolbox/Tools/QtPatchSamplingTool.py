@@ -5,7 +5,7 @@ import random
 import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
-from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF, QMouseEvent
+from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF, QMouseEvent, QFont, QPainter
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
                              QPushButton, QComboBox, QSpinBox, QMessageBox, QLabel,
                              QFormLayout, QGroupBox, QGraphicsRectItem)
@@ -32,105 +32,95 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class PatchGraphic(QGraphicsRectItem):
-    def __init__(self, x, y, size, color, parent=None):
+    def __init__(self, x, y, size, color, label_text, parent=None):
         super().__init__(x, y, size, size, parent)
         self.base_color = color
+        self.label_text = label_text
 
         # --- Animation Properties ---
         self.animation_manager = None
         self.is_animating = False
-
-        self._pulse_alpha = 128
-        self._pulse_direction = 1
+        self.animation_offset = 0
 
         self.default_brush = QBrush(QColor(color.red(), color.green(), color.blue(), 50))
-        self.setPen(self._create_pen())
         self.setBrush(self.default_brush)
+        self._update_pen()
         
     def set_animation_manager(self, manager):
-        """Set the animation manager for this graphic."""
         self.animation_manager = manager
         
     def is_graphics_item_valid(self):
-        """Check if the graphics item is still valid (not deleted)."""
         try:
             return self.scene() is not None
         except RuntimeError:
             return False
 
-    def _create_pen(self):
-        """Create a pulsing dotted pen with brighter color."""
-        # Use a lighter version of the base color for better visibility
-        pen_color = QColor(self.base_color)
-        pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-        pen = QPen(pen_color, 2)  # Increased width
+    def _update_pen(self):
+        """Create a marching ants dashed pen."""
+        pen = QPen(self.base_color, 2)
         pen.setCosmetic(True)
-        pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
-        return pen
+        # PyQt uses setDashPattern; provide floats for compatibility
+        pen.setDashPattern([4.0, 4.0])
+        pen.setDashOffset(self.animation_offset)
+        self.setPen(pen)
     
     def tick_animation(self):
-        """Update the pulse alpha for a heartbeat-like effect."""
-        if self._pulse_direction == 1:
-            self._pulse_alpha += 30
-        else:
-            self._pulse_alpha -= 10
-
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50
-            self._pulse_direction = 1
-
-        self.setPen(self._create_pen())
-    
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_alpha += 30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
-
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
-            self._pulse_direction = 1
-        
-        self.setPen(self._create_pen())
+        """Update the marching ants offset."""
+        self.animation_offset = (self.animation_offset + 1) % 8
+        self._update_pen()
         
     def animate(self):
-        """Start animating the graphic."""
         self.is_animating = True
         if self.animation_manager:
             self.animation_manager.register_animating_object(self)
 
     def deanimate(self):
-        """Stop animating the graphic."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
-        self._pulse_alpha = 128
-        self.setPen(self._create_pen())
+        self.animation_offset = 0
+        self._update_pen()
+    
+    def paint(self, painter, option, widget=None):
+        """Draw the marching ants rectangle and the floating nametag."""
+        # 1. Draw the base rectangle using QGraphicsRectItem's native logic
+        super().paint(painter, option, widget)
+        
+        # 2. Draw the floating nametag
+        painter.setRenderHint(QPainter.Antialiasing)
+        font = QFont("Arial", 6, QFont.Bold)
+        painter.setFont(font)
+        
+        fm = painter.fontMetrics()
+        text_width = fm.horizontalAdvance(self.label_text)
+        text_height = fm.height()
+        
+        pad_x, pad_y = 4, 2
+        
+        # Position at top-left, slightly inside the patch
+        r = self.rect()
+        bg_rect = QRectF(r.left() + 2, r.top() + 2, text_width + pad_x * 2, text_height + pad_y * 2)
+        
+        # Opaque background using the label's color
+        bg_color = QColor(self.base_color)
+        bg_color.setAlpha(255)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(bg_color))
+        painter.drawRoundedRect(bg_rect, 4, 4)
+        
+        # Draw the text significantly darker than the label color for high contrast
+        text_color = bg_color.darker(150) 
+        painter.setPen(text_color)
+        painter.drawText(bg_rect, Qt.AlignCenter, self.label_text)
     
     def itemChange(self, change, value):
-        """Handle item changes to ensure cleanup when removed from scene."""
         if change == QGraphicsRectItem.ItemSceneChange and value is None:
-            # The item is being removed from the scene, stop animation immediately
-            # to release the reference held by the AnimationManager.
             self.deanimate()
         return super().itemChange(change, value)
             
     def __del__(self):
-        """Clean up when the graphic is deleted."""
         if hasattr(self, 'is_animating') and self.is_animating:
             self.deanimate()
-        if hasattr(self, 'animation_timer') and self.animation_timer:  # Keep for old instances
-            self.animation_timer.stop()
 
 
 class PatchSamplingDialog(QDialog):
@@ -572,7 +562,7 @@ class PatchSamplingDialog(QDialog):
             exclude_polygons=polygons
         )
     
-        # Create graphics for each annotation, using propagated label color if needed
+        # Create graphics for each annotation, using propagated label if needed
         image_annotations = self.annotation_window.get_image_annotations()
         for x, y, size in self.sampled_annotations:
             if propagate:
@@ -586,16 +576,20 @@ class PatchSamplingDialog(QDialog):
                     ),
                     None
                 )
-                color = found.label.color if found else sample_label.color
+                used_label = found.label if found else sample_label
             else:
-                color = sample_label.color
+                used_label = sample_label
                 
-            graphic = PatchGraphic(x, y, size, color)
+            # --- Pass the color AND the short label code ---
+            graphic = PatchGraphic(x, y, size, used_label.color, used_label.short_label_code)
+            # -----------------------------------------------
+            
             graphic.set_animation_manager(self.animation_manager)
             graphic.animate()
             
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
+            
         self.annotation_window.viewport().update()
 
     def preview_annotations(self):

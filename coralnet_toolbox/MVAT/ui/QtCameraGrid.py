@@ -579,6 +579,13 @@ class CameraGrid(QWidget):
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet("background-color: white;")
         self.scroll_area.setWidget(self.content_widget)
+
+        # Placeholder label for empty state
+        self._placeholder_label = QLabel("No cameras available", self.content_widget)
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setStyleSheet("color: #666;")
+        self._placeholder_label.hide()
         
         # Only add the scroll area to the main layout!
         layout.addWidget(self.scroll_area)
@@ -707,6 +714,12 @@ class CameraGrid(QWidget):
             progress.close()
             progress = None
         
+        # Show or hide placeholder depending on whether we have cameras
+        if not cameras:
+            self._show_placeholder()
+        else:
+            self._hide_placeholder()
+
         # Calculate layout
         self.recalculate_layout()
         
@@ -719,6 +732,23 @@ class CameraGrid(QWidget):
             widget.hide()  # Immediately hide to prevent ghost widgets
             widget.setParent(None)
             widget.deleteLater()
+
+    def _show_placeholder(self, text: str = None):
+        """Show placeholder in the content widget area."""
+        try:
+            if text:
+                self._placeholder_label.setText(text)
+            self._placeholder_label.setGeometry(self.content_widget.rect())
+            self._placeholder_label.show()
+        except Exception:
+            pass
+
+    def _hide_placeholder(self):
+        """Hide the placeholder label."""
+        try:
+            self._placeholder_label.hide()
+        except Exception:
+            pass
             
     def clear_cameras(self):
         """Clear all cameras from the grid."""
@@ -728,6 +758,8 @@ class CameraGrid(QWidget):
         self.widget_positions.clear()
         # Selection state is managed by SelectionManager
         self.model.clear_selections()
+        # Show placeholder when empty
+        self._show_placeholder()
         
     def recalculate_layout(self):
         """Schedule a layout recalculation (debounced)."""
@@ -737,7 +769,12 @@ class CameraGrid(QWidget):
     def _do_recalculate_layout(self):
         """Actually recalculate widget positions."""
         if not self.data_items:
+            # Ensure placeholder is visible when there are no items
+            self._show_placeholder()
             return
+        else:
+            # Hide placeholder when there are items to display
+            self._hide_placeholder()
             
         # Get available width
         available_width = self.scroll_area.viewport().width() - 10  # Padding
