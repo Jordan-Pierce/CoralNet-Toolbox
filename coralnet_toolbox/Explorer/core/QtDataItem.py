@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 POINT_SIZE = 15
 POINT_WIDTH = 3
 SPRITE_SIZE = 32
-ANNOTATION_WIDTH = 5
+ANNOTATION_WIDTH = 2
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -430,7 +430,7 @@ class AnnotationImageWidget(QWidget):
             # Use a darker version of the color for better visibility
             pen_color = pen_color.darker(150)  # Changed to darker for brighter selected appearance
             pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-            pen = QPen(pen_color, ANNOTATION_WIDTH)
+            pen = QPen(pen_color, ANNOTATION_WIDTH + 1)
             pen.setCosmetic(True)
             pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         else:

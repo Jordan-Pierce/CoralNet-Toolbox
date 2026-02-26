@@ -63,7 +63,7 @@ class PatchGraphic(QGraphicsRectItem):
         # Use a lighter version of the base color for better visibility
         pen_color = QColor(self.base_color)
         pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
-        pen = QPen(pen_color, 4)  # Increased width
+        pen = QPen(pen_color, 2)  # Increased width
         pen.setCosmetic(True)
         pen.setStyle(Qt.DotLine)  # Predefined dotted line (static, no movement)
         return pen

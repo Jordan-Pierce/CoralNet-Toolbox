@@ -832,7 +832,7 @@ class Annotation(QObject):
             
             pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
             
-            pen = QPen(pen_color.lighter(150), 4)  # Changed to lighter for brighter selected appearance
+            pen = QPen(pen_color.lighter(150), 2)  # Changed to lighter for brighter selected appearance
             pen.setStyle(Qt.DotLine)  # Predefined dotted line
             pen.setCosmetic(True)
             return pen
@@ -840,7 +840,7 @@ class Annotation(QObject):
             # Use label color with solid line for unselected items, always opaque
             pen_color = QColor(base_color)
             pen_color.setAlpha(255)  # Pen should always be fully opaque
-            pen = QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+            pen = QPen(pen_color, 1, Qt.SolidLine)  # Consistent width
             pen.setCosmetic(True)
             return pen
     
@@ -876,7 +876,7 @@ class Annotation(QObject):
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
     
-        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 4, center_xy.y() - 4, 8, 8)
+        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 1, center_xy.y() - 1, 2, 2)
         self.center_graphics_item.setBrush(color)
     
         # Use the consolidated pen creation method
