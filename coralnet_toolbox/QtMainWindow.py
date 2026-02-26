@@ -27,11 +27,16 @@ from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
-# Special Windows
+# Explorer Windows
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
-from coralnet_toolbox.MVAT import MVATWindow
+
+# MVAT Windows
+from coralnet_toolbox.MVAT import MVATViewer
+from coralnet_toolbox.MVAT import CameraGrid
+from coralnet_toolbox.MVAT import MVATManager
+
 
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
@@ -229,8 +234,20 @@ class MainWindow(QMainWindow):
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self) 
          
-        # Initialized in open_mvat_window
-        self.mvat_window = None  
+        # Create dock-based mvat windows
+        self.mvat_viewer = MVATViewer(self)
+        self.camera_grid = CameraGrid(model=None, mvat_window=None)
+        self.mvat_manager = MVATManager(self, self.mvat_viewer, self.camera_grid)
+        self.camera_grid.model = self.mvat_manager.selection_model
+        # Wire a reference to the main window so CameraGrid can access the
+        # MVAT manager (used by the Load Cameras toolbar button).
+        try:
+            self.camera_grid.mvat_window = self
+            # Enable the load button if it exists
+            if hasattr(self.camera_grid, 'load_btn'):
+                self.camera_grid.load_btn.setEnabled(True)
+        except Exception:
+            pass
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
@@ -706,11 +723,11 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # ========== MVAT ACTION ==========
-        # MVAT (Multi-View Annotation Tool) action
-        self.open_mvat_action = QAction("MVAT", self)
-        self.open_mvat_action.triggered.connect(self.open_mvat_window)
-        self.menu_bar.addAction(self.open_mvat_action)
+        # # ========== MVAT ACTION ==========
+        # # MVAT (Multi-View Annotation Tool) action
+        # self.open_mvat_action = QAction("MVAT", self)
+        # self.open_mvat_action.triggered.connect(self.open_mvat_window)
+        # self.menu_bar.addAction(self.open_mvat_action)
 
         # ========== HELP MENU ==========
         # Help menu
@@ -1193,6 +1210,30 @@ class MainWindow(QMainWindow):
         # These can be shown later by the user via the View menu or programmatically.
         # self.annotation_gallery_dock.hide()
         # self.embedding_viewer_dock.hide()
+        
+        # Setup MVAT Viewer Dock (Center) using DockWrapper
+        self.mvat_viewer_dock = DockWrapper(
+            title="3D Viewer",
+            object_name="MVATViewerDock",
+            main_widget=self.mvat_viewer,
+            parent=self
+        )
+        if hasattr(self.mvat_viewer, 'create_top_toolbar'):
+            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_top_toolbar(), Qt.TopToolBarArea)
+        if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
+            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+        self.mvat_viewer_dock.hide()
+
+        # Setup Camera Grid Dock (Right) using DockWrapper
+        self.camera_grid_dock = DockWrapper(
+            title="Camera Grid",
+            object_name="CameraGridDock",
+            main_widget=self.camera_grid,
+            parent=self
+        )
+        if hasattr(self.camera_grid, 'create_top_toolbar'):
+            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar(), Qt.TopToolBarArea)
+        self.camera_grid_dock.hide()
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1215,6 +1256,14 @@ class MainWindow(QMainWindow):
         # Because we locked the corners above, "Top" now effectively means 
         # "Top of the center column", sitting perfectly above our invisible central widget!
         self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
+        
+        # Add MVAT Viewer and tabify it with Annotation Workspace ---
+        self.addDockWidget(Qt.TopDockWidgetArea, self.mvat_viewer_dock)
+        self.tabifyDockWidget(self.annotation_dock, self.mvat_viewer_dock)
+        
+        # Add Camera Grid under the right-side Image Dock ---
+        self.addDockWidget(Qt.RightDockWidgetArea, self.camera_grid_dock)
+        self.splitDockWidget(self.right_dock, self.camera_grid_dock, Qt.Vertical)
         
         # 5. Add the Annotation Gallery dock to the Bottom area
         self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
@@ -1558,9 +1607,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
+        
+        if hasattr(self, 'mvat_manager') and self.mvat_manager:
+            self.mvat_manager.cleanup()
         
         # Stop timer threads properly
         if hasattr(self, 'timer_window') and self.timer_window:
@@ -2996,38 +3045,6 @@ class MainWindow(QMainWindow):
         """
         # SelectionManager handles all selection syncing automatically
         pass
-        
-    def open_mvat_window(self):
-        """Open the Multi-View Annotation Tool (MVAT) window."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening MVAT.")
-            return
-        
-        try:
-            # Create and show the MVAT window (modeless - doesn't block main window)
-            # Create a new instance each time to ensure fresh state
-            self.mvat_window = MVATWindow(self)
-            self.mvat_window.show()
-            self.mvat_window.activateWindow()
-            self.mvat_window.raise_()
-            
-        except ImportError as e:
-            QMessageBox.warning(self,
-                                "MVAT Unavailable",
-                                "MVAT requires PyVista and PyVistaQt.\n\n"
-                                "Install with: pip install pyvista pyvistaqt")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
-            
-    def close_mvat_window(self):
-        """Handle the MVAT window being closed."""
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
-            self.mvat_window = None
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""

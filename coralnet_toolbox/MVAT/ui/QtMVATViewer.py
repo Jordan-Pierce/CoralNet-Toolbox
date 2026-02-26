@@ -15,8 +15,10 @@ from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
-    QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox
+    QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox,
+    QToolBar, QToolButton, QMenu, QAction
 )
+
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
@@ -26,9 +28,10 @@ from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
-    # UI signals
-    opacityChanged = pyqtSignal(int)           # percentage 0-100
+    opacityChanged = pyqtSignal(int)            # percentage 0-100
     pointSizeChanged = pyqtSignal(int)
+    showFullCloudToggled = pyqtSignal(bool)
+    computeDepthMapsToggled = pyqtSignal(bool)
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -87,11 +90,8 @@ class MVATViewer(QFrame):
         bottom_layout = QHBoxLayout(self.bottom_toolbar_widget)
         bottom_layout.setContentsMargins(6, 2, 6, 2)
         bottom_layout.setSpacing(12)
-
-        # Insert widgets into the viewer's own layout (top toolbar, plotter, bottom toolbar)
-        self.layout.addWidget(self.top_toolbar_widget)
+        
         self.layout.addWidget(self.plotter.interactor)
-        self.layout.addWidget(self.bottom_toolbar_widget)
 
         # Opacity control (for thumbnail/frustum opacity)
         opacity_label = QLabel("Opacity:")
@@ -128,6 +128,139 @@ class MVATViewer(QFrame):
         # We run this on a timer to ensure it happens AFTER the parent window
         # has run its setup (like enable_point_picking), so we can override it.
         QTimer.singleShot(100, self._configure_interaction)
+        
+    # --------------------------------------------------------------------------
+    # View Menu Actions
+    # --------------------------------------------------------------------------
+    
+    def view_top(self):
+        """Set camera to look down from the Z-axis."""
+        self.plotter.camera_position = 'xy'
+        self.plotter.render()
+
+    def view_front(self):
+        """Set camera to look from the Y-axis."""
+        self.plotter.camera_position = 'xz'
+        self.plotter.render()
+
+    def view_side(self):
+        """Set camera to look from the X-axis."""
+        self.plotter.camera_position = 'yz'
+        self.plotter.render()
+
+    def view_isometric(self):
+        """Set camera to a standard 3D isometric angle."""
+        self.plotter.view_isometric()
+        self.plotter.render()
+
+    def toggle_orthographic(self, state: bool):
+        """Toggle between perspective and orthographic projection."""
+        if state:
+            self.plotter.enable_parallel_projection()
+        else:
+            self.plotter.disable_parallel_projection()
+        self.plotter.render()
+        
+    # --------------------------------------------------------------------------
+    # DockWrapper Hooks
+    # --------------------------------------------------------------------------
+    
+    def create_top_toolbar(self) -> QToolBar:
+        """Create the top toolbar with the categorized View dropdown menu."""       
+        toolbar = QToolBar("3D Viewer Tools")
+        toolbar.setMovable(False)
+        
+        # Create the View Dropdown Button
+        view_btn = QToolButton()
+        view_btn.setText("View")
+        view_btn.setPopupMode(QToolButton.InstantPopup)
+        
+        view_menu = QMenu(view_btn)
+        
+        # --- [ Camera Angles ] ---
+        view_menu.addAction("Top (XY)", self.view_top)
+        view_menu.addAction("Front (XZ)", self.view_front)
+        view_menu.addAction("Side (YZ)", self.view_side)
+        view_menu.addAction("Isometric", self.reset_view)  # reset_view defaults to isometric
+        view_menu.addSeparator()
+        
+        # --- [ Camera Setup ] ---
+        action_ortho = QAction("Orthographic Projection", self)
+        action_ortho.setCheckable(True)
+        action_ortho.toggled.connect(self.toggle_orthographic)
+        view_menu.addAction(action_ortho)
+        
+        action_fit = QAction("Fit All", self)
+        action_fit.setShortcut("F")
+        action_fit.triggered.connect(self.fit_to_view)
+        view_menu.addAction(action_fit)
+        
+        action_reset = QAction("Reset View", self)
+        action_reset.setShortcut("R")
+        action_reset.triggered.connect(self.reset_view)
+        view_menu.addAction(action_reset)
+        view_menu.addSeparator()
+        
+        # --- [ Visibility Toggles ] ---
+        action_wireframes = QAction("Show Wireframes", self)
+        action_wireframes.setCheckable(True)
+        action_wireframes.setChecked(self._show_wireframes_enabled)
+        action_wireframes.toggled.connect(self.enable_wireframes)
+        view_menu.addAction(action_wireframes)
+        
+        action_thumbnails = QAction("Show Thumbnails", self)
+        action_thumbnails.setCheckable(True)
+        action_thumbnails.setChecked(self._show_thumbnails_enabled)
+        action_thumbnails.toggled.connect(self.enable_thumbnails)
+        view_menu.addAction(action_thumbnails)
+        
+        action_rays = QAction("Show Rays", self)
+        action_rays.setCheckable(True)
+        action_rays.setChecked(self._show_rays_enabled)
+        action_rays.toggled.connect(self.set_ray_visible)
+        view_menu.addAction(action_rays)
+        
+        action_full_cloud = QAction("Show Full Point Cloud", self)
+        action_full_cloud.setCheckable(True)
+        action_full_cloud.setChecked(False)  # Defaults to False in MVATWindow
+        action_full_cloud.toggled.connect(self.showFullCloudToggled.emit)
+        view_menu.addAction(action_full_cloud)
+        view_menu.addSeparator()
+        
+        # --- [ Settings ] ---
+        action_depth = QAction("Compute Depth Maps", self)
+        action_depth.setCheckable(True)
+        action_depth.setChecked(True)  # Defaults to True in MVATWindow
+        action_depth.setToolTip("Toggle computing depth maps during visibility computation")
+        action_depth.toggled.connect(self.computeDepthMapsToggled.emit)
+        view_menu.addAction(action_depth)
+        
+        # Attach Menu to Button and Button to Toolbar
+        view_btn.setMenu(view_menu)
+        toolbar.addWidget(view_btn)
+        
+        return toolbar
+
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar for opacity and point size."""
+        from PyQt5.QtWidgets import QToolBar
+        toolbar = QToolBar("3D Display Settings")
+        toolbar.setMovable(False)
+        
+        # Simply mount your existing bottom widget into the toolbar!
+        toolbar.addWidget(self.bottom_toolbar_widget)
+        
+        return toolbar
+
+    def create_bottom_toolbar(self) -> QToolBar:
+        """Create the bottom toolbar for opacity and point size."""
+        toolbar = QToolBar("3D Display Settings")
+        toolbar.setMovable(False)
+        
+        # Simply mount your existing bottom widget into the toolbar!
+        toolbar.addWidget(self.bottom_toolbar_widget)
+        
+        return toolbar
 
     # --------------------------------------------------------------------------
     # Custom Interaction Logic
@@ -767,6 +900,7 @@ class MVATViewer(QFrame):
     # ------------------------------------------------------------------
     # Frustum & Thumbnail Management (moved from MVATWindow)
     # ------------------------------------------------------------------
+    
     def add_frustums(self, cameras: dict, frustum_scale: float = None,
                      show_thumbnails: bool = None, selected_camera=None,
                      highlighted_paths: list = None, hovered_camera: str = None):

@@ -13,7 +13,7 @@ from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, 
     QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton,
-    QApplication
+    QApplication, QToolBar, QMessageBox
 )
 
 from coralnet_toolbox.MVAT.core.constants import (
@@ -535,19 +535,11 @@ class CameraGrid(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         
-        # --- Toolbar widget ---
-        self.toolbar_widget = QWidget()
-        toolbar = QHBoxLayout(self.toolbar_widget)
-        toolbar.setContentsMargins(5, 5, 5, 5)
-        toolbar.setSpacing(5)
-        
-        # Stats label
+        # --- Initialize Toolbar Widgets (Do not add to layout yet) ---
         self.stats_label = QLabel("Cameras: 0")
         self.stats_label.setStyleSheet("color: #333;")
-        toolbar.addWidget(self.stats_label)
 
-        # Size slider
-        size_label = QLabel("Size:")
+        self.size_label = QLabel("Size:")
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setRange(MIN_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE)
         self.size_slider.setValue(self.thumbnail_size)
@@ -555,47 +547,26 @@ class CameraGrid(QWidget):
         self.size_slider.setToolTip("Adjust thumbnail size")
         self.size_slider.valueChanged.connect(self._on_size_changed)
         
-        # Pixel value label
         self.size_value_label = QLabel(f"{self.thumbnail_size}px")
         self.size_value_label.setMinimumWidth(50)
         
-        toolbar.addWidget(size_label)
-        toolbar.addWidget(self.size_slider)
-        toolbar.addWidget(self.size_value_label)
-        
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        toolbar.addWidget(sep)
-        
-        # Selected camera label
         self.selected_label = QLabel("None selected")
         self.selected_label.setStyleSheet("color: #666;")
-        toolbar.addWidget(self.selected_label)
         
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setFrameShadow(QFrame.Sunken)
-        toolbar.addWidget(sep2)
-        
-        # Selection info label
         self.selection_label = QLabel("0 highlighted")
         self.selection_label.setStyleSheet("color: #666;")
-        toolbar.addWidget(self.selection_label)
-        
-        toolbar.addStretch()
-        
-        # Clear selection button
+
+        # Load Cameras button (disabled by default until MVAT manager is wired)
+        self.load_btn = QToolButton()
+        self.load_btn.setText("Load Cameras")
+        self.load_btn.setToolTip("Load cameras into MVAT (build frustums, markers, etc.)")
+        self.load_btn.clicked.connect(self._on_load_cameras_clicked)
+        self.load_btn.setEnabled(False)
+
         self.clear_btn = QToolButton()
         self.clear_btn.setText("Clear")
         self.clear_btn.setToolTip("Clear all selections (Escape)")
         self.clear_btn.clicked.connect(self.clear_all_selections)
-        toolbar.addWidget(self.clear_btn)
-        
-        # Insert the toolbar widget into the main layout so it can be reused by MVATWindow
-        layout.addWidget(self.toolbar_widget)
         
         # --- Scroll Area ---
         self.scroll_area = QScrollArea()
@@ -609,10 +580,81 @@ class CameraGrid(QWidget):
         self.content_widget.setStyleSheet("background-color: white;")
         self.scroll_area.setWidget(self.content_widget)
         
+        # Only add the scroll area to the main layout!
         layout.addWidget(self.scroll_area)
         
         # Set minimum width
         self.setMinimumWidth(MIN_THUMBNAIL_SIZE + 20)
+        
+    # --------------------------------------------------------------------------
+    # DockWrapper Hooks
+    # --------------------------------------------------------------------------
+    
+    def create_top_toolbar(self) -> QToolBar:
+        """Create the top toolbar containing grid settings and stats."""
+        toolbar = QToolBar("Camera Grid Tools")
+        toolbar.setMovable(False)
+        
+        # Use a container to preserve the stretching/spacing behavior
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        layout.addWidget(self.stats_label)
+        
+        layout.addWidget(self.size_label)
+        layout.addWidget(self.size_slider)
+        layout.addWidget(self.size_value_label)
+        
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep1)
+        
+        layout.addWidget(self.selected_label)
+        
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep2)
+        
+        layout.addWidget(self.selection_label)
+        
+        # Add stretch to push the Clear button to the far right
+        layout.addStretch(1)
+        # Place Load Cameras immediately before the Clear button
+        try:
+            layout.addWidget(self.load_btn)
+        except Exception:
+            pass
+
+        layout.addWidget(self.clear_btn)
+        
+        toolbar.addWidget(container)
+        
+        return toolbar
+
+    def _on_load_cameras_clicked(self):
+        """Handler for the Load Cameras button.
+
+        Attempts to call the MVAT manager's load_cameras method via the
+        wired `mvat_window` reference. Shows an informational message if
+        the manager isn't available or if an error occurs.
+        """
+        if not getattr(self, 'mvat_window', None):
+            QMessageBox.information(self, "No MVAT", "MVAT manager is not available.")
+            return
+
+        mgr = getattr(self.mvat_window, 'mvat_manager', None)
+        if mgr is None:
+            QMessageBox.information(self, "No MVAT", "MVAT manager is not available.")
+            return
+
+        try:
+            mgr.load_cameras()
+        except Exception as e:
+            QMessageBox.warning(self, "Load Cameras Failed", f"Failed to load cameras: {e}")
         
     def set_cameras(self, cameras):
         """
