@@ -1527,6 +1527,12 @@ class AnnotationWindow(QGraphicsView):
         else:
             self._hide_focal_marker()
         
+        # Show loaded message in status bar (centralized here per MVAT convention)
+        try:
+            self.main_window.status_bar.showMessage(f"Loaded image: {os.path.basename(image_path)}", 2000)
+        except Exception:
+            pass
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
 

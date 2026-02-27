@@ -30,7 +30,7 @@ class MVATViewer(QFrame):
     focalPointChanged = pyqtSignal(np.ndarray)  # Emits 3D point when focal point is set
     opacityChanged = pyqtSignal(int)            # percentage 0-100
     pointSizeChanged = pyqtSignal(int)
-    showFullCloudToggled = pyqtSignal(bool)
+    computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
@@ -73,7 +73,7 @@ class MVATViewer(QFrame):
         # Frustum and thumbnail management
         self._frustum_manager = BatchedFrustumManager()
         self.thumbnail_actors = []
-        self.thumbnail_opacity = 0.25
+        self.thumbnail_opacity = 0.0
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
@@ -118,6 +118,7 @@ class MVATViewer(QFrame):
         self.opacity_slider.setFixedWidth(120)
         self.opacity_slider.setToolTip("Adjust thumbnail opacity")
         self.opacity_slider.valueChanged.connect(lambda v: self.opacityChanged.emit(v))
+        self.opacity_slider.valueChanged.connect(lambda v: self.set_thumbnail_opacity(v / 100.0))
 
         # Point size control
         point_size_label = QLabel("Point Size:")
@@ -128,6 +129,11 @@ class MVATViewer(QFrame):
         self.point_size_spinbox.setToolTip("Adjust point cloud point size")
         self.point_size_spinbox.valueChanged.connect(self._on_point_size_spin_changed)
 
+        # Initialize thumbnail opacity from slider value
+        try:
+            self.set_thumbnail_opacity(self.opacity_slider.value() / 100.0)
+        except Exception:
+            pass
         # Add widgets to bottom layout (left aligned: opacity, stretch, point size)
         bottom_layout.addWidget(opacity_label)
         bottom_layout.addWidget(self.opacity_slider)
@@ -263,13 +269,17 @@ class MVATViewer(QFrame):
         action_rays.toggled.connect(self.set_ray_visible)
         view_menu.addAction(action_rays)
 
-        action_full_cloud = QAction("Show Full Point Cloud", self)
-        action_full_cloud.setCheckable(True)
-        action_full_cloud.setChecked(False)
-        action_full_cloud.toggled.connect(self.showFullCloudToggled.emit)
-        view_menu.addAction(action_full_cloud)
-
         view_menu.addSeparator()
+        
+        # Removed the old "Show Full Point Cloud" toggle - viewer now always
+        # renders the full point cloud. Add a toggle to control whether index
+        # map computation runs in the background.
+        action_index_maps = QAction("Compute Index Maps", self)
+        action_index_maps.setCheckable(True)
+        action_index_maps.setChecked(True)
+        action_index_maps.setToolTip("Toggle background computation of visibility index maps")
+        action_index_maps.toggled.connect(self.computeIndexMapsToggled.emit)
+        view_menu.addAction(action_index_maps)
 
         # Settings
         action_depth = QAction("Compute Depth Maps", self)
@@ -280,17 +290,6 @@ class MVATViewer(QFrame):
         view_menu.addAction(action_depth)
 
         return view_menu
-
-    def create_bottom_toolbar(self) -> QToolBar:
-        """Create the bottom toolbar for opacity and point size."""
-        from PyQt5.QtWidgets import QToolBar
-        toolbar = QToolBar("3D Display Settings")
-        toolbar.setMovable(False)
-        
-        # Simply mount your existing bottom widget into the toolbar!
-        toolbar.addWidget(self.bottom_toolbar_widget)
-        
-        return toolbar
 
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar for opacity and point size."""
@@ -698,6 +697,13 @@ class MVATViewer(QFrame):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             file_path = event.mimeData().urls()[0].toLocalFile()
+            # Notify user via status bar if available
+            try:
+                top = self.window()
+                if hasattr(top, 'status_bar'):
+                    top.status_bar.showMessage("Loading point cloud...", 0)
+            except Exception:
+                pass
             # Create PointCloud instance
             self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
             # Hide placeholder now that a point cloud exists
@@ -705,7 +711,7 @@ class MVATViewer(QFrame):
                 self._hide_placeholder()
             except Exception:
                 pass
-            # Warm up GPU cache (no rendering yet)
+            # Render the full point cloud immediately
             self.add_point_cloud()
             event.acceptProposedAction()
             
@@ -722,21 +728,67 @@ class MVATViewer(QFrame):
             print(f"Failed to load 3D file: {e}")
             event.ignore()
         finally:
+            try:
+                top = self.window()
+                if hasattr(top, 'status_bar'):
+                    top.status_bar.showMessage("Point cloud load finished.", 3000)
+            except Exception:
+                pass
             QApplication.restoreOverrideCursor()
 
     def add_point_cloud(self):
-        """Warm up GPU cache for the point cloud.
-        
-        Does NOT add any actors to the plotter. The cloud will only be
-        visualized through update_point_cloud_subset() which creates
-        the single _filtered_actor on demand.
-        """
+        """Render the full point cloud immediately into the scene."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            if self.point_cloud is not None:
-                # Trigger GPU cache upload (Compute Space)
-                self.point_cloud._ensure_gpu_cache()
-                print("⚡ Point cloud GPU cache ready (no rendering yet)")
+            if self.point_cloud is None:
+                return
+
+            mesh = self.point_cloud.get_mesh()
+            if mesh is None:
+                return
+
+            # Create or replace the actor for the full cloud
+            if self._filtered_actor is None:
+                if 'RGB' in mesh.point_data:
+                    self._filtered_actor = self.plotter.add_mesh(
+                        mesh,
+                        scalars='RGB',
+                        rgb=True,
+                        point_size=self.point_size,
+                        style='points',
+                        render_points_as_spheres=False,
+                        lighting=False,
+                        render=False
+                    )
+                else:
+                    self._filtered_actor = self.plotter.add_mesh(
+                        mesh,
+                        color='black',
+                        point_size=self.point_size,
+                        style='points',
+                        render_points_as_spheres=False,
+                        lighting=False,
+                        render=False
+                    )
+            else:
+                try:
+                    self._filtered_actor.GetMapper().SetInputData(mesh)
+                    self._filtered_actor.SetVisibility(True)
+                except Exception:
+                    # Fallback: recreate actor
+                    self._filtered_actor = self.plotter.add_mesh(mesh, 
+                                                                 color='black', 
+                                                                 point_size=self.point_size, 
+                                                                 style='points', 
+                                                                 render=False)
+
+            # Hide placeholder and render
+            try:
+                self._hide_placeholder()
+            except Exception:
+                pass
+            self.plotter.render()
+            print("Rendered full point cloud into viewer")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -774,86 +826,7 @@ class MVATViewer(QFrame):
         except Exception:
             pass
     
-    def update_point_cloud_subset(self, indices):
-        """
-        Update the viewer to show only a subset of points using GPU-accelerated extraction.
-        
-        Uses the hybrid \"Compute vs. Render\" architecture:
-        - GPU slicing happens in Model.py (fast CUDA indexing)
-        - Mapper swap happens here (minimal rendering overhead)
-        
-        Args:
-            indices: Array of point indices to show. 
-                    - None: show full cloud
-                    - Empty list/array: hide cloud (show nothing)
-                    - Array: show filtered subset
-        """
-        if self.point_cloud is None:
-            return
-        
-        start_time = time.time()
-        
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # Extract subset mesh using GPU-accelerated slicing
-            # This is where the magic happens - Model.py uses CUDA for fast indexing
-            subset_mesh = self.point_cloud.get_subset_data(indices)
-            
-            # Handle empty results
-            if subset_mesh is None or subset_mesh.n_points == 0:
-                if self._filtered_actor is not None:
-                    self._filtered_actor.SetVisibility(False)
-                self.plotter.render()
-                total_time = time.time() - start_time
-                print(f"⏱️ update_point_cloud_subset: Hidden (empty subset) in {total_time:.3f}s")
-                return
-            
-            # First time: Create the actor
-            if self._filtered_actor is None:
-                if 'RGB' in subset_mesh.point_data:
-                    self._filtered_actor = self.plotter.add_mesh(
-                        subset_mesh,
-                        scalars='RGB',
-                        rgb=True,
-                        point_size=self.point_size,
-                        style='points',
-                        render_points_as_spheres=False,
-                        lighting=False,
-                        render=False
-                    )
-                else:
-                    self._filtered_actor = self.plotter.add_mesh(
-                        subset_mesh,
-                        color='black',
-                        point_size=self.point_size,
-                        style='points',
-                        render_points_as_spheres=False,
-                        lighting=False,
-                        render=False
-                    )
-                
-                # Apply LOD optimization
-                try:
-                    self._filtered_actor.GetProperty().SetLODRenderThreshold(1000)
-                except AttributeError:
-                    pass
-                
-                update_type = "Initial Build"
-            else:
-                # Subsequent times: Swap the mapper input (FAST!)
-                # This is the key optimization - no actor recreation
-                self._filtered_actor.GetMapper().SetInputData(subset_mesh)
-                self._filtered_actor.SetVisibility(True)
-                update_type = "Mapper Swap"
-            
-            # Render the updated scene
-            self.plotter.render()
-            
-            total_time = time.time() - start_time
-            print(f"⏱️ update_point_cloud_subset ({update_type}): {subset_mesh.n_points:,} pts in {total_time:.3f}s")
-            
-        finally:
-            QApplication.restoreOverrideCursor()
+    # Subsetting removed: viewer now renders the full point cloud immediately
 
     # --------------------------------------------------------------------------
     # Ray Visualization Methods (Using BatchedRayManager)

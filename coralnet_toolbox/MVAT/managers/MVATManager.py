@@ -9,14 +9,14 @@ the MainWindow, RasterManager, MVATViewer (3D), and CameraGrid (2D).
 import time
 import numpy as np
 
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
 from PyQt5.QtWidgets import QApplication, QMessageBox
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
@@ -163,7 +163,12 @@ class MVATManager(QObject):
         
         # Data Settings
         self.compute_depth_maps_enabled = True
-        self._show_full_cloud = False
+        # New toggle: whether to compute index maps in background
+        self.compute_index_maps_enabled = True
+        # Safety flag to prevent concurrent visibility computations
+        self._is_computing_visibility = False
+        # Track active worker threads to prevent GC
+        self._active_workers = []
         
         # Internal Managers
         self.selection_model = SelectionManager(self)
@@ -201,7 +206,7 @@ class MVATManager(QObject):
         
         # 4. Viewer Signals
         self.viewer.focalPointChanged.connect(self._on_focal_point_changed)
-        self.viewer.showFullCloudToggled.connect(self._on_full_cloud_toggled)
+        self.viewer.computeIndexMapsToggled.connect(self._on_compute_index_maps_toggled)
         self.viewer.computeDepthMapsToggled.connect(self._on_compute_depth_maps_toggled)
         
         # 5. Main Window Sync
@@ -209,6 +214,16 @@ class MVATManager(QObject):
             self.annotation_window.mouseMoved.connect(self.mouse_bridge.on_mouse_moved)
         if hasattr(self.image_window, 'imageLoaded'):
             self.image_window.imageLoaded.connect(self._on_main_image_loaded)
+        # CameraGrid image selection -> load image in AnnotationWindow
+        try:
+            self.camera_grid.camera_selected.connect(self._on_camera_selected)
+        except Exception:
+            pass
+        # Single highlight intent -> update viewer perspective
+        try:
+            self.camera_grid.camera_highlighted_single.connect(self._on_camera_highlighted_single)
+        except Exception:
+            pass
 
     def load_cameras(self):
         """
@@ -224,26 +239,35 @@ class MVATManager(QObject):
         if not all_paths:
             return
             
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress = ProgressBar(self.main_window, title="Loading Cameras")
-        progress.show()
-        progress.start_progress(len(all_paths))
-        
-        valid_count = 0
+        # Indicate busy state via cursor and status bar (no modal progress)
         try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        except Exception:
+            pass
+        try:
+            try:
+                self.main_window.status_bar.showMessage("Loading cameras...", 0)
+            except Exception:
+                pass
+
+            valid_count = 0
             for path in all_paths:
-                if progress.canceled: break
                 raster = self.raster_manager.get_raster(path)
                 if raster and raster.intrinsics is not None and raster.extrinsics is not None:
                     try:
                         self.cameras[path] = Camera(raster)
                         valid_count += 1
-                    except Exception: pass
-                progress.update_progress()
+                    except Exception:
+                        pass
         finally:
-            QApplication.restoreOverrideCursor()
-            progress.finish_progress()
-            progress.close()
+            try:
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
+            try:
+                self.main_window.status_bar.showMessage(f"Loaded cameras: {valid_count} / {len(all_paths)}", 3000)
+            except Exception:
+                pass
             
         if valid_count == 0:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
@@ -251,7 +275,8 @@ class MVATManager(QObject):
             
         try:
             self.camera_grid.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
-        except Exception: pass
+        except Exception:
+            pass
         
         self.camera_grid.set_cameras(self.cameras)
         self._render_frustums()
@@ -272,7 +297,12 @@ class MVATManager(QObject):
         present, then asks the viewer to draw all camera frustums using the
         current selection/highlight/hover state.
         """
-        self.viewer.add_point_cloud()
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self.viewer.add_point_cloud()
+        finally:
+            QApplication.restoreOverrideCursor()
+            
         self.viewer.add_axes()
         highlighted = self.selection_model.get_selected_list()
         
@@ -337,23 +367,9 @@ class MVATManager(QObject):
             self.hovered_camera = None
         self._update_frustum_states()
 
-    def _on_full_cloud_toggled(self, state: bool):
-        """
-        Toggle between showing the full point cloud or a visibility-filtered
-        subset.
-
-        When showing the full cloud, any visibility filtering is bypassed. When
-        returning to filtered mode, recompute the visibility subset for the
-        currently highlighted cameras (and the selected camera if needed).
-        """
-        self._show_full_cloud = state
-        if state:
-            self.viewer.update_point_cloud_subset(None)
-        else:
-            highlighted_paths = list(self.camera_grid.get_highlighted_cameras())
-            if self.selected_camera and self.selected_camera.image_path not in highlighted_paths:
-                highlighted_paths.append(self.selected_camera.image_path)
-            self._update_visibility_filter(highlighted_paths)
+    # Note: full-cloud toggling and GPU-based subsetting have been removed.
+    # The viewer now renders the full point cloud; background index-map
+    # computation is controlled by the computeIndexMaps toggle.
 
     def _on_compute_depth_maps_toggled(self, state: bool):
         """
@@ -362,6 +378,72 @@ class MVATManager(QObject):
         expensive to compute and merge into rasters.
         """
         self.compute_depth_maps_enabled = state
+
+    def _on_compute_index_maps_toggled(self, state: bool):
+        """Enable/disable background computation of index maps."""
+        self.compute_index_maps_enabled = state
+        try:
+            msg = "Compute Index Maps: ON" if state else "Compute Index Maps: OFF"
+            self.main_window.status_bar.showMessage(msg, 2000)
+        except Exception:
+            pass
+
+    def _on_visibility_computed(self, results: dict):
+        """Handle results emitted from VisibilityWorker (runs on main thread)."""
+        try:
+            for path, result in results.items():
+                camera = self.cameras.get(path)
+                if not camera:
+                    continue
+
+                cache_path = None
+                if self.cache_manager is not None:
+                    try:
+                        cache_path = self.cache_manager.save_visibility(
+                            camera._raster.extrinsics,
+                            self.viewer.point_cloud.file_path,
+                            result.get('index_map'),
+                            result.get('visible_indices'),
+                            result.get('depth_map') if self.compute_depth_maps_enabled else None
+                        )
+                    except Exception:
+                        cache_path = None
+
+                try:
+                    camera._raster.add_index_map(result.get('index_map'), cache_path, result.get('visible_indices'))
+                except Exception:
+                    pass
+
+                if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
+                    try:
+                        camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                    except Exception:
+                        pass
+
+        finally:
+            self._is_computing_visibility = False
+            try:
+                self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            except Exception:
+                pass
+            # Restore cursor when done
+            try:
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
+            
+    def _on_visibility_error(self, error_str: str):
+        print(f"Visibility worker error:\n{error_str}")
+        self._is_computing_visibility = False
+        try:
+            self.main_window.status_bar.showMessage("Visibility computation failed. See console for details.", 5000)
+        except Exception:
+            pass
+        # Restore cursor on error
+        try:
+            QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
 
     def _on_active_camera_changed(self, path):
         """
@@ -382,7 +464,46 @@ class MVATManager(QObject):
             
             try:
                 self.image_window.load_image_by_path(path)
-            except Exception: pass
+            except Exception: 
+                pass
+
+    def _on_camera_selected(self, path: str):
+        """Handle camera_selected from the grid (context menu 'Select Image').
+
+        Preferred entry point to change the displayed image in the annotation
+        window is `annotation_window.set_image(path)` per project convention.
+        Fall back to older image_window loader if the method isn't present.
+        """
+        try:
+            # Make this the sole selection: set active and clear other highlights
+            try:
+                self.selection_model.set_active(path)
+                # Ensure only the active camera remains selected/highlighted
+                self.selection_model.set_selections([path])
+            except Exception:
+                pass
+
+            if hasattr(self.annotation_window, 'set_image'):
+                self.annotation_window.set_image(path)
+            else:
+                # Legacy fallback
+                self.image_window.load_image_by_path(path)
+            # Note: status message moved to AnnotationWindow.set_image
+        except Exception as e:
+            print(f"Failed to load selected image '{path}': {e}")
+
+    def _on_camera_highlighted_single(self, path: str):
+        """Handle single-camera highlight intent (e.g., plain click).
+
+        This updates the viewer perspective to match the clicked camera when
+        supported.
+        """
+        try:
+            cam = self.cameras.get(path)
+            if cam and hasattr(self.viewer, 'match_camera_perspective'):
+                self.viewer.match_camera_perspective(cam)
+        except Exception:
+            pass
 
     def _on_selections_changed(self, selected_paths):
         """
@@ -402,16 +523,22 @@ class MVATManager(QObject):
             try:
                 if hasattr(self.viewer, 'update_camera_appearance'):
                     self.viewer.update_camera_appearance(camera)
-            except Exception: pass
+            except Exception: 
+                pass
 
         self.highlighted_cameras = [self.cameras.get(path) for path in selected_paths if path in self.cameras]
         self._update_frustum_states()
         
         try:
             self.camera_grid._sync_ui_to_model()
-        except Exception: pass
+        except Exception: 
+            pass
 
         self.viewer.clear_ray()
+        try:
+            print(f"MVATManager: selections changed -> {selected_paths}")
+        except Exception:
+            pass
         self._update_visibility_filter(list(selected_paths))
 
     # --- Core Logic Methods ---
@@ -463,84 +590,81 @@ class MVATManager(QObject):
 
     def _update_visibility_filter(self, highlighted_paths):
         """
-        Compute and apply a visibility filter on the point cloud based on the
-        supplied highlighted cameras.
-
-        Steps:
-        - If the viewer has no point cloud or the manager is configured to
-          show the full cloud, do nothing.
-        - For each highlighted camera, either collect cached visible indices
-          or queue cameras that require visibility computation.
-        - If computation is required, batch compute visibility using
-          VisibilityManager, optionally compute depth maps, cache results,
-          and merge depth maps into rasters when requested.
-        - Combine (union) the visible indices across cameras and ask the
-          viewer to display the resulting subset.
+        Asynchronously compute visibility index maps for the supplied highlighted
+        cameras and cache results. Does NOT modify the viewer's rendered
+        point cloud (subsetting removed).
         """
-        if not self.viewer.point_cloud or self._show_full_cloud:
+        # Preconditions
+        if not self.viewer.point_cloud:
             return
-            
+        if not self.compute_index_maps_enabled:
+            return
         if not highlighted_paths:
-            self.viewer.update_point_cloud_subset([])
             return
-            
-        all_visible_indices = []
+
+        # Collect cameras that need visibility computation
         cameras_needing_visibility = []
-        
         for path in highlighted_paths:
             camera = self.cameras.get(path)
-            if camera:
-                if camera.visible_indices is None:
-                    cameras_needing_visibility.append(camera)
-                else:
-                    all_visible_indices.append(camera.visible_indices)
-                    
-        if cameras_needing_visibility:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress = ProgressBar(self.main_window, title="Computing Visibility")
-            progress.show()
-            progress.start_progress(len(cameras_needing_visibility))
-            
-            try:
-                points_world = self.viewer.point_cloud.get_points_array()
-                camera_params = [(cam.K, cam.R, cam.t, cam.width, cam.height) for cam in cameras_needing_visibility]
-                
-                batch_results = VisibilityManager.compute_batch_visibility(
-                    points_world, 
-                    camera_params, 
-                    compute_depth_map=self.compute_depth_maps_enabled
-                )
-                
-                for camera, result in zip(cameras_needing_visibility, batch_results):
-                    cache_path = None
-                    if self.cache_manager is not None:
-                        cache_path = self.cache_manager.save_visibility(
-                            camera._raster.extrinsics,
-                            self.viewer.point_cloud.file_path,
-                            result['index_map'],
-                            result['visible_indices'],
-                            result.get('depth_map') if self.compute_depth_maps_enabled else None
-                        )
-                    
-                    camera._raster.add_index_map(result['index_map'], cache_path, result['visible_indices'])
-                    
-                    if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
-                        try: camera._raster.merge_or_set_depth_map(result.get('depth_map'))
-                        except Exception: pass
-                        
-                    all_visible_indices.append(result['visible_indices'])
-                    progress.update_progress()
-            finally:
-                QApplication.restoreOverrideCursor()
-                progress.finish_progress()
-                progress.close()
-                
-        if not all_visible_indices:
-            self.viewer.update_point_cloud_subset([])
+            if camera and camera.visible_indices is None:
+                cameras_needing_visibility.append(camera)
+
+        if not cameras_needing_visibility:
             return
-            
-        union_indices = np.unique(np.concatenate(all_visible_indices)) if len(all_visible_indices) > 1 else all_visible_indices[0]
-        self.viewer.update_point_cloud_subset(union_indices)
+
+        # Prevent concurrent computations
+        if self._is_computing_visibility:
+            return
+
+        points_world = self.viewer.point_cloud.get_points_array()
+        if points_world is None or len(points_world) == 0:
+            return
+
+        # Build camera params dict keyed by image path
+        camera_params_dict = {
+            cam.image_path: (cam.K, cam.R, cam.t, cam.width, cam.height)
+            for cam in cameras_needing_visibility
+        }
+
+        # Start worker thread
+        try:
+            self._is_computing_visibility = True
+            try:
+                extra = " (including depth maps)" if self.compute_depth_maps_enabled else ""
+                self.main_window.status_bar.showMessage(f"Computing occlusion maps for {len(camera_params_dict)} cameras{extra}...")
+            except Exception:
+                pass
+
+            print(f"MVATManager: starting visibility worker for {len(camera_params_dict)} cameras")
+            try:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+            except Exception:
+                pass
+
+            worker = VisibilityWorker(points_world, 
+                                      camera_params_dict, 
+                                      compute_depth_maps=self.compute_depth_maps_enabled)
+            thread = QThread()
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+
+            # Connect signals
+            worker.signals.finished.connect(self._on_visibility_computed)
+            worker.signals.error.connect(self._on_visibility_error)
+
+            # Cleanup when done
+            worker.signals.finished.connect(thread.quit)
+            worker.signals.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+
+            # Keep references to avoid GC
+            self._active_workers.append((thread, worker))
+
+            thread.start()
+
+        except Exception as e:
+            print(f"Failed to start visibility worker: {e}")
+            self._is_computing_visibility = False
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
         """

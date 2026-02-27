@@ -1173,8 +1173,6 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.performance_dock.setMaximumHeight(125)  # Set height
-        # Hide performance window by default (don't show on startup)
-        self.performance_dock.hide()
         
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
         self.annotation_gallery_dock = DockWrapper(
@@ -1191,7 +1189,7 @@ class MainWindow(QMainWindow):
             self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
                                                      Qt.BottomToolBarArea)
 
-        # Setup Embedding Viewer Dock (Right) using DockWrapper
+        # Setup Embedding Viewer Dock (Bottom) using DockWrapper
         self.embedding_viewer_dock = DockWrapper(
             title="Embedding Viewer",
             object_name="EmbeddingViewerDock",
@@ -1205,13 +1203,7 @@ class MainWindow(QMainWindow):
             self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
                                                    Qt.BottomToolBarArea)
 
-        # By default hide the bottom explorer docks so the Annotation workspace
-        # takes the full vertical space when the main window is shown.
-        # These can be shown later by the user via the View menu or programmatically.
-        # self.annotation_gallery_dock.hide()
-        # self.embedding_viewer_dock.hide()
-        
-        # Setup MVAT Viewer Dock (Center) using DockWrapper
+        # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
         self.mvat_viewer_dock = DockWrapper(
             title="3D Viewer",
             object_name="MVATViewerDock",
@@ -1226,9 +1218,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
             self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
 
-        self.mvat_viewer_dock.hide()
-
-        # Setup Camera Grid Dock (Right) using DockWrapper
+        # Setup Camera Grid Dock (Bottom-right) using DockWrapper
         self.camera_grid_dock = DockWrapper(
             title="Camera Grid",
             object_name="CameraGridDock",
@@ -1237,7 +1227,6 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self.camera_grid, 'create_top_toolbar'):
             self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar(), Qt.TopToolBarArea)
-        self.camera_grid_dock.hide()
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1256,18 +1245,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
         self.tabifyDockWidget(self.right_dock, self.left_dock)
         
-        # 4. Add the Workspace dock to the TOP area. 
-        # Because we locked the corners above, "Top" now effectively means 
-        # "Top of the center column", sitting perfectly above our invisible central widget!
+        # 4. Add the Workspace dock to the TOP area.
         self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
-        
-        # Add MVAT Viewer and tabify it with Annotation Workspace ---
-        self.addDockWidget(Qt.TopDockWidgetArea, self.mvat_viewer_dock)
-        self.tabifyDockWidget(self.annotation_dock, self.mvat_viewer_dock)
-        
-        # Add Camera Grid under the right-side Image Dock ---
-        self.addDockWidget(Qt.RightDockWidgetArea, self.camera_grid_dock)
-        self.splitDockWidget(self.right_dock, self.camera_grid_dock, Qt.Vertical)
         
         # 5. Add the Annotation Gallery dock to the Bottom area
         self.addDockWidget(Qt.BottomDockWidgetArea, self.annotation_gallery_dock)
@@ -1275,32 +1254,40 @@ class MainWindow(QMainWindow):
         # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
         # Place both viewer docks in the Bottom area and split them horizontally
         self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
-        
-        # 7. Place the Timer under the Confidence/Performance area and tabify it with Performance
-        # Timer is hidden by default.
-        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
-        # Tabify Performance and Timer so they share a tab group under Confidence
-        try:
-            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
-        except Exception:
-            pass
-
-        # 8. Shrink the default width of the side docks.
-        # This tells Qt to assign N pixels of width to the left side and right side,
-        # leaving the vast majority of the screen for your center column.
-        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
-        
-        # Give the Workspace dock the absolute maximum vertical space available
-        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
-        
-        # Split the two viewer docks (annotation gallery and embedding viewer) horizontally
         try:
             self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
             # Make them approximately equal width
             self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
         except Exception:
-            # If splitting fails for any reason (e.g. docks not in same area), ignore silently
             pass
+
+        # 7. Place the MVAT Viewer under the Annotation Gallery (left bottom column)
+        try:
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.mvat_viewer_dock)
+            self.splitDockWidget(self.annotation_gallery_dock, self.mvat_viewer_dock, Qt.Vertical)
+        except Exception:
+            pass
+
+        # 8. Place the Camera Grid under the Embedding Viewer (right bottom column)
+        try:
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.camera_grid_dock)
+            self.splitDockWidget(self.embedding_viewer_dock, self.camera_grid_dock, Qt.Vertical)
+        except Exception:
+            pass
+
+        # 9. Place the Timer under the Confidence/Performance area and tabify it with Performance
+        # Timer is hidden by default.
+        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
+        try:
+            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
+        except Exception:
+            pass
+
+        # 10. Shrink the default width of the side docks.
+        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
+        
+        # Give the Workspace dock the absolute maximum vertical space available
+        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
         
         # --------------------------------------------------
         # Enable drag and drop

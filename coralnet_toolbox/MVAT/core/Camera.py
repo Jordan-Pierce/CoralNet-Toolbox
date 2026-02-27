@@ -296,7 +296,8 @@ class Camera:
     # Visibility Computation (Index Maps)
     # --------------------------------------------------------------------------
     
-    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True):
+    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True, 
+                               compute_index_maps: bool = True):
         """
         Ensure visibility data (index_map and visible_indices) is computed and cached.
         
@@ -312,6 +313,10 @@ class Camera:
         Returns:
             bool: True if visibility data is available, False otherwise
         """
+        # If index-map computation is disabled by the user, skip heavy work
+        if not compute_index_maps:
+            return True
+
         # Step 1: Check if already in memory
         if self._raster.visible_indices is not None:
             return True
@@ -413,7 +418,7 @@ class Camera:
         """Delegates creation of the Frustum actor to the Frustum class."""
         return self.frustum.create_actor(plotter, scale)
 
-    def update_appearance(self, plotter=None, opacity=0.8):
+    def update_appearance(self, plotter=None, opacity=0.0):
         """Update the Frustum appearance based on selection state."""
         self.frustum.update_appearance(plotter, opacity)
 
