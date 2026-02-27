@@ -275,12 +275,18 @@ class EmbeddingViewerWindow(QWidget):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
         
+        # Clear button (next to Run Embedding) - clears only the embedding view
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setToolTip("Clear embedding view and reset placeholder")
+        self.clear_button.clicked.connect(self.clear_view)
+        toolbar.addWidget(self.clear_button)
+        
         # Run button
         self.run_button = QPushButton("Run Embedding")
         self.run_button.setToolTip("Extract features and generate embedding visualization")
         self.run_button.clicked.connect(self.run_embedding_pipeline)
         toolbar.addWidget(self.run_button)
-        
+
         # Initialize model combo based on default category
         self._on_category_changed(self.category_combo.currentText())
         
@@ -1765,7 +1771,52 @@ class EmbeddingViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     # Cleanup
     # -------------------------------------------------------------------------
-    
+    @pyqtSlot()
+    def clear_view(self):
+        """Clear the embedding view: cancel pipeline, clear points and reset placeholders."""
+        try:
+            # Cancel running pipeline worker if any
+            try:
+                if getattr(self, '_pipeline_running', False) and getattr(self, '_pipeline_worker', None):
+                    try:
+                        self._pipeline_worker.cancel()
+                    except Exception:
+                        pass
+                    try:
+                        self._pipeline_worker.wait(1000)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Clear scene and internal state
+            try:
+                self._clear_points()
+            except Exception:
+                pass
+
+            self.current_data_items = []
+            self.current_features = None
+            self.current_feature_model_key = None
+            self.data_item_cache.clear()
+            self.working_set_ids = []
+            try:
+                self.graphics_scene.clearSelection()
+            except Exception:
+                pass
+
+            # Show placeholder and update toolbar
+            try:
+                self._show_placeholder()
+            except Exception:
+                pass
+            try:
+                self._update_toolbar_state()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         """Handle close event - cleanup resources."""
         self.cache_manager.close()

@@ -254,7 +254,8 @@ class MainWindow(QMainWindow):
         self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
-        
+        self.annotation_viewer_window.cleared.connect(self.embedding_viewer_window.clear_view)
+
         # Create the centralized selection manager for explorer windows
         self.selection_manager = SelectionManager(self)
         self.selection_manager.register_annotation_viewer(self.annotation_viewer_window)
