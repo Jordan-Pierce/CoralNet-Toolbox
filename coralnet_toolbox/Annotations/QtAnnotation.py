@@ -32,8 +32,15 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
         # Ensure the background is fully opaque for readability
         self.bg_color.setAlpha(255) 
         
+        # --- SMART TEXT CONTRAST ---
+        # Calculate how bright the label color is (0.0 to 1.0)
+        luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+        
+        # If the background is bright, use black text. If it's dark, use white text!
+        text_color = QColor(self.bg_color)
+        text_color = text_color.darker(200) if luminance > 0.5 else text_color.lighter(200)
+        
         # Make the text darker than the background color for contrast
-        text_color = QColor(self.bg_color).darker(200)
         text_color.setAlpha(255)
         self.setBrush(QBrush(text_color))
         

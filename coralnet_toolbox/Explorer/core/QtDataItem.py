@@ -130,7 +130,19 @@ class EmbeddingPointItem(QGraphicsObject):
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
             opacity = int(128 + 127 * z_normalized)
 
-        base_color = self.data_item.effective_color
+        # Preserve the original label color; allow a special-case override when id == "-1"
+        original_label_color = QColor(self.data_item.effective_color)
+        effective_label = self.data_item.effective_label
+
+        # By default use the label color for display and for dashed strokes
+        display_color = QColor(original_label_color)
+        dash_color = QColor(original_label_color)
+
+        # Special case: if the effective label id is "-1" show the annotation in black
+        # but use the original label color for the dashed/animated stroke (e.g., white)
+        if effective_label and effective_label.id == "-1":
+            display_color = QColor("black")
+            dash_color = QColor(original_label_color)
         
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
@@ -152,15 +164,16 @@ class EmbeddingPointItem(QGraphicsObject):
                 half_w = pen_width / 2.0
                 rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                # Use a darker version of the label color for the contrast background
-                bg_color = QColor(base_color).darker(160)
+                # Use a darker version of the display color for the contrast background
+                bg_color = QColor(display_color).darker(160)
                 bg_pen = QPen(bg_color, pen_width + 2)
                 bg_pen.setJoinStyle(Qt.MiterJoin)
                 painter.setPen(bg_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRect(rect)
                 
-                fg_pen = QPen(base_color, pen_width)
+                # Use the dash_color for the animated dashed outline
+                fg_pen = QPen(dash_color, pen_width)
                 fg_pen.setJoinStyle(Qt.MiterJoin)
                 fg_pen.setDashPattern([4.0, 4.0])
                 fg_pen.setDashOffset(self.animation_offset)
@@ -168,7 +181,7 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.drawRect(rect)
             else:
                 # Faint border to give gentle definition to unselected thumbnails
-                faint = QColor(base_color).darker(160)
+                faint = QColor(display_color).darker(160)
                 faint.setAlpha(80)
                 painter.setPen(QPen(faint, 1))
                 painter.setBrush(Qt.NoBrush)
@@ -179,7 +192,7 @@ class EmbeddingPointItem(QGraphicsObject):
             if self.isSelected():
                 # 1. Solid opaque base color so it pops out of the cluster
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(base_color))
+                painter.setBrush(QBrush(display_color))
                 painter.drawEllipse(self.boundingRect())
                 
                 # 2. Inset Targeting Reticle (Prevents flat-edge clipping bugs)
@@ -190,23 +203,23 @@ class EmbeddingPointItem(QGraphicsObject):
                 # Shrink rect slightly so the stroke stays strictly inside the bounds
                 draw_rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                white_pen = QPen(QColor("white"), pen_width + 1)
+                white_pen = QPen(QColor(display_color).darker(160), pen_width + 1)
                 painter.setPen(white_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(draw_rect)
                 
                 # Animated darkened label-color dash on top (smaller [2.0, 2.0] dashes fit tiny circles better)
-                dark_dash_color = QColor(base_color).darker(160)
-                black_dash = QPen(dark_dash_color, pen_width)
-                black_dash.setDashPattern([2.0, 2.0])
-                black_dash.setDashOffset(self.animation_offset)
-                painter.setPen(black_dash)
+                # Use the dash_color (special-case may be original label color) for the animated dashed stroke
+                dash_pen = QPen(dash_color, pen_width)
+                dash_pen.setDashPattern([2.0, 2.0])
+                dash_pen.setDashOffset(self.animation_offset)
+                painter.setPen(dash_pen)
                 painter.drawEllipse(draw_rect)
                 
             else:
                 # Pure, borderless alpha-blended dots. 
                 # Overlapping clusters naturally form beautiful density heatmaps.
-                effective_brush_color = QColor(base_color)
+                effective_brush_color = QColor(display_color)
                 effective_brush_color.setAlpha(opacity)
                 
                 painter.setPen(Qt.NoPen)
@@ -427,9 +440,16 @@ class AnnotationImageWidget(QWidget):
             painter.drawText(self.rect(), Qt.AlignCenter, "No Image\nAvailable")
 
         effective_label = self.data_item.effective_label
-        pen_color = self.data_item.effective_color
+        # Keep the original label color around so we can use it for the dashed line
+        original_label_color = self.data_item.effective_color
+        pen_color = QColor(original_label_color)
+        # Special case: when the effective label id is "-1" use a black pen for borders
+        # but use the original label color for the dashed selection stroke (no darkening)
         if effective_label and effective_label.id == "-1":
             pen_color = QColor("black")
+            dashed_color = QColor(original_label_color)
+        else:
+            dashed_color = QColor(pen_color)
 
         # We adjust the rectangle slightly inward so the thick borders don't get clipped by the widget edges
         half_width = (ANNOTATION_WIDTH - 1) // 2
@@ -440,6 +460,7 @@ class AnnotationImageWidget(QWidget):
             contrast_bg_color = QColor(pen_color).darker(160)
         except Exception:
             contrast_bg_color = QColor("black")
+            
         bg_pen = QPen(contrast_bg_color, ANNOTATION_WIDTH + 2)  # darkened label color as contrast
         bg_pen.setCosmetic(True)
         bg_pen.setJoinStyle(Qt.MiterJoin)
@@ -449,7 +470,8 @@ class AnnotationImageWidget(QWidget):
 
         # 2b. Draw the Colored Line (On top of the black line)
         if self.is_selected():
-            pen = QPen(pen_color, ANNOTATION_WIDTH)
+            # Use the dashed_color for the animated dashed line (special-case may be original label color)
+            pen = QPen(dashed_color, ANNOTATION_WIDTH)
             # PyQt uses setDashPattern; provide floats for compatibility
             pen.setDashPattern([4.0, 4.0])
             pen.setDashOffset(self.animation_offset)
@@ -489,8 +511,9 @@ class AnnotationImageWidget(QWidget):
         luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
         
         # If the background is bright, use black text. If it's dark, use white text!
-        text_color = Qt.black if luminance > 0.5 else Qt.white
-        
+        text_color = QColor(bg_color)
+        text_color = text_color.darker(200) if luminance > 0.5 else text_color.lighter(200)
+    
         painter.setPen(text_color)
         painter.drawText(bg_rect, Qt.AlignCenter, tag_text)
         
