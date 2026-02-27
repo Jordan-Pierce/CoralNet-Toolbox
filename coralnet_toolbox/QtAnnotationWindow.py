@@ -2589,7 +2589,6 @@ class AnnotationWindow(QGraphicsView):
                 if raster:
                     raster.mask_annotation = annotation
 
-            
             # If the annotation belongs to the current image, we MUST 
             # create its visual item in the scene immediately.
             if annotation.image_path == self.current_image_path:
@@ -2713,59 +2712,57 @@ class AnnotationWindow(QGraphicsView):
         QApplication.restoreOverrideCursor()
 
     def delete_selected_annotations(self):
-        """Delete all currently selected annotations."""
+        """Delete all currently selected annotations in a single batch."""
         # Get the selected annotations
         selected_annotations = self.selected_annotations.copy()
-        # Unselect them first
+        # Unselect them first to clean up confidence window connections
         self.unselect_annotations()
-        # Delete each selected annotation
+        # Call the bulk delete method to trigger the optimized viewer slots
         self.delete_annotations(selected_annotations)
 
     def delete_label_annotations(self, label):
-        """Delete all annotations with the specified label."""
-        labeled_annotations = []
-        for annotation in self.annotations_dict.values():
-            if annotation.label.id == label.id:
-                labeled_annotations.append(annotation)
-                
-        # Delete the labeled annotations
-        self.delete_annotations(labeled_annotations)
+        """Delete all annotations with the specified label (Bulk Optimized)."""
+        # 1. Use list comprehension for significantly faster filtering across the master dict
+        labeled_annotations = [
+            ann for ann in self.annotations_dict.values() 
+            if ann.label.id == label.id
+        ]
+        
+        # 2. Only trigger the deletion process if work is required
+        if labeled_annotations:
+            # Delegate to the optimized bulk method which handles cursors, 
+            # signal blocking, and a single consolidated UI refresh.
+            self.delete_annotations(labeled_annotations)
 
     def delete_image_annotations(self, image_path):
-        """Delete all annotations associated with a specific image path."""
-        if image_path in self.image_annotations_dict:
-            # Check if a label is locked
-            label_locked = self.main_window.label_window.label_locked
-            locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
-            
-            # Create a copy of annotations to safely iterate
-            annotations = list(self.image_annotations_dict[image_path].copy())
-            annotations_to_delete = []
-            
-            # Filter annotations based on locked label
-            for annotation in annotations:
-                # Skip annotations with locked label
-                if label_locked and annotation.label.id == locked_label_id:
-                    continue
-                
-                # Add to delete list
-                annotations_to_delete.append(annotation)
-            
-            # Delete filtered annotations
+        """Delete all annotations associated with a specific image path (Bulk Optimized)."""
+        if image_path not in self.image_annotations_dict:
+            return
+
+        # 1. Access label lock state once
+        label_window = self.main_window.label_window
+        label_locked = label_window.label_locked
+        locked_label_id = label_window.locked_label.id if label_locked else None
+        
+        # 2. Efficiently filter the image-specific list using comprehension
+        annotations_to_delete = [
+            ann for ann in self.image_annotations_dict[image_path]
+            if not (label_locked and ann.label.id == locked_label_id)
+        ]
+        
+        if annotations_to_delete:
+            # 3. Use bulk delete to handle internal dictionaries and viewer updates
             self.delete_annotations(annotations_to_delete)
             
-            # If all annotations were deleted, remove the image path from the dictionary
-            if not self.image_annotations_dict.get(image_path, []):
-                del self.image_annotations_dict[image_path]
-            
-        # Clear the mask_annotation to ensure semantic segmentation data is reset
+        # 4. Handle Mask/Semantic Reset
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
         if raster:
             raster.delete_mask_annotation()
         
-        # Always update the viewport
-        self.scene.update()
-        self.viewport().update()
+        # --- THE FIX ---
+        # Removed redundant self.scene.update() and self.viewport().update() calls.
+        # Since delete_annotations() already calls viewport().update() at the end, 
+        # removing these prevents a second expensive repaint pass.
 
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""
