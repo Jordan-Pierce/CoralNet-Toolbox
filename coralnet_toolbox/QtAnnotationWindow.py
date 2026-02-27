@@ -2563,67 +2563,50 @@ class AnnotationWindow(QGraphicsView):
         if not annotations_list:
             return
 
-        # Use a set to efficiently track unique image paths that need updating
         images_to_update = set()
 
         for annotation in annotations_list:
             if annotation is None or annotation.id in self.annotations_dict:
                 continue
 
-            # --- Parity Fix: Set animation manager and scale ---
             annotation.set_animation_manager(self.animation_manager)
             self.set_annotation_scale(annotation)
 
-            # --- Core Logic: Only update data dictionaries ---
+            # Update data dictionaries
             self.annotations_dict[annotation.id] = annotation
             if annotation.image_path not in self.image_annotations_dict:
                 self.image_annotations_dict[annotation.image_path] = []
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
-            # Track the image path for a final UI update
             images_to_update.add(annotation.image_path)
 
-            # --- Connect signals for future interaction ---
             annotation.selected.connect(self.select_annotation)
             annotation.annotationDeleted.connect(self.delete_annotation)
-            
-            # Ensure annotation updates (like move/resize) propagate to UI
             annotation.annotationUpdated.connect(self.on_annotation_updated)
 
-            # Register MaskAnnotations directly to their raster
             if isinstance(annotation, MaskAnnotation):
                 raster = self.main_window.image_window.raster_manager.get_raster(annotation.image_path)
                 if raster:
                     raster.mask_annotation = annotation
 
-            # NOTE: per-annotation emission removed to allow bulk emits
+            
+            # If the annotation belongs to the current image, we MUST 
+            # create its visual item in the scene immediately.
+            if annotation.image_path == self.current_image_path:
+                self.load_annotation(annotation)
 
-        # --- Final UI Updates (after all annotations are processed) ---
+        # Final UI Updates for sidebar/counts
         if images_to_update:
-            # Update the annotation count in the ImageWindow table for each affected image
             for path in images_to_update:
                 self.main_window.image_window.update_image_annotations(path)
-            
-            # Update the global annotation counts in the LabelWindow once
             self.main_window.label_window.update_annotation_count()
 
-        # Record this bulk addition as a single undoable action (if requested)
-        try:
-            if record_action and annotations_list:
-                # store a shallow copy to avoid mutation side-effects
-                self.action_stack.push(AddAnnotationsAction(self, list(annotations_list)))
-        except Exception:
-            # Non-fatal: action stack is a convenience; ignore failures
-            pass
+        if record_action:
+            self.action_stack.push(AddAnnotationsAction(self, list(annotations_list)))
 
-        # Emit a single bulk-created signal with the list of added IDs so
-        # viewers (gallery/embedding) can process the additions once.
-        try:
-            added_ids = [ann.id for ann in annotations_list if ann and ann.id in self.annotations_dict]
-            if added_ids:
-                self.annotationsCreated.emit(added_ids)
-        except Exception:
-            pass
+        added_ids = [ann.id for ann in annotations_list if ann and ann.id in self.annotations_dict]
+        if added_ids:
+            self.annotationsCreated.emit(added_ids)
 
     def delete_annotation(self, annotation_id, record_action=True, bulk_mode=False):
         """Delete an annotation by its ID from dicts."""

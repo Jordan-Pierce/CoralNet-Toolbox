@@ -84,23 +84,11 @@ class AddAnnotationsAction(Action):
         self.annotations = annotations
 
     def do(self):
+        # By calling this, the window will now automatically 
+        # detect if they should be visible on the current scene.
         self.annotation_window.add_annotations(self.annotations, record_action=False)
-        try:
-            current = self.annotation_window.current_image_path
-            if current:
-                image_paths = {getattr(a, 'image_path', None) for a in self.annotations}
-                if current in image_paths:
-                    self.annotation_window.load_annotations(image_path=current)
-                    try:
-                        self.annotation_window.scene.update()
-                        self.annotation_window.viewport().update()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
     def undo(self):
-        # FIX: Use true bulk delete instead of a massive loop
         self.annotation_window.delete_annotations(self.annotations, record_action=False)
 
 
@@ -112,11 +100,11 @@ class DeleteAnnotationsAction(Action):
         self.annotations = annotations
 
     def do(self):
-        # FIX: Use true bulk delete instead of a massive loop
         self.annotation_window.delete_annotations(self.annotations, record_action=False)
 
     def undo(self):
-        # FIX: Use true bulk add instead of a massive loop
+        # FIX: Just call add_annotations; the updated logic in 
+        # AnnotationWindow will handle the visual restoration.
         self.annotation_window.add_annotations(self.annotations, record_action=False)
 
 
