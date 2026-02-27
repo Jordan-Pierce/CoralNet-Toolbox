@@ -1,6 +1,5 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDockWidget, QMainWindow, QMenu, QToolBar, QWidget, QStatusBar
-
+from PyQt5.QtWidgets import QDockWidget, QMainWindow, QMenu, QMenuBar, QToolBar, QWidget, QStatusBar, QSizePolicy
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -40,19 +39,58 @@ class DockWrapper(QDockWidget):
         
         # This applies the specific background color to ANY QToolBar 
         # that gets attached to this specific dock's inner window.
+        # Add QMenuBar to the stylesheet so it isn't transparent
         self.inner_window.setStyleSheet("""
+            QMenuBar {
+                background-color: rgb(248, 249, 250);
+                border-bottom: 1px solid #ddd;
+            }
             QToolBar {
                 background-color: rgb(248, 249, 250);
                 border: none;
-                spacing: 4px; /* Optional: adds a nice default gap between items */
+                spacing: 4px;
             }
         """)
 
     # --- UI COMPONENT MOUNTING ---
-
+    
     def add_menu(self, menu: QMenu):
-        """Attaches a QMenu to the dock's internal menu bar."""
-        self.inner_window.menuBar().addMenu(menu)
+        """Attaches a QMenu to the dock's internal menu bar using setMenuWidget."""
+        
+        # 1. Create a physical QMenuBar and force it into the layout as a standard widget
+        if not hasattr(self, '_local_menubar'):
+            self._local_menubar = QMenuBar(self.inner_window)
+            self._local_menubar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            
+            # CRITICAL: setMenuWidget completely bypasses OS native-menubar bugs
+            self.inner_window.setMenuWidget(self._local_menubar)
+            
+            # Ensure text is visible even if the app uses Dark Mode
+            self._local_menubar.setStyleSheet("""
+                QMenuBar {
+                    background-color: rgb(248, 249, 250);
+                    color: black;
+                    border-bottom: 1px solid #ddd;
+                }
+                QMenuBar::item {
+                    background-color: transparent;
+                    padding: 4px 8px;
+                }
+                QMenuBar::item:selected {
+                    background-color: #e2e6ea;
+                }
+            """)
+
+        # 2. Prevent Python Garbage Collection from deleting the menu!
+        if not hasattr(self, '_menus'):
+            self._menus = []
+        self._menus.append(menu)
+        
+        # 3. Bind coordinates to the menubar to fix the multi-monitor offset bug
+        menu.setParent(self._local_menubar)
+        
+        # 4. Mount the menu
+        self._local_menubar.addMenu(menu)
 
     def add_toolbar(self, toolbar: QToolBar, area=Qt.TopToolBarArea):
         """

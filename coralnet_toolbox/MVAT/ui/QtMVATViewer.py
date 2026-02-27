@@ -186,77 +186,100 @@ class MVATViewer(QFrame):
         """Create the top toolbar with the categorized View dropdown menu."""       
         toolbar = QToolBar("3D Viewer Tools")
         toolbar.setMovable(False)
+        # The View menu has been moved to the application's menubar / dock menu.
+        # Keep the toolbar present for other controls (bottom toolbar mounts widgets).
+        return toolbar
+    
+    def create_view_toolbar(self) -> QToolBar:
+        """
+        Create a toolbar containing a button with the View menu.
+        This can be added directly to the dock's toolbar area.
+        """
+        toolbar = QToolBar("View Menu")
+        toolbar.setMovable(False)
         
-        # Create the View Dropdown Button
-        view_btn = QToolButton()
-        view_btn.setText("View")
-        view_btn.setPopupMode(QToolButton.InstantPopup)
+        # Create the menu (you can reuse the existing create_view_menu logic)
+        view_menu = self.create_view_menu()
         
-        view_menu = QMenu(view_btn)
+        # Create a tool button that shows the menu
+        view_button = QToolButton()
+        view_button.setText("View")
+        view_button.setMenu(view_menu)
+        view_button.setPopupMode(QToolButton.InstantPopup)
+        view_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         
-        # --- [ Camera Angles ] ---
-        view_menu.addAction("Top (XY)", self.view_top)
-        view_menu.addAction("Front (XZ)", self.view_front)
-        view_menu.addAction("Side (YZ)", self.view_side)
-        view_menu.addAction("Isometric", self.reset_view)  # reset_view defaults to isometric
-        view_menu.addSeparator()
-        
-        # --- [ Camera Setup ] ---
-        action_ortho = QAction("Orthographic Projection", self)
-        action_ortho.setCheckable(True)
-        action_ortho.toggled.connect(self.toggle_orthographic)
-        view_menu.addAction(action_ortho)
-        
+        toolbar.addWidget(view_button)
+        return toolbar
+
+    def create_view_menu(self) -> QMenu:
+        """Create a standalone QMenu for the viewer that can be attached to a menubar or dock."""
+        view_menu = QMenu("View")
+
+        # Top actions: Fit and Reset
         action_fit = QAction("Fit All", self)
         action_fit.setShortcut("F")
         action_fit.triggered.connect(self.fit_to_view)
         view_menu.addAction(action_fit)
-        
+
         action_reset = QAction("Reset View", self)
         action_reset.setShortcut("R")
         action_reset.triggered.connect(self.reset_view)
         view_menu.addAction(action_reset)
+
         view_menu.addSeparator()
-        
-        # --- [ Visibility Toggles ] ---
+
+        # Camera angles
+        view_menu.addAction("Top (XY)", self.view_top)
+        view_menu.addAction("Front (XZ)", self.view_front)
+        view_menu.addAction("Side (YZ)", self.view_side)
+        view_menu.addAction("Isometric", self.view_isometric)
+
+        view_menu.addSeparator()
+
+        # Orthographic projection
+        action_ortho = QAction("Orthographic Projection", self)
+        action_ortho.setCheckable(True)
+        action_ortho.toggled.connect(self.toggle_orthographic)
+        view_menu.addAction(action_ortho)
+
+        view_menu.addSeparator()
+
+        # Visibility toggles
         action_wireframes = QAction("Show Wireframes", self)
         action_wireframes.setCheckable(True)
         action_wireframes.setChecked(self._show_wireframes_enabled)
         action_wireframes.toggled.connect(self.enable_wireframes)
         view_menu.addAction(action_wireframes)
-        
+
         action_thumbnails = QAction("Show Thumbnails", self)
         action_thumbnails.setCheckable(True)
         action_thumbnails.setChecked(self._show_thumbnails_enabled)
         action_thumbnails.toggled.connect(self.enable_thumbnails)
         view_menu.addAction(action_thumbnails)
-        
+
         action_rays = QAction("Show Rays", self)
         action_rays.setCheckable(True)
         action_rays.setChecked(self._show_rays_enabled)
         action_rays.toggled.connect(self.set_ray_visible)
         view_menu.addAction(action_rays)
-        
+
         action_full_cloud = QAction("Show Full Point Cloud", self)
         action_full_cloud.setCheckable(True)
-        action_full_cloud.setChecked(False)  # Defaults to False in MVATWindow
+        action_full_cloud.setChecked(False)
         action_full_cloud.toggled.connect(self.showFullCloudToggled.emit)
         view_menu.addAction(action_full_cloud)
+
         view_menu.addSeparator()
-        
-        # --- [ Settings ] ---
+
+        # Settings
         action_depth = QAction("Compute Depth Maps", self)
         action_depth.setCheckable(True)
-        action_depth.setChecked(True)  # Defaults to True in MVATWindow
+        action_depth.setChecked(True)
         action_depth.setToolTip("Toggle computing depth maps during visibility computation")
         action_depth.toggled.connect(self.computeDepthMapsToggled.emit)
         view_menu.addAction(action_depth)
-        
-        # Attach Menu to Button and Button to Toolbar
-        view_btn.setMenu(view_menu)
-        toolbar.addWidget(view_btn)
-        
-        return toolbar
+
+        return view_menu
 
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar for opacity and point size."""

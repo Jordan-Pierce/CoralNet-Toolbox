@@ -1218,10 +1218,14 @@ class MainWindow(QMainWindow):
             main_widget=self.mvat_viewer,
             parent=self
         )
+        if hasattr(self.mvat_viewer, 'create_view_toolbar'):
+            view_toolbar = self.mvat_viewer.create_view_toolbar()
+            self.mvat_viewer_dock.add_toolbar(view_toolbar, Qt.TopToolBarArea)
         if hasattr(self.mvat_viewer, 'create_top_toolbar'):
             self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_top_toolbar(), Qt.TopToolBarArea)
         if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
             self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+
         self.mvat_viewer_dock.hide()
 
         # Setup Camera Grid Dock (Right) using DockWrapper
