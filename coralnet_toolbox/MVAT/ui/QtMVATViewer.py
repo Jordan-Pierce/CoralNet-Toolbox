@@ -134,6 +134,7 @@ class MVATViewer(QFrame):
             self.set_thumbnail_opacity(self.opacity_slider.value() / 100.0)
         except Exception:
             pass
+        
         # Add widgets to bottom layout (left aligned: opacity, stretch, point size)
         bottom_layout.addWidget(opacity_label)
         bottom_layout.addWidget(self.opacity_slider)
