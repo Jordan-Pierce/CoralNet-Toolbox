@@ -168,11 +168,11 @@ class Raster(QObject):
             self.metadata['bands'] = self.channels
 
             crs = self._rasterio_src.crs
+            transform = self._rasterio_src.transform
+
             if crs is not None:
                 if not getattr(crs, "is_geographic", False):
                     # Case 1: Already projected. Read the scale and convert to meters.
-                    transform = self._rasterio_src.transform
-
                     scale_x = abs(transform.a)
                     scale_y = abs(transform.e)
                     source_units = crs.linear_units.lower()
@@ -190,7 +190,7 @@ class Raster(QObject):
                         dst_crs = CRS.from_epsg(3857)
 
                         # Calculate the transform, new width, and new height for the reprojected image
-                        transform, width, height = calculate_default_transform(
+                        proj_transform, width, height = calculate_default_transform(
                             crs,                        # Source CRS
                             dst_crs,                    # Destination CRS
                             self._rasterio_src.width,   # Source width
@@ -199,8 +199,8 @@ class Raster(QObject):
                         )
 
                         # Now, the transform's components are in meters
-                        scale_x = abs(transform.a)
-                        scale_y = abs(transform.e)
+                        scale_x = abs(proj_transform.a)
+                        scale_y = abs(proj_transform.e)
                         scale_units = 'm'  # EPSG:3857 units are meters
 
                         self.update_scale(scale_x, scale_y, scale_units)
@@ -214,9 +214,22 @@ class Raster(QObject):
                         # Fallback if reprojection calculation fails
                         print(f"Could not calculate default transform for {self.image_path}: {e}")
                         self.metadata['units'] = "degrees (reprojection failed)"
-                        # scale attributes remain None
-                # else: neither projected nor geographic, do nothing
-            # Case 3: No CRS. self.scale_x, self.scale_y, and self.scale_units correctly remain None
+                        
+            else:
+                # Case 3: No CRS. Check if there is a valid transform (e.g., from a .jgw sidecar file)
+                if transform is not None and not transform.is_identity:
+                    scale_x = abs(transform.a)
+                    scale_y = abs(transform.e)
+                    
+                    # Since there is no CRS, bypass update_scale to avoid unit conversion errors.
+                    # Assign the raw values directly and flag the units as unknown.
+                    self.scale_x = scale_x
+                    self.scale_y = scale_y
+                    self.scale_units = 'unknown' 
+                    
+                    self.metadata['scale_x'] = f"{self.scale_x:.6f} (unknown units)"
+                    self.metadata['scale_y'] = f"{self.scale_y:.6f} (unknown units)"
+                    self.metadata['original_crs'] = "None (Loaded from world file)"
 
             return True
             
