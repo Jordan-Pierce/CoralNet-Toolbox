@@ -15,9 +15,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 POINT_SIZE = 15
-POINT_WIDTH = 3
-SPRITE_SIZE = 32
-ANNOTATION_WIDTH = 3
+POINT_WIDTH = 2
+SPRITE_SIZE = 48
+
+ANNOTATION_WIDTH = 4
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -47,7 +48,12 @@ class EmbeddingPointItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
 
-        self.default_pen = QPen(QColor("black"), POINT_WIDTH)
+        # Use the annotation's label color (darkened) for outlines instead of pure black
+        try:
+            dark_outline = QColor(self.data_item.effective_color).darker(160)
+        except Exception:
+            dark_outline = QColor("black")
+        self.default_pen = QPen(dark_outline, POINT_WIDTH)
         self.default_pen.setCosmetic(True)
         self.setPos(self.data_item.embedding_x, self.data_item.embedding_y)
         self.setToolTip(self.data_item.get_tooltip_text())
@@ -142,11 +148,13 @@ class EmbeddingPointItem(QGraphicsObject):
 
             if self.isSelected():
                 # High contrast border for selected sprites (inset to prevent clipping)
-                pen_width = max(2, int(3 * scale_factor))
+                pen_width = min(2, int(2 * scale_factor))
                 half_w = pen_width / 2.0
                 rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                bg_pen = QPen(QColor("black"), pen_width + 2)
+                # Use a darker version of the label color for the contrast background
+                bg_color = QColor(base_color).darker(160)
+                bg_pen = QPen(bg_color, pen_width + 2)
                 bg_pen.setJoinStyle(Qt.MiterJoin)
                 painter.setPen(bg_pen)
                 painter.setBrush(Qt.NoBrush)
@@ -160,7 +168,9 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.drawRect(rect)
             else:
                 # Faint border to give gentle definition to unselected thumbnails
-                painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
+                faint = QColor(base_color).darker(160)
+                faint.setAlpha(80)
+                painter.setPen(QPen(faint, 1))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRect(self.boundingRect())
 
@@ -180,14 +190,14 @@ class EmbeddingPointItem(QGraphicsObject):
                 # Shrink rect slightly so the stroke stays strictly inside the bounds
                 draw_rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                # Solid white ring underneath
                 white_pen = QPen(QColor("white"), pen_width + 1)
                 painter.setPen(white_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(draw_rect)
                 
-                # Animated black dash on top (smaller [2.0, 2.0] dashes fit tiny circles better)
-                black_dash = QPen(QColor("black"), pen_width)
+                # Animated darkened label-color dash on top (smaller [2.0, 2.0] dashes fit tiny circles better)
+                dark_dash_color = QColor(base_color).darker(160)
+                black_dash = QPen(dark_dash_color, pen_width)
                 black_dash.setDashPattern([2.0, 2.0])
                 black_dash.setDashOffset(self.animation_offset)
                 painter.setPen(black_dash)
@@ -421,15 +431,16 @@ class AnnotationImageWidget(QWidget):
         if effective_label and effective_label.id == "-1":
             pen_color = QColor("black")
 
-        # Determine the base line width
-        base_width = ANNOTATION_WIDTH
-
         # We adjust the rectangle slightly inward so the thick borders don't get clipped by the widget edges
-        half_width = (base_width - 1) // 2
+        half_width = (ANNOTATION_WIDTH - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
 
-        # 2a. Draw the Contrast Stroke (Thicker Black Line Underneath)
-        bg_pen = QPen(QColor("black"), base_width + 2)  # +2 makes 1 pixel of black peek out on both sides
+        # 2a. Draw the Contrast Stroke (Thicker darkened label color underneath)
+        try:
+            contrast_bg_color = QColor(pen_color).darker(160)
+        except Exception:
+            contrast_bg_color = QColor("black")
+        bg_pen = QPen(contrast_bg_color, ANNOTATION_WIDTH + 2)  # darkened label color as contrast
         bg_pen.setCosmetic(True)
         bg_pen.setJoinStyle(Qt.MiterJoin)
         painter.setPen(bg_pen)
@@ -438,13 +449,13 @@ class AnnotationImageWidget(QWidget):
 
         # 2b. Draw the Colored Line (On top of the black line)
         if self.is_selected():
-            pen = QPen(pen_color, base_width)
+            pen = QPen(pen_color, ANNOTATION_WIDTH)
             # PyQt uses setDashPattern; provide floats for compatibility
             pen.setDashPattern([4.0, 4.0])
             pen.setDashOffset(self.animation_offset)
             pen.setJoinStyle(Qt.MiterJoin)
         else:
-            pen = QPen(pen_color, base_width)
+            pen = QPen(pen_color, ANNOTATION_WIDTH)
             pen.setStyle(Qt.SolidLine)
             pen.setJoinStyle(Qt.MiterJoin)
 
@@ -465,10 +476,11 @@ class AnnotationImageWidget(QWidget):
         # Position at top-left, inset slightly so it anchors nicely to the border
         bg_rect = QRectF(4, 4, text_width + pad_x * 2, text_height + pad_y * 2)
         
-        # Draw opaque pill background with a 1px black outline
+        # Draw opaque pill background with a 1px darkened-label outline
         bg_color = QColor(pen_color)
         bg_color.setAlpha(255) 
-        painter.setPen(QPen(QColor("black"), 1))  # Black outline for the tag
+        tag_outline = QColor(pen_color).darker(160)
+        painter.setPen(QPen(tag_outline, 1))  # Outline for the tag uses darkened label color
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(bg_rect, 4, 4)
         
