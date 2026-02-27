@@ -1119,8 +1119,18 @@ class MVATViewer(QFrame):
 
             focal_point = position + view_direction * focal_distance
 
-            self.plotter.camera.position = position.tolist()
-            self.plotter.camera.focal_point = focal_point.tolist()
+            # Move the viewer slightly back from the camera optical center
+            # to avoid exact coincidence between viewer and camera geometry.
+            try:
+                eps = max(1e-6, scene_size * 1e-4) if 'scene_size' in locals() else 1e-6
+            except Exception:
+                eps = 1e-6
+
+            viewer_pos = (position - view_direction * eps)
+            viewer_focal = viewer_pos + view_direction * focal_distance
+
+            self.plotter.camera.position = viewer_pos.tolist()
+            self.plotter.camera.focal_point = viewer_focal.tolist()
             self.plotter.camera.up = up_vector.tolist()
 
             # Match vertical FOV from intrinsics if available
@@ -1137,6 +1147,32 @@ class MVATViewer(QFrame):
 
             try:
                 self.plotter.render()
+            except Exception:
+                pass
+
+            # Reset/adjust clipping range so small visualized rays are not clipped
+            try:
+                # Let the renderer compute a reasonable clipping range first
+                try:
+                    self.plotter.renderer.ResetCameraClippingRange()
+                except Exception:
+                    pass
+
+                # Then enforce a slightly smaller near plane relative to camera-focal distance
+                cam = self.plotter.camera
+                cam_pos = np.array(cam.position)
+                cam_focal = np.array(cam.focal_point)
+                dist = float(np.linalg.norm(cam_focal - cam_pos)) if cam_focal is not None else 1.0
+                near = max(1e-6, dist * 1e-4)
+                far = max(dist * 10.0, near + 1.0)
+                try:
+                    cam.SetClippingRange(near, far)
+                except Exception:
+                    # Fallback: try to reset clipping via plotter
+                    try:
+                        self.plotter.reset_camera()
+                    except Exception:
+                        pass
             except Exception:
                 pass
         except Exception as e:
