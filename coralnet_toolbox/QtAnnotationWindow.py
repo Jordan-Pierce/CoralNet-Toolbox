@@ -2318,9 +2318,6 @@ class AnnotationWindow(QGraphicsView):
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
         annotation.annotationUpdated.connect(self.on_annotation_updated)
-        
-        # Update the view
-        self.viewport().update()
 
     def load_annotations(self, image_path=None, annotations=None):
         """Load annotations for the specified image path or current image."""
@@ -2361,6 +2358,9 @@ class AnnotationWindow(QGraphicsView):
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(annotations_to_load))
+        
+        # Suspend spatial indexing before the loop
+        self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
 
         try:
             # Load each annotation and update progress
@@ -2382,6 +2382,9 @@ class AnnotationWindow(QGraphicsView):
             QMessageBox.critical(self, "Error", str(e))
 
         finally:
+            # Restore spatial indexing after all items are added
+            self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
+            
             # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
@@ -2549,6 +2552,9 @@ class AnnotationWindow(QGraphicsView):
                 
             # Set the visibility based on the current UI state (will respect label checkbox)
             self.set_annotation_visibility(annotation)
+            
+            # Force the screen to instantly show the newly drawn item
+            self.viewport().update()
 
         # --- Finalization ---
         # Update the annotation count in the ImageWindow table (always, regardless of visibility)
@@ -2570,6 +2576,9 @@ class AnnotationWindow(QGraphicsView):
             return
 
         images_to_update = set()
+        
+        # Suspend spatial indexing
+        self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
 
         for annotation in annotations_list:
             if annotation is None or annotation.id in self.annotations_dict:
@@ -2599,6 +2608,9 @@ class AnnotationWindow(QGraphicsView):
             # create its visual item in the scene immediately.
             if annotation.image_path == self.current_image_path:
                 self.load_annotation(annotation)
+                
+        # Restore spatial indexing
+        self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
         if images_to_update:
             for path in images_to_update:
@@ -2606,6 +2618,10 @@ class AnnotationWindow(QGraphicsView):
                 self.main_window.image_window.update_image_annotations(path, update_counts=False)
             # The final UI update handles the counts ONCE
             self.main_window.label_window.update_annotation_count()
+            
+            # Repaint exactly ONCE, but only if the active image was affected by the import
+            if self.current_image_path in images_to_update:
+                self.viewport().update()
 
         if record_action:
             self.action_stack.push(AddAnnotationsAction(self, list(annotations_list)))
