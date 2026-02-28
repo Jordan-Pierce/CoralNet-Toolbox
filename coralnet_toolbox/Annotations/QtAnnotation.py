@@ -724,7 +724,8 @@ class Annotation(QObject):
         self.is_selected = True
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setVisible(True)
-        self.update_graphics_item()
+            
+        self._update_pen_styles()
         self.animate()
 
     def deselect(self):
@@ -732,8 +733,9 @@ class Annotation(QObject):
         self.is_selected = False
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setVisible(False)
+            
         self.deanimate()
-        self.update_graphics_item()
+        self._update_pen_styles()
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
@@ -914,11 +916,7 @@ class Annotation(QObject):
             return pen
     
     def _update_pen_styles(self):
-        """Update pen styles with current pulse alpha."""
-        # Only update if selected OR if animation is running (for forced animation)
-        if not self.is_selected and not self.is_animating:
-            return
-        
+        """Update pen styles with current pulse alpha."""        
         color = QColor(self.label.color).darker(150) if not self.verified else QColor(self.label.color).lighter(150)
         pen = self._create_pen(color)
         
