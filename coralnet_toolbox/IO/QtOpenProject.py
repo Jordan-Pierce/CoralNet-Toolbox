@@ -4,6 +4,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import json
+import pickle
+import time
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton,
@@ -105,9 +107,9 @@ class OpenProject(QDialog):
         """Open a file dialog to select a project JSON file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Open Project JSON", 
+                                                   "Open Project", 
                                                    "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+                                                   "Binary Files (*.bin);;JSON Files (*.json);;All Files (*)", 
                                                    options=options)
         if file_path:
             self.file_path_edit.setText(file_path)
@@ -126,9 +128,9 @@ class OpenProject(QDialog):
         """Open a project from a JSON file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Open Project JSON", 
+                                                   "Open Project", 
                                                    "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+                                                   "Binary Files (*.bin);;JSON Files (*.json);;All Files (*)", 
                                                    options=options)
         if file_path:
             self.load_project(file_path)
@@ -138,9 +140,24 @@ class OpenProject(QDialog):
         try:
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            start_time = time.perf_counter()
 
-            with open(file_path, 'r') as file:
-                project_data = json.load(file)
+            # Decide how to load based on extension. Support .bin (pickle) and .json.
+            _, ext = os.path.splitext(file_path)
+            if ext.lower() == '.bin':
+                with open(file_path, 'rb') as file:
+                    project_data = pickle.load(file)
+            elif ext.lower() == '.json':
+                with open(file_path, 'r') as file:
+                    project_data = json.load(file)
+            else:
+                # Try JSON first, then pickle as fallback
+                try:
+                    with open(file_path, 'r') as file:
+                        project_data = json.load(file)
+                except Exception:
+                    with open(file_path, 'rb') as file:
+                        project_data = pickle.load(file)
 
             # Handle both new and old project formats for images and work areas
             images_data = project_data.get('images', project_data.get('image_paths'))
@@ -150,11 +167,15 @@ class OpenProject(QDialog):
             self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
             self.import_annotations(project_data.get('annotations'))
-            
-            # Note: Timer import/export functionality temporarily removed
-            
+                        
             # Update current project path
             self.current_project_path = file_path
+            elapsed = time.perf_counter() - start_time
+            elapsed_msg = f"Import complete ({elapsed:.2f}s)."
+            try:
+                self.main_window.status_bar.showMessage(elapsed_msg, 5000)
+            except Exception:
+                pass
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window, 
@@ -170,6 +191,10 @@ class OpenProject(QDialog):
 
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
+        try:
+            self.main_window.status_bar.showMessage("Importing images...", 0)
+        except Exception:
+            pass
         if not images_data:
             return
 
@@ -233,9 +258,17 @@ class OpenProject(QDialog):
             
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Import complete.", 3000)
+            except Exception:
+                pass
 
     def import_labels(self, labels):
         """Import labels from the given list."""
+        try:
+            self.main_window.status_bar.showMessage("Importing labels...", 0)
+        except Exception:
+            pass
         if not labels:
             return
         
@@ -268,9 +301,17 @@ class OpenProject(QDialog):
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Import complete.", 3000)
+            except Exception:
+                pass
 
     def import_annotations(self, annotations):
         """Import annotations from the given dictionary."""
+        try:
+            self.main_window.status_bar.showMessage("Importing annotations...", 0)
+        except Exception:
+            pass
         if not annotations:
             return
         
@@ -378,6 +419,10 @@ class OpenProject(QDialog):
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Import complete.", 3000)
+            except Exception:
+                pass
 
     def get_project_path(self):
         return self.current_project_path

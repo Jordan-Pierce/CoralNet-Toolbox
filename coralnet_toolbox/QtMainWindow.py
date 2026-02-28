@@ -509,11 +509,11 @@ class MainWindow(QMainWindow):
         self.new_project_action.triggered.connect(self.open_new_project)
         self.file_menu.addAction(self.new_project_action)
         # Open Project
-        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action = QAction("Open Project", self)
         self.open_project_action.triggered.connect(self.open_open_project_dialog)
         self.file_menu.addAction(self.open_project_action)
         # Save Project
-        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action = QAction("Save Project", self)
         self.save_project_action.setToolTip("Ctrl + Shift + S")
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
@@ -1635,8 +1635,8 @@ class MainWindow(QMainWindow):
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
-            # Accept if any of the files is a JSON file
-            if any(file_name.lower().endswith('.json') for file_name in file_names):
+            # Accept if any of the files is a project file (.json or .bin)
+            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragEnterEvent(event)
@@ -1649,8 +1649,8 @@ class MainWindow(QMainWindow):
         file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
         if file_names:
-            # Check if a single JSON file was dropped
-            if len(file_names) == 1 and file_names[0].lower().endswith('.json'):
+            # Check if a single project file (.json or .bin) was dropped
+            if len(file_names) == 1 and file_names[0].lower().endswith(('.json', '.bin')):
                 # Open as a project file
                 path = file_names[0]
                 self.open_project_dialog.file_path_edit.setText(path)
@@ -1669,8 +1669,8 @@ class MainWindow(QMainWindow):
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
-            # Accept if any of the files is a JSON file
-            if any(file_name.lower().endswith('.json') for file_name in file_names):
+            # Accept if any of the files is a project file (.json or .bin)
+            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragMoveEvent(event)
