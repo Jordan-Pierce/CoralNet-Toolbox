@@ -1357,31 +1357,48 @@ class AnnotationViewerWindow(QWidget):
     
     def render_selection_from_ids(self, selected_ids):
         """Update visual selection using fast set-diffing."""
-        self.setUpdatesEnabled(False)
-        try:
-            selected_ids_set = set(selected_ids) if selected_ids else set()
-            current_selected_ids = {w.data_item.annotation.id for w in self.selected_widgets}
+        # Removed self.setUpdatesEnabled(False) - This was dropping the paint events!
+        
+        selected_ids_set = set(selected_ids) if selected_ids else set()
+        current_selected_ids = {w.data_item.annotation.id for w in self.selected_widgets}
 
-            to_select = selected_ids_set - current_selected_ids
-            to_deselect = current_selected_ids - selected_ids_set
+        to_select = selected_ids_set - current_selected_ids
+        to_deselect = current_selected_ids - selected_ids_set
 
-            for ann_id in to_select:
-                if ann_id in self.annotation_widgets_by_id:
-                    widget = self.annotation_widgets_by_id[ann_id]
-                    widget.data_item.set_selected(True)
-                    widget.update_selection_visuals()
-                    self.selected_widgets.append(widget)
+        for ann_id in to_select:
+            if ann_id in self.annotation_widgets_by_id:
+                widget = self.annotation_widgets_by_id[ann_id]
+                widget.data_item.set_selected(True)
+                widget.update_selection_visuals()
+                self.selected_widgets.append(widget)
 
-            for ann_id in to_deselect:
-                if ann_id in self.annotation_widgets_by_id:
-                    widget = self.annotation_widgets_by_id[ann_id]
-                    widget.data_item.set_selected(False)
-                    widget.update_selection_visuals()
-                    if widget in self.selected_widgets:
-                        self.selected_widgets.remove(widget)
-        finally:
-            self.setUpdatesEnabled(True)
+        for ann_id in to_deselect:
+            if ann_id in self.annotation_widgets_by_id:
+                widget = self.annotation_widgets_by_id[ann_id]
+                widget.data_item.set_selected(False)
+                widget.update_selection_visuals()
+                if widget in self.selected_widgets:
+                    self.selected_widgets.remove(widget)
+                    
         self._update_toolbar_state()
+        
+        # --- Auto-scroll to the newly selected item ---
+        # Because of how the SelectionManager passes data, `to_select` will 
+        # only have items if the selection originated from OUTSIDE the gallery.
+        if to_select:
+            first_id = next(iter(to_select))
+            if first_id in self.widget_positions:
+                rect = self.widget_positions[first_id]
+                
+                # Scroll the gallery so the widget's center is visible
+                self.scroll_area.ensureVisible(
+                    rect.center().x(), 
+                    rect.center().y(), 
+                    rect.width() // 2 + 10, 
+                    rect.height() // 2 + 10
+                )
+                # Instantly load the virtualized widgets in the new scroll area
+                self._update_visible_widgets()
     
     def handle_annotation_selection(self, widget, event):
         """Handle selection with keyboard modifiers."""

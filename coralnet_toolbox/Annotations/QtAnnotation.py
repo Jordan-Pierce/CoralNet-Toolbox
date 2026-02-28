@@ -916,8 +916,8 @@ class Annotation(QObject):
             return pen
     
     def _update_pen_styles(self):
-        """Update pen styles with current pulse alpha."""        
-        color = QColor(self.label.color).darker(150) if not self.verified else QColor(self.label.color).lighter(150)
+        """Update pen styles with current pulse alpha."""
+        color = QColor(self.label.color)
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen

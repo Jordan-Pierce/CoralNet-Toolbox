@@ -121,28 +121,21 @@ class EmbeddingPointItem(QGraphicsObject):
         painter.setRenderHint(QPainter.Antialiasing)
         
         scale_factor = 1.0
-        if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
-            z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
-            scale_factor = 0.5 + z_normalized
-
         opacity = 255
         if self.viewer and self.viewer.is_3d_data and self.viewer.z_range > 0:
             z_normalized = (self.data_item.embedding_z - self.viewer.min_z) / self.viewer.z_range
+            scale_factor = 0.5 + z_normalized
             opacity = int(128 + 127 * z_normalized)
 
-        # Preserve the original label color; allow a special-case override when id == "-1"
-        original_label_color = QColor(self.data_item.effective_color)
+        # Directly grab the existing effective color reference (Avoids wrapping memory unnecessarily)
         effective_label = self.data_item.effective_label
+        base_color = self.data_item.effective_color
+        
+        display_color = base_color
+        dash_color = base_color
 
-        # By default use the label color for display and for dashed strokes
-        display_color = QColor(original_label_color)
-        dash_color = QColor(original_label_color)
-
-        # Special case: if the effective label id is "-1" show the annotation in black
-        # but use the original label color for the dashed/animated stroke (e.g., white)
         if effective_label and effective_label.id == "-1":
             display_color = QColor("black")
-            dash_color = QColor(original_label_color)
         
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
@@ -159,20 +152,18 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.drawPixmap(self.boundingRect().topLeft(), self.thumbnail_pixmap)
 
             if self.isSelected():
-                # High contrast border for selected sprites (inset to prevent clipping)
                 pen_width = min(2, int(2 * scale_factor))
                 half_w = pen_width / 2.0
                 rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                # Use a darker version of the display color for the contrast background
-                bg_color = QColor(display_color).darker(160)
-                bg_pen = QPen(bg_color, pen_width + 2)
+                # Draw background border
+                bg_pen = QPen(display_color.darker(160), pen_width + 2)
                 bg_pen.setJoinStyle(Qt.MiterJoin)
                 painter.setPen(bg_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRect(rect)
                 
-                # Use the dash_color for the animated dashed outline
+                # Draw animated dashed stroke
                 fg_pen = QPen(dash_color, pen_width)
                 fg_pen.setJoinStyle(Qt.MiterJoin)
                 fg_pen.setDashPattern([4.0, 4.0])
@@ -180,8 +171,7 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.setPen(fg_pen)
                 painter.drawRect(rect)
             else:
-                # Faint border to give gentle definition to unselected thumbnails
-                faint = QColor(display_color).darker(160)
+                faint = QColor(display_color.darker(160))
                 faint.setAlpha(80)
                 painter.setPen(QPen(faint, 1))
                 painter.setBrush(Qt.NoBrush)
@@ -190,26 +180,19 @@ class EmbeddingPointItem(QGraphicsObject):
         else:
             # --- MODERN DATA-SCIENCE DOTS ---
             if self.isSelected():
-                # 1. Solid opaque base color so it pops out of the cluster
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(display_color))
+                painter.setBrush(display_color)
                 painter.drawEllipse(self.boundingRect())
                 
-                # 2. Inset Targeting Reticle (Prevents flat-edge clipping bugs)
-                # Black & White layered dash ensures visibility on ANY color dot/background
                 pen_width = max(1.5, 2.0 * scale_factor)
                 half_w = pen_width / 2.0
-                
-                # Shrink rect slightly so the stroke stays strictly inside the bounds
                 draw_rect = self.boundingRect().adjusted(half_w, half_w, -half_w, -half_w)
                 
-                white_pen = QPen(QColor(display_color).darker(160), pen_width + 1)
+                white_pen = QPen(display_color.darker(160), pen_width + 1)
                 painter.setPen(white_pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(draw_rect)
                 
-                # Animated darkened label-color dash on top (smaller [2.0, 2.0] dashes fit tiny circles better)
-                # Use the dash_color (special-case may be original label color) for the animated dashed stroke
                 dash_pen = QPen(dash_color, pen_width)
                 dash_pen.setDashPattern([2.0, 2.0])
                 dash_pen.setDashOffset(self.animation_offset)
@@ -217,11 +200,8 @@ class EmbeddingPointItem(QGraphicsObject):
                 painter.drawEllipse(draw_rect)
                 
             else:
-                # Pure, borderless alpha-blended dots. 
-                # Overlapping clusters naturally form beautiful density heatmaps.
                 effective_brush_color = QColor(display_color)
                 effective_brush_color.setAlpha(opacity)
-                
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(effective_brush_color)
                 painter.drawEllipse(self.boundingRect())
@@ -283,11 +263,18 @@ class AnnotationImageWidget(QWidget):
         self.pixmap = None
         self.is_loaded = False
 
+        # --- High Performance Rendering Caches ---
+        self._cached_scaled_pixmap = None
+        self._cached_size = None
+        self._cached_label_id = None
+        self._cached_tag_text = ""
+        self._cached_text_width = 0
+        self._cached_text_height = 0
+        self._font = QFont("Arial", 6, QFont.Bold)
+
         # --- Animation Properties ---
         self.animation_manager = None
         self.is_animating = False
-        
-        # --- Marching Ants properties ---
         self.animation_offset = 0
 
         self.recalculate_aspect_ratio()
@@ -295,60 +282,46 @@ class AnnotationImageWidget(QWidget):
         self.update_tooltip()
         
     def set_animation_manager(self, manager):
-        """
-        Binds this object to the central AnimationManager.
-        
-        Args:
-            manager (AnimationManager): The central animation manager instance.
-        """
         self.animation_manager = manager
         
     def is_graphics_item_valid(self):
         """
-        Checks if the widget is still valid and visible.
-        
-        Returns:
-            bool: True if the widget is visible, False otherwise.
+        Checks if the widget is still valid.
         """
         try:
-            return self.isVisible()
+            # Just verify the underlying C++ object still exists.
+            # Do NOT check self.isVisible() here, because the virtualized 
+            # scroll area temporarily hides widgets when they go off-screen!
+            self.objectName()
+            return True
         except RuntimeError:
             return False
         
     def update_tooltip(self):
-        """Updates the tooltip by fetching the latest text from the data item."""
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def recalculate_aspect_ratio(self):
-        """Calculate and store the annotation's aspect ratio."""
         annotation = self.data_item.annotation
-        
-        # Try to use the cropped_bbox attribute first
         if hasattr(annotation, 'cropped_bbox'):
             min_x, min_y, max_x, max_y = annotation.cropped_bbox
             width = max_x - min_x
             height = max_y - min_y
-            
             if height > 0:
                 self.aspect_ratio = width / height
                 return
         
-        # Fallback to bounding box methods
         try:
             top_left = annotation.get_bounding_box_top_left()
             bottom_right = annotation.get_bounding_box_bottom_right()
-            
             if top_left and bottom_right:
                 width = bottom_right.x() - top_left.x()
                 height = bottom_right.y() - top_left.y()
-                
                 if height > 0:
                     self.aspect_ratio = width / height
                     return
         except (AttributeError, TypeError):
             pass
         
-        # Last resort: try to get aspect ratio from the cropped image
         try:
             pixmap = annotation.get_cropped_image()
             if pixmap and not pixmap.isNull() and pixmap.height() > 0:
@@ -357,19 +330,17 @@ class AnnotationImageWidget(QWidget):
         except (AttributeError, TypeError):
             pass
         
-        # Default to square if we can't determine aspect ratio
         self.aspect_ratio = 1.0
 
     def load_image(self):
-        """Loads the image pixmap if it hasn't been loaded yet."""
         if self.is_loaded:
             return
-
         try:
             cropped_pixmap = self.annotation.get_cropped_image_graphic()
             if cropped_pixmap and not cropped_pixmap.isNull():
                 self.pixmap = cropped_pixmap
                 self.is_loaded = True
+                self._cached_scaled_pixmap = None  # Invalidate cache
                 self.update()
             else:
                 self.pixmap = None
@@ -380,99 +351,76 @@ class AnnotationImageWidget(QWidget):
             self.update()
 
     def unload_image(self):
-        """Unloads the pixmap to free memory."""
         if not self.is_loaded:
             return
         self.pixmap = None
+        self._cached_scaled_pixmap = None  # Clean up memory
         self.is_loaded = False
 
     def update_height(self, new_height):
-        """Updates the widget's height and rescales its width and content accordingly."""
         self.widget_height = new_height
         new_width = int(self.widget_height * self.aspect_ratio)
         self.setFixedSize(new_width, new_height)
+        self._cached_scaled_pixmap = None  # Invalidate cache
         self.update()
 
     def update_selection_visuals(self):
-        """
-        Updates the widget's visual state based on the data_item's selection
-        status. This should be called by the controlling viewer.
-        """
-        is_selected = self.data_item.is_selected
-
-        if is_selected:
+        if self.data_item.is_selected:
             self.animate()
         else:
             self.deanimate()
-
-        # Trigger a repaint to show the new selection state (border, etc.)
         self.update()
 
     def is_selected(self):
-        """Return whether this widget is selected via the data item."""
         return self.data_item.is_selected
 
-    def _update_animation_frame(self):
-        """Update the animation offset and schedule a repaint."""
-        # Removed: self.animation_offset = (self.animation_offset + 1) % 20
-        self.update()
-
     def paintEvent(self, event):
-        """Handle custom drawing for the widget: Image, Contrast Border, and Smart Nametag."""
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 1. Draw the image (Centered)
+        # 1. Draw the image (Centered & Cached)
         if self.pixmap:
-            scaled_pixmap = self.pixmap.scaled(
-                self.width() - 8,
-                self.height() - 8,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            x_offset = (self.width() - scaled_pixmap.width()) // 2
-            y_offset = (self.height() - scaled_pixmap.height()) // 2
-            painter.drawPixmap(x_offset, y_offset, scaled_pixmap)
+            current_size = self.size()
+            # ONLY execute smooth transformation if the widget size has changed
+            if self._cached_scaled_pixmap is None or self._cached_size != current_size:
+                self._cached_scaled_pixmap = self.pixmap.scaled(
+                    self.width() - 8,
+                    self.height() - 8,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                self._cached_size = current_size
+                
+            x_offset = (self.width() - self._cached_scaled_pixmap.width()) // 2
+            y_offset = (self.height() - self._cached_scaled_pixmap.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, self._cached_scaled_pixmap)
         else:
             painter.setPen(QColor("black"))
             painter.setFont(QFont("Arial", 12))
             painter.drawText(self.rect(), Qt.AlignCenter, "No Image\nAvailable")
 
         effective_label = self.data_item.effective_label
-        # Keep the original label color around so we can use it for the dashed line
-        original_label_color = self.data_item.effective_color
-        pen_color = QColor(original_label_color)
-        # Special case: when the effective label id is "-1" use a black pen for borders
-        # but use the original label color for the dashed selection stroke (no darkening)
+        pen_color = self.data_item.effective_color
+        dashed_color = QColor(pen_color)  # Base color copy
+
         if effective_label and effective_label.id == "-1":
             pen_color = QColor("black")
-            dashed_color = QColor(original_label_color)
-        else:
-            dashed_color = QColor(pen_color)
 
-        # We adjust the rectangle slightly inward so the thick borders don't get clipped by the widget edges
         half_width = (ANNOTATION_WIDTH - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)
 
-        # 2a. Draw the Contrast Stroke (Thicker darkened label color underneath)
-        try:
-            contrast_bg_color = QColor(pen_color).darker(160)
-        except Exception:
-            contrast_bg_color = QColor("black")
-            
-        bg_pen = QPen(contrast_bg_color, ANNOTATION_WIDTH + 2)  # darkened label color as contrast
+        # 2a. Draw the Contrast Stroke
+        bg_pen = QPen(pen_color.darker(160), ANNOTATION_WIDTH + 2)
         bg_pen.setCosmetic(True)
         bg_pen.setJoinStyle(Qt.MiterJoin)
         painter.setPen(bg_pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(rect)
 
-        # 2b. Draw the Colored Line (On top of the black line)
+        # 2b. Draw the Colored Line
         if self.is_selected():
-            # Use the dashed_color for the animated dashed line (special-case may be original label color)
             pen = QPen(dashed_color, ANNOTATION_WIDTH)
-            # PyQt uses setDashPattern; provide floats for compatibility
             pen.setDashPattern([4.0, 4.0])
             pen.setDashOffset(self.animation_offset)
             pen.setJoinStyle(Qt.MiterJoin)
@@ -484,68 +432,62 @@ class AnnotationImageWidget(QWidget):
         painter.setPen(pen)
         painter.drawRect(rect)
 
-        # 3. Draw the Floating Nametag
-        tag_text = effective_label.short_label_code
-        font = QFont("Arial", 6, QFont.Bold)
-        painter.setFont(font)
-        
-        fm = painter.fontMetrics()
-        text_width = fm.horizontalAdvance(tag_text)
-        text_height = fm.height()
+        # 3. Draw the Floating Nametag (Cached Font Metrics)
+        if self._cached_label_id != effective_label.id:
+            # Re-calculate expensive OS string layout ONLY when the label changes
+            from PyQt5.QtGui import QFontMetrics
+            self._cached_label_id = effective_label.id
+            self._cached_tag_text = effective_label.short_label_code
+            fm = QFontMetrics(self._font)
+            self._cached_text_width = fm.horizontalAdvance(self._cached_tag_text)
+            self._cached_text_height = fm.height()
+
+        painter.setFont(self._font)
         
         pad_x, pad_y = 4, 2
+        bg_rect = QRectF(4, 4, self._cached_text_width + pad_x * 2, self._cached_text_height + pad_y * 2)
         
-        # Position at top-left, inset slightly so it anchors nicely to the border
-        bg_rect = QRectF(4, 4, text_width + pad_x * 2, text_height + pad_y * 2)
-        
-        # Draw opaque pill background with a 1px darkened-label outline
         bg_color = QColor(pen_color)
         bg_color.setAlpha(255) 
-        tag_outline = QColor(pen_color).darker(160)
-        painter.setPen(QPen(tag_outline, 1))  # Outline for the tag uses darkened label color
+        painter.setPen(QPen(pen_color.darker(160), 1)) 
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(bg_rect, 4, 4)
         
-        # --- SMART TEXT CONTRAST ---
-        # Calculate how bright the label color is (0.0 to 1.0)
+        # Smart text contrast
         luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-        
-        # If the background is bright, use black text. If it's dark, use white text!
-        text_color = QColor(bg_color)
-        text_color = text_color.darker(200) if luminance > 0.5 else text_color.lighter(200)
+        text_color = bg_color.darker(200) if luminance > 0.5 else bg_color.lighter(200)
     
         painter.setPen(text_color)
-        painter.drawText(bg_rect, Qt.AlignCenter, tag_text)
+        painter.drawText(bg_rect, Qt.AlignCenter, self._cached_tag_text)
         
     def tick_animation(self):
         """Perform one 'tick' of the marching ants animation."""
-        # A [4, 4] dash pattern has a period of 8 pixels
+        # Check visibility here instead! This saves CPU cycles by pausing 
+        # the math and repaint requests while the widget is scrolled out of view.
+        if not self.isVisible():
+            return 
+            
         self.animation_offset = (self.animation_offset + 1) % 8
         self.update()  # Trigger repaint
         
     def animate(self):
-        """Start the tick animation by registering with the global timer."""
         self.is_animating = True
         if self.animation_manager:
             self.animation_manager.register_animating_object(self)
             
     def deanimate(self):
-        """Stop the animation by de-registering from the global timer."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
-            
-        self.animation_offset = 0  # Reset to default
+        self.animation_offset = 0
         try:
-            self.update()  # Apply the default style
+            self.update()
         except RuntimeError:
             pass
     
     def mousePressEvent(self, event):
-        """Handle mouse press events for selection, delegating logic to the viewer."""
         if event.button() == Qt.LeftButton:
             if self.annotation_viewer and hasattr(self.annotation_viewer, 'handle_annotation_selection'):
-                # The viewer is the controller and will decide how to change the selection state
                 self.annotation_viewer.handle_annotation_selection(self, event)
                 event.accept()
                 return
@@ -558,10 +500,15 @@ class AnnotationImageWidget(QWidget):
                 event.ignore()
         super().mousePressEvent(event)
         
+    def showEvent(self, event):
+        """Ensure animation resumes smoothly when scrolled back into view."""
+        super().showEvent(event)
+        if self.is_selected():
+            self.animate()
+        
     def __del__(self):
-        """Clean up the timer when the widget is deleted."""
         if hasattr(self, 'is_animating') and self.is_animating:
-            self.deanimate()            
+            self.deanimate()    
 
 
 class AnnotationDataItem:
