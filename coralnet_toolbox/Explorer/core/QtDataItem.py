@@ -301,35 +301,44 @@ class AnnotationImageWidget(QWidget):
         self.setToolTip(self.data_item.get_tooltip_text())
 
     def recalculate_aspect_ratio(self):
+        """Calculate and store the annotation's aspect ratio safely."""
         annotation = self.data_item.annotation
-        if hasattr(annotation, 'cropped_bbox'):
-            min_x, min_y, max_x, max_y = annotation.cropped_bbox
-            width = max_x - min_x
-            height = max_y - min_y
-            if height > 0:
-                self.aspect_ratio = width / height
-                return
         
+        # Try to use the cropped_bbox attribute first
         try:
-            top_left = annotation.get_bounding_box_top_left()
-            bottom_right = annotation.get_bounding_box_bottom_right()
-            if top_left and bottom_right:
-                width = bottom_right.x() - top_left.x()
-                height = bottom_right.y() - top_left.y()
+            if hasattr(annotation, 'cropped_bbox'):
+                min_x, min_y, max_x, max_y = annotation.cropped_bbox
+                width = abs(max_x - min_x)
+                height = abs(max_y - min_y)
                 if height > 0:
-                    self.aspect_ratio = width / height
+                    self.aspect_ratio = max(0.1, width / height)
                     return
         except (AttributeError, TypeError):
             pass
         
+        # Fallback to bounding box methods
+        try:
+            top_left = annotation.get_bounding_box_top_left()
+            bottom_right = annotation.get_bounding_box_bottom_right()
+            if top_left and bottom_right:
+                width = abs(bottom_right.x() - top_left.x())
+                height = abs(bottom_right.y() - top_left.y())
+                if height > 0:
+                    self.aspect_ratio = max(0.1, width / height)
+                    return
+        except (AttributeError, TypeError):
+            pass
+        
+        # Last resort: try to get aspect ratio from the cropped image
         try:
             pixmap = annotation.get_cropped_image()
             if pixmap and not pixmap.isNull() and pixmap.height() > 0:
-                self.aspect_ratio = pixmap.width() / pixmap.height()
+                self.aspect_ratio = max(0.1, pixmap.width() / pixmap.height())
                 return
         except (AttributeError, TypeError):
             pass
         
+        # Default to square if we can't determine aspect ratio
         self.aspect_ratio = 1.0
 
     def load_image(self):

@@ -114,8 +114,10 @@ class AnnotationViewerWindow(QWidget):
         """Handle show event to refresh filters when dock becomes visible."""
         super().showEvent(event)
         # Refresh filter options when window becomes visible
-        # This ensures filters are populated even if dock was created before images/labels loaded
         QTimer.singleShot(0, self.refresh_filter_options)
+        
+        # Force a layout recalculation right after the Qt layout engine has settled
+        QTimer.singleShot(100, self._recalculate_layout)
         
     def set_animation_manager(self, manager):
         """
@@ -1055,8 +1057,7 @@ class AnnotationViewerWindow(QWidget):
         # If isolated, only consider isolated widgets
         if self.isolated_mode:
             isolated_ids = {w.data_item.annotation.id for w in self.isolated_widgets}
-            sorted_data_items = [item for item in sorted_data_items 
-                                if item.annotation.id in isolated_ids]
+            sorted_data_items = [item for item in sorted_data_items if item.annotation.id in isolated_ids]
         
         if not sorted_data_items:
             self.content_widget.setMinimumSize(1, 1)
@@ -1065,7 +1066,12 @@ class AnnotationViewerWindow(QWidget):
         # Group items by sort key
         groups = self._group_data_items_by_sort_key(sorted_data_items)
         spacing = max(5, int(self.current_widget_size * 0.08))
+        
+        # Fallback for initial layout before Qt assigns proper dimensions
         available_width = self.scroll_area.viewport().width()
+        if available_width < 100:
+            available_width = max(self.width(), 400)
+            
         x, y = spacing, spacing
         max_height_in_row = 0
         
@@ -1101,20 +1107,25 @@ class AnnotationViewerWindow(QWidget):
                     widget = AnnotationImageWidget(
                         data_item, self.current_widget_size, self, self.content_widget
                     )
+                    
+                    # FIX: Explicitly hide on creation to prevent the (0,0) rendering trap
+                    widget.hide()
+                    
                     widget.set_animation_manager(self.animation_manager)
                     widget.recalculate_aspect_ratio()
                     self.annotation_widgets_by_id[ann_id] = widget
                 
-                widget_size = widget.size()
-                if x > spacing and x + widget_size.width() > available_width:
+                # Calculate width mathematically instead of trusting the lagging GUI engine
+                expected_width = max(10, int(self.current_widget_size * widget.aspect_ratio))
+                if x > spacing and x + expected_width > available_width:
                     x = spacing
                     y += max_height_in_row + spacing
                     max_height_in_row = 0
                 
-                self.widget_positions[ann_id] = QRect(x, y, widget_size.width(), widget_size.height())
+                self.widget_positions[ann_id] = QRect(x, y, expected_width, self.current_widget_size)
                 
-                x += widget_size.width() + spacing
-                max_height_in_row = max(max_height_in_row, widget_size.height())
+                x += expected_width + spacing
+                max_height_in_row = max(max_height_in_row, self.current_widget_size)
         
         total_height = y + max_height_in_row + spacing
         self.content_widget.setMinimumSize(available_width, total_height)
@@ -1133,14 +1144,19 @@ class AnnotationViewerWindow(QWidget):
         self.content_widget.setUpdatesEnabled(False)
         
         scroll_y = self.scroll_area.verticalScrollBar().value()
-        visible_rect = QRect(
-            0, scroll_y,
-            self.scroll_area.viewport().width(),
-            self.scroll_area.viewport().height()
-        )
+        
+        vp_width = self.scroll_area.viewport().width()
+        vp_height = self.scroll_area.viewport().height()
+        
+        # Fallback for initial layout before window is fully shown
+        if vp_width < 100 or vp_height < 100:
+            vp_width = max(self.width(), 400)
+            vp_height = max(self.height(), 400)
+            
+        visible_rect = QRect(0, scroll_y, vp_width, vp_height)
         
         # Add buffer for smoother scrolling
-        buffer = self.scroll_area.viewport().height() // 2
+        buffer = vp_height // 2
         visible_rect.adjust(0, -buffer, 0, buffer)
         
         visible_ids = set()
@@ -1148,15 +1164,15 @@ class AnnotationViewerWindow(QWidget):
             if rect.intersects(visible_rect):
                 visible_ids.add(ann_id)
         
+        # FIX: Remove isVisible() checks. Aggressively force states.
         for ann_id, widget in self.annotation_widgets_by_id.items():
             if ann_id in visible_ids:
                 widget.setGeometry(self.widget_positions[ann_id])
                 widget.load_image()
                 widget.show()
             else:
-                if widget.isVisible():
-                    widget.hide()
-                    widget.unload_image()
+                widget.hide()
+                widget.unload_image()
         
         self.content_widget.setUpdatesEnabled(True)
     
