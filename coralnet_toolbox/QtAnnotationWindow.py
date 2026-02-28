@@ -2600,10 +2600,11 @@ class AnnotationWindow(QGraphicsView):
             if annotation.image_path == self.current_image_path:
                 self.load_annotation(annotation)
 
-        # Final UI Updates for sidebar/counts
         if images_to_update:
             for path in images_to_update:
-                self.main_window.image_window.update_image_annotations(path)
+                # Pass False so it only updates the raster, not the whole UI
+                self.main_window.image_window.update_image_annotations(path, update_counts=False)
+            # The final UI update handles the counts ONCE
             self.main_window.label_window.update_annotation_count()
 
         if record_action:

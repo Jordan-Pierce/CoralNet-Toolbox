@@ -766,22 +766,20 @@ class ImageWindow(QWidget):
             
         # Update the annotations for the raster
         self.update_image_annotations(image_path)
-        
-    def update_image_annotations(self, image_path):
+            
+    def update_image_annotations(self, image_path, update_counts=True):
         """
         Update annotation information for a specific image.
         
         Args:
             image_path (str): Path to the image
+            update_counts (bool): Whether to update the annotation counts in the label window
         """
-        # Get the annotations for the image
         annotations = self.annotation_window.get_image_annotations(image_path)
-        
-        # Update the raster
         self.raster_manager.update_annotation_info(image_path, annotations)
         
-        # Update label counts
-        self.main_window.label_window.update_annotation_count()
+        if update_counts:
+            self.main_window.label_window.update_annotation_count()
         
     def update_current_image_annotations(self):
         """Update annotations for the currently selected image."""
