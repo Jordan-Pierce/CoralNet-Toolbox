@@ -1,3 +1,5 @@
+import traceback
+
 import numpy as np
 
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
@@ -407,7 +409,6 @@ class Camera:
             
         except Exception as e:
             print(f"Error computing visibility for {self.label}: {e}")
-            import traceback
             traceback.print_exc()
             return False
 
@@ -455,54 +456,98 @@ class OrthographicCamera(Camera):
     - Rays are parallel (no perspective distortion)
     """
     def __init__(self, raster):
-        import numpy as np
-        
+        """
+        Initialize orthographic camera from raster with DEM.
+
+        Args:
+            raster: A Raster object with transform_matrix and z_channel (DEM)
+
+        Raises:
+            ValueError: If transform_matrix is missing or singular
+        """        
+        # Core flag
         self.is_orthographic = True
         self._raster = raster
 
-        # 1. Dimensions ALWAYS match the full-res image
+        # 1. ORTHOMOSAIC IMAGE PROPERTIES
+        # Dimensions ALWAYS match the full-res image (this is what the user clicks on)
         self.width = raster.width
         self.height = raster.height
 
         if raster.transform_matrix is None:
             raise ValueError(f"Orthomosaic {raster.basename} missing transform_matrix")
 
-        # 2. Transform matrix ALWAYS matches the full-res image
         self.transform_matrix = raster.transform_matrix.copy()
+
         try:
             self.transform_matrix_inv = np.linalg.inv(self.transform_matrix)
         except np.linalg.LinAlgError:
-            raise ValueError(f"Transform matrix for {raster.basename} is singular")
+            raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
 
+        # 2. DEM PROPERTIES & GEOGRAPHIC RECONCILIATION
         self.z_channel = raster.z_channel
-        self.dem_scale = 1  # NEW: Track DEM scaling independently
 
         if self.z_channel is None:
             print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
-            self.z_channel = np.zeros((self.height, self.width), dtype=np.float32)
+            self.z_channel = np.zeros((1, 1), dtype=np.float32)  # Dummy array
+            self.dem_width = 1
+            self.dem_height = 1
+            self.dem_transform = self.transform_matrix.copy()
         else:
             self.z_channel = self.z_channel.copy()
+            self.dem_width = self.z_channel.shape
+            self.dem_height = self.z_channel.shape
 
-            # Performance check: downsample if > 500MB
+            # Fetch the DEM's specific geographic transform
+            if hasattr(raster, 'dem_transform') and raster.dem_transform is not None:
+                self.dem_transform = raster.dem_transform.copy()
+            else:
+                # Fallback: assume the DEM exactly matches the ortho's geographic footprint, 
+                # but scale the transform matrix to account for differing array sizes
+                scale_x = self.width / self.dem_width if self.dem_width > 0 else 1.0
+                scale_y = self.height / self.dem_height if self.dem_height > 0 else 1.0
+                self.dem_transform = self.transform_matrix @ np.array([[scale_x, 0, 0], [0, scale_y, 0],])
+
+            # 3. PERFORMANCE SAFEGUARD: Downsample DEM if > 500MB
             dem_size_mb = self.z_channel.nbytes / 1_000_000
             if dem_size_mb > 500:
-                print(f"DEM size {dem_size_mb:.1f}MB > 500MB. Downsampling DEM by 2x...")
+                print(f"DEM size {dem_size_mb:.1f}MB exceeds 500MB threshold. Downsampling DEM by factor of 2...")
                 self.z_channel = self.z_channel[::2, ::2]
-                self.dem_scale = 2
-                # CRITICAL FIX: Do NOT change self.width, self.height, or transform_matrix!
+                self.dem_height, self.dem_width = self.z_channel.shape
+                
+                # Scale DEM transform matrix accordingly (pixels represent 2x the physical space)
+                scale_matrix = np.array([, ,])
+                self.dem_transform = self.dem_transform @ scale_matrix
 
-        center_x, center_y = self.width / 2, self.height / 2
-        world_center = self.transform_matrix @ np.array([center_x, center_y, 1])
-        z_avg = float(np.nanmean(self.z_channel))
-        self.position = np.array([world_center, world_center, z_avg + 1000])
+        # Calculate inverse DEM transform for world -> DEM pixel lookups
+        try:
+            self.dem_transform_inv = np.linalg.inv(self.dem_transform)
+        except np.linalg.LinAlgError:
+            self.dem_transform_inv = np.eye(3)
 
-        # Stubs for compatibility
+        # 4. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
+        center_x, center_y = self.width / 2.0, self.height / 2.0
+        world_center = self.transform_matrix @ np.array([center_x, center_y, 1.0])
+        
+        # Safely calculate average Z for altitude placement
+        if self.z_channel is not None and self.z_channel.size > 0:
+            z_avg = float(np.nanmean(self.z_channel))
+            if np.isnan(z_avg): z_avg = 0.0
+        else:
+            z_avg = 0.0
+            
+        self.position = np.array([world_center, world_center, z_avg + 1000.0])
+
+        # 5. COMPATIBILITY STUBS
+        # These allow OrthographicCamera to safely interact with perspective-only UI code
         self.K = np.eye(3)
         self.R = np.eye(3)
-        self.t = np.array()
+        self.t = np.array([0.0, 0.0, 0.0])
         self.K_inv = np.eye(3)
         self.extrinsics = np.eye(4)
         self.P = np.eye(3, 4)
+        
+        # No frustum for orthomosaics
         self.frustum = None
         self.selected = False
 
@@ -553,8 +598,6 @@ class OrthographicCamera(Camera):
         Returns:
             np.ndarray: 2D pixel coordinate(s) [u, v]
         """
-        import numpy as np
-
         points = np.atleast_2d(points_3d_world)
         N = len(points)
 
@@ -570,30 +613,49 @@ class OrthographicCamera(Camera):
         return pixels_hom[:, :2]
 
     def unproject(self, pixel_coord):
-        """Unproject pixel to 3D world point using DEM."""
-        import numpy as np
-        u, v = pixel_coord
+        """
+        Unproject pixel to 3D world point using DEM.
+        Uses exact 2-step geographic lookup to handle mismatched bounding boxes.
+        """        
+        # Clamp to Ortho bounds
+        u = np.clip(int(pixel_coord), 0, self.width - 1)
+        v = np.clip(int(pixel_coord), 0, self.height - 1)
 
-        u = np.clip(int(u), 0, self.width - 1)
-        v = np.clip(int(v), 0, self.height - 1)
-
-        # 1. Transform FULL-RES pixel to world X, Y
-        pixel_hom = np.array([u, v, 1])
+        # 1. Transform Ortho pixel to world X, Y
+        pixel_hom = np.array([u, v, 1.0])
         world_hom = self.transform_matrix @ pixel_hom
         X, Y = world_hom, world_hom
 
-        # 2. Scale u, v DOWN to query the potentially downsampled DEM
-        dem_u = u // self.dem_scale
-        dem_v = v // self.dem_scale
+        if self.z_channel is None:
+            return np.array([X, Y, 0.0])
+
+        # 2. Transform world X, Y to DEM pixel coordinates
+        dem_pixel_hom = self.dem_transform_inv @ world_hom
+        dem_u = int(round(dem_pixel_hom))
+        dem_v = int(round(dem_pixel_hom))
+
+        # 3. Query DEM for Z, ensuring we are within DEM bounds
+        if not (0 <= dem_u < self.dem_width and 0 <= dem_v < self.dem_height):
+            return np.array([X, Y, 0.0]) # Or return None if you prefer strict failure
 
         Z = self.z_channel[dem_v, dem_u]
+        
         if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
             Z = 0.0
 
         return np.array([X, Y, Z])
 
-        def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
-        import numpy as np
+    def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
+        """
+        Determine if a 3D point is occluded based on the depth map (z_channel) of the camera.
+        
+        Args:
+            point_3d (np.ndarray): 3D point in world coordinates [x, y, z]
+            depth_threshold (float): Threshold for considering a point occluded
+
+        Returns:
+            bool: True if the point is occluded, False otherwise
+        """    
         uv = self.project(point_3d.reshape(1, 3))
         if np.isnan(uv).any():
             return True
@@ -676,7 +738,6 @@ class OrthographicCamera(Camera):
 
         except Exception as e:
             print(f"Error computing orthographic visibility for {self.label}: {e}")
-            import traceback
             traceback.print_exc()
             return False
 
