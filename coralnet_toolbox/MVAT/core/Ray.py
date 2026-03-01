@@ -83,41 +83,32 @@ class CameraRay:
         self.visual_terminal = self.terminal_point.copy()
         
     @classmethod
-    def from_pixel_and_camera(cls, 
-                              pixel_xy: Tuple[int, int], 
-                              camera: 'Camera', 
-                              depth: Optional[float] = None,
-                              default_depth: float = 10.0) -> 'CameraRay':
-        """
-        Create a ray from a 2D pixel coordinate through a camera.
+    def from_pixel_and_camera(cls, pixel_xy: Tuple[int, int], camera: 'Camera', 
+                              depth: Optional[float] = None, default_depth: float = 10.0) -> 'CameraRay':
         
-        If depth is provided (e.g., from z-channel), the terminal point is calculated
-        precisely using camera.unproject(). Otherwise, a default depth is used to
-        estimate the terminal point.
-        
-        Args:
-            pixel_xy: 2D pixel coordinate (u, v) in image space.
-            camera: Camera object with intrinsics and extrinsics.
-            depth: Optional depth value at this pixel (from z-channel).
-            default_depth: Fallback depth to use if depth is None.
-            
-        Returns:
-            CameraRay: A new ray object.
-        """
-        # BRANCH: Orthographic camera
+        # --- ORTHOGRAPHIC RAYS ---
         if getattr(camera, 'is_orthographic', False):
-            # Unproject pixel to world point (includes DEM lookup)
+            # ALWAYS use unproject to fetch actual DEM elevation natively,
+            # completely bypassing the 'depth' arg from the UI.
             terminal_point = camera.unproject(pixel_xy)
+            has_accurate_depth = False
             
-            # Ray shoots straight down from sky
+            if terminal_point is not None:
+                has_accurate_depth = True
+            else:
+                # Extreme fallback if DEM yields NaN
+                pixel_hom = np.array([pixel_xy, pixel_xy, 1.0])
+                world_xy = camera.transform_matrix @ pixel_hom
+                terminal_point = np.array([world_xy, world_xy, 0.0])
+            
             direction = np.array([0.0, 0.0, -1.0])
-            origin = terminal_point + np.array([0.0, 0.0, 1000.0])  # 1km above ground
+            origin = terminal_point + np.array([0.0, 0.0, 1000.0]) 
             
             ray = cls(
                 origin=origin,
                 direction=direction,
                 terminal_point=terminal_point,
-                has_accurate_depth=True,  # DEM provides exact depth
+                has_accurate_depth=has_accurate_depth,
                 pixel_coord=pixel_xy,
                 source_camera=camera
             )
@@ -237,8 +228,6 @@ class CameraRay:
         # Visual start/end default to the true geometry (no offset).
         ray.visual_origin = ray.origin.copy()
         ray.visual_terminal = ray.terminal_point.copy()
-
-        return ray
 
         return ray
     

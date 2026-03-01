@@ -443,7 +443,7 @@ class Camera:
         self.frustum.unhighlight()
 
 
-class OrthographicCamera:
+class OrthographicCamera(Camera):
     """
     Orthographic camera for handling georeferenced orthomosaics.
     Uses affine transformation instead of pinhole camera model.
@@ -455,41 +455,27 @@ class OrthographicCamera:
     - Rays are parallel (no perspective distortion)
     """
     def __init__(self, raster):
-        """
-        Initialize orthographic camera from raster with DEM.
-
-        Args:
-
-            raster: A Raster object with transform_matrix and z_channel (DEM)
-
-        Raises:
-
-            ValueError: If transform_matrix is missing or singular
-        """
         import numpy as np
         
-        # Core flag
         self.is_orthographic = True
         self._raster = raster
 
-        # Dimensions
+        # 1. Dimensions ALWAYS match the full-res image
         self.width = raster.width
         self.height = raster.height
 
-        # Extract affine transform
         if raster.transform_matrix is None:
             raise ValueError(f"Orthomosaic {raster.basename} missing transform_matrix")
 
+        # 2. Transform matrix ALWAYS matches the full-res image
         self.transform_matrix = raster.transform_matrix.copy()
-
-        # Compute and cache inverse (microsecond operation for 3x3)
         try:
             self.transform_matrix_inv = np.linalg.inv(self.transform_matrix)
         except np.linalg.LinAlgError:
-            raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
+            raise ValueError(f"Transform matrix for {raster.basename} is singular")
 
-        # DEM handling with fallback
         self.z_channel = raster.z_channel
+        self.dem_scale = 1  # NEW: Track DEM scaling independently
 
         if self.z_channel is None:
             print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
@@ -497,34 +483,26 @@ class OrthographicCamera:
         else:
             self.z_channel = self.z_channel.copy()
 
-        # Performance check: downsample if > 500MB
-        dem_size_mb = self.z_channel.nbytes / 1_000_000
+            # Performance check: downsample if > 500MB
+            dem_size_mb = self.z_channel.nbytes / 1_000_000
+            if dem_size_mb > 500:
+                print(f"DEM size {dem_size_mb:.1f}MB > 500MB. Downsampling DEM by 2x...")
+                self.z_channel = self.z_channel[::2, ::2]
+                self.dem_scale = 2
+                # CRITICAL FIX: Do NOT change self.width, self.height, or transform_matrix!
 
-        if dem_size_mb > 500:
-            print(f"DEM size {dem_size_mb:.1f}MB exceeds 500MB threshold. Downsampling by factor of 2...")
-            self.z_channel = self.z_channel[::2, ::2]
-            self.height, self.width = self.z_channel.shape
-            # Scale transform matrix accordingly (2x pixel spacing)
-            scale_matrix = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 1]])
-            self.transform_matrix = self.transform_matrix @ scale_matrix
-            self.transform_matrix_inv = np.linalg.inv(self.transform_matrix)
-
-        # "Camera" position (conceptual - directly above scene center)
         center_x, center_y = self.width / 2, self.height / 2
         world_center = self.transform_matrix @ np.array([center_x, center_y, 1])
         z_avg = float(np.nanmean(self.z_channel))
-        self.position = np.array([world_center[0], world_center[1], z_avg + 1000])
+        self.position = np.array([world_center, world_center, z_avg + 1000])
 
-        # Stub attributes for compatibility with perspective camera code
-        # These allow OrthographicCamera to work with code expecting K, R, t
-        self.K = np.eye(3)  # Identity (no projection matrix for ortho)
-        self.R = np.eye(3)  # Identity rotation (top-down view)
-        self.t = np.array([0, 0, 0])  # No translation vector for ortho
+        # Stubs for compatibility
+        self.K = np.eye(3)
+        self.R = np.eye(3)
+        self.t = np.array()
         self.K_inv = np.eye(3)
         self.extrinsics = np.eye(4)
-        self.P = np.eye(3, 4)  # Identity projection
-        
-        # No frustum for orthomosaics
+        self.P = np.eye(3, 4)
         self.frustum = None
         self.selected = False
 
@@ -592,67 +570,45 @@ class OrthographicCamera:
         return pixels_hom[:, :2]
 
     def unproject(self, pixel_coord):
-        """
-        Unproject pixel to 3D world point using DEM.
-        Uses affine transformation: [X, Y, 1] = T @ [u, v, 1]
-        Z is queried from the DEM at the pixel location.
-
-        Args:
-            pixel_coord (tuple/list): 2D pixel [u, v]
-
-        Returns:
-            np.ndarray: 3D world point [x, y, z]
-        """
+        """Unproject pixel to 3D world point using DEM."""
         import numpy as np
         u, v = pixel_coord
 
-        # Clamp to valid image bounds (CRITICAL for PyVista picks)
         u = np.clip(int(u), 0, self.width - 1)
         v = np.clip(int(v), 0, self.height - 1)
 
-        # Transform pixel to world X, Y
+        # 1. Transform FULL-RES pixel to world X, Y
         pixel_hom = np.array([u, v, 1])
         world_hom = self.transform_matrix @ pixel_hom
-        X, Y = world_hom[0], world_hom[1]
+        X, Y = world_hom, world_hom
 
-        # Query DEM for Z (handle NaN/nodata)
-        Z = self.z_channel[v, u]
+        # 2. Scale u, v DOWN to query the potentially downsampled DEM
+        dem_u = u // self.dem_scale
+        dem_v = v // self.dem_scale
+
+        Z = self.z_channel[dem_v, dem_u]
         if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
-            Z = 0.0  # Fallback to ground level
+            Z = 0.0
 
         return np.array([X, Y, Z])
 
-    def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
-        """
-        Check if 3D point is occluded (underground) using DEM.
-
-        Args:
-            point_3d (np.ndarray): 3D world point [x, y, z]
-            depth_threshold (float): Tolerance below ground (meters)
-
-        Returns:
-            bool: True if occluded, False if visible
-        """
+        def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
         import numpy as np
-
-        # Project to pixel
         uv = self.project(point_3d.reshape(1, 3))
         if np.isnan(uv).any():
             return True
 
-        u, v = int(np.clip(uv[0], 0, self.width - 1)), int(np.clip(uv[1], 0, self.height - 1))
+        u, v = int(np.clip(uv, 0, self.width - 1)), int(np.clip(uv, 0, self.height - 1))
+        
+        # Scale coordinates for DEM lookup
+        dem_u = u // self.dem_scale
+        dem_v = v // self.dem_scale
 
-        # Check if pixel is within bounds
-        if not (0 <= u < self.width and 0 <= v < self.height):
-            return True
-
-        # Get DEM height
-        Z_dem = self.z_channel[v, u]
+        Z_dem = self.z_channel[dem_v, dem_u]
         if np.isnan(Z_dem):
-            return False  # Can't determine occlusion
+            return False 
 
-        # Point is occluded if below ground
-        return point_3d[2] < (Z_dem - depth_threshold)
+        return point_3d < (Z_dem - depth_threshold)
 
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
         """
