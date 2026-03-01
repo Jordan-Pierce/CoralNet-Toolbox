@@ -735,7 +735,7 @@ class Raster(QObject):
             if z_data_type == 'elevation' and self.transform_matrix is None:
                 try:
                     with rasterio.open(z_channel_path) as dem_dataset:
-                        self._extract_transform_matrix(source_dataset=dem_dataset)
+                        self._extract_transform_matrix()
                 except Exception as e:
                     print(f"Warning: Could not extract transform from DEM {z_channel_path}: {e}")
             
