@@ -515,6 +515,15 @@ class OrthographicCamera:
         z_avg = float(np.nanmean(self.z_channel))
         self.position = np.array([world_center[0], world_center[1], z_avg + 1000])
 
+        # Stub attributes for compatibility with perspective camera code
+        # These allow OrthographicCamera to work with code expecting K, R, t
+        self.K = np.eye(3)  # Identity (no projection matrix for ortho)
+        self.R = np.eye(3)  # Identity rotation (top-down view)
+        self.t = np.array([0, 0, 0])  # No translation vector for ortho
+        self.K_inv = np.eye(3)
+        self.extrinsics = np.eye(4)
+        self.P = np.eye(3, 4)  # Identity projection
+        
         # No frustum for orthomosaics
         self.frustum = None
         self.selected = False

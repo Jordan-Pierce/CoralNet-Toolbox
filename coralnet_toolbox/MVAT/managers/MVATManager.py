@@ -742,8 +742,14 @@ class MVATManager(QObject):
         return combined_score
 
     def _reorder_cameras(self, reference_path, hide_distant_cameras=True):
+        """Reorder cameras based on proximity to reference camera."""
         reference_camera = self.cameras.get(reference_path)
-        if not reference_camera: return
+        if not reference_camera: 
+            return
+        
+        # Skip reordering for orthomosaics (no meaningful view direction)
+        if reference_camera.is_orthographic:
+            return
         
         camera_scores = []
         for path, camera in self.cameras.items():
