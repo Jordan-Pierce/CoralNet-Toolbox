@@ -199,6 +199,7 @@ class RectangleAnnotation(Annotation):
         path = QPainterPath()
         polygon = self.get_polygon()
         path.addPolygon(polygon)
+        path.closeSubpath()
         return path
 
     def get_bounding_box_top_left(self):

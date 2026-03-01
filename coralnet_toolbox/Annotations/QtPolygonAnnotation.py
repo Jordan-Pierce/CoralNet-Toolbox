@@ -293,6 +293,9 @@ class PolygonAnnotation(Annotation):
         # 3. Set the fill rule, which tells the painter to treat
         #    overlapping polygons as holes.
         path.setFillRule(Qt.OddEvenFill)
+        
+        # Close the subpath to ensure the path is a closed polygon
+        path.closeSubpath()
 
         return path
 

@@ -13,7 +13,7 @@ from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSlider, 
     QLabel, QMenu, QAction, QSizePolicy, QFrame, QToolButton,
-    QApplication
+    QApplication, QToolBar, QMessageBox
 )
 
 from coralnet_toolbox.MVAT.core.constants import (
@@ -535,19 +535,11 @@ class CameraGrid(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         
-        # --- Toolbar widget ---
-        self.toolbar_widget = QWidget()
-        toolbar = QHBoxLayout(self.toolbar_widget)
-        toolbar.setContentsMargins(5, 5, 5, 5)
-        toolbar.setSpacing(5)
-        
-        # Stats label
+        # --- Initialize Toolbar Widgets (Do not add to layout yet) ---
         self.stats_label = QLabel("Cameras: 0")
         self.stats_label.setStyleSheet("color: #333;")
-        toolbar.addWidget(self.stats_label)
 
-        # Size slider
-        size_label = QLabel("Size:")
+        self.size_label = QLabel("Size:")
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setRange(MIN_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE)
         self.size_slider.setValue(self.thumbnail_size)
@@ -555,47 +547,26 @@ class CameraGrid(QWidget):
         self.size_slider.setToolTip("Adjust thumbnail size")
         self.size_slider.valueChanged.connect(self._on_size_changed)
         
-        # Pixel value label
         self.size_value_label = QLabel(f"{self.thumbnail_size}px")
         self.size_value_label.setMinimumWidth(50)
         
-        toolbar.addWidget(size_label)
-        toolbar.addWidget(self.size_slider)
-        toolbar.addWidget(self.size_value_label)
-        
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        toolbar.addWidget(sep)
-        
-        # Selected camera label
         self.selected_label = QLabel("None selected")
         self.selected_label.setStyleSheet("color: #666;")
-        toolbar.addWidget(self.selected_label)
         
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setFrameShadow(QFrame.Sunken)
-        toolbar.addWidget(sep2)
-        
-        # Selection info label
         self.selection_label = QLabel("0 highlighted")
         self.selection_label.setStyleSheet("color: #666;")
-        toolbar.addWidget(self.selection_label)
-        
-        toolbar.addStretch()
-        
-        # Clear selection button
+
+        # Load Cameras button (disabled by default until MVAT manager is wired)
+        self.load_btn = QToolButton()
+        self.load_btn.setText("Load Cameras")
+        self.load_btn.setToolTip("Load cameras into MVAT (build frustums, markers, etc.)")
+        self.load_btn.clicked.connect(self._on_load_cameras_clicked)
+        self.load_btn.setEnabled(False)
+
         self.clear_btn = QToolButton()
         self.clear_btn.setText("Clear")
         self.clear_btn.setToolTip("Clear all selections (Escape)")
         self.clear_btn.clicked.connect(self.clear_all_selections)
-        toolbar.addWidget(self.clear_btn)
-        
-        # Insert the toolbar widget into the main layout so it can be reused by MVATWindow
-        layout.addWidget(self.toolbar_widget)
         
         # --- Scroll Area ---
         self.scroll_area = QScrollArea()
@@ -608,11 +579,89 @@ class CameraGrid(QWidget):
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet("background-color: white;")
         self.scroll_area.setWidget(self.content_widget)
+
+        # Placeholder label for empty state
+        self._placeholder_label = QLabel("No cameras available", self.content_widget)
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setStyleSheet("color: #666;")
+        self._placeholder_label.hide()
         
+        # Only add the scroll area to the main layout!
         layout.addWidget(self.scroll_area)
         
         # Set minimum width
         self.setMinimumWidth(MIN_THUMBNAIL_SIZE + 20)
+        
+    # --------------------------------------------------------------------------
+    # DockWrapper Hooks
+    # --------------------------------------------------------------------------
+    
+    def create_top_toolbar(self) -> QToolBar:
+        """Create the top toolbar containing grid settings and stats."""
+        toolbar = QToolBar("Camera Grid Tools")
+        toolbar.setMovable(False)
+        
+        # Use a container to preserve the stretching/spacing behavior
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        layout.addWidget(self.stats_label)
+        
+        layout.addWidget(self.size_label)
+        layout.addWidget(self.size_slider)
+        layout.addWidget(self.size_value_label)
+        
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep1)
+        
+        layout.addWidget(self.selected_label)
+        
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep2)
+        
+        layout.addWidget(self.selection_label)
+        
+        # Add stretch to push the Clear button to the far right
+        layout.addStretch(1)
+        # Place Load Cameras immediately before the Clear button
+        try:
+            layout.addWidget(self.load_btn)
+        except Exception:
+            pass
+
+        layout.addWidget(self.clear_btn)
+        
+        toolbar.addWidget(container)
+        
+        return toolbar
+
+    def _on_load_cameras_clicked(self):
+        """Handler for the Load Cameras button.
+
+        Attempts to call the MVAT manager's load_cameras method via the
+        wired `mvat_window` reference. Shows an informational message if
+        the manager isn't available or if an error occurs.
+        """
+        if not getattr(self, 'mvat_window', None):
+            QMessageBox.information(self, "No MVAT", "MVAT manager is not available.")
+            return
+
+        mgr = getattr(self.mvat_window, 'mvat_manager', None)
+        if mgr is None:
+            QMessageBox.information(self, "No MVAT", "MVAT manager is not available.")
+            return
+
+        try:
+            mgr.load_cameras()
+        except Exception as e:
+            QMessageBox.warning(self, "Load Cameras Failed", f"Failed to load cameras: {e}")
         
     def set_cameras(self, cameras):
         """
@@ -665,6 +714,12 @@ class CameraGrid(QWidget):
             progress.close()
             progress = None
         
+        # Show or hide placeholder depending on whether we have cameras
+        if not cameras:
+            self._show_placeholder()
+        else:
+            self._hide_placeholder()
+
         # Calculate layout
         self.recalculate_layout()
         
@@ -677,6 +732,23 @@ class CameraGrid(QWidget):
             widget.hide()  # Immediately hide to prevent ghost widgets
             widget.setParent(None)
             widget.deleteLater()
+
+    def _show_placeholder(self, text: str = None):
+        """Show placeholder in the content widget area."""
+        try:
+            if text:
+                self._placeholder_label.setText(text)
+            self._placeholder_label.setGeometry(self.content_widget.rect())
+            self._placeholder_label.show()
+        except Exception:
+            pass
+
+    def _hide_placeholder(self):
+        """Hide the placeholder label."""
+        try:
+            self._placeholder_label.hide()
+        except Exception:
+            pass
             
     def clear_cameras(self):
         """Clear all cameras from the grid."""
@@ -686,6 +758,8 @@ class CameraGrid(QWidget):
         self.widget_positions.clear()
         # Selection state is managed by SelectionManager
         self.model.clear_selections()
+        # Show placeholder when empty
+        self._show_placeholder()
         
     def recalculate_layout(self):
         """Schedule a layout recalculation (debounced)."""
@@ -695,7 +769,12 @@ class CameraGrid(QWidget):
     def _do_recalculate_layout(self):
         """Actually recalculate widget positions."""
         if not self.data_items:
+            # Ensure placeholder is visible when there are no items
+            self._show_placeholder()
             return
+        else:
+            # Hide placeholder when there are items to display
+            self._hide_placeholder()
             
         # Get available width
         available_width = self.scroll_area.viewport().width() - 10  # Padding
@@ -907,6 +986,18 @@ class CameraGrid(QWidget):
         """Handle widget click for selection/highlighting using SelectionManager."""
         path = widget.data_item.image_path
         modifiers = event.modifiers()
+        
+        # BLOCK: If active camera is orthographic, force exit to clicked camera
+        if self.model and self.model.active_path:
+            active_widget = self.widgets_by_path.get(self.model.active_path)
+            if active_widget:
+                active_camera = active_widget.data_item.camera
+                if getattr(active_camera, 'is_orthographic', False):
+                    print(f"🚫 Exiting orthomosaic view → activating {path}")
+                    self.active_requested.emit(path)
+                    self.camera_selected.emit(path)
+                    self.last_clicked_index = next((i for i, item in enumerate(self.data_items) if item.image_path == path), -1)
+                    return  # Bypass all Ctrl/Shift logic
 
         # Find index of clicked item
         clicked_index = next((i for i, item in enumerate(self.data_items) if item.image_path == path), -1)
@@ -930,6 +1021,18 @@ class CameraGrid(QWidget):
     def _on_widget_double_clicked(self, widget):
         """Handle widget double-click for highlighting only (no image load)."""
         path = widget.data_item.image_path
+        
+        # BLOCK: Same logic as single click - force exit if in ortho view
+        if self.model and self.model.active_path:
+            active_widget = self.widgets_by_path.get(self.model.active_path)
+            if active_widget:
+                active_camera = active_widget.data_item.camera
+                if getattr(active_camera, 'is_orthographic', False):
+                    print(f"🚫 Exiting orthomosaic view → activating {path}")
+                    self.active_requested.emit(path)
+                    self.camera_selected.emit(path)
+                    return
+        
         # Double-click now acts like single-click - just highlights
         # Plain click: request single selection
         self.selection_requested.emit([path])

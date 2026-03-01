@@ -113,6 +113,10 @@ class Raster(QObject):
         self.intrinsics: Optional[np.ndarray] = None  # Camera intrinsic parameters as numpy array
         self.extrinsics: Optional[np.ndarray] = None  # Camera extrinsic parameters as numpy array
         
+        # Spatial transformation for orthomosaics
+        self.is_orthomosaic: bool = False
+        self.transform_matrix: Optional[np.ndarray] = None
+        
         # Visibility/Index map information (for MultiView Annotation)
         self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to point cloud IDs (H x W int32)
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
@@ -168,11 +172,11 @@ class Raster(QObject):
             self.metadata['bands'] = self.channels
 
             crs = self._rasterio_src.crs
+            transform = self._rasterio_src.transform
+
             if crs is not None:
                 if not getattr(crs, "is_geographic", False):
                     # Case 1: Already projected. Read the scale and convert to meters.
-                    transform = self._rasterio_src.transform
-
                     scale_x = abs(transform.a)
                     scale_y = abs(transform.e)
                     source_units = crs.linear_units.lower()
@@ -190,7 +194,7 @@ class Raster(QObject):
                         dst_crs = CRS.from_epsg(3857)
 
                         # Calculate the transform, new width, and new height for the reprojected image
-                        transform, width, height = calculate_default_transform(
+                        proj_transform, width, height = calculate_default_transform(
                             crs,                        # Source CRS
                             dst_crs,                    # Destination CRS
                             self._rasterio_src.width,   # Source width
@@ -199,8 +203,8 @@ class Raster(QObject):
                         )
 
                         # Now, the transform's components are in meters
-                        scale_x = abs(transform.a)
-                        scale_y = abs(transform.e)
+                        scale_x = abs(proj_transform.a)
+                        scale_y = abs(proj_transform.e)
                         scale_units = 'm'  # EPSG:3857 units are meters
 
                         self.update_scale(scale_x, scale_y, scale_units)
@@ -214,9 +218,22 @@ class Raster(QObject):
                         # Fallback if reprojection calculation fails
                         print(f"Could not calculate default transform for {self.image_path}: {e}")
                         self.metadata['units'] = "degrees (reprojection failed)"
-                        # scale attributes remain None
-                # else: neither projected nor geographic, do nothing
-            # Case 3: No CRS. self.scale_x, self.scale_y, and self.scale_units correctly remain None
+                        
+            else:
+                # Case 3: No CRS. Check if there is a valid transform (e.g., from a .jgw sidecar file)
+                if transform is not None and not transform.is_identity:
+                    scale_x = abs(transform.a)
+                    scale_y = abs(transform.e)
+                    
+                    # Since there is no CRS, bypass update_scale to avoid unit conversion errors.
+                    # Assign the raw values directly and flag the units as unknown.
+                    self.scale_x = scale_x
+                    self.scale_y = scale_y
+                    self.scale_units = 'unknown' 
+                    
+                    self.metadata['scale_x'] = f"{self.scale_x:.6f} (unknown units)"
+                    self.metadata['scale_y'] = f"{self.scale_y:.6f} (unknown units)"
+                    self.metadata['original_crs'] = "None (Loaded from world file)"
 
             return True
             
@@ -262,6 +279,27 @@ class Raster(QObject):
         self.metadata.pop('scale_x', None)
         self.metadata.pop('scale_y', None)
         self.metadata.pop('original_crs', None)  # Also remove derived crs
+        
+    def _extract_transform_matrix(self, source_dataset=None):
+        """
+        Extracts the 3x3 affine transform matrix.
+        If source_dataset is provided (e.g., from a DEM), uses that.
+        Otherwise, uses the main image's rasterio source.
+        """
+        dataset = source_dataset if source_dataset is not None else self._rasterio_src
+        
+        if dataset is not None:
+            t = dataset.transform
+            # Ensure it's not a default identity matrix (meaning no actual spatial data)
+            if not t.is_identity:
+                self.transform_matrix = np.array([
+                    [t.a, t.b, t.c],
+                    [t.d, t.e, t.f],
+                    [t.g, t.h, t.i]
+                ])
+                self.metadata['transform_matrix'] = "Extracted from source"
+                return True
+        return False
     
     def add_intrinsics(self, intrinsics: np.ndarray):
         """
@@ -457,6 +495,12 @@ class Raster(QObject):
         # Set z_data_type if provided
         if z_data_type is not None:
             self.z_data_type = z_data_type
+            
+            # --- NEW ORTHOMOSAIC LOGIC ---
+            if z_data_type == 'elevation':
+                self.is_orthomosaic = True
+                if self.transform_matrix is None:
+                    self._extract_transform_matrix()
         
         # Set z_nodata if provided
         if z_nodata is not None:
@@ -679,11 +723,35 @@ class Raster(QObject):
                 z_unit = normalize_z_unit(z_unit)
             
             # Preserve existing z_nodata if already set, otherwise use value from file
-            # This ensures that user-set nodata values (e.g., from ScaleTool) are preserved
             if self.z_nodata is not None:
                 final_z_nodata = self.z_nodata
             else:
                 final_z_nodata = z_nodata
+
+            # --- CORRECTED DEM TRANSFORM EXTRACTION ---
+            # If the user supplied a non-georeferenced image (like a JPG) but gave us a DEM, 
+            # we must extract the transform from the DEM and scale it to account for 
+            # the fact that the DEM was just resized to fit the JPG.
+            if z_data_type == 'elevation' and self.transform_matrix is None:
+                try:
+                    import rasterio
+                    with rasterio.open(z_channel_path) as dem_dataset:
+                        t = dem_dataset.transform
+                        if not t.is_identity:
+                            # Calculate the scale factor between the original DEM and our base image
+                            scale_x = dem_dataset.width / self.width if self.width > 0 else 1.0
+                            scale_y = dem_dataset.height / self.height if self.height > 0 else 1.0
+                            
+                            # Scale the transform matrix (T_corrected = T_dem * S)
+                            self.transform_matrix = np.array([
+                                [t.a * scale_x, t.b * scale_y, t.c],
+                                [t.d * scale_x, t.e * scale_y, t.f],
+                                [0.0, 0.0, 1.0]
+                            ])
+                            self.metadata['transform_matrix'] = "Extracted and scaled from DEM"
+                            self.is_orthomosaic = True
+                except Exception as e:
+                    print(f"Warning: Could not extract and scale transform from DEM {z_channel_path}: {e}")
             
             # Add z_channel with the nodata value and data type
             self.z_unit = z_unit
@@ -1130,7 +1198,8 @@ class Raster(QObject):
             'state': {
                 'checkbox_state': self.checkbox_state
             },
-            'work_areas': work_areas_list
+            'work_areas': work_areas_list,
+            'is_orthomosaic': self.is_orthomosaic  # --- NEW ORTHOMOSAIC LOGIC ---
         }
         
         # Include scale information if available
@@ -1147,14 +1216,14 @@ class Raster(QObject):
             
         if self.extrinsics is not None:
             raster_data['extrinsics'] = self.extrinsics.tolist()  # Convert numpy array to list for JSON
+            
+        # --- NEW ORTHOMOSAIC LOGIC ---
+        if self.transform_matrix is not None:
+            raster_data['transform_matrix'] = self.transform_matrix.tolist()
         
         # Include index_map path and visible_indices if available
         if self.index_map_path is not None:
             raster_data['index_map_path'] = self.index_map_path
-        
-        # TODO figure out if this neccessary, or if we can just read in the index_map when needed from the path.        
-        # if self.visible_indices is not None:
-        #     raster_data['visible_indices'] = self.visible_indices.tolist()  # Store for quick filtering
         
         # Include z_channel path if available
         if self.z_channel_path is not None:
@@ -1240,6 +1309,15 @@ class Raster(QObject):
                 raster.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {image_path}: {str(e)}")
+                
+        # --- ORTHOMOSAIC LOGIC ---
+        raster.is_orthomosaic = raster_dict.get('is_orthomosaic', False)
+        transform_data = raster_dict.get('transform_matrix')
+        if transform_data:
+            try:
+                raster.transform_matrix = np.array(transform_data)
+            except Exception as e:
+                print(f"Error loading transform_matrix for {image_path}: {str(e)}")
         
         # Load z_channel path if available and attempt to load the z-channel data
         z_channel_path = raster_dict.get('z_channel_path')
@@ -1309,6 +1387,15 @@ class Raster(QObject):
                 self.add_extrinsics(extrinsics_array)
             except Exception as e:
                 print(f"Error loading extrinsics for {self.image_path}: {str(e)}")
+                
+        # --- ORTHOMOSAIC LOGIC ---
+        self.is_orthomosaic = raster_dict.get('is_orthomosaic', self.is_orthomosaic)
+        transform_data = raster_dict.get('transform_matrix')
+        if transform_data:
+            try:
+                self.transform_matrix = np.array(transform_data)
+            except Exception as e:
+                print(f"Error loading transform_matrix for {self.image_path}: {str(e)}")
         
         # Update index_map path and visible_indices if available
         index_map_path = raster_dict.get('index_map_path')
@@ -1339,7 +1426,7 @@ class Raster(QObject):
             self.z_data_type = z_data_type
         
         # Note: z_channel data is not loaded from dictionary as it's typically stored separately
-        
+
     def cleanup(self):
         """Release all resources associated with this raster."""
         # Close and clean up rasterio resources
@@ -1363,6 +1450,11 @@ class Raster(QObject):
         # Clear camera calibration and z channel data
         self.intrinsics = None
         self.extrinsics = None
+        
+        # --- NEW ORTHOMOSAIC LOGIC ---
+        self.is_orthomosaic = False
+        self.transform_matrix = None
+        
         self.z_channel = None
         self.z_channel_path = None
         self.z_unit = None

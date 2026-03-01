@@ -275,12 +275,18 @@ class EmbeddingViewerWindow(QWidget):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
         
+        # Clear button (next to Run Embedding) - clears only the embedding view
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setToolTip("Clear embedding view and reset placeholder")
+        self.clear_button.clicked.connect(self.clear_view)
+        toolbar.addWidget(self.clear_button)
+        
         # Run button
         self.run_button = QPushButton("Run Embedding")
         self.run_button.setToolTip("Extract features and generate embedding visualization")
         self.run_button.clicked.connect(self.run_embedding_pipeline)
         toolbar.addWidget(self.run_button)
-        
+
         # Initialize model combo based on default category
         self._on_category_changed(self.category_combo.currentText())
         
@@ -414,6 +420,51 @@ class EmbeddingViewerWindow(QWidget):
         self.cache_manager.remove_features_for_annotation(annotation_id)
         
         self._update_toolbar_state()
+        
+    @pyqtSlot(list)
+    def on_annotations_deleted(self, annotation_ids):
+        """
+        Handle a bulk deletion of annotations with optimized batch removal.
+        """
+        if not annotation_ids:
+            return
+
+        # 1. Use a set for O(1) lookups during the list rebuild
+        ids_to_delete = set(annotation_ids)
+
+        # 2. Block signals and updates to prevent individual redraws per item
+        self.graphics_view.setUpdatesEnabled(False)
+        self.graphics_scene.blockSignals(True)
+
+        try:
+            # 3. Fast Rebuild of the data item list
+            self.current_data_items = [
+                item for item in self.current_data_items
+                if item.annotation.id not in ids_to_delete
+            ]
+
+            # 4. Remove Points and clean caches
+            for ann_id in annotation_ids:
+                # Clear visual points instantly
+                if ann_id in self.points_by_id:
+                    point = self.points_by_id.pop(ann_id)
+                    self.graphics_scene.removeItem(point)
+                
+                # Cleanup internal caches
+                self.data_item_cache.pop(ann_id, None)
+                if ann_id in self.working_set_ids:
+                    self.working_set_ids.remove(ann_id)
+                
+                # Invalidate cached ML features for deleted items
+                self.cache_manager.remove_features_for_annotation(ann_id)
+
+        finally:
+            # 5. Re-enable updates and perform ONE consolidated refresh
+            self.graphics_scene.blockSignals(False)
+            self.graphics_view.setUpdatesEnabled(True)
+            self.graphics_scene.update()
+
+        self._update_toolbar_state()
     
     @pyqtSlot(str, str)
     def on_annotation_label_changed(self, annotation_id, new_label):
@@ -455,6 +506,14 @@ class EmbeddingViewerWindow(QWidget):
             annotation_id: ID of the newly created annotation.
         """
         self._embeddings_stale = True
+
+    @pyqtSlot(list)
+    def on_annotations_created(self, annotation_ids):
+        """
+        Handle bulk annotation creation - flag that embeddings need refresh.
+        """
+        if annotation_ids:
+            self._embeddings_stale = True
     
     @pyqtSlot(object)
     def on_annotations_labels_changed(self, changes):
@@ -1220,37 +1279,45 @@ class EmbeddingViewerWindow(QWidget):
     def _schedule_view_update(self):
         """Schedule delayed view update for virtualization."""
         self.view_update_timer.start(50)
-    
+            
     def _update_visible_points(self):
-        """Update visibility of points based on viewport."""
-        if self.isolated_mode or not self.points_by_id:
-            return
-        
-        visible_rect = self.graphics_view.mapToScene(
-            self.graphics_view.viewport().rect()
-        ).boundingRect()
-        
-        buffer_x = visible_rect.width() * 0.2
-        buffer_y = visible_rect.height() * 0.2
-        buffered_rect = visible_rect.adjusted(-buffer_x, -buffer_y, buffer_x, buffer_y)
-        
-        for point in self.points_by_id.values():
-            point.setVisible(buffered_rect.contains(point.pos()) or point.isSelected())
+        """
+        Qt's QGraphicsScene natively uses a highly optimized C++ BSP tree 
+        to instantly cull off-screen items before rendering. 
+        Manually looping through thousands of points to call .setVisible() 
+        actively fights the engine and causes massive lag!
+        """
+        pass # Let the native C++ engine do its job!
     
     # -------------------------------------------------------------------------
     # Selection Management
     # -------------------------------------------------------------------------
     
     def render_selection_from_ids(self, selected_ids):
-        """Update visual selection from ID set."""
+        """Update visual selection using set-diffing to minimize updates."""
         blocker = QSignalBlocker(self.graphics_scene)
-        
-        for ann_id, point in self.points_by_id.items():
-            is_selected = ann_id in selected_ids
-            point.data_item.set_selected(is_selected)
-            point.setSelected(is_selected)
-        
-        blocker.unblock()
+        try:
+            selected_ids_set = set(selected_ids) if selected_ids else set()
+            current_selected_ids = {aid for aid, pt in self.points_by_id.items() if pt.data_item.is_selected}
+
+            to_select = selected_ids_set - current_selected_ids
+            to_deselect = current_selected_ids - selected_ids_set
+
+            for ann_id in to_select:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(True)
+                    pt.setSelected(True)
+
+            for ann_id in to_deselect:
+                if ann_id in self.points_by_id:
+                    pt = self.points_by_id[ann_id]
+                    pt.data_item.set_selected(False)
+                    pt.setSelected(False)
+        finally:
+            blocker.unblock()
+
+        # One consolidated update after changes
         self._on_selection_changed()
         self._update_visible_points()
     
@@ -1307,7 +1374,10 @@ class EmbeddingViewerWindow(QWidget):
         self.isolated_points.clear()
         self.graphics_view.setUpdatesEnabled(False)
         try:
-            self._update_visible_points()
+            # --- Explicitly make all points visible again ---
+            for point in self.points_by_id.values():
+                point.setVisible(True)
+            # ------------------------------------------------
         finally:
             self.graphics_view.setUpdatesEnabled(True)
         
@@ -1399,7 +1469,7 @@ class EmbeddingViewerWindow(QWidget):
             QLineF(visible_rect.right(), target_y, target_x, target_y),
         ]
         
-        pen = QPen(QColor(0, 0, 0), 3, Qt.DashLine)
+        pen = QPen(QColor(0, 0, 0), 2, Qt.DashLine)
         pen.setCosmetic(True)
         
         for line_data in lines_data:
@@ -1630,7 +1700,8 @@ class EmbeddingViewerWindow(QWidget):
                 for item in self.selection_at_press:
                     item.setSelected(True)
             self.graphics_scene.blockSignals(False)
-            self._on_selection_changed()
+            # Do not call _on_selection_changed() on every mouse-move while dragging;
+            # emit final selection once on mouse release instead for performance.
         elif event.buttons() == Qt.RightButton:
             left_event = QMouseEvent(
                 event.type(), event.localPos(), Qt.LeftButton, Qt.LeftButton, event.modifiers()
@@ -1658,6 +1729,11 @@ class EmbeddingViewerWindow(QWidget):
             return
         
         if self.rubber_band:
+            # Process the final selection exactly once
+            try:
+                self._on_selection_changed()
+            except Exception:
+                pass
             self.graphics_scene.removeItem(self.rubber_band)
             self.rubber_band = None
             self.selection_at_press = None
@@ -1695,7 +1771,52 @@ class EmbeddingViewerWindow(QWidget):
     # -------------------------------------------------------------------------
     # Cleanup
     # -------------------------------------------------------------------------
-    
+    @pyqtSlot()
+    def clear_view(self):
+        """Clear the embedding view: cancel pipeline, clear points and reset placeholders."""
+        try:
+            # Cancel running pipeline worker if any
+            try:
+                if getattr(self, '_pipeline_running', False) and getattr(self, '_pipeline_worker', None):
+                    try:
+                        self._pipeline_worker.cancel()
+                    except Exception:
+                        pass
+                    try:
+                        self._pipeline_worker.wait(1000)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Clear scene and internal state
+            try:
+                self._clear_points()
+            except Exception:
+                pass
+
+            self.current_data_items = []
+            self.current_features = None
+            self.current_feature_model_key = None
+            self.data_item_cache.clear()
+            self.working_set_ids = []
+            try:
+                self.graphics_scene.clearSelection()
+            except Exception:
+                pass
+
+            # Show placeholder and update toolbar
+            try:
+                self._show_placeholder()
+            except Exception:
+                pass
+            try:
+                self._update_toolbar_state()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         """Handle close event - cleanup resources."""
         self.cache_manager.close()

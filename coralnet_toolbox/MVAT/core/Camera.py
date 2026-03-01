@@ -1,3 +1,5 @@
+import traceback
+
 import numpy as np
 
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
@@ -75,6 +77,7 @@ class Camera:
 
         # --- Visualization ---
         self.selected = False
+        self.is_orthographic = False  # Flag for orthographic vs perspective camera
         
         # Initialize the Frustum visualization object
         # The Frustum reads geometry directly from 'self' (this Camera instance)
@@ -228,7 +231,7 @@ class Camera:
         
         # Check if pixel is within image bounds
         if not (0 <= pixel_coord[0] < self.width and 0 <= pixel_coord[1] < self.height):
-            return True # Outside FOV
+            return True  # Outside FOV
 
         # 2. Calculate actual distance from camera center to the 3D point
         dist_to_point = np.linalg.norm(point_3d - self.position)
@@ -296,7 +299,8 @@ class Camera:
     # Visibility Computation (Index Maps)
     # --------------------------------------------------------------------------
     
-    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True):
+    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map: bool = True, 
+                               compute_index_maps: bool = True):
         """
         Ensure visibility data (index_map and visible_indices) is computed and cached.
         
@@ -312,6 +316,10 @@ class Camera:
         Returns:
             bool: True if visibility data is available, False otherwise
         """
+        # If index-map computation is disabled by the user, skip heavy work
+        if not compute_index_maps:
+            return True
+
         # Step 1: Check if already in memory
         if self._raster.visible_indices is not None:
             return True
@@ -401,7 +409,6 @@ class Camera:
             
         except Exception as e:
             print(f"Error computing visibility for {self.label}: {e}")
-            import traceback
             traceback.print_exc()
             return False
 
@@ -413,7 +420,7 @@ class Camera:
         """Delegates creation of the Frustum actor to the Frustum class."""
         return self.frustum.create_actor(plotter, scale)
 
-    def update_appearance(self, plotter=None, opacity=0.8):
+    def update_appearance(self, plotter=None, opacity=0.0):
         """Update the Frustum appearance based on selection state."""
         self.frustum.update_appearance(plotter, opacity)
 
@@ -435,3 +442,289 @@ class Camera:
     def unhighlight(self):
         """Mark as not highlighted and update appearance."""
         self.frustum.unhighlight()
+
+
+class OrthographicCamera(Camera):
+    """
+    Orthographic camera for handling georeferenced orthomosaics.
+    Uses affine transformation instead of pinhole camera model.
+
+    Key differences from perspective Camera:
+    - No intrinsics/extrinsics (K, R, t)
+    - Uses affine transform matrix for pixel <-> world coordinate conversion
+    - Requires DEM (z_channel) for accurate 3D unprojection
+    - Rays are parallel (no perspective distortion)
+    """
+    def __init__(self, raster):
+        """
+        Initialize orthographic camera from raster with DEM.
+        """        
+        # Core flag
+        self.is_orthographic = True
+        self._raster = raster
+
+        # 1. ORTHOMOSAIC IMAGE PROPERTIES
+        self.width = raster.width
+        self.height = raster.height
+
+        if raster.transform_matrix is None:
+            raise ValueError(f"Orthomosaic {raster.basename} missing transform_matrix")
+
+        # BULLETPROOF: Force the matrix to be a standard 3x3 float array. 
+        # This strips away any legacy np.matrix or object array wrappers.
+        self.transform_matrix = np.array(raster.transform_matrix, dtype=np.float64).reshape(3, 3)
+
+        try:
+            self.transform_matrix_inv = np.linalg.inv(self.transform_matrix)
+        except np.linalg.LinAlgError:
+            raise ValueError(f"Transform matrix for {raster.basename} is singular (non-invertible)")
+
+        # 2. DEM PROPERTIES
+        self.z_channel = raster.z_channel
+
+        if self.z_channel is None:
+            print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
+        else:
+            self.z_channel = self.z_channel.copy()
+
+        # 3. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
+        center_x, center_y = self.width / 2.0, self.height / 2.0
+        
+        # Because transform_matrix is strictly an ndarray, this is guaranteed to yield a 1D (3,) array
+        center_vec = np.array([center_x, center_y, 1.0], dtype=np.float64)
+        world_center = (self.transform_matrix @ center_vec).flatten()
+        
+        # Safely calculate average Z for altitude placement
+        if self.z_channel is not None and self.z_channel.size > 0:
+            z_mean = np.nanmean(self.z_channel)
+            z_avg = float(np.ravel(z_mean))  # Safe scalar extraction
+            if np.isnan(z_avg): 
+                z_avg = 0.0
+        else:
+            z_avg = 0.0
+            
+        # Safely construct the 3D position using the explicit floats
+        # Extract X and Y components from the homogeneous world_center array
+        self.position = np.array([float(world_center[0]), float(world_center[1]), z_avg + 1000.0], dtype=np.float64)
+
+        # 4. COMPATIBILITY STUBS
+        self.K = np.eye(3)
+        self.R = np.eye(3)
+        self.t = np.array([0.0, 0.0, 0.0])
+        self.K_inv = np.eye(3)
+        self.extrinsics = np.eye(4)
+        self.P = np.eye(3, 4)
+        
+        # No frustum for orthomosaics
+        self.frustum = None
+        self.selected = False
+
+    # --------------------------------------------------------------------------
+    # Properties (Delegated to Raster)
+    # --------------------------------------------------------------------------
+    
+    @property
+    def label(self):
+        """Return the label/filename of the associated raster."""
+        return self._raster.basename
+
+    @property
+    def image_path(self):
+        """Return the file path of the source image."""
+        return self._raster.image_path
+
+    def get_thumbnail(self):
+        """Get the image thumbnail for 3D visualization."""
+        return self._raster.get_thumbnail()
+
+    def get_native_size(self):
+        """Return tuple of (width, height)."""
+        return (self.width, self.height)
+
+    @property
+    def visible_indices(self):
+        """Get the visible point indices for this camera."""
+        return self._raster.visible_indices
+    
+    @property
+    def index_map(self):
+        """Get the index map for this camera."""
+        return self._raster.index_map_lazy
+
+    # --------------------------------------------------------------------------
+    # Geometric Methods
+    # --------------------------------------------------------------------------
+
+    def project(self, points_3d_world):
+        """
+        Project 3D world points to 2D pixel coordinates (ignoring Z).
+        Uses affine transformation: [u, v, 1] = T_inv @ [X, Y, 1]
+
+        Args:
+            points_3d_world (np.ndarray): 3D point(s) [x, y, z] in world coordinates
+
+        Returns:
+            np.ndarray: 2D pixel coordinate(s) [u, v]
+        """
+        points = np.atleast_2d(points_3d_world)
+        N = len(points)
+
+        # Homogeneous coordinates [X, Y, 1] (ignore Z for orthographic)
+        points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
+
+        # Transform to pixel space
+        pixels_hom = (self.transform_matrix_inv @ points_hom.T).T
+        
+        # Return [u, v] (drop homogeneous coordinate)
+        if N == 1:
+            return pixels_hom[0, :2]
+        return pixels_hom[:, :2]
+
+    def unproject(self, pixel_coord):
+        """
+        Unproject pixel to 3D world point using DEM.
+        Since QtRaster resizes the DEM to match the image 1:1, we can do a direct lookup.
+        """        
+        # Clamp to Ortho bounds and explicitly unpack the tuple to avoid TypeError
+        u = int(np.clip(pixel_coord[0], 0, self.width - 1))
+        v = int(np.clip(pixel_coord[1], 0, self.height - 1))
+
+        # 1. Transform Ortho pixel to world X, Y
+        pixel_hom = np.array([u, v, 1.0], dtype=np.float64)
+        
+        # Guaranteed to be a 1D array because of our strict matrix formatting in __init__
+        world_hom = (self.transform_matrix @ pixel_hom).flatten()
+        X, Y = float(world_hom[0]), float(world_hom[1])
+
+        # If there's no DEM loaded at all, fallback to Z=0.0
+        if self.z_channel is None:
+            return np.array([X, Y, 0.0], dtype=np.float64)
+
+        # 2. Query DEM for Z directly (1:1 pixel mapping)
+        Z = self.z_channel[v, u]
+        
+        # 3. Handle NaN or NoData values from the DEM
+        if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
+            Z = 0.0
+
+        return np.array([X, Y, float(Z)], dtype=np.float64)
+    
+    def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
+        """
+        Determine if a 3D point is occluded based on the depth map (z_channel) of the camera.
+        """    
+        uv = self.project(point_3d.reshape(1, 3))
+        if np.isnan(uv).any():
+            return True
+
+        # Extract tuple properly
+        u = int(np.clip(uv, 0, self.width - 1))
+        v = int(np.clip(uv, 0, self.height - 1))
+        
+        if self.z_channel is None:
+            return False
+            
+        # Direct lookup (1:1 pixel mapping)
+        Z_dem = self.z_channel[v, u]
+        if np.isnan(Z_dem):
+            return False 
+
+        # Compare the Z-component of the 3D point (index 2)
+        return point_3d < (Z_dem - depth_threshold)
+
+    def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
+        """
+        Ensure visibility data is computed for this orthographic camera.
+        Delegates to VisibilityManager.compute_orthographic_visibility
+        """
+        if not compute_index_maps:
+            return True
+
+        # Check if already in memory
+        if self._raster.visible_indices is not None:
+            return True
+
+        # Try to load from cache
+        if cache_manager is not None:
+            # Use transform_matrix as unique identifier for orthomosaics
+            cached_data = cache_manager.load_visibility(
+                self.transform_matrix,
+                point_cloud.file_path
+            )
+            if cached_data is not None:
+                cache_path = cache_manager.get_cache_path(
+                    self.transform_matrix,
+                    point_cloud.file_path
+                )
+
+                self._raster.add_index_map(
+                    cached_data['index_map'],
+                    cache_path,
+                    cached_data['visible_indices']
+                )
+                return True
+            
+        # Compute visibility using orthographic method
+        try:
+            from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+            points_world = point_cloud.get_points_array()
+            if points_world is None or len(points_world) == 0:
+                print(f"Warning: Point cloud is empty or invalid")
+                return False
+            
+            result = VisibilityManager.compute_orthographic_visibility(
+                points_world=points_world,
+                transform_matrix_inv=self.transform_matrix_inv,
+                width=self.width,
+                height=self.height
+            )
+            # Save to cache
+            cache_path = None
+            if cache_manager is not None:
+                cache_path = cache_manager.save_visibility(
+                    self.transform_matrix,
+                    point_cloud.file_path,
+                    result['index_map'],
+                    result['visible_indices'],
+                    None  # No depth map for orthographic
+                )
+            # Store in Raster
+            self._raster.add_index_map(
+                result['index_map'],
+                cache_path,
+                result['visible_indices']
+            )
+            return True
+
+        except Exception as e:
+            print(f"Error computing orthographic visibility for {self.label}: {e}")
+            traceback.print_exc()
+            return False
+
+    # --------------------------------------------------------------------------
+    # Visualization Stubs (No frustum for orthomosaics)
+    # --------------------------------------------------------------------------
+
+    def create_actor(self, plotter, scale=0.1):
+        """No frustum actor for orthomosaics."""
+        return None
+
+    def update_appearance(self, plotter=None, opacity=0.0):
+        """No-op for orthomosaics."""
+        pass
+
+    def select(self):
+        """Mark as selected."""
+        self.selected = True
+
+    def deselect(self):
+        """Mark as deselected."""
+        self.selected = False
+
+    def highlight(self):
+        """No-op for orthomosaics."""
+        pass
+
+    def unhighlight(self):
+        """No-op for orthomosaics."""
+        pass

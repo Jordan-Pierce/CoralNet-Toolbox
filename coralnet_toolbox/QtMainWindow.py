@@ -27,11 +27,16 @@ from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
 
-# Special Windows
+# Explorer Windows
 from coralnet_toolbox.Explorer import AnnotationViewerWindow
 from coralnet_toolbox.Explorer import EmbeddingViewerWindow
 from coralnet_toolbox.Explorer import SelectionManager
-from coralnet_toolbox.MVAT import MVATWindow
+
+# MVAT Windows
+from coralnet_toolbox.MVAT import MVATViewer
+from coralnet_toolbox.MVAT import CameraGrid
+from coralnet_toolbox.MVAT import MVATManager
+
 
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
@@ -59,7 +64,6 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -229,15 +233,28 @@ class MainWindow(QMainWindow):
         self.timer_window = TimerWindow(self)   
         self.performance_window = PerformanceWindow(self) 
          
-        # Initialized in open_mvat_window
-        self.mvat_window = None  
+        # Create dock-based mvat windows
+        self.mvat_viewer = MVATViewer(self)
+        self.camera_grid = CameraGrid(model=None, mvat_window=None)
+        self.mvat_manager = MVATManager(self, self.mvat_viewer, self.camera_grid)
+        self.camera_grid.model = self.mvat_manager.selection_model
+        # Wire a reference to the main window so CameraGrid can access the
+        # MVAT manager (used by the Load Cameras toolbar button).
+        try:
+            self.camera_grid.mvat_window = self
+            # Enable the load button if it exists
+            if hasattr(self.camera_grid, 'load_btn'):
+                self.camera_grid.load_btn.setEnabled(True)
+        except Exception:
+            pass
         
         # Create dock-based explorer windows
         self.annotation_viewer_window = AnnotationViewerWindow(self)
         self.annotation_viewer_window.set_animation_manager(self.animation_manager)
         self.embedding_viewer_window = EmbeddingViewerWindow(self)
         self.embedding_viewer_window.set_animation_manager(self.animation_manager)
-        
+        self.annotation_viewer_window.cleared.connect(self.embedding_viewer_window.clear_view)
+
         # Create the centralized selection manager for explorer windows
         self.selection_manager = SelectionManager(self)
         self.selection_manager.register_annotation_viewer(self.annotation_viewer_window)
@@ -252,7 +269,6 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
-        self.import_cameras_dialog = ImportCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -355,13 +371,6 @@ class MainWindow(QMainWindow):
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
         
-        # Cameras submenu
-        self.import_cameras_menu = self.import_menu.addMenu("Cameras")
-        # Import Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP / Metashape", self)
-        self.import_colmap_cameras_action.triggered.connect(self.import_cameras_dialog.exec_)
-        self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
         # Import Labels
@@ -491,11 +500,11 @@ class MainWindow(QMainWindow):
         self.new_project_action.triggered.connect(self.open_new_project)
         self.file_menu.addAction(self.new_project_action)
         # Open Project
-        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action = QAction("Open Project", self)
         self.open_project_action.triggered.connect(self.open_open_project_dialog)
         self.file_menu.addAction(self.open_project_action)
         # Save Project
-        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action = QAction("Save Project", self)
         self.save_project_action.setToolTip("Ctrl + Shift + S")
         self.save_project_action.triggered.connect(self.open_save_project_dialog)
         self.file_menu.addAction(self.save_project_action)
@@ -706,11 +715,11 @@ class MainWindow(QMainWindow):
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        # ========== MVAT ACTION ==========
-        # MVAT (Multi-View Annotation Tool) action
-        self.open_mvat_action = QAction("MVAT", self)
-        self.open_mvat_action.triggered.connect(self.open_mvat_window)
-        self.menu_bar.addAction(self.open_mvat_action)
+        # # ========== MVAT ACTION ==========
+        # # MVAT (Multi-View Annotation Tool) action
+        # self.open_mvat_action = QAction("MVAT", self)
+        # self.open_mvat_action.triggered.connect(self.open_mvat_window)
+        # self.menu_bar.addAction(self.open_mvat_action)
 
         # ========== HELP MENU ==========
         # Help menu
@@ -1156,8 +1165,6 @@ class MainWindow(QMainWindow):
         )
         # Set the size policy to fixed vertically
         self.performance_dock.setMaximumHeight(125)  # Set height
-        # Hide performance window by default (don't show on startup)
-        self.performance_dock.hide()
         
         # Setup Annotation Gallery Dock (Bottom) using DockWrapper
         self.annotation_gallery_dock = DockWrapper(
@@ -1174,7 +1181,7 @@ class MainWindow(QMainWindow):
             self.annotation_gallery_dock.add_toolbar(self.annotation_viewer_window.create_bottom_toolbar(), 
                                                      Qt.BottomToolBarArea)
 
-        # Setup Embedding Viewer Dock (Right) using DockWrapper
+        # Setup Embedding Viewer Dock (Bottom) using DockWrapper
         self.embedding_viewer_dock = DockWrapper(
             title="Embedding Viewer",
             object_name="EmbeddingViewerDock",
@@ -1188,11 +1195,30 @@ class MainWindow(QMainWindow):
             self.embedding_viewer_dock.add_toolbar(self.embedding_viewer_window.create_bottom_toolbar(), 
                                                    Qt.BottomToolBarArea)
 
-        # By default hide the bottom explorer docks so the Annotation workspace
-        # takes the full vertical space when the main window is shown.
-        # These can be shown later by the user via the View menu or programmatically.
-        # self.annotation_gallery_dock.hide()
-        # self.embedding_viewer_dock.hide()
+        # Setup MVAT Viewer Dock (Bottom-left) using DockWrapper
+        self.mvat_viewer_dock = DockWrapper(
+            title="3D Viewer",
+            object_name="MVATViewerDock",
+            main_widget=self.mvat_viewer,
+            parent=self
+        )
+        if hasattr(self.mvat_viewer, 'create_view_toolbar'):
+            view_toolbar = self.mvat_viewer.create_view_toolbar()
+            self.mvat_viewer_dock.add_toolbar(view_toolbar, Qt.TopToolBarArea)
+        if hasattr(self.mvat_viewer, 'create_top_toolbar'):
+            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_top_toolbar(), Qt.TopToolBarArea)
+        if hasattr(self.mvat_viewer, 'create_bottom_toolbar'):
+            self.mvat_viewer_dock.add_toolbar(self.mvat_viewer.create_bottom_toolbar(), Qt.BottomToolBarArea)
+
+        # Setup Camera Grid Dock (Bottom-right) using DockWrapper
+        self.camera_grid_dock = DockWrapper(
+            title="Camera Grid",
+            object_name="CameraGridDock",
+            main_widget=self.camera_grid,
+            parent=self
+        )
+        if hasattr(self.camera_grid, 'create_top_toolbar'):
+            self.camera_grid_dock.add_toolbar(self.camera_grid.create_top_toolbar(), Qt.TopToolBarArea)
 
         # --------------------------------------------------
         # Explicitly arrange the docks on the screen
@@ -1211,9 +1237,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.left_dock)
         self.tabifyDockWidget(self.right_dock, self.left_dock)
         
-        # 4. Add the Workspace dock to the TOP area. 
-        # Because we locked the corners above, "Top" now effectively means 
-        # "Top of the center column", sitting perfectly above our invisible central widget!
+        # 4. Add the Workspace dock to the TOP area.
         self.addDockWidget(Qt.TopDockWidgetArea, self.annotation_dock)
         
         # 5. Add the Annotation Gallery dock to the Bottom area
@@ -1222,32 +1246,40 @@ class MainWindow(QMainWindow):
         # 6. Add the Embedding Viewer dock next to the Annotation Gallery (under the Annotation workspace)
         # Place both viewer docks in the Bottom area and split them horizontally
         self.addDockWidget(Qt.BottomDockWidgetArea, self.embedding_viewer_dock)
-        
-        # 7. Place the Timer under the Confidence/Performance area and tabify it with Performance
-        # Timer is hidden by default.
-        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
-        # Tabify Performance and Timer so they share a tab group under Confidence
-        try:
-            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
-        except Exception:
-            pass
-
-        # 8. Shrink the default width of the side docks.
-        # This tells Qt to assign N pixels of width to the left side and right side,
-        # leaving the vast majority of the screen for your center column.
-        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
-        
-        # Give the Workspace dock the absolute maximum vertical space available
-        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
-        
-        # Split the two viewer docks (annotation gallery and embedding viewer) horizontally
         try:
             self.splitDockWidget(self.annotation_gallery_dock, self.embedding_viewer_dock, Qt.Horizontal)
             # Make them approximately equal width
             self.resizeDocks([self.annotation_gallery_dock, self.embedding_viewer_dock], [600, 600], Qt.Horizontal)
         except Exception:
-            # If splitting fails for any reason (e.g. docks not in same area), ignore silently
             pass
+
+        # 7. Place the MVAT Viewer under the Annotation Gallery (left bottom column)
+        try:
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.mvat_viewer_dock)
+            self.splitDockWidget(self.annotation_gallery_dock, self.mvat_viewer_dock, Qt.Vertical)
+        except Exception:
+            pass
+
+        # 8. Place the Camera Grid under the Embedding Viewer (right bottom column)
+        try:
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.camera_grid_dock)
+            self.splitDockWidget(self.embedding_viewer_dock, self.camera_grid_dock, Qt.Vertical)
+        except Exception:
+            pass
+
+        # 9. Place the Timer under the Confidence/Performance area and tabify it with Performance
+        # Timer is hidden by default.
+        self.addDockWidget(Qt.RightDockWidgetArea, self.timer_dock)
+        try:
+            self.tabifyDockWidget(self.performance_dock, self.timer_dock)
+        except Exception:
+            pass
+
+        # 10. Shrink the default width of the side docks.
+        self.resizeDocks([self.left_dock, self.right_dock], [800, 800], Qt.Horizontal)
+        
+        # Give the Workspace dock the absolute maximum vertical space available
+        self.resizeDocks([self.annotation_dock], [2000], Qt.Vertical)
         
         # --------------------------------------------------
         # Enable drag and drop
@@ -1291,13 +1323,17 @@ class MainWindow(QMainWindow):
         self.annotation_window.annotationDeleted.connect(self.label_window.update_tooltips)
 
         self.annotation_window.annotationCreated.connect(self.annotation_viewer_window.on_annotation_created)
+        self.annotation_window.annotationsCreated.connect(self.annotation_viewer_window.on_annotations_created)
         self.annotation_window.annotationDeleted.connect(self.annotation_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationsDeleted.connect(self.annotation_viewer_window.on_annotations_deleted)
         self.annotation_window.annotationModified.connect(self.annotation_viewer_window.on_annotation_modified)
 
         self.annotation_window.annotationCreated.connect(self.embedding_viewer_window.on_annotation_created)
+        self.annotation_window.annotationsCreated.connect(self.embedding_viewer_window.on_annotations_created)
         self.annotation_window.annotationDeleted.connect(self.embedding_viewer_window.on_annotation_deleted)
+        self.annotation_window.annotationsDeleted.connect(self.embedding_viewer_window.on_annotations_deleted)
         self.annotation_window.annotationModified.connect(self.embedding_viewer_window.on_annotation_modified)
-
+        
         # ---------------------------------------------------------------------
         # Annotation label changes -> update viewers
         # - When an annotation's label is changed, both gallery and embedding
@@ -1558,9 +1594,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensure special windows (explorer, mvat) and Performance Window are closed when the main window closes."""
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
+        
+        if hasattr(self, 'mvat_manager') and self.mvat_manager:
+            self.mvat_manager.cleanup()
         
         # Stop timer threads properly
         if hasattr(self, 'timer_window') and self.timer_window:
@@ -1590,8 +1626,8 @@ class MainWindow(QMainWindow):
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
-            # Accept if any of the files is a JSON file
-            if any(file_name.lower().endswith('.json') for file_name in file_names):
+            # Accept if any of the files is a project file (.json or .bin)
+            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragEnterEvent(event)
@@ -1604,8 +1640,8 @@ class MainWindow(QMainWindow):
         file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
         if file_names:
-            # Check if a single JSON file was dropped
-            if len(file_names) == 1 and file_names[0].lower().endswith('.json'):
+            # Check if a single project file (.json or .bin) was dropped
+            if len(file_names) == 1 and file_names[0].lower().endswith(('.json', '.bin')):
                 # Open as a project file
                 path = file_names[0]
                 self.open_project_dialog.file_path_edit.setText(path)
@@ -1624,8 +1660,8 @@ class MainWindow(QMainWindow):
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
-            # Accept if any of the files is a JSON file
-            if any(file_name.lower().endswith('.json') for file_name in file_names):
+            # Accept if any of the files is a project file (.json or .bin)
+            if any(file_name.lower().endswith(('.json', '.bin')) for file_name in file_names):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragMoveEvent(event)
@@ -2996,38 +3032,6 @@ class MainWindow(QMainWindow):
         """
         # SelectionManager handles all selection syncing automatically
         pass
-        
-    def open_mvat_window(self):
-        """Open the Multi-View Annotation Tool (MVAT) window."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening MVAT.")
-            return
-        
-        try:
-            # Create and show the MVAT window (modeless - doesn't block main window)
-            # Create a new instance each time to ensure fresh state
-            self.mvat_window = MVATWindow(self)
-            self.mvat_window.show()
-            self.mvat_window.activateWindow()
-            self.mvat_window.raise_()
-            
-        except ImportError as e:
-            QMessageBox.warning(self,
-                                "MVAT Unavailable",
-                                "MVAT requires PyVista and PyVistaQt.\n\n"
-                                "Install with: pip install pyvista pyvistaqt")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
-            
-    def close_mvat_window(self):
-        """Handle the MVAT window being closed."""
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
-            self.mvat_window = None
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""

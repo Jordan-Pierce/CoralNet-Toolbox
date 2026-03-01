@@ -76,29 +76,47 @@ class CameraRay:
         self.has_accurate_depth = has_accurate_depth
         self.pixel_coord = pixel_coord
         self.source_camera = source_camera
+        # Visualized start/end points (may be offset slightly to avoid
+        # coincident geometry with the viewer camera and near-plane clipping).
+        # These are computed by factory methods; default to the raw values.
+        self.visual_origin = self.origin.copy()
+        self.visual_terminal = self.terminal_point.copy()
         
     @classmethod
-    def from_pixel_and_camera(cls, 
-                              pixel_xy: Tuple[int, int], 
-                              camera: 'Camera', 
-                              depth: Optional[float] = None,
-                              default_depth: float = 10.0) -> 'CameraRay':
-        """
-        Create a ray from a 2D pixel coordinate through a camera.
+    def from_pixel_and_camera(cls, pixel_xy: Tuple[int, int], camera: 'Camera', 
+                              depth: Optional[float] = None, default_depth: float = 10.0) -> 'CameraRay':
         
-        If depth is provided (e.g., from z-channel), the terminal point is calculated
-        precisely using camera.unproject(). Otherwise, a default depth is used to
-        estimate the terminal point.
-        
-        Args:
-            pixel_xy: 2D pixel coordinate (u, v) in image space.
-            camera: Camera object with intrinsics and extrinsics.
-            depth: Optional depth value at this pixel (from z-channel).
-            default_depth: Fallback depth to use if depth is None.
+        # --- ORTHOGRAPHIC RAYS ---
+        if getattr(camera, 'is_orthographic', False):
+            # ALWAYS use unproject to fetch actual DEM elevation natively,
+            # completely bypassing the 'depth' arg from the UI.
+            terminal_point = camera.unproject(pixel_xy)
+            has_accurate_depth = False
             
-        Returns:
-            CameraRay: A new ray object.
-        """
+            if terminal_point is not None:
+                has_accurate_depth = True
+            else:
+                # Extreme fallback if DEM yields NaN
+                pixel_hom = np.array([pixel_xy, pixel_xy, 1.0], dtype=np.float64)
+                world_xy = (camera.transform_matrix @ pixel_hom).flatten()
+                terminal_point = np.array([float(world_xy), float(world_xy), 0.0], dtype=np.float64)
+            
+            direction = np.array([0.0, 0.0, -1.0])
+            origin = terminal_point + np.array([0.0, 0.0, 1000.0]) 
+            
+            ray = cls(
+                origin=origin,
+                direction=direction,
+                terminal_point=terminal_point,
+                has_accurate_depth=has_accurate_depth,
+                pixel_coord=pixel_xy,
+                source_camera=camera
+            )
+            ray.visual_origin = origin.copy()
+            ray.visual_terminal = terminal_point.copy()
+            return ray
+        
+        # EXISTING: Perspective camera logic
         # Camera origin is the optical center in world coordinates
         origin = camera.position.copy()
         
@@ -131,7 +149,7 @@ class CameraRay:
             # Fallback to camera's forward direction
             direction = camera.R.T @ np.array([0, 0, 1])
             
-        return cls(
+        ray = cls(
             origin=origin,
             direction=direction,
             terminal_point=terminal_point,
@@ -139,6 +157,12 @@ class CameraRay:
             pixel_coord=pixel_xy,
             source_camera=camera
         )
+
+        # Visual start/end default to the true geometry (no offset).
+        ray.visual_origin = ray.origin.copy()
+        ray.visual_terminal = ray.terminal_point.copy()
+
+        return ray
     
     @classmethod
     def from_world_point_and_camera(cls, 
@@ -161,6 +185,25 @@ class CameraRay:
         # from highlighted cameras should use solid or dashed line styling
         # based on depth accuracy at the projected point.
         """
+        # BRANCH: Orthographic camera
+        if getattr(camera, 'is_orthographic', False):
+            world_point = np.asarray(world_point, dtype=np.float64)
+            direction = np.array([0.0, 0.0, -1.0])
+            origin = world_point + np.array([0.0, 0.0, 1000.0])
+            
+            ray = cls(
+                origin=origin,
+                direction=direction,
+                terminal_point=world_point,
+                has_accurate_depth=True,
+                pixel_coord=None,
+                source_camera=camera
+            )
+            ray.visual_origin = origin.copy()
+            ray.visual_terminal = world_point.copy()
+            return ray
+        
+        # EXISTING: Perspective camera logic
         origin = camera.position.copy()
         world_point = np.asarray(world_point, dtype=np.float64)
         
@@ -173,7 +216,7 @@ class CameraRay:
             # Fallback to camera's forward direction
             direction = camera.R.T @ np.array([0, 0, 1])
             
-        return cls(
+        ray = cls(
             origin=origin,
             direction=direction,
             terminal_point=world_point,
@@ -181,6 +224,12 @@ class CameraRay:
             pixel_coord=None,  # Not originating from a pixel
             source_camera=camera
         )
+
+        # Visual start/end default to the true geometry (no offset).
+        ray.visual_origin = ray.origin.copy()
+        ray.visual_terminal = ray.terminal_point.copy()
+
+        return ray
     
     def cast_on_mesh(self, mesh) -> Optional[np.ndarray]:
         """
@@ -282,7 +331,10 @@ class CameraRay:
         Returns:
             Tuple of (start_point, end_point) as numpy arrays.
         """
-        return (self.origin.copy(), self.terminal_point.copy())
+        # Return the visual segment by default (prevents near-plane clipping
+        # when the viewer matches a camera). If raw geometry is required,
+        # use .origin and .terminal_point directly.
+        return (self.get_visual_start(), self.get_visual_end())
     
     def to_pyvista_line(self):
         """
@@ -291,7 +343,9 @@ class CameraRay:
         Returns:
             pyvista.Line or None: Line mesh if PyVista available.
         """            
-        return pv.Line(self.origin.tolist(), self.terminal_point.tolist())
+        start = self.get_visual_start().tolist()
+        end = self.get_visual_end().tolist()
+        return pv.Line(start, end)
     
     def to_pyvista_arrow(self, scale: float = 0.1):
         """
@@ -303,11 +357,22 @@ class CameraRay:
         Returns:
             pyvista.Arrow or None: Arrow mesh if PyVista available.
         """
+        # Arrow should originate from the visual start so it is visible
+        # when the viewer is positioned at the camera.
+        start = self.get_visual_start().tolist()
         return pv.Arrow(
-            start=self.origin.tolist(),
+            start=start,
             direction=self.direction.tolist(),
             scale=scale
         )
+
+    def get_visual_start(self) -> np.ndarray:
+        """Return the visualized start point for rendering."""
+        return self.visual_origin.copy() if hasattr(self, 'visual_origin') else self.origin.copy()
+
+    def get_visual_end(self) -> np.ndarray:
+        """Return the visualized end point for rendering."""
+        return self.visual_terminal.copy() if hasattr(self, 'visual_terminal') else self.terminal_point.copy()
     
     def __repr__(self) -> str:
         """String representation of the ray."""
@@ -369,8 +434,9 @@ class BatchedRayManager:
                 
             # Add origin and terminal points
             pt_idx = len(points)
-            points.append(ray.origin.tolist())
-            points.append(ray.terminal_point.tolist())
+            # Use visual start/end to avoid near-plane clipping / coincidence
+            points.append(ray.get_visual_start().tolist())
+            points.append(ray.get_visual_end().tolist())
             
             # Add line connectivity
             lines.extend([2, pt_idx, pt_idx + 1])
@@ -445,8 +511,8 @@ class BatchedRayManager:
         for i, (ray, color) in enumerate(rays_with_colors):
             if ray is not None:
                 pt_idx = i * 2
-                points[pt_idx] = ray.origin
-                points[pt_idx + 1] = ray.terminal_point
+                points[pt_idx] = ray.get_visual_start()
+                points[pt_idx + 1] = ray.get_visual_end()
 
             # Normalize/convert color to 0-1 float tuple (store per-endpoint)
             if isinstance(color, tuple) and any(c > 1 for c in color[:3]):

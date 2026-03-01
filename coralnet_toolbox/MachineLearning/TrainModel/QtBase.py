@@ -838,7 +838,9 @@ class Base(QDialog):
         Handle the OK button click event.
         """
         self.train_model()
-        # Don't call super().accept() here, call it in on_training_completed
+        # Close the dialog immediately after starting training so the UI is free.
+        # The training continues in a background thread and will emit completion/error signals.
+        super().accept()
 
     def get_parameters(self):
         """

@@ -678,6 +678,8 @@ class BatchInferenceDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
             self.cleanup()
+            
+        self.accept()  # Close the dialog after applying
 
     def batch_inference(self):
         """

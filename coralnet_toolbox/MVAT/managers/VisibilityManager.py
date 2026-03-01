@@ -259,10 +259,6 @@ class VisibilityManager:
         
         return results
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # PyTorch Implementation (CUDA & CPU)
-    # ------------------------------------------------------------------------------------------------------------------
-
     @staticmethod
     def _compute_torch(points_np, ids_np, K_np, R_np, t_np, width, height, device, compute_depth_map: bool = True):
         """
@@ -375,10 +371,6 @@ class VisibilityManager:
             'depth_map': depth_map_np
         }
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # NumPy Implementation (Legacy / Fallback)
-    # ------------------------------------------------------------------------------------------------------------------
-
     @staticmethod
     def _compute_numpy(points, ids, K, R, t, width, height, compute_depth_map: bool = True):
         """
@@ -447,4 +439,149 @@ class VisibilityManager:
             'index_map': index_map,
             'visible_indices': visible_indices,
             'depth_map': depth_map
+        }
+        
+    @classmethod
+    def compute_orthographic_visibility(cls, 
+                                        points_world: np.ndarray,
+                                        transform_matrix_inv: np.ndarray,
+                                        width: int,
+                                        height: int,
+                                        point_ids: np.ndarray = None) -> dict:
+        """
+        Compute visibility for orthographic camera using affine transform.
+        Groups points by [u,v] pixel, keeps highest Z per pixel.
+        """
+        start_time = time.time()
+        
+        if point_ids is None:
+            point_ids = np.arange(len(points_world), dtype=np.int32)
+
+        # 1. Prefer PyTorch (CUDA or CPU)
+        if HAS_TORCH:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            result = cls._compute_ortho_torch(points_world, point_ids, transform_matrix_inv, width, height, device)
+        else:
+            # 2. Fallback to highly optimized Vectorized NumPy
+            device = 'numpy'
+            result = cls._compute_ortho_numpy(points_world, point_ids, transform_matrix_inv, width, height)
+
+        compute_time = time.time() - start_time
+        visible_count = len(result['visible_indices'])
+        print(
+            f"⏱️ Computed orthographic index map ({height}x{width}) for {len(points_world):,} points using "
+            f"{device.upper()}: {visible_count:,} visible in {compute_time:.3f}s"
+        )
+        
+        return result
+
+    @staticmethod
+    def _compute_ortho_torch(points_np, ids_np, transform_inv_np, width, height, device):
+        """PyTorch-accelerated orthographic visibility computation."""
+        # 1. Transfer to device
+        points = torch.as_tensor(points_np, dtype=torch.float32, device=device)
+        p_ids = torch.as_tensor(ids_np, dtype=torch.int32, device=device)
+        T_inv = torch.as_tensor(transform_inv_np, dtype=torch.float32, device=device)
+
+        # 2. Extract X, Y, Z and make X, Y homogeneous
+        # points[:, :2] gets X, Y. We add a column of 1s for affine transform.
+        N = points.shape[0]
+        points_xy_hom = torch.cat([points[:, :2], torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
+        z = points[:, 2]
+
+        # 3. Apply inverse affine transform: pixels_hom = T_inv @ points_hom.T
+        pixels_hom = torch.matmul(T_inv, points_xy_hom.T).T
+        
+        u = pixels_hom[:, 0]
+        v = pixels_hom[:, 1]
+
+        # 4. Bounds Check & Integer Cast
+        u_idx = u.round().long()
+        v_idx = v.round().long()
+
+        valid_mask = (u_idx >= 0) & (u_idx < width) & (v_idx >= 0) & (v_idx < height)
+
+        valid_u = u_idx[valid_mask]
+        valid_v = v_idx[valid_mask]
+        valid_z = z[valid_mask]
+        valid_ids = p_ids[valid_mask]
+
+        if valid_ids.numel() == 0:
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32)
+            }
+
+        # 5. Z-Buffering (Scatter Reduce for Max Z)
+        flat_indices = valid_v * width + valid_u
+        
+        # Initialize with -infinity (we want the highest Z to win)
+        z_buffer = torch.full((height * width,), float('-inf'), device=device, dtype=torch.float32)
+
+        try:
+            # reduce="amax" gets the maximum Z value per pixel
+            z_buffer.scatter_reduce_(0, flat_indices, valid_z, reduce="amax", include_self=True)
+        except AttributeError:
+            # Fallback for old PyTorch versions
+            return VisibilityManager._compute_ortho_numpy(points_np, ids_np, transform_inv_np, width, height)
+
+        max_z_at_pixel = z_buffer[flat_indices]
+        is_closest = torch.abs(valid_z - max_z_at_pixel) < 1e-4
+
+        final_pixel_indices = flat_indices[is_closest]
+        final_ids = valid_ids[is_closest]
+
+        # 6. Construct Outputs
+        index_map_tensor = torch.full((height * width,), -1, device=device, dtype=torch.int32)
+        index_map_tensor[final_pixel_indices] = final_ids
+        index_map_2d = index_map_tensor.view(height, width)
+
+        visible_indices = torch.unique(final_ids, sorted=True)
+
+        return {
+            'index_map': index_map_2d.cpu().numpy(),
+            'visible_indices': visible_indices.cpu().numpy()
+        }
+
+    @staticmethod
+    def _compute_ortho_numpy(points, ids, transform_inv, width, height):
+        """Vectorized NumPy fallback for orthographic visibility."""
+        N = len(points)
+        points_hom = np.column_stack([points[:, 0], points[:, 1], np.ones(N)])
+        pixels_hom = (transform_inv @ points_hom.T).T
+        
+        u = np.rint(pixels_hom[:, 0]).astype(np.int32)
+        v = np.rint(pixels_hom[:, 1]).astype(np.int32)
+        z = points[:, 2]
+
+        valid_mask = (u >= 0) & (u < width) & (v >= 0) & (v < height)
+        
+        u_valid = u[valid_mask]
+        v_valid = v[valid_mask]
+        z_valid = z[valid_mask]
+        id_valid = ids[valid_mask]
+
+        if len(id_valid) == 0:
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32)
+            }
+
+        # Vectorized Z-Buffering (The Sorting Trick)
+        # Sort ASCENDING by Z. Since index_map[y, x] = id overwrites previous values,
+        # the highest Z (which comes last in ascending order) will "win" the pixel.
+        sort_order = np.argsort(z_valid)
+
+        u_sorted = u_valid[sort_order]
+        v_sorted = v_valid[sort_order]
+        id_sorted = id_valid[sort_order]
+
+        index_map = np.full((height, width), -1, dtype=np.int32)
+        index_map[v_sorted, u_sorted] = id_sorted
+
+        visible_indices = np.unique(index_map[index_map != -1])
+
+        return {
+            'index_map': index_map,
+            'visible_indices': visible_indices
         }

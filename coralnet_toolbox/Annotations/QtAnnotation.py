@@ -6,10 +6,11 @@ import cv2
 import math
 import numpy as np
 
-from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty
-from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
-                             QGraphicsScene, QGraphicsItemGroup)
+from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPainter
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, pyqtProperty, QRectF
+from PyQt5.QtWidgets import (QMessageBox, QGraphicsRectItem, QGraphicsItem,
+                             QGraphicsScene, QGraphicsItemGroup, QGraphicsSimpleTextItem, 
+                             QGraphicsPathItem)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -23,6 +24,59 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class FloatingTagItem(QGraphicsSimpleTextItem):
+    def __init__(self, text, bg_color, parent=None):
+        super().__init__(text, parent)
+        self.bg_color = QColor(bg_color)
+        
+        # Ensure the background is fully opaque for readability
+        self.bg_color.setAlpha(255) 
+        
+        # --- SMART TEXT CONTRAST ---
+        # Calculate how bright the label color is (0.0 to 1.0)
+        luminance = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+        
+        # If the background is bright, use black text. If it's dark, use white text!
+        text_color = QColor(self.bg_color)
+        text_color = text_color.darker(200) if luminance > 0.5 else text_color.lighter(200)
+        
+        # Make the text darker than the background color for contrast
+        text_color.setAlpha(255)
+        self.setBrush(QBrush(text_color))
+        
+        # Set a crisp, modern font
+        font = QFont("Arial", 5)
+        self.setFont(font)
+        
+        # THE MAGIC FLAG: Keeps the tag readable at any zoom level
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+        
+        # Force it to render on top of everything else
+        self.setZValue(20)
+
+    def paint(self, painter, option, widget):
+        """Override paint to draw a custom rounded background behind the text."""
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Get the bounding box of the text itself
+        text_rect = self.boundingRect()
+        
+        # Add a few pixels of padding around the text
+        pad_x, pad_y = 3, 1
+        bg_rect = QRectF(text_rect.x() - pad_x, 
+                         text_rect.y() - pad_y, 
+                         text_rect.width() + pad_x * 2, 
+                         text_rect.height() + pad_y * 2)
+        
+        # Draw the rounded pill/badge background
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self.bg_color))
+        painter.drawRoundedRect(bg_rect, 4, 4)  # 4px corner radius
+        
+        # Draw the actual text on top
+        super().paint(painter, option, widget)
+        
+        
 class Annotation(QObject):
     selected = pyqtSignal(object)
     colorChanged = pyqtSignal(QColor)
@@ -74,10 +128,10 @@ class Annotation(QObject):
         self.animation_manager = None
         self.is_animating = False
         
-        # Animation properties
-        self._pulse_alpha = 128  # Starting alpha for pulsing (semi-transparent)
-        self._pulse_direction = 1  # 1 for increasing alpha, -1 for decreasing
-
+        # Modern Animation properties (Marching Ants)
+        self._dash_offset = 0.0
+        self._dash_speed = 1.0  # Pixels to move per animation tick
+        
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -668,16 +722,20 @@ class Annotation(QObject):
     def select(self):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
-        self.update_graphics_item()
-        # Start animation
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setVisible(True)
+            
+        self._update_pen_styles()
         self.animate()
 
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
-        # Stop animation
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setVisible(False)
+            
         self.deanimate()
-        self.update_graphics_item()
+        self._update_pen_styles()
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
@@ -704,19 +762,17 @@ class Annotation(QObject):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the annotation and add them to the scene as a group."""
-        # Remove old group if it exists
         if self.graphics_item_group and self.graphics_item_group.scene():
             self.graphics_item_group.scene().removeItem(self.graphics_item_group)
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
+            
         self.graphics_item_group = QGraphicsItemGroup()
 
-        # The subclass has already created self.graphics_item.
-        # This parent method is now only responsible for styling and grouping it.
         if self.graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            # Only set brush and pen if the item supports them (e.g., shape items, not pixmaps)
+            
             if hasattr(self.graphics_item, 'setBrush'):
                 self.graphics_item.setBrush(QBrush(color))
             if hasattr(self.graphics_item, 'setPen'):
@@ -725,13 +781,28 @@ class Annotation(QObject):
             self.graphics_item.setData(0, self.id)
             self.graphics_item_group.addToGroup(self.graphics_item)
 
-        # Create and group the helper graphics (center, bbox, etc.)
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
+                                               
+        # --- Add the Floating Class Tag ---
+        tag_text = self.label.short_label_code
+        self.tag_item = FloatingTagItem(tag_text, self.label.color)
         
-        # Add the final group to the scene
+        # Position it just above the top-left corner
+        top_left = self.get_bounding_box_top_left()
+        
+        # Note: Because the tag ignores transformations, we don't need a huge offset. 
+        # A tiny visual bump places it right on the perimeter.
+        self.tag_item.setPos(top_left.x(), top_left.y()) 
+        
+        # Clutter Control (Only show when selected)
+        self.tag_item.setVisible(self.is_selected)
+        
+        self.graphics_item_group.addToGroup(self.tag_item)
+        # ---------------------------------------
+        
         scene.addItem(self.graphics_item_group)
         
     def is_graphics_item_valid(self):
@@ -762,44 +833,6 @@ class Annotation(QObject):
         """
         self.animation_manager = manager
         
-    def tick_animation(self):
-        """
-        Perform one 'tick' of the animation.
-        This is the public entry point for the global manager.
-        """
-        # This just calls the existing private method that holds the logic
-        self._update_pulse_alpha()
-        
-    @pyqtProperty(int)  # Changed to int for QColor compatibility
-    def pulse_alpha(self):
-        """Get the current pulse alpha for animation."""
-        return self._pulse_alpha
-    
-    @pulse_alpha.setter
-    def pulse_alpha(self, value):
-        """Set the pulse alpha and update pen styles."""
-        self._pulse_alpha = int(max(0, min(255, value)))  # Clamp to 0-255 and convert to int
-        self._update_pen_styles()
-    
-    def _update_pulse_alpha(self):
-        """Update the pulse alpha for a heartbeat-like effect: quick rise, slow fall."""
-        if self._pulse_direction == 1:
-            # Quick increase (systole-like)
-            self._pulse_alpha += 30
-        else:
-            # Slow decrease (diastole-like)
-            self._pulse_alpha -= 10  # <-- Corrected from += to -=
-
-        # Check direction before clamping to ensure smooth transition
-        if self._pulse_alpha >= 255:
-            self._pulse_alpha = 255  # Clamp to max
-            self._pulse_direction = -1
-        elif self._pulse_alpha <= 50:
-            self._pulse_alpha = 50   # Clamp to min
-            self._pulse_direction = 1
-
-        self._update_pen_styles()
-    
     def animate(self, force=False):
         """
         Start the pulsing animation by registering with the global timer.
@@ -811,46 +844,80 @@ class Annotation(QObject):
             self.is_animating = True
             if self.animation_manager:
                 self.animation_manager.register_animating_object(self)
+        
+    def tick_animation(self):
+        """
+        Perform one 'tick' of the animation.
+        This is the public entry point for the global manager.
+        """
+        self._update_dash_offset()
+        
+    @pyqtProperty(float)
+    def dash_offset(self):
+        """Get the current dash offset for animation."""
+        return self._dash_offset
     
+    @dash_offset.setter
+    def dash_offset(self, value):
+        """Set the dash offset and update pen styles."""
+        self._dash_offset = value
+        self._update_pen_styles()
+    
+    def _update_dash_offset(self):
+        """Increment the dash offset to create the marching ants effect."""
+        self._dash_offset += self._dash_speed
+        
+        # Reset the offset once it completes a full pattern cycle to prevent float overflow.
+        # If our pattern is [4, 4] (4px line, 4px gap), the cycle length is 8.
+        if self._dash_offset >= 8.0:
+            self._dash_offset -= 8.0
+
+        self._update_pen_styles()
+
     def deanimate(self):
-        """Stop the pulsing animation by de-registering from the global timer."""
+        """Stop the animation by de-registering from the global timer."""
         self.is_animating = False
         if self.animation_manager:
             self.animation_manager.unregister_animating_object(self)
             
-        self._pulse_alpha = 128  # Reset to default
+        self._dash_offset = 0.0  # Reset to default
         self.update_graphics_item()  # Apply the default style
     
     def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""
         if self.is_selected or self.is_animating:
             # Use same color if verified, black if not verified
-            if self.verified:
-                pen_color = QColor(base_color)  # Create a copy
-            else:
-                pen_color = QColor(0, 0, 0)  # Black
+            pen_color = QColor(base_color) if self.verified else QColor(0, 0, 0)
             
-            pen_color.setAlpha(self._pulse_alpha)  # Apply pulsing alpha for animation
+            # The line stays fully opaque so you never lose contrast
+            pen_color.setAlpha(255)
             
-            pen = QPen(pen_color.lighter(150), 4)  # Changed to lighter for brighter selected appearance
-            pen.setStyle(Qt.DotLine)  # Predefined dotted line
+            # Create a thicker, lighter pen for the selected state
+            pen = QPen(pen_color.lighter(130), 2.5) 
+            
+            # Apply the Marching Ants pattern
+            pen.setDashPattern([4, 4])  # 4 pixels painted, 4 pixels empty gap
+            pen.setDashOffset(self._dash_offset)
+            
+            # Use flat caps so the dashes butt up neatly against each other
+            pen.setCapStyle(Qt.FlatCap)
+            pen.setJoinStyle(Qt.MiterJoin)
             pen.setCosmetic(True)
             return pen
         else:
-            # Use label color with solid line for unselected items, always opaque
+            # Modernized unselected state: Solid opaque line
             pen_color = QColor(base_color)
-            pen_color.setAlpha(255)  # Pen should always be fully opaque
-            pen = QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
+            pen_color.setAlpha(255)  
+            
+            pen = QPen(pen_color, 2, Qt.SolidLine) 
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
             pen.setCosmetic(True)
             return pen
     
     def _update_pen_styles(self):
         """Update pen styles with current pulse alpha."""
-        # Only update if selected OR if animation is running (for forced animation)
-        if not self.is_selected and not self.is_animating:
-            return
-            
-        color = QColor(self.label.color).lighter(150) if not self.verified else QColor(self.label.color)  
+        color = QColor(self.label.color)
         pen = self._create_pen(color)
         
         # Update all graphics items with the pen
@@ -863,7 +930,6 @@ class Annotation(QObject):
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
-        # First safely check if the center_graphics_item is still valid
         try:
             has_scene = self.center_graphics_item and self.center_graphics_item.scene()
         except RuntimeError:
@@ -873,14 +939,31 @@ class Annotation(QObject):
         if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
     
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-    
-        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 4, center_xy.y() - 4, 8, 8)
-        self.center_graphics_item.setBrush(color)
-    
-        # Use the consolidated pen creation method
-        self.center_graphics_item.setPen(self._create_pen(color))
+        # Create an open-center crosshair using QPainterPath
+        path = QPainterPath()
+        gap = 1     # Empty space from the center pixel
+        length = 3  # Length of each crosshair arm
+        
+        # Horizontal left arm
+        path.moveTo(center_xy.x() - gap - length, center_xy.y())
+        path.lineTo(center_xy.x() - gap, center_xy.y())
+        # Horizontal right arm
+        path.moveTo(center_xy.x() + gap, center_xy.y())
+        path.lineTo(center_xy.x() + gap + length, center_xy.y())
+        
+        # Vertical top arm
+        path.moveTo(center_xy.x(), center_xy.y() - gap - length)
+        path.lineTo(center_xy.x(), center_xy.y() - gap)
+        # Vertical bottom arm
+        path.moveTo(center_xy.x(), center_xy.y() + gap)
+        path.lineTo(center_xy.x(), center_xy.y() + gap + length)
+        
+        self.center_graphics_item = QGraphicsPathItem(path)
+        
+        # Use a crisp white pen for maximum visibility without obscuring data
+        crosshair_pen = QPen(Qt.white, 1.5, Qt.SolidLine)
+        crosshair_pen.setCosmetic(True)
+        self.center_graphics_item.setPen(crosshair_pen)
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
@@ -888,7 +971,6 @@ class Annotation(QObject):
             scene.addItem(self.center_graphics_item)
     
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene, add_to_group=False):
-        """Create a graphical item representing the annotation's bounding box."""
         try:
             has_scene = self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene()
         except RuntimeError:
@@ -898,17 +980,22 @@ class Annotation(QObject):
         if has_scene:
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
     
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-    
         self.bounding_box_graphics_item = QGraphicsRectItem(
             top_left.x(), top_left.y(),
             bottom_right.x() - top_left.x(),
             bottom_right.y() - top_left.y()
         )
     
-        # Use the consolidated pen creation method
-        self.bounding_box_graphics_item.setPen(self._create_pen(color))
+        # Make the BBox fill totally transparent
+        self.bounding_box_graphics_item.setBrush(QBrush(Qt.transparent))
+        
+        # Use a very subtle, faint white dashed line
+        subtle_pen = QPen(QColor(255, 255, 255, 150), 1, Qt.DashLine)
+        subtle_pen.setCosmetic(True)
+        self.bounding_box_graphics_item.setPen(subtle_pen)
+        
+        # Only make it visible if the item is actively selected
+        self.bounding_box_graphics_item.setVisible(self.is_selected)
     
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
@@ -981,15 +1068,23 @@ class Annotation(QObject):
 
     def update_center_graphics_item(self, center_xy):
         """Update the position and appearance of the center graphics item."""
-        if self.center_graphics_item:
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-    
-            self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-            self.center_graphics_item.setBrush(color)
-    
-            # Use the consolidated pen creation method
-            self.center_graphics_item.setPen(self._create_pen(color))
+        if self.center_graphics_item and isinstance(self.center_graphics_item, QGraphicsPathItem):
+            path = QPainterPath()
+            gap = 1
+            length = 3
+            
+            # Re-draw paths at the new coordinates
+            path.moveTo(center_xy.x() - gap - length, center_xy.y())
+            path.lineTo(center_xy.x() - gap, center_xy.y())
+            path.moveTo(center_xy.x() + gap, center_xy.y())
+            path.lineTo(center_xy.x() + gap + length, center_xy.y())
+            
+            path.moveTo(center_xy.x(), center_xy.y() - gap - length)
+            path.lineTo(center_xy.x(), center_xy.y() - gap)
+            path.moveTo(center_xy.x(), center_xy.y() + gap)
+            path.lineTo(center_xy.x(), center_xy.y() + gap + length)
+            
+            self.center_graphics_item.setPath(path)
     
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""

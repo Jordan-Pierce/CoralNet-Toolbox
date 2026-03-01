@@ -1,6 +1,9 @@
 import warnings
 
 import ujson as json
+import os
+import pickle
+import time
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel,
@@ -74,9 +77,9 @@ class SaveProject(QDialog):
         """Open a file dialog to select the save file path."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
-                                                   "Save Project JSON",
+                                                   "Save Project",
                                                    "",
-                                                   "JSON Files (*.json);;All Files (*)",
+                                                   "Binary Files (*.bin);;JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             self.file_path_edit.setText(file_path)
@@ -93,24 +96,42 @@ class SaveProject(QDialog):
         """Save the project data to a JSON file."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        start_time = time.perf_counter()
 
         try:
             project_data = {
                 'images': self.get_images(),
                 'labels': self.get_labels(),
                 'annotations': self.get_annotations()
-                # Note: Timer information removed for now
             }
 
-            with open(file_path, 'w') as file:
-                json.dump(project_data, file, indent=4)
+            # If no extension provided, default to binary
+            root, ext = os.path.splitext(file_path)
+            if not ext:
+                file_path = f"{file_path}.bin"
+                ext = '.bin'
+
+            # Write binary if .bin, otherwise write JSON
+            if ext.lower() == '.bin':
+                with open(file_path, 'wb') as file:
+                    pickle.dump(project_data, file, protocol=pickle.HIGHEST_PROTOCOL)
+            else:
+                with open(file_path, 'w') as file:
+                    json.dump(project_data, file, indent=4)
 
             # Update current project path
             self.current_project_path = file_path
 
+            elapsed = time.perf_counter() - start_time
+            elapsed_msg = f"Project has been successfully saved ({elapsed:.2f}s)."
+
             QMessageBox.information(self.annotation_window,
                                     "Project Saved",
-                                    "Project has been successfully saved.")
+                                    elapsed_msg)
+            try:
+                self.main_window.status_bar.showMessage(elapsed_msg, 5000)
+            except Exception:
+                pass
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
@@ -126,6 +147,11 @@ class SaveProject(QDialog):
 
     def get_images(self):
         """Get the list of image objects, including paths, states, and work areas."""
+        # Show status message
+        try:
+            self.main_window.status_bar.showMessage("Exporting images...", 0)
+        except Exception:
+            pass
         # Start the progress bar
         total_images = len(self.image_window.raster_manager.image_paths)
         progress_bar = ProgressBar(self.label_window, "Exporting Image Data")
@@ -152,11 +178,19 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Export complete.", 3000)
+            except Exception:
+                pass
 
         return export_images
 
     def get_labels(self):
         """Get the list of labels to export."""
+        try:
+            self.main_window.status_bar.showMessage("Exporting labels...", 0)
+        except Exception:
+            pass
         # Start the progress bar
         total_labels = len(self.label_window.labels)
         progress_bar = ProgressBar(self.label_window, "Exporting Labels")
@@ -179,11 +213,19 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Export complete.", 3000)
+            except Exception:
+                pass
 
         return export_labels
 
     def get_annotations(self):
         """Get the annotations to export."""
+        try:
+            self.main_window.status_bar.showMessage("Exporting annotations...", 0)
+        except Exception:
+            pass
         # Combine vector annotations with any existing mask annotations
         all_annotations = list(self.annotation_window.annotations_dict.values())
         for image_path in self.image_window.raster_manager.image_paths:
@@ -237,6 +279,10 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            try:
+                self.main_window.status_bar.showMessage("Export complete.", 3000)
+            except Exception:
+                pass
 
         return export_annotations
 

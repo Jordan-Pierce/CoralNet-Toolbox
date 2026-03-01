@@ -1,11 +1,12 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import datetime
 import gc
 from pathlib import Path
 
+from torch.cuda import empty_cache
+
+from ultralytics import YOLO
 import ultralytics.engine.validator as validator
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -14,12 +15,12 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
                              QSpinBox, QFormLayout, QComboBox,
                              QGroupBox, QLabel, QCheckBox, QDoubleSpinBox)
 
-from torch.cuda import empty_cache
-from ultralytics import YOLO
-
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -211,7 +212,7 @@ class Base(QDialog):
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(0)
         self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(8)
+        self.workers_spinbox.setValue(0)
         layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)

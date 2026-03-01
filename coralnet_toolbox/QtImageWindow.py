@@ -17,6 +17,7 @@ from coralnet_toolbox.Rasters import RasterTableModel
 
 from coralnet_toolbox.Z import ZImportDialog
 from coralnet_toolbox.Z import ZExportDialog
+from coralnet_toolbox.IO import ImportCameras
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -766,22 +767,20 @@ class ImageWindow(QWidget):
             
         # Update the annotations for the raster
         self.update_image_annotations(image_path)
-        
-    def update_image_annotations(self, image_path):
+            
+    def update_image_annotations(self, image_path, update_counts=True):
         """
         Update annotation information for a specific image.
         
         Args:
             image_path (str): Path to the image
+            update_counts (bool): Whether to update the annotation counts in the label window
         """
-        # Get the annotations for the image
         annotations = self.annotation_window.get_image_annotations(image_path)
-        
-        # Update the raster
         self.raster_manager.update_annotation_info(image_path, annotations)
         
-        # Update label counts
-        self.main_window.label_window.update_annotation_count()
+        if update_counts:
+            self.main_window.label_window.update_annotation_count()
         
     def update_current_image_annotations(self):
         """Update annotations for the currently selected image."""
@@ -1175,6 +1174,23 @@ class ImageWindow(QWidget):
             lambda: self.remove_z_channel_highlighted_images()
         )
 
+        # Cameras submenu (Import / Remove)
+        cameras_menu = context_menu.addMenu("Cameras...")
+
+        # Add import cameras action
+        import_cameras_action = cameras_menu.addAction(
+            f"Import Cameras for {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        import_cameras_action.triggered.connect(lambda: self._open_import_cameras_for_highlighted(highlighted_paths))
+
+        cameras_menu.addSeparator()
+
+        # Add remove cameras action
+        remove_cameras_action = cameras_menu.addAction(
+            f"Remove Cameras from {count} Highlighted Image{'s' if count > 1 else ''}"
+        )
+        remove_cameras_action.triggered.connect(lambda: self.remove_cameras_highlighted_images())
+
         context_menu.addSeparator()
 
         # Add delete actions
@@ -1187,6 +1203,28 @@ class ImageWindow(QWidget):
             lambda: self.delete_highlighted_images_annotations()
         )
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+
+    def _open_import_cameras_for_highlighted(self, highlighted_paths: list):
+        """
+        Open the Import Cameras dialog and set it to operate on the highlighted images.
+        """
+        if not highlighted_paths:
+            QMessageBox.warning(self, "No Images Selected", "Please highlight one or more images before importing cameras.")
+            return
+
+        # Use the main window's ImportCameras dialog instance if available
+        try:
+            dialog = self.main_window.import_cameras_dialog
+        except Exception:
+            dialog = None
+
+        if dialog is None:
+            # Fallback - instantiate a temporary dialog
+            dialog = ImportCameras(self.main_window)
+
+        # Provide the highlighted images to the dialog so it restricts matching
+        dialog.highlighted_images = highlighted_paths
+        dialog.exec_()
         
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
@@ -1417,6 +1455,55 @@ class ImageWindow(QWidget):
                 progress_bar.stop_progress()
                 progress_bar.close()
                 QApplication.restoreOverrideCursor()
+
+    def remove_cameras_highlighted_images(self):
+        """Remove camera intrinsics/extrinsics from the highlighted images."""
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        if not highlighted_paths:
+            return
+
+        count = len(highlighted_paths)
+        plural = 's' if count > 1 else ''
+        reply = QMessageBox.question(
+            self,
+            "Confirm Camera Parameter Removal",
+            f"Are you sure you want to remove cameras from {count} image{plural}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Removing Cameras")
+        progress_bar.show()
+        progress_bar.start_progress(len(highlighted_paths))
+
+        try:
+            removed_count = 0
+            for path in highlighted_paths:
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    raster.remove_intrinsics()
+                    raster.remove_extrinsics()
+                    # Notify raster manager/UI of update
+                    self.raster_manager.rasterUpdated.emit(path)
+                    removed_count += 1
+                progress_bar.update_progress()
+
+            # If current image is affected, refresh viewer tools
+            if self.selected_image_path in highlighted_paths:
+                self.annotation_window.update_scene()
+
+            QMessageBox.information(
+                self,
+                "Cameras Removed",
+                f"Cameras removed from {removed_count} image{plural}."
+            )
+        finally:
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
     
     def export_z_channel_highlighted_images(self):
         """Export z-channels from the highlighted images."""

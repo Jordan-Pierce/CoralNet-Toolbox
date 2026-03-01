@@ -181,7 +181,11 @@ class SelectionManager(QObject):
             
             # Sync to annotation viewer (if not the source)
             if source != 'gallery' and self._annotation_viewer:
-                self._annotation_viewer.render_selection_from_ids(self._selected_ids)
+                if self._selected_ids:
+                    # Isolate the selection so they are grouped together automatically
+                    self._annotation_viewer.isolate_and_select_from_ids(self._selected_ids)
+                else:
+                    self._annotation_viewer.clear_selection()
             
             # Sync to embedding viewer (if not the source)
             if source != 'embedding' and self._embedding_viewer:
@@ -324,7 +328,13 @@ class SelectionManager(QObject):
             
             # Sync to annotation viewer
             if self._annotation_viewer:
-                self._annotation_viewer.render_selection_from_ids(self._selected_ids)
+                if self._selected_ids:
+                    # Automatically isolate the canvas selections in the gallery
+                    self._annotation_viewer.isolate_and_select_from_ids(self._selected_ids)
+                else:
+                    # If selection is cleared on canvas, clear it here too 
+                    # (Note: double-click the gallery to exit isolation mode)
+                    self._annotation_viewer.clear_selection()
             
             # Sync to embedding viewer
             if self._embedding_viewer:
@@ -569,7 +579,10 @@ class SelectionManager(QObject):
             
             # Sync to annotation viewer
             if self._annotation_viewer:
-                self._annotation_viewer.render_selection_from_ids(self._selected_ids)
+                if self._selected_ids:
+                    self._annotation_viewer.isolate_and_select_from_ids(self._selected_ids)
+                else:
+                    self._annotation_viewer.clear_selection()
             
             # Sync to embedding viewer
             if self._embedding_viewer:

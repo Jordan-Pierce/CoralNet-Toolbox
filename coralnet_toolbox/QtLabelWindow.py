@@ -74,7 +74,7 @@ class LabelDisplay(QWidget):
 
         # --- 2. Animated Selection Indicator ---
         if self.label.is_selected:
-            pen_color = QColor(self.label.color).darker(150)
+            pen_color = QColor(self.label.color).darker(300)
             pen_color.setAlpha(self.label.pulse_alpha)
             pen = QPen(pen_color)
             pen.setWidthF(2.5)

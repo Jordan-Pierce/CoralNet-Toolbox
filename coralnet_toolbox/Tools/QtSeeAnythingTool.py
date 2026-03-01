@@ -199,6 +199,7 @@ class SeeAnythingTool(Tool):
         self.working_area.create_graphics(self.annotation_window.scene, 
                                           include_shadow=True, 
                                           image_rect=self.annotation_window.get_image_rect())
+        
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
         
@@ -292,7 +293,7 @@ class SeeAnythingTool(Tool):
             # Style the rectangle
             pen = QPen(QColor(color))
             pen.setCosmetic(True)
-            pen.setWidth(4)
+            pen.setWidth(2)
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)
 
