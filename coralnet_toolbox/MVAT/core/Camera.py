@@ -458,19 +458,12 @@ class OrthographicCamera(Camera):
     def __init__(self, raster):
         """
         Initialize orthographic camera from raster with DEM.
-
-        Args:
-            raster: A Raster object with transform_matrix and z_channel (DEM)
-
-        Raises:
-            ValueError: If transform_matrix is missing or singular
         """        
         # Core flag
         self.is_orthographic = True
         self._raster = raster
 
         # 1. ORTHOMOSAIC IMAGE PROPERTIES
-        # Dimensions ALWAYS match the full-res image (this is what the user clicks on)
         self.width = raster.width
         self.height = raster.height
 
@@ -494,7 +487,7 @@ class OrthographicCamera(Camera):
             # No need for dem_width, dem_height, or dem_transform.
             # The DEM is already resized to self.width x self.height by QtRaster.
 
-        # 4. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
+        # 3. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
         center_x, center_y = self.width / 2.0, self.height / 2.0
         world_center = self.transform_matrix @ np.array([center_x, center_y, 1.0])
         
@@ -506,11 +499,10 @@ class OrthographicCamera(Camera):
         else:
             z_avg = 0.0
             
-        # Position: take X,Y from transformed center and place camera high above average Z
-        self.position = np.array([float(world_center[0]), float(world_center[1]), float(z_avg + 1000.0)])
+        # Unpack world_center to avoid multidimensional array shape issues
+        self.position = np.array([world_center, world_center, z_avg + 1000.0])
 
-        # 5. COMPATIBILITY STUBS
-        # These allow OrthographicCamera to safely interact with perspective-only UI code
+        # 4. COMPATIBILITY STUBS
         self.K = np.eye(3)
         self.R = np.eye(3)
         self.t = np.array([0.0, 0.0, 0.0])
@@ -611,25 +603,22 @@ class OrthographicCamera(Camera):
             Z = 0.0
 
         return np.array([X, Y, Z])
-
+    
     def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
         """
         Determine if a 3D point is occluded based on the depth map (z_channel) of the camera.
-        
-        Args:
-            point_3d (np.ndarray): 3D point in world coordinates [x, y, z]
-            depth_threshold (float): Threshold for considering a point occluded
-
-        Returns:
-            bool: True if the point is occluded, False otherwise
         """    
         uv = self.project(point_3d.reshape(1, 3))
         if np.isnan(uv).any():
             return True
 
+        # Extract tuple properly
         u = int(np.clip(uv, 0, self.width - 1))
         v = int(np.clip(uv, 0, self.height - 1))
         
+        if self.z_channel is None:
+            return False
+            
         # Direct lookup (1:1 pixel mapping)
         Z_dem = self.z_channel[v, u]
         if np.isnan(Z_dem):
