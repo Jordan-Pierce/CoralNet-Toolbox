@@ -275,6 +275,7 @@ class MVATManager(QObject):
                         self.cameras[path] = Camera(raster)
                         valid_count += 1
                     except Exception:
+                        print(f"❌ Failed to load perspective camera {raster.basename}")
                         pass
         finally:
             try:
