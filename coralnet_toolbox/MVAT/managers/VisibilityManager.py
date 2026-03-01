@@ -485,7 +485,7 @@ class VisibilityManager:
 
         # 2. Extract X, Y, Z and make X, Y homogeneous
         # points[:, :2] gets X, Y. We add a column of 1s for affine transform.
-        N = points.shape
+        N = points.shape[0]
         points_xy_hom = torch.cat([points[:, :2], torch.ones((N, 1), dtype=torch.float32, device=device)], dim=1)
         z = points[:, 2]
 

@@ -586,8 +586,8 @@ class OrthographicCamera(Camera):
         Since QtRaster resizes the DEM to match the image 1:1, we can do a direct lookup.
         """        
         # Clamp to Ortho bounds and explicitly unpack the tuple to avoid TypeError
-        u = int(np.clip(pixel_coord, 0, self.width - 1))
-        v = int(np.clip(pixel_coord, 0, self.height - 1))
+        u = int(np.clip(pixel_coord[0], 0, self.width - 1))
+        v = int(np.clip(pixel_coord[1], 0, self.height - 1))
 
         # 1. Transform Ortho pixel to world X, Y
         pixel_hom = np.array([u, v, 1.0], dtype=np.float64)
