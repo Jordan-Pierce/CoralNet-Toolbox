@@ -97,9 +97,10 @@ class CameraRay:
                 has_accurate_depth = True
             else:
                 # Extreme fallback if DEM yields NaN
-                pixel_hom = np.array([pixel_xy, pixel_xy, 1.0])
+                # Build homogeneous pixel coordinate correctly from (u, v)
+                pixel_hom = np.array([float(pixel_xy[0]), float(pixel_xy[1]), 1.0])
                 world_xy = camera.transform_matrix @ pixel_hom
-                terminal_point = np.array([world_xy, world_xy, 0.0])
+                terminal_point = np.array([float(world_xy[0]), float(world_xy[1]), 0.0])
             
             direction = np.array([0.0, 0.0, -1.0])
             origin = terminal_point + np.array([0.0, 0.0, 1000.0]) 

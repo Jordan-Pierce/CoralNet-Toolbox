@@ -495,18 +495,16 @@ class OrthographicCamera(Camera):
             self.dem_transform = self.transform_matrix.copy()
         else:
             self.z_channel = self.z_channel.copy()
-            self.dem_width = self.z_channel.shape
-            self.dem_height = self.z_channel.shape
+            # z_channel.shape -> (height, width, ...). Explicitly unpack height/width
+            self.dem_height, self.dem_width = self.z_channel.shape[:2]
 
             # Fetch the DEM's specific geographic transform
-            if hasattr(raster, 'dem_transform') and raster.dem_transform is not None:
-                self.dem_transform = raster.dem_transform.copy()
-            else:
-                # Fallback: assume the DEM exactly matches the ortho's geographic footprint, 
-                # but scale the transform matrix to account for differing array sizes
-                scale_x = self.width / self.dem_width if self.dem_width > 0 else 1.0
-                scale_y = self.height / self.dem_height if self.dem_height > 0 else 1.0
-                self.dem_transform = self.transform_matrix @ np.array([[scale_x, 0, 0], [0, scale_y, 0],])
+            # Assume the DEM exactly matches the ortho's geographic footprint,
+            # but scale the transform matrix to account for differing array sizes
+            scale_x = float(self.width) / float(self.dem_width) if self.dem_width > 0 else 1.0
+            scale_y = float(self.height) / float(self.dem_height) if self.dem_height > 0 else 1.0
+            scale_matrix = np.array([[scale_x, 0.0, 0.0], [0.0, scale_y, 0.0], [0.0, 0.0, 1.0]])
+            self.dem_transform = self.transform_matrix @ scale_matrix
 
         # Calculate inverse DEM transform for world -> DEM pixel lookups
         try:
@@ -526,7 +524,8 @@ class OrthographicCamera(Camera):
         else:
             z_avg = 0.0
             
-        self.position = np.array([world_center, world_center, z_avg + 1000.0])
+        # Position: take X,Y from transformed center and place camera high above average Z
+        self.position = np.array([float(world_center[0]), float(world_center[1]), float(z_avg + 1000.0)])
 
         # 5. COMPATIBILITY STUBS
         # These allow OrthographicCamera to safely interact with perspective-only UI code
@@ -607,29 +606,33 @@ class OrthographicCamera(Camera):
         Unproject pixel to 3D world point using DEM.
         Uses exact 2-step geographic lookup to handle mismatched bounding boxes.
         """        
-        # Clamp to Ortho bounds
-        u = np.clip(int(pixel_coord), 0, self.width - 1)
-        v = np.clip(int(pixel_coord), 0, self.height - 1)
+        # Validate pixel_coord is a (u, v) pair and clamp to Ortho bounds
+        try:
+            u = int(np.clip(int(pixel_coord[0]), 0, self.width - 1))
+            v = int(np.clip(int(pixel_coord[1]), 0, self.height - 1))
+        except Exception:
+            raise ValueError("pixel_coord must be an iterable of (u, v)")
 
         # 1. Transform Ortho pixel to world X, Y
         pixel_hom = np.array([u, v, 1.0])
         world_hom = self.transform_matrix @ pixel_hom
-        X, Y = world_hom, world_hom
+        X = float(world_hom[0])
+        Y = float(world_hom[1])
 
         if self.z_channel is None:
             return np.array([X, Y, 0.0])
 
         # 2. Transform world X, Y to DEM pixel coordinates
         dem_pixel_hom = self.dem_transform_inv @ world_hom
-        dem_u = int(round(dem_pixel_hom))
-        dem_v = int(round(dem_pixel_hom))
+        dem_u = int(round(float(dem_pixel_hom[0])))
+        dem_v = int(round(float(dem_pixel_hom[1])))
 
         # 3. Query DEM for Z, ensuring we are within DEM bounds
         if not (0 <= dem_u < self.dem_width and 0 <= dem_v < self.dem_height):
-            return np.array([X, Y, 0.0]) # Or return None if you prefer strict failure
+            return np.array([X, Y, 0.0])
 
-        Z = self.z_channel[dem_v, dem_u]
-        
+        Z = float(self.z_channel[dem_v, dem_u])
+
         if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
             Z = 0.0
 
@@ -647,20 +650,36 @@ class OrthographicCamera(Camera):
             bool: True if the point is occluded, False otherwise
         """    
         uv = self.project(point_3d.reshape(1, 3))
+        # project may return a (1,2) array or a (2,) vector
+        if uv is None:
+            return True
+        if isinstance(uv, np.ndarray) and uv.ndim > 1:
+            uv = uv[0]
         if np.isnan(uv).any():
             return True
 
-        u, v = int(np.clip(uv, 0, self.width - 1)), int(np.clip(uv, 0, self.height - 1))
-        
-        # Scale coordinates for DEM lookup
-        dem_u = u // self.dem_scale
-        dem_v = v // self.dem_scale
+        u = int(np.clip(int(round(float(uv[0]))), 0, self.width - 1))
+        v = int(np.clip(int(round(float(uv[1]))), 0, self.height - 1))
 
-        Z_dem = self.z_channel[dem_v, dem_u]
+        # Transform coordinates for accurate DEM lookup
+        pixel_hom = np.array([u, v, 1.0])
+        world_hom = self.transform_matrix @ pixel_hom
+        dem_pixel_hom = self.dem_transform_inv @ world_hom
+
+        dem_u = int(round(float(dem_pixel_hom[0])))
+        dem_v = int(round(float(dem_pixel_hom[1])))
+
+        # Bound check before lookup
+        if not (0 <= dem_u < self.dem_width and 0 <= dem_v < self.dem_height):
+            return False
+
+        Z_dem = float(self.z_channel[dem_v, dem_u])
         if np.isnan(Z_dem):
-            return False 
+            return False
 
-        return point_3d < (Z_dem - depth_threshold)
+        # Compare the Z-component of the 3D point (index 2). If point is below the DEM surface
+        # by more than the threshold it is considered occluded.
+        return float(point_3d[2]) < (Z_dem - depth_threshold)
 
     def ensure_visibility_data(self, point_cloud, cache_manager, compute_depth_map=True, compute_index_maps=True):
         """
