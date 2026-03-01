@@ -504,7 +504,8 @@ class OrthographicCamera(Camera):
             z_avg = 0.0
             
         # Safely construct the 3D position using the explicit floats
-        self.position = np.array([float(world_center), float(world_center), z_avg + 1000.0], dtype=np.float64)
+        # Extract X and Y components from the homogeneous world_center array
+        self.position = np.array([float(world_center[0]), float(world_center[1]), z_avg + 1000.0], dtype=np.float64)
 
         # 4. COMPATIBILITY STUBS
         self.K = np.eye(3)
@@ -593,7 +594,7 @@ class OrthographicCamera(Camera):
         
         # Guaranteed to be a 1D array because of our strict matrix formatting in __init__
         world_hom = (self.transform_matrix @ pixel_hom).flatten()
-        X, Y = float(world_hom), float(world_hom)
+        X, Y = float(world_hom[0]), float(world_hom[1])
 
         # If there's no DEM loaded at all, fallback to Z=0.0
         if self.z_channel is None:
