@@ -474,17 +474,13 @@ class Raster(QObject):
         if z_data.dtype not in [np.float32, np.uint8]:
             raise ValueError("Z channel data must be float32 or uint8 dtype")
         
-        # Resize z_data if dimensions don't match (ONLY for perspective depth maps)
+        # Resize z_data if dimensions don't match
         if z_data.shape != (self.height, self.width):
-            if z_data_type == 'elevation':
-                # DO NOT RESIZE DEMS! They have their own geographic bounds.
-                pass 
-            else:
-                z_data = cv2.resize(
-                    z_data,
-                    (self.width, self.height),
-                    interpolation=cv2.INTER_NEAREST
-                )
+            z_data = cv2.resize(
+                z_data,
+                (self.width, self.height),
+                interpolation=cv2.INTER_NEAREST
+            )
         
         if z_data_type is not None and z_data_type not in ['depth', 'elevation']:
             raise ValueError(f"z_data_type must be 'depth' or 'elevation', got '{z_data_type}'")
@@ -733,25 +729,29 @@ class Raster(QObject):
                 final_z_nodata = z_nodata
 
             # --- CORRECTED DEM TRANSFORM EXTRACTION ---
-            if z_data_type == 'elevation':
-                self.is_orthomosaic = True
+            # If the user supplied a non-georeferenced image (like a JPG) but gave us a DEM, 
+            # we must extract the transform from the DEM and scale it to account for 
+            # the fact that the DEM was just resized to fit the JPG.
+            if z_data_type == 'elevation' and self.transform_matrix is None:
                 try:
                     import rasterio
                     with rasterio.open(z_channel_path) as dem_dataset:
                         t = dem_dataset.transform
-                        # Store the DEM's dedicated transform
-                        self.dem_transform = np.array([
-                            [t.a, t.b, t.c],
-                            [t.d, t.e, t.f],
-                            [0.0, 0.0, 1.0]
-                        ])
-                        
-                        # Also extract ortho transform if missing
-                        if self.transform_matrix is None:
-                            self._extract_transform_matrix()
-                             
+                        if not t.is_identity:
+                            # Calculate the scale factor between the original DEM and our base image
+                            scale_x = dem_dataset.width / self.width if self.width > 0 else 1.0
+                            scale_y = dem_dataset.height / self.height if self.height > 0 else 1.0
+                            
+                            # Scale the transform matrix (T_corrected = T_dem * S)
+                            self.transform_matrix = np.array([
+                                [t.a * scale_x, t.b * scale_y, t.c],
+                                [t.d * scale_x, t.e * scale_y, t.f],
+                                [0.0, 0.0, 1.0]
+                            ])
+                            self.metadata['transform_matrix'] = "Extracted and scaled from DEM"
+                            self.is_orthomosaic = True
                 except Exception as e:
-                    print(f"Warning: Could not extract transform from DEM {z_channel_path}: {e}")
+                    print(f"Warning: Could not extract and scale transform from DEM {z_channel_path}: {e}")
             
             # Add z_channel with the nodata value and data type
             self.z_unit = z_unit

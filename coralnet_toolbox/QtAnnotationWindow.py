@@ -1641,35 +1641,6 @@ class AnnotationWindow(QGraphicsView):
             # Layer order: base image (-10) < z-channel (-5) < annotations (0+)
             self.z_item.setZValue(-5)
             
-            if getattr(raster, 'is_orthomosaic', False) and hasattr(raster, 'dem_transform'):
-                # 1. Get DEM corners in its own pixel coordinates
-                dem_tl_pix = np.array([0, 0, 1.0])
-                dem_br_pix = np.array([w, h, 1.0]) 
-
-                # 2. Convert DEM pixels to World coordinates
-                dem_tl_world = raster.dem_transform @ dem_tl_pix
-                dem_br_world = raster.dem_transform @ dem_br_pix
-
-                # 3. Convert World coords to Orthomosaic pixels (which are our Scene coords)
-                scene_tl = raster.transform_matrix_inv @ dem_tl_world
-                scene_br = raster.transform_matrix_inv @ dem_br_world
-
-                # 4. Calculate required visual offset and scale
-                offset_x, offset_y = scene_tl, scene_tl
-                scale_x = (scene_br - scene_tl) / w
-                scale_y = (scene_br - scene_tl) / h
-
-                # 5. Apply the transformation to the Qt Item
-                self.z_item.setPos(offset_x, offset_y)
-                
-                from PyQt5.QtGui import QTransform
-                transform = QTransform()
-                transform.scale(scale_x, scale_y)
-                self.z_item.setTransform(transform)
-            else:
-                # Perspective cameras are already 1:1 matching
-                self.z_item.setPos(0, 0)
-            
             # Set opacity from current slider value (not hardcoded default)
             # This preserves user's transparency preference when switching images
             current_opacity = self.main_window.z_transparency_widget.value() / 255.0
@@ -1865,14 +1836,11 @@ class AnnotationWindow(QGraphicsView):
             # Get visible viewport area in scene coordinates
             visible_rect = (self.mapToScene(self.viewport().rect()).boundingRect())
             
-            # Map scene coords into the potentially scaled/shifted z_item
-            local_rect = self.z_item.mapRectFromScene(visible_rect).boundingRect()
-            
-            # Convert to image coordinates using the local rect
-            x1 = max(0, int(local_rect.left()))
-            y1 = max(0, int(local_rect.top()))
-            x2 = min(z_data.shape, int(local_rect.right()))
-            y2 = min(z_data.shape, int(local_rect.bottom()))
+            # Convert scene rect to image coordinates
+            x1 = max(0, int(visible_rect.left()))
+            y1 = max(0, int(visible_rect.top()))
+            x2 = min(z_data.shape[1], int(visible_rect.right()))
+            y2 = min(z_data.shape[0], int(visible_rect.bottom()))
             
             # Ensure we have a valid region
             if x1 >= x2 or y1 >= y2:
@@ -1907,7 +1875,8 @@ class AnnotationWindow(QGraphicsView):
                 z_vis_max = z_vis_min + 1
             
             # Get current colormap name from main window
-            colormap_name = (self.main_window.z_colormap_dropdown.currentText())
+            colormap_name = (
+                self.main_window.z_colormap_dropdown.currentText())
             
             if colormap_name != 'None':
                 # Get the colormap and apply with adjusted range
@@ -1930,7 +1899,8 @@ class AnnotationWindow(QGraphicsView):
                 # Create QImage from RGBA data
                 h, w = z_colored.shape[:2]
                 z_copy = np.ascontiguousarray(z_colored)
-                q_img = QImage(z_copy.data, w, h, w * 4, QImage.Format_RGBA8888)
+                q_img = QImage(z_copy.data, w, h, w * 4,
+                               QImage.Format_RGBA8888)
                 
                 # Convert to QPixmap and update scene item
                 pixmap = QPixmap.fromImage(q_img)
