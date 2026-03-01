@@ -64,7 +64,6 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -270,7 +269,6 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
-        self.import_cameras_dialog = ImportCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -373,13 +371,6 @@ class MainWindow(QMainWindow):
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
         
-        # Cameras submenu
-        self.import_cameras_menu = self.import_menu.addMenu("Cameras")
-        # Import Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP / Metashape", self)
-        self.import_colmap_cameras_action.triggered.connect(self.import_cameras_dialog.exec_)
-        self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
         # Import Labels

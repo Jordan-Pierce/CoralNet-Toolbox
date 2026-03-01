@@ -505,7 +505,10 @@ class ColmapTab(QWidget):
             
         # Build a case-insensitive map of loaded images by basename (no extension)
         image_path_map = {}
-        for path in self.image_window.raster_manager.image_paths:
+        source_paths = getattr(self.parent_dialog, 'highlighted_images', None)
+        if not source_paths:
+            source_paths = self.image_window.raster_manager.image_paths
+        for path in source_paths:
             base = os.path.splitext(os.path.basename(path))[0].lower()
             image_path_map[base] = path
 
@@ -668,7 +671,10 @@ class MetashapeTab(QWidget):
 
         # Case-insensitive basename map for loaded images
         image_path_map = {}
-        for path in self.image_window.raster_manager.image_paths:
+        source_paths = getattr(self.parent_dialog, 'highlighted_images', None)
+        if not source_paths:
+            source_paths = self.image_window.raster_manager.image_paths
+        for path in source_paths:
             base = os.path.splitext(os.path.basename(path))[0].lower()
             image_path_map[base] = path
 
@@ -781,6 +787,8 @@ class ImportCameras(QDialog):
         """Create the tabbed import dialog containing COLMAP and Metashape tabs."""
         super().__init__(main_window)
         self.main_window = main_window
+        # If set by caller, this should be a list of image paths to restrict import to
+        self.highlighted_images = None
         self.setWindowTitle("Import Camera Parameters")
         self.resize(800, 180)
 
