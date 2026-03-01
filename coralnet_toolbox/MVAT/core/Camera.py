@@ -484,12 +484,12 @@ class OrthographicCamera(Camera):
             print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
         else:
             self.z_channel = self.z_channel.copy()
-            # No need for dem_width, dem_height, or dem_transform.
-            # The DEM is already resized to self.width x self.height by QtRaster.
 
         # 3. "CAMERA" POSITION (Conceptual - hovering directly above scene center)
         center_x, center_y = self.width / 2.0, self.height / 2.0
-        world_center = self.transform_matrix @ np.array([center_x, center_y, 1.0])
+        
+        # Use .flatten() to ensure world_center is a pure 1D array of scalars
+        world_center = np.asarray(self.transform_matrix @ np.array([center_x, center_y, 1.0])).flatten()
         
         # Safely calculate average Z for altitude placement
         if self.z_channel is not None and self.z_channel.size > 0:
@@ -499,8 +499,8 @@ class OrthographicCamera(Camera):
         else:
             z_avg = 0.0
             
-        # Unpack world_center to avoid multidimensional array shape issues
-        self.position = np.array([world_center, world_center, z_avg + 1000.0])
+        # Safely construct the 3D position
+        self.position = np.array([float(world_center), float(world_center), z_avg + 1000.0])
 
         # 4. COMPATIBILITY STUBS
         self.K = np.eye(3)
@@ -586,10 +586,10 @@ class OrthographicCamera(Camera):
 
         # 1. Transform Ortho pixel to world X, Y
         pixel_hom = np.array([u, v, 1.0])
-        world_hom = self.transform_matrix @ pixel_hom
         
-        # Explicitly extract the 0th and 1st elements 
-        X, Y = world_hom, world_hom
+        # Use .flatten() to ensure we get pure scalars out of the matrix multiplication
+        world_hom = np.asarray(self.transform_matrix @ pixel_hom).flatten()
+        X, Y = float(world_hom), float(world_hom)
 
         # If there's no DEM loaded at all, fallback to Z=0.0
         if self.z_channel is None:
@@ -602,7 +602,7 @@ class OrthographicCamera(Camera):
         if np.isnan(Z) or (self._raster.z_nodata is not None and Z == self._raster.z_nodata):
             Z = 0.0
 
-        return np.array([X, Y, Z])
+        return np.array([X, Y, float(Z)])
     
     def is_point_occluded_depth_based(self, point_3d, depth_threshold=0.1):
         """
