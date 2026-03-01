@@ -383,6 +383,11 @@ class BatchedFrustumManager:
         point_offset = 0
         
         for idx, (path, camera) in enumerate(cameras.items()):
+            # SKIP: No frustum for orthomosaics
+            if getattr(camera, 'is_orthographic', False):
+                print(f"   ⏭️ Skipping frustum for orthomosaic: {camera.label}")
+                continue
+            
             self.camera_indices[path] = idx
             self.camera_paths.append(path)
             

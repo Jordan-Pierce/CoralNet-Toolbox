@@ -104,6 +104,28 @@ class CameraRay:
         Returns:
             CameraRay: A new ray object.
         """
+        # BRANCH: Orthographic camera
+        if getattr(camera, 'is_orthographic', False):
+            # Unproject pixel to world point (includes DEM lookup)
+            terminal_point = camera.unproject(pixel_xy)
+            
+            # Ray shoots straight down from sky
+            direction = np.array([0.0, 0.0, -1.0])
+            origin = terminal_point + np.array([0.0, 0.0, 1000.0])  # 1km above ground
+            
+            ray = cls(
+                origin=origin,
+                direction=direction,
+                terminal_point=terminal_point,
+                has_accurate_depth=True,  # DEM provides exact depth
+                pixel_coord=pixel_xy,
+                source_camera=camera
+            )
+            ray.visual_origin = origin.copy()
+            ray.visual_terminal = terminal_point.copy()
+            return ray
+        
+        # EXISTING: Perspective camera logic
         # Camera origin is the optical center in world coordinates
         origin = camera.position.copy()
         
@@ -172,6 +194,25 @@ class CameraRay:
         # from highlighted cameras should use solid or dashed line styling
         # based on depth accuracy at the projected point.
         """
+        # BRANCH: Orthographic camera
+        if getattr(camera, 'is_orthographic', False):
+            world_point = np.asarray(world_point, dtype=np.float64)
+            direction = np.array([0.0, 0.0, -1.0])
+            origin = world_point + np.array([0.0, 0.0, 1000.0])
+            
+            ray = cls(
+                origin=origin,
+                direction=direction,
+                terminal_point=world_point,
+                has_accurate_depth=True,
+                pixel_coord=None,
+                source_camera=camera
+            )
+            ray.visual_origin = origin.copy()
+            ray.visual_terminal = world_point.copy()
+            return ray
+        
+        # EXISTING: Perspective camera logic
         origin = camera.position.copy()
         world_point = np.asarray(world_point, dtype=np.float64)
         
@@ -196,6 +237,8 @@ class CameraRay:
         # Visual start/end default to the true geometry (no offset).
         ray.visual_origin = ray.origin.copy()
         ray.visual_terminal = ray.terminal_point.copy()
+
+        return ray
 
         return ray
     

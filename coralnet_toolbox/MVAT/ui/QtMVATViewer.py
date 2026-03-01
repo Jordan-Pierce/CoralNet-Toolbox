@@ -1097,6 +1097,20 @@ class MVATViewer(QFrame):
             focal_distance_ratio: Fraction of scene diagonal to use as focal distance
         """
         try:
+            # BRANCH: Orthographic camera
+            if getattr(camera, 'is_orthographic', False):
+                print(f"🗺️ Switching to orthographic projection for {camera.label}")
+                self.view_top()  # Snap to top-down view
+                self.plotter.enable_parallel_projection()
+                return
+            
+            # RESTORE: Perspective projection for normal cameras
+            try:
+                self.plotter.disable_parallel_projection()
+            except Exception:
+                pass
+            
+            # EXISTING: Perspective camera alignment
             position = camera.position
 
             # view direction: camera looks along +Z in camera frame

@@ -251,9 +251,26 @@ class MVATManager(QObject):
                 pass
 
             valid_count = 0
+            ortho_count = 0
+            
             for path in all_paths:
                 raster = self.raster_manager.get_raster(path)
-                if raster and raster.intrinsics is not None and raster.extrinsics is not None:
+                if not raster:
+                    continue
+                
+                # CREATE ORTHOGRAPHIC CAMERA
+                if raster.is_orthomosaic:
+                    try:
+                        from coralnet_toolbox.MVAT.core.Camera import OrthographicCamera
+                        self.cameras[path] = OrthographicCamera(raster)
+                        ortho_count += 1
+                        valid_count += 1
+                    except Exception as e:
+                        print(f"❌ Failed to load orthomosaic {raster.basename}: {e}")
+                        continue
+                
+                # CREATE PERSPECTIVE CAMERA
+                elif raster.intrinsics is not None and raster.extrinsics is not None:
                     try:
                         self.cameras[path] = Camera(raster)
                         valid_count += 1
@@ -265,20 +282,29 @@ class MVATManager(QObject):
             except Exception:
                 pass
             try:
-                self.main_window.status_bar.showMessage(f"Loaded cameras: {valid_count} / {len(all_paths)}", 3000)
+                self.main_window.status_bar.showMessage(
+                    f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, {valid_count - ortho_count} perspective)",
+                    3000
+                )
             except Exception:
                 pass
             
         if valid_count == 0:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
             return
-            
+        
+        # FILTER: Only pass perspective cameras to grid UI
+        perspective_cameras = {p: c for p, c in self.cameras.items() if not c.is_orthographic}
+        
         try:
-            self.camera_grid.stats_label.setText(f"Cameras: {valid_count} / {len(all_paths)}")
+            self.camera_grid.stats_label.setText(
+                f"Cameras: {len(perspective_cameras)} perspective" + 
+                (f", {ortho_count} ortho" if ortho_count > 0 else "")
+            )
         except Exception:
             pass
         
-        self.camera_grid.set_cameras(self.cameras)
+        self.camera_grid.set_cameras(perspective_cameras)
         self._render_frustums()
         self.viewer.fit_to_view()
         
@@ -286,7 +312,10 @@ class MVATManager(QObject):
         current_image_path = getattr(self.annotation_window, 'current_image_path', None)
         if current_image_path and current_image_path in self.cameras:
             self.selection_model.set_active(current_image_path)
+        elif perspective_cameras:
+            self.selection_model.set_active(next(iter(perspective_cameras)))
         elif self.cameras:
+            # Only orthomosaics loaded - activate the first one
             self.selection_model.set_active(next(iter(self.cameras)))
 
     def _render_frustums(self):
@@ -453,9 +482,16 @@ class MVATManager(QObject):
         instructs the viewer to match the selected camera perspective (when
         supported), reorders the grid to prioritize nearby cameras, and asks
         the image window to load the selected image.
+        
+        ENFORCES: Clean map view for orthomosaics by clearing all highlights.
         """
         camera = self.cameras.get(path)
         if camera:
+            # ENFORCE: Clear all highlights when entering orthomosaic view
+            if camera.is_orthographic:
+                print(f"📍 Entering orthomosaic view: {camera.label}")
+                self.selection_model.clear_selections(keep_active=True, emit=True)
+            
             self.viewer.clear_ray()
             self._select_camera(path, camera)
             if hasattr(self.viewer, 'match_camera_perspective'):
@@ -621,10 +657,14 @@ class MVATManager(QObject):
             return
 
         # Build camera params dict keyed by image path
-        camera_params_dict = {
-            cam.image_path: (cam.K, cam.R, cam.t, cam.width, cam.height)
-            for cam in cameras_needing_visibility
-        }
+        # For perspective cameras: (K, R, t, width, height)
+        # For orthographic cameras: ('ortho', transform_matrix_inv, width, height)
+        camera_params_dict = {}
+        for cam in cameras_needing_visibility:
+            if cam.is_orthographic:
+                camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
+            else:
+                camera_params_dict[cam.image_path] = (cam.K, cam.R, cam.t, cam.width, cam.height)
 
         # Start worker thread
         try:

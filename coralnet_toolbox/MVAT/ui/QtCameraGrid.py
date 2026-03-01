@@ -986,6 +986,16 @@ class CameraGrid(QWidget):
         """Handle widget click for selection/highlighting using SelectionManager."""
         path = widget.data_item.image_path
         modifiers = event.modifiers()
+        
+        # BLOCK: If active camera is orthographic, force exit to clicked camera
+        if self.model and self.model.active_path:
+            active_camera = self.cameras_dict.get(self.model.active_path)
+            if active_camera and getattr(active_camera, 'is_orthographic', False):
+                print(f"🚫 Exiting orthomosaic view → activating {path}")
+                self.active_requested.emit(path)
+                self.camera_selected.emit(path)
+                self.last_clicked_index = next((i for i, item in enumerate(self.data_items) if item.image_path == path), -1)
+                return  # Bypass all Ctrl/Shift logic
 
         # Find index of clicked item
         clicked_index = next((i for i, item in enumerate(self.data_items) if item.image_path == path), -1)
@@ -1009,6 +1019,16 @@ class CameraGrid(QWidget):
     def _on_widget_double_clicked(self, widget):
         """Handle widget double-click for highlighting only (no image load)."""
         path = widget.data_item.image_path
+        
+        # BLOCK: Same logic as single click - force exit if in ortho view
+        if self.model and self.model.active_path:
+            active_camera = self.cameras_dict.get(self.model.active_path)
+            if active_camera and getattr(active_camera, 'is_orthographic', False):
+                print(f"🚫 Exiting orthomosaic view → activating {path}")
+                self.active_requested.emit(path)
+                self.camera_selected.emit(path)
+                return
+        
         # Double-click now acts like single-click - just highlights
         # Plain click: request single selection
         self.selection_requested.emit([path])
