@@ -723,20 +723,35 @@ class Raster(QObject):
                 z_unit = normalize_z_unit(z_unit)
             
             # Preserve existing z_nodata if already set, otherwise use value from file
-            # This ensures that user-set nodata values (e.g., from ScaleTool) are preserved
             if self.z_nodata is not None:
                 final_z_nodata = self.z_nodata
             else:
                 final_z_nodata = z_nodata
 
-            # --- LOGIC FOR DEM TRANSFORM EXTRACTION ---
-            # If the user supplied a non-georeferenced image (like JPG) but gave us a DEM, 
-            # we should extract the transform matrix from the DEM itself.
+            # --- CORRECTED DEM TRANSFORM EXTRACTION ---
+            # If the user supplied a non-georeferenced image (like a JPG) but gave us a DEM, 
+            # we must extract the transform from the DEM and scale it to account for 
+            # the fact that the DEM was just resized to fit the JPG.
             if z_data_type == 'elevation' and self.transform_matrix is None:
                 try:
-                    self._extract_transform_matrix()
+                    import rasterio
+                    with rasterio.open(z_channel_path) as dem_dataset:
+                        t = dem_dataset.transform
+                        if not t.is_identity:
+                            # Calculate the scale factor between the original DEM and our base image
+                            scale_x = dem_dataset.width / self.width if self.width > 0 else 1.0
+                            scale_y = dem_dataset.height / self.height if self.height > 0 else 1.0
+                            
+                            # Scale the transform matrix (T_corrected = T_dem * S)
+                            self.transform_matrix = np.array([
+                                [t.a * scale_x, t.b * scale_y, t.c],
+                                [t.d * scale_x, t.e * scale_y, t.f],
+                                [0.0, 0.0, 1.0]
+                            ])
+                            self.metadata['transform_matrix'] = "Extracted and scaled from DEM"
+                            self.is_orthomosaic = True
                 except Exception as e:
-                    print(f"Warning: Could not extract transform from DEM {z_channel_path}: {e}")
+                    print(f"Warning: Could not extract and scale transform from DEM {z_channel_path}: {e}")
             
             # Add z_channel with the nodata value and data type
             self.z_unit = z_unit
