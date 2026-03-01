@@ -41,8 +41,18 @@ class VisibilityWorker(QObject):
             perspective_params = {}
             
             for path, params in self.camera_params_dict.items():
-                # Check if this is an orthographic camera (first element is 'ortho')
-                if params[0] == 'ortho':
+                # Be defensive: params can contain numpy arrays (e.g. K) and
+                # comparing an array to a string raises a ValueError. Detect
+                # orthographic entries by ensuring the first element is a
+                # str and equals 'ortho'. Otherwise treat as perspective.
+                try:
+                    first = params[0]
+                except Exception:
+                    # Malformed/empty params -> treat as perspective entry
+                    perspective_params[path] = params
+                    continue
+
+                if isinstance(first, str) and first == 'ortho':
                     # Extract: ('ortho', transform_matrix_inv, width, height)
                     _, transform_inv, width, height = params
                     ortho_params[path] = (transform_inv, width, height)

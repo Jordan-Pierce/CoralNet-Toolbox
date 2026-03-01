@@ -508,17 +508,6 @@ class OrthographicCamera(Camera):
                 scale_y = self.height / self.dem_height if self.dem_height > 0 else 1.0
                 self.dem_transform = self.transform_matrix @ np.array([[scale_x, 0, 0], [0, scale_y, 0],])
 
-            # 3. PERFORMANCE SAFEGUARD: Downsample DEM if > 500MB
-            dem_size_mb = self.z_channel.nbytes / 1_000_000
-            if dem_size_mb > 500:
-                print(f"DEM size {dem_size_mb:.1f}MB exceeds 500MB threshold. Downsampling DEM by factor of 2...")
-                self.z_channel = self.z_channel[::2, ::2]
-                self.dem_height, self.dem_width = self.z_channel.shape
-                
-                # Scale DEM transform matrix accordingly (pixels represent 2x the physical space)
-                scale_matrix = np.array([, ,])
-                self.dem_transform = self.dem_transform @ scale_matrix
-
         # Calculate inverse DEM transform for world -> DEM pixel lookups
         try:
             self.dem_transform_inv = np.linalg.inv(self.dem_transform)
@@ -532,7 +521,8 @@ class OrthographicCamera(Camera):
         # Safely calculate average Z for altitude placement
         if self.z_channel is not None and self.z_channel.size > 0:
             z_avg = float(np.nanmean(self.z_channel))
-            if np.isnan(z_avg): z_avg = 0.0
+            if np.isnan(z_avg): 
+                z_avg = 0.0
         else:
             z_avg = 0.0
             
@@ -768,4 +758,3 @@ class OrthographicCamera(Camera):
     def unhighlight(self):
         """No-op for orthomosaics."""
         pass
-
