@@ -569,15 +569,15 @@ class CameraGrid(QWidget):
         self.clear_btn.clicked.connect(self.clear_all_selections)
         
         # --- Scroll Area ---
+        # Content widget inside scroll area
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet("background-color: black;")
+        
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
-        
-        # Content widget inside scroll area
-        self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background-color: white;")
         self.scroll_area.setWidget(self.content_widget)
 
         # Placeholder label for empty state

@@ -336,6 +336,8 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.mouseReleaseEvent = self._mouse_release_event
         self.graphics_view.mouseMoveEvent = self._mouse_move_event
         self.graphics_view.wheelEvent = self._wheel_event
+        self.graphics_view.setStyleSheet("background-color: black;")
+        self.graphics_scene.setBackgroundBrush(QColor('black'))
         
         layout.addWidget(self.graphics_view)
         
@@ -1470,7 +1472,7 @@ class EmbeddingViewerWindow(QWidget):
             QLineF(visible_rect.right(), target_y, target_x, target_y),
         ]
         
-        pen = QPen(QColor(0, 0, 0), 2, Qt.DashLine)
+        pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
         pen.setCosmetic(True)
         
         for line_data in lines_data:

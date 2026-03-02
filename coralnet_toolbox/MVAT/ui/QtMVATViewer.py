@@ -114,7 +114,6 @@ class MVATViewer(QFrame):
         self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
         self._show_placeholder()  # Show placeholder initially        
-        # Add the placeholder to the stack (on top of the plotter) and show it by default
         self._stack.addWidget(self._placeholder_label)
         self._stack.setCurrentWidget(self._placeholder_label)
         self.layout.addWidget(self._stack_container)
