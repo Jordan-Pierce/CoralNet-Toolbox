@@ -581,11 +581,14 @@ class CameraGrid(QWidget):
         self.scroll_area.setWidget(self.content_widget)
 
         # Placeholder label for empty state
-        self._placeholder_label = QLabel("No cameras available", self.content_widget)
+        self._placeholder_label = QLabel(
+            "No cameras available\nLoad camera lists to populate the grid.", 
+            self.content_widget
+        )
+        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: #666;")
-        self._placeholder_label.hide()
+        self._show_placeholder()  # Show placeholder initially
         
         # Only add the scroll area to the main layout!
         layout.addWidget(self.scroll_area)

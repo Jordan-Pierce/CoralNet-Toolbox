@@ -106,18 +106,15 @@ class MVATViewer(QFrame):
         self._stack.addWidget(self.plotter.interactor)
 
         # Placeholder shown when no point cloud present
-        self._placeholder_label = QLabel("No point cloud loaded")
+        self._placeholder_label = QLabel(
+            "No point cloud loaded\nDrag a point cloud file here to load a point cloud."
+        )
+        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: white; background-color: black;")
-        
-        # Ensure the label paints its background
-        try:
-            self._placeholder_label.setAutoFillBackground(True)
-        except Exception:
-            pass
-        
-        # Start showing placeholder by default
+        self._show_placeholder()  # Show placeholder initially        
+        # Add the placeholder to the stack (on top of the plotter) and show it by default
         self._stack.addWidget(self._placeholder_label)
         self._stack.setCurrentWidget(self._placeholder_label)
         self.layout.addWidget(self._stack_container)

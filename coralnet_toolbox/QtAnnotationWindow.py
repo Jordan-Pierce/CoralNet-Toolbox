@@ -151,11 +151,15 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = None
 
         # Placeholder label shown when no image/annotations are loaded
-        self._placeholder_label = QLabel("No image loaded", self.viewport())
+        self._placeholder_label = QLabel(
+            "No image loaded\nImport or drag and drop an image or Project file.", 
+            self.viewport()
+        )
+        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: white;")
-        self._placeholder_label.hide()
+        self._show_placeholder()  # Show placeholder initially
         
         # Z-channel visualization attributes
         self.z_item = None  # QGraphicsPixmapItem for Z-channel visualization
@@ -181,11 +185,6 @@ class AnnotationWindow(QGraphicsView):
         
         # Initialize toolbar and status bar widgets
         self._init_toolbar_widgets()  # Likely causes an error
-        # Show placeholder initially until an image is set
-        try:
-            self._show_placeholder("No image loaded")
-        except Exception:
-            pass
         
     def _init_toolbar_widgets(self):
         """Instantiate all status and toolbar widgets previously held by MainWindow."""
