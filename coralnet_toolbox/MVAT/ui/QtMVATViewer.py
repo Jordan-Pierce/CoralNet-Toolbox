@@ -109,12 +109,17 @@ class MVATViewer(QFrame):
         self._placeholder_label = QLabel("No point cloud loaded")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: #666;")
-        self._stack.addWidget(self._placeholder_label)
-
+        self._placeholder_label.setStyleSheet("color: white; background-color: black;")
+        
+        # Ensure the label paints its background
+        try:
+            self._placeholder_label.setAutoFillBackground(True)
+        except Exception:
+            pass
+        
         # Start showing placeholder by default
+        self._stack.addWidget(self._placeholder_label)
         self._stack.setCurrentWidget(self._placeholder_label)
-
         self.layout.addWidget(self._stack_container)
 
         # Opacity control (for thumbnail/frustum opacity)
@@ -167,46 +172,53 @@ class MVATViewer(QFrame):
     def view_top(self):
         """Set camera to look down from the +Z-axis."""
         try:
-            self.plotter.view_xy()  # Standard Top View
-            self.plotter.render()
+            # preserve current zoom/distance when snapping to canonical axes
+            # looking down from +Z: view direction (camera->focal) = [0,0,-1]
+            self._set_view_preserve_zoom([0, 0, -1], up=[0, 1, 0])
         except Exception:
             print("Error setting top view: ", traceback.format_exc())
 
     def view_bottom(self):
         """Set camera to look up from the -Z-axis."""
         try:
-            self.plotter.view_xy(negative=True) 
-            self.plotter.render()
+            # looking up from -Z: view direction = [0,0,1]
+            self._set_view_preserve_zoom([0, 0, 1], up=[0, 1, 0])
         except Exception:
             print("Error setting bottom view: ", traceback.format_exc())
             
     def view_front(self):
         """Set camera to look from the -Y-axis (Standard front)."""
         try:
-            self.plotter.view_xz()
-            self.plotter.render()
+            # front: camera at -Y looking towards +Y -> view direction = [0,1,0]
+            self._set_view_preserve_zoom([0, 1, 0], up=[0, 0, 1])
         except Exception:
             print("Error setting front view: ", traceback.format_exc())
 
     def view_back(self):
         """Set camera to look from the +Y-axis."""
         try:
-            self.plotter.view_xz(negative=True)
-            self.plotter.render()
+            # back: camera at +Y looking towards -Y -> view direction = [0,-1,0]
+            self._set_view_preserve_zoom([0, -1, 0], up=[0, 0, 1])
         except Exception:
             print("Error setting back view: ", traceback.format_exc())
 
     def view_right(self):
         """Look at the YZ plane from the right (+X)."""
         # Z is UP, Y is LEFT
-        self.plotter.view_yz()
-        self.plotter.render()
+        # right: camera at +X looking towards -X -> view direction = [-1,0,0]
+        try:
+            self._set_view_preserve_zoom([-1, 0, 0], up=[0, 0, 1])
+        except Exception:
+            pass
 
     def view_left(self):
         """Look at the YZ plane from the left (-X)."""
         # Z is UP, Y is RIGHT
-        self.plotter.view_yz(negative=True)
-        self.plotter.render()
+        # left: camera at -X looking towards +X -> view direction = [1,0,0]
+        try:
+            self._set_view_preserve_zoom([1, 0, 0], up=[0, 0, 1])
+        except Exception:
+            pass
         
     def view_isometric(self):
         try:
@@ -214,6 +226,44 @@ class MVATViewer(QFrame):
             self.plotter.render()
         except Exception:
             print("Error setting isometric view: ", traceback.format_exc())
+
+    def _set_view_preserve_zoom(self, view_dir, up=None):
+        """Set camera looking along view_dir (from camera towards focal point)
+        while preserving current camera distance (zoom) and view angle.
+
+        view_dir: iterable-like 3-vector (direction from camera to focal point)
+        up: optional up-vector to set on the camera
+        """
+        try:
+            cam = self.plotter.camera
+            fp = np.array(cam.focal_point)
+            pos = np.array(cam.position)
+            # preserve distance between camera and focal point; fallback to scene median
+            dist = np.linalg.norm(pos - fp)
+            if dist < 1e-6:
+                dist = self.get_scene_median_depth(pos if pos is not None else np.array([0.0, 0.0, 0.0]))
+
+            v = np.array(view_dir, dtype=float)
+            n = np.linalg.norm(v)
+            if n < 1e-12:
+                return
+            view_dir_norm = v / n
+
+            # new camera position such that (fp - new_pos) is view_dir_norm * dist
+            new_pos = fp - view_dir_norm * dist
+
+            cam.position = new_pos.tolist()
+            cam.focal_point = fp.tolist()
+            if up is not None:
+                cam.up = np.array(up, dtype=float).tolist()
+            # keep view_angle unchanged -> do not call reset/fit helpers
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+            self._update_clipping_range()
+        except Exception:
+            pass
 
     def toggle_orthographic(self, state: bool):
         if state:

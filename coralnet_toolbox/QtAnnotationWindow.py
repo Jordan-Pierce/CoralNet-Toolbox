@@ -154,7 +154,7 @@ class AnnotationWindow(QGraphicsView):
         self._placeholder_label = QLabel("No image loaded", self.viewport())
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: #ccc;")
+        self._placeholder_label.setStyleSheet("color: white;")
         self._placeholder_label.hide()
         
         # Z-channel visualization attributes
