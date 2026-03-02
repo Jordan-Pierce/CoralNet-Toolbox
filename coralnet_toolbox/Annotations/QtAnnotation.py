@@ -799,7 +799,7 @@ class Annotation(QObject):
         
         # Clutter Control (Only show when selected)
         self.tag_item.setVisible(self.is_selected)
-        
+
         self.graphics_item_group.addToGroup(self.tag_item)
         # ---------------------------------------
         
