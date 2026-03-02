@@ -10,7 +10,10 @@ Customized interaction style:
 """
 
 import time
+import traceback
+
 import numpy as np
+
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -19,11 +22,15 @@ from PyQt5.QtWidgets import (
     QToolBar, QToolButton, QMenu, QAction, QStackedLayout
 )
 
-
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class MVATViewer(QFrame):
@@ -52,7 +59,7 @@ class MVATViewer(QFrame):
         self.plotter = QtInteractor(self, point_smoothing=False)
 
         # Optimizations TODO make configurable?
-        self.plotter.set_background('white')
+        self.plotter.set_background('black')
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -158,27 +165,57 @@ class MVATViewer(QFrame):
     # --------------------------------------------------------------------------
     
     def view_top(self):
-        """Set camera to look down from the Z-axis."""
-        self.plotter.camera_position = 'xy'
-        self.plotter.render()
+        """Set camera to look down from the +Z-axis."""
+        try:
+            self.plotter.view_xy()  # Standard Top View
+            self.plotter.render()
+        except Exception:
+            print("Error setting top view: ", traceback.format_exc())
 
+    def view_bottom(self):
+        """Set camera to look up from the -Z-axis."""
+        try:
+            self.plotter.view_xy(negative=True) 
+            self.plotter.render()
+        except Exception:
+            print("Error setting bottom view: ", traceback.format_exc())
+            
     def view_front(self):
-        """Set camera to look from the Y-axis."""
-        self.plotter.camera_position = 'xz'
+        """Set camera to look from the -Y-axis (Standard front)."""
+        try:
+            self.plotter.view_xz()
+            self.plotter.render()
+        except Exception:
+            print("Error setting front view: ", traceback.format_exc())
+
+    def view_back(self):
+        """Set camera to look from the +Y-axis."""
+        try:
+            self.plotter.view_xz(negative=True)
+            self.plotter.render()
+        except Exception:
+            print("Error setting back view: ", traceback.format_exc())
+
+    def view_right(self):
+        """Look at the YZ plane from the right (+X)."""
+        # Z is UP, Y is LEFT
+        self.plotter.view_yz()
         self.plotter.render()
 
-    def view_side(self):
-        """Set camera to look from the X-axis."""
-        self.plotter.camera_position = 'yz'
+    def view_left(self):
+        """Look at the YZ plane from the left (-X)."""
+        # Z is UP, Y is RIGHT
+        self.plotter.view_yz(negative=True)
         self.plotter.render()
-
+        
     def view_isometric(self):
-        """Set camera to a standard 3D isometric angle."""
-        self.plotter.view_isometric()
-        self.plotter.render()
+        try:
+            self.plotter.view_isometric()
+            self.plotter.render()
+        except Exception:
+            print("Error setting isometric view: ", traceback.format_exc())
 
     def toggle_orthographic(self, state: bool):
-        """Toggle between perspective and orthographic projection."""
         if state:
             self.plotter.enable_parallel_projection()
         else:
@@ -224,22 +261,23 @@ class MVATViewer(QFrame):
 
         # Top actions: Fit and Reset
         action_fit = QAction("Fit All", self)
-        action_fit.setShortcut("F")
         action_fit.triggered.connect(self.fit_to_view)
         view_menu.addAction(action_fit)
 
         action_reset = QAction("Reset View", self)
-        action_reset.setShortcut("R")
         action_reset.triggered.connect(self.reset_view)
         view_menu.addAction(action_reset)
 
         view_menu.addSeparator()
 
         # Camera angles
-        view_menu.addAction("Top (XY)", self.view_top)
-        view_menu.addAction("Front (XZ)", self.view_front)
-        view_menu.addAction("Side (YZ)", self.view_side)
-        view_menu.addAction("Isometric", self.view_isometric)
+        view_menu.addAction("Top (T)", self.view_top)
+        view_menu.addAction("Bottom (C)", self.view_bottom)
+        view_menu.addAction("Front (F)", self.view_front)
+        view_menu.addAction("Back (B)", self.view_back)
+        view_menu.addAction("Left (L)", self.view_left)
+        view_menu.addAction("Right (R)", self.view_right)
+        view_menu.addAction("Isometric (I)", self.view_isometric)
 
         view_menu.addSeparator()
 
@@ -624,7 +662,8 @@ class MVATViewer(QFrame):
                 - WASD: change view direction in-place (rotate viewing direction)
                     W/S: pitch up/down, A/D: yaw left/right
         - Arrow keys: move camera position (forward/back/strafe)
-        - Q/E: keep existing rotate behavior
+        - Q/E: rotate view left/right
+        - View shortcuts: T=Top, F=Front, C=Bottom (Caboose), L=Left, R=Right, B=Back, I=Isometric
         """
         key = event.key()
         ang = np.radians(self.rotate_speed)
@@ -663,8 +702,36 @@ class MVATViewer(QFrame):
         elif key == Qt.Key_E:
             self.rotate_left()
             event.accept()
+        elif key == Qt.Key_T:
+            # Top view
+            self.view_top()
+            event.accept()
+        elif key == Qt.Key_F:
+            # Front view
+            self.view_front()
+            event.accept()
+        elif key == Qt.Key_C:
+            # Bottom view (Caboose)
+            self.view_bottom()
+            event.accept()
+        elif key == Qt.Key_L:
+            # Left view
+            self.view_left()
+            event.accept()
+        elif key == Qt.Key_R:
+            # Right view
+            self.view_right()
+            event.accept()
+        elif key == Qt.Key_B:
+            # Back view
+            self.view_back()
+            event.accept()
+        elif key == Qt.Key_I:
+            # Isometric view
+            self.view_isometric()
+            event.accept()
         else:
-            # Let the parent widget handle keys like R, F, Escape, etc.
+            # Let the parent widget handle other keys
             event.ignore()
 
     def set_focal_point(self, point):

@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 
 import pyqtgraph as pg
-from PyQt5.QtGui import QMouseEvent, QPixmap, QImage
+from PyQt5.QtGui import QMouseEvent, QPixmap, QImage, QBrush
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QSize
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem, 
                              QSlider, QSpinBox, QLabel, QHBoxLayout, QWidget, QComboBox, QToolButton, QToolBar)
@@ -101,6 +101,15 @@ class AnnotationWindow(QGraphicsView):
 
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
+        # Default to a dark background for the annotation workspace
+        try:
+            self.scene.setBackgroundBrush(QBrush(Qt.black))
+            self.setBackgroundBrush(QBrush(Qt.black))
+            # also ensure the viewport widget background matches
+            self.viewport().setStyleSheet("background-color: black;")
+        except Exception:
+            # Fall back silently if the view isn't fully initialized yet
+            pass
         
         # Reference to the global animation manager
         self.animation_manager = None
@@ -145,7 +154,7 @@ class AnnotationWindow(QGraphicsView):
         self._placeholder_label = QLabel("No image loaded", self.viewport())
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: #666;")
+        self._placeholder_label.setStyleSheet("color: #ccc;")
         self._placeholder_label.hide()
         
         # Z-channel visualization attributes
