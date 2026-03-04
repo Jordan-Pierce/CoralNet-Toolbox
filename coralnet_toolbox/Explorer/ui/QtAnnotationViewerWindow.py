@@ -352,26 +352,26 @@ class AnnotationViewerWindow(QWidget):
         layout.setSpacing(0)
         
         # Create scroll area for content
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet("background-color: black;")
+        
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        self.content_widget = QWidget()
         self.scroll_area.setWidget(self.content_widget)
-        
+        self.scroll_area.viewport().setStyleSheet("background-color: black;")
         layout.addWidget(self.scroll_area)
 
         # Placeholder label shown when no annotations are available
         self.placeholder_label = QLabel(
-            "No annotations available.\nUse the gallery filters or load annotations to see results."
+            "No annotations available\nLoad annotations or adjust the gallery filters to display results."
         )
+        self.placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self.placeholder_label.setAlignment(Qt.AlignCenter)
-        self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
-        layout.addWidget(self.placeholder_label)
-
-        # Start with the placeholder visible until annotations are populated
+        self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
+        layout.addWidget(self.placeholder_label)
 
         # Connect scrollbar for virtualization
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._schedule_update)
@@ -1594,17 +1594,12 @@ class AnnotationViewerWindow(QWidget):
         
         if not self.rubber_band:
             self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.scroll_area.viewport())
-            self.rubber_band.setStyleSheet(
-                "QRubberBand { border: 3px rgb(0, 168, 230); border-style: dashed; "
-                "background-color: rgba(0, 168, 230, 30); }"
-            )
         
         rect = QRect(self.rubber_band_origin, event.pos()).normalized()
         self.rubber_band.setGeometry(rect)
         self.rubber_band.show()
         
         selection_rect = self.rubber_band.geometry()
-        changed_ids = []
         
         for widget in self.annotation_widgets_by_id.values():
             mapped_pos = self.content_widget.mapTo(self.scroll_area.viewport(), widget.geometry().topLeft())

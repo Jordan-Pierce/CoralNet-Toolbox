@@ -336,18 +336,21 @@ class EmbeddingViewerWindow(QWidget):
         self.graphics_view.mouseReleaseEvent = self._mouse_release_event
         self.graphics_view.mouseMoveEvent = self._mouse_move_event
         self.graphics_view.wheelEvent = self._wheel_event
+        self.graphics_view.setStyleSheet("background-color: black;")
+        self.graphics_scene.setBackgroundBrush(QColor('black'))
         
         layout.addWidget(self.graphics_view)
         
         # Placeholder label
         self.placeholder_label = QLabel(
-            "No embedding data available.\nSelect data from Annotation Gallery and click 'Run Embedding'."
+            "No embedding data available\nRun embedding to see visualizations."
         )
+        self.placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self.placeholder_label.setAlignment(Qt.AlignCenter)
-        self.placeholder_label.setStyleSheet("color: gray; font-size: 14px;")
-        layout.addWidget(self.placeholder_label)
-        
+        self.placeholder_label.setAutoFillBackground(True)
         self._show_placeholder()
+
+        layout.addWidget(self.placeholder_label)
         
     # -------------------------------------------------------------------------
     # Public API
@@ -1469,7 +1472,7 @@ class EmbeddingViewerWindow(QWidget):
             QLineF(visible_rect.right(), target_y, target_x, target_y),
         ]
         
-        pen = QPen(QColor(0, 0, 0), 2, Qt.DashLine)
+        pen = QPen(QColor(0, 168, 230), 2, Qt.DashLine)
         pen.setCosmetic(True)
         
         for line_data in lines_data:

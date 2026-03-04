@@ -128,14 +128,8 @@ class EmbeddingPointItem(QGraphicsObject):
             opacity = int(128 + 127 * z_normalized)
 
         # Directly grab the existing effective color reference (Avoids wrapping memory unnecessarily)
-        effective_label = self.data_item.effective_label
-        base_color = self.data_item.effective_color
-        
-        display_color = base_color
-        dash_color = base_color
-
-        if effective_label and effective_label.id == "-1":
-            display_color = QColor("black")
+        display_color = self.data_item.effective_color
+        dash_color = self.data_item.effective_color
         
         display_mode = self.viewer.display_mode if self.viewer else 'dots'
 
@@ -210,8 +204,19 @@ class EmbeddingPointItem(QGraphicsObject):
         """Safely handle selection state changes without spamming the paint loop."""
         if change == QGraphicsItem.ItemSelectedChange:
             if value:  # It is being selected
+                # Bring this item to the front so it is not occluded by other points.
+                sc = self.scene()
+                if sc is not None:
+                    # Compute max z among items and set this to max+1
+                    try:
+                        max_z = max((it.zValue() for it in sc.items()), default=0)
+                    except Exception:
+                        max_z = 0
+                    self.setZValue(max_z + 1)
                 self.animate()
             else:      # It is being deselected
+                # Reset z-value so normal stacking resumes
+                self.setZValue(0)
                 self.deanimate()
                 
         elif change == QGraphicsItem.ItemSceneChange and value is None:
@@ -412,9 +417,6 @@ class AnnotationImageWidget(QWidget):
         effective_label = self.data_item.effective_label
         pen_color = self.data_item.effective_color
         dashed_color = QColor(pen_color)  # Base color copy
-
-        if effective_label and effective_label.id == "-1":
-            pen_color = QColor("black")
 
         half_width = (ANNOTATION_WIDTH - 1) // 2
         rect = self.rect().adjusted(half_width, half_width, -half_width, -half_width)

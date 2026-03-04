@@ -207,7 +207,8 @@ class MultiPolygonAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotationUpdated.emit(self)  # Notify update
+        # NOTE: Do NOT emit annotationUpdated here - creating a cropped image is not a modification.
+        # The caller is responsible for handling display updates if needed.
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create and add QGraphicsItems for all polygons to the scene."""

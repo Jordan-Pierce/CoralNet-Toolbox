@@ -10,7 +10,10 @@ Customized interaction style:
 """
 
 import time
+import traceback
+
 import numpy as np
+
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -19,11 +22,15 @@ from PyQt5.QtWidgets import (
     QToolBar, QToolButton, QMenu, QAction, QStackedLayout
 )
 
-
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
 from coralnet_toolbox.MVAT.core.Model import PointCloud
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class MVATViewer(QFrame):
@@ -52,7 +59,7 @@ class MVATViewer(QFrame):
         self.plotter = QtInteractor(self, point_smoothing=False)
 
         # Optimizations TODO make configurable?
-        self.plotter.set_background('white')
+        self.plotter.set_background('black')
         self.plotter.disable_anti_aliasing()
         self.plotter.disable_eye_dome_lighting()
         self.plotter.disable_shadows()
@@ -99,15 +106,16 @@ class MVATViewer(QFrame):
         self._stack.addWidget(self.plotter.interactor)
 
         # Placeholder shown when no point cloud present
-        self._placeholder_label = QLabel("No point cloud loaded")
+        self._placeholder_label = QLabel(
+            "No point cloud loaded\nDrag a point cloud file here to load a point cloud."
+        )
+        self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setAutoFillBackground(True)
         self._placeholder_label.setWordWrap(True)
-        self._placeholder_label.setStyleSheet("color: #666;")
+        self._show_placeholder()  # Show placeholder initially        
         self._stack.addWidget(self._placeholder_label)
-
-        # Start showing placeholder by default
         self._stack.setCurrentWidget(self._placeholder_label)
-
         self.layout.addWidget(self._stack_container)
 
         # Opacity control (for thumbnail/frustum opacity)
@@ -158,27 +166,102 @@ class MVATViewer(QFrame):
     # --------------------------------------------------------------------------
     
     def view_top(self):
-        """Set camera to look down from the Z-axis."""
-        self.plotter.camera_position = 'xy'
-        self.plotter.render()
+        """Set camera to look down from the +Z-axis."""
+        try:
+            # preserve current zoom/distance when snapping to canonical axes
+            # looking down from +Z: view direction (camera->focal) = [0,0,-1]
+            self._set_view_preserve_zoom([0, 0, -1], up=[0, 1, 0])
+        except Exception:
+            print("Error setting top view: ", traceback.format_exc())
 
+    def view_bottom(self):
+        """Set camera to look up from the -Z-axis."""
+        try:
+            # looking up from -Z: view direction = [0,0,1]
+            self._set_view_preserve_zoom([0, 0, 1], up=[0, 1, 0])
+        except Exception:
+            print("Error setting bottom view: ", traceback.format_exc())
+            
     def view_front(self):
-        """Set camera to look from the Y-axis."""
-        self.plotter.camera_position = 'xz'
-        self.plotter.render()
+        """Set camera to look from the -Y-axis (Standard front)."""
+        try:
+            # front: camera at -Y looking towards +Y -> view direction = [0,1,0]
+            self._set_view_preserve_zoom([0, 1, 0], up=[0, 0, 1])
+        except Exception:
+            print("Error setting front view: ", traceback.format_exc())
 
-    def view_side(self):
-        """Set camera to look from the X-axis."""
-        self.plotter.camera_position = 'yz'
-        self.plotter.render()
+    def view_back(self):
+        """Set camera to look from the +Y-axis."""
+        try:
+            # back: camera at +Y looking towards -Y -> view direction = [0,-1,0]
+            self._set_view_preserve_zoom([0, -1, 0], up=[0, 0, 1])
+        except Exception:
+            print("Error setting back view: ", traceback.format_exc())
 
+    def view_right(self):
+        """Look at the YZ plane from the right (+X)."""
+        # Z is UP, Y is LEFT
+        # right: camera at +X looking towards -X -> view direction = [-1,0,0]
+        try:
+            self._set_view_preserve_zoom([-1, 0, 0], up=[0, 0, 1])
+        except Exception:
+            pass
+
+    def view_left(self):
+        """Look at the YZ plane from the left (-X)."""
+        # Z is UP, Y is RIGHT
+        # left: camera at -X looking towards +X -> view direction = [1,0,0]
+        try:
+            self._set_view_preserve_zoom([1, 0, 0], up=[0, 0, 1])
+        except Exception:
+            pass
+        
     def view_isometric(self):
-        """Set camera to a standard 3D isometric angle."""
-        self.plotter.view_isometric()
-        self.plotter.render()
+        try:
+            self.plotter.view_isometric()
+            self.plotter.render()
+        except Exception:
+            print("Error setting isometric view: ", traceback.format_exc())
+
+    def _set_view_preserve_zoom(self, view_dir, up=None):
+        """Set camera looking along view_dir (from camera towards focal point)
+        while preserving current camera distance (zoom) and view angle.
+
+        view_dir: iterable-like 3-vector (direction from camera to focal point)
+        up: optional up-vector to set on the camera
+        """
+        try:
+            cam = self.plotter.camera
+            fp = np.array(cam.focal_point)
+            pos = np.array(cam.position)
+            # preserve distance between camera and focal point; fallback to scene median
+            dist = np.linalg.norm(pos - fp)
+            if dist < 1e-6:
+                dist = self.get_scene_median_depth(pos if pos is not None else np.array([0.0, 0.0, 0.0]))
+
+            v = np.array(view_dir, dtype=float)
+            n = np.linalg.norm(v)
+            if n < 1e-12:
+                return
+            view_dir_norm = v / n
+
+            # new camera position such that (fp - new_pos) is view_dir_norm * dist
+            new_pos = fp - view_dir_norm * dist
+
+            cam.position = new_pos.tolist()
+            cam.focal_point = fp.tolist()
+            if up is not None:
+                cam.up = np.array(up, dtype=float).tolist()
+            # keep view_angle unchanged -> do not call reset/fit helpers
+            try:
+                self.plotter.render()
+            except Exception:
+                pass
+            self._update_clipping_range()
+        except Exception:
+            pass
 
     def toggle_orthographic(self, state: bool):
-        """Toggle between perspective and orthographic projection."""
         if state:
             self.plotter.enable_parallel_projection()
         else:
@@ -224,22 +307,23 @@ class MVATViewer(QFrame):
 
         # Top actions: Fit and Reset
         action_fit = QAction("Fit All", self)
-        action_fit.setShortcut("F")
         action_fit.triggered.connect(self.fit_to_view)
         view_menu.addAction(action_fit)
 
         action_reset = QAction("Reset View", self)
-        action_reset.setShortcut("R")
         action_reset.triggered.connect(self.reset_view)
         view_menu.addAction(action_reset)
 
         view_menu.addSeparator()
 
         # Camera angles
-        view_menu.addAction("Top (XY)", self.view_top)
-        view_menu.addAction("Front (XZ)", self.view_front)
-        view_menu.addAction("Side (YZ)", self.view_side)
-        view_menu.addAction("Isometric", self.view_isometric)
+        view_menu.addAction("Top (T)", self.view_top)
+        view_menu.addAction("Bottom (C)", self.view_bottom)
+        view_menu.addAction("Front (F)", self.view_front)
+        view_menu.addAction("Back (B)", self.view_back)
+        view_menu.addAction("Left (L)", self.view_left)
+        view_menu.addAction("Right (R)", self.view_right)
+        view_menu.addAction("Isometric (I)", self.view_isometric)
 
         view_menu.addSeparator()
 
@@ -624,7 +708,8 @@ class MVATViewer(QFrame):
                 - WASD: change view direction in-place (rotate viewing direction)
                     W/S: pitch up/down, A/D: yaw left/right
         - Arrow keys: move camera position (forward/back/strafe)
-        - Q/E: keep existing rotate behavior
+        - Q/E: rotate view left/right
+        - View shortcuts: T=Top, F=Front, C=Bottom (Caboose), L=Left, R=Right, B=Back, I=Isometric
         """
         key = event.key()
         ang = np.radians(self.rotate_speed)
@@ -663,8 +748,36 @@ class MVATViewer(QFrame):
         elif key == Qt.Key_E:
             self.rotate_left()
             event.accept()
+        elif key == Qt.Key_T:
+            # Top view
+            self.view_top()
+            event.accept()
+        elif key == Qt.Key_F:
+            # Front view
+            self.view_front()
+            event.accept()
+        elif key == Qt.Key_C:
+            # Bottom view (Caboose)
+            self.view_bottom()
+            event.accept()
+        elif key == Qt.Key_L:
+            # Left view
+            self.view_left()
+            event.accept()
+        elif key == Qt.Key_R:
+            # Right view
+            self.view_right()
+            event.accept()
+        elif key == Qt.Key_B:
+            # Back view
+            self.view_back()
+            event.accept()
+        elif key == Qt.Key_I:
+            # Isometric view
+            self.view_isometric()
+            event.accept()
         else:
-            # Let the parent widget handle keys like R, F, Escape, etc.
+            # Let the parent widget handle other keys
             event.ignore()
 
     def set_focal_point(self, point):
