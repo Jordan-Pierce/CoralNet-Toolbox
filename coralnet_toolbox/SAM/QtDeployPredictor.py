@@ -4,7 +4,9 @@ import os
 import gc
 
 import numpy as np
+
 from torch.cuda import empty_cache
+from torch.cuda import is_available as cuda_is_available
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
@@ -38,7 +40,7 @@ class DeployPredictorDialog(QDialog):
         self.resize(400, 325)
 
         # Initialize instance variables
-        self.imgsz = 640
+        self.imgsz = 640 if not cuda_is_available() else 1024  # Default to smaller size on CPU for performance
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
@@ -297,11 +299,24 @@ class DeployPredictorDialog(QDialog):
         if self.loaded_model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
+        # Make cursor busy while setting the image
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         self.original_image = image
         self.image_path = image_path
         
-        # Set the image in the predictor
-        self.loaded_model.set_image(image)
+        try:
+            # Set the image in the predictor
+            self.loaded_model.set_image(image)
+            
+        except Exception as e:
+            QMessageBox.critical(self.annotation_window, "Error Setting Image", f"Error setting image: {e}")
+            self.original_image = None
+            self.image_path = None
+            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def predict_from_prompts(self, bbox=None, points=None, labels=None):
         """

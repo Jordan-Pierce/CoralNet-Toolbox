@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import torch
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
@@ -80,6 +80,13 @@ class SAMTool(Tool):
         # Output settings - synced from dialog
         self.output_type = "Polygon"  # Default value, will be synced from dialog
         self.allow_holes = False  # Default value, will be synced from dialog
+
+        # --- THE FIX: Hover Debounce Timer ---
+        # Debounce heavy hover predictions so rapid mouseMoveEvents don't flood the UI thread
+        self.hover_timer = QTimer()
+        self.hover_timer.setSingleShot(True)
+        self.hover_timer.timeout.connect(self._on_hover_timeout)
+        self.debounce_ms = 10  # Wait 10ms after the mouse stops before predicting
 
     def activate(self):
         """
@@ -159,6 +166,19 @@ class SAMTool(Tool):
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
+
+    def _on_hover_timeout(self):
+        """
+        Triggered when the mouse stops moving for 'debounce_ms'.
+        Safe to run heavy predictions here without lagging the UI.
+        """
+        if not self.active or not self.working_area or not self.hover_pos:
+            return
+
+        # Double check conditions before predicting
+        if not self.has_active_prompts or len(self.positive_points) > 0 or len(self.negative_points) > 0:
+            self.create_temp_annotation(self.hover_pos)
+            self.annotation_window.scene.update()
         
     def set_custom_working_area(self, start_point, end_point):
         """
@@ -586,7 +606,7 @@ class SAMTool(Tool):
         """
         # Call parent implementation to handle crosshair
         super().mouseMoveEvent(event)
-        
+
         # Continue with tool-specific behavior
         scene_pos = self.annotation_window.mapToScene(event.pos())
         self.hover_pos = scene_pos
@@ -595,7 +615,7 @@ class SAMTool(Tool):
         if self.creating_working_area and self.working_area_start:
             self.display_working_area_preview(scene_pos)
             return
-            
+
         if not self.working_area:
             return
 
@@ -605,14 +625,16 @@ class SAMTool(Tool):
             self.display_rectangle()
         # Create hover annotation when not drawing rectangle
         elif not self.drawing_rectangle and self.annotation_window.cursorInWindow(event.pos()):
-            # Only create new temp annotation if we don't have active prompts
-            if not self.has_active_prompts:
-                self.create_temp_annotation(scene_pos)
-            # If we have points but no rectangle, update the temp annotation with new hover point
-            elif len(self.positive_points) > 0 or len(self.negative_points) > 0:
-                self.create_temp_annotation(scene_pos)
+            # Only start the debounce timer if we don't have active prompts OR we have point prompts
+            if not self.has_active_prompts or len(self.positive_points) > 0 or len(self.negative_points) > 0:
+                # Reset/start the hover debounce timer - prediction will run when mouse stops
+                self.hover_timer.start(self.debounce_ms)
+
         # Remove hover annotation when cursor leaves window
         elif not self.annotation_window.cursorInWindow(event.pos()):
+            # Stop any pending hover prediction
+            if hasattr(self, 'hover_timer'):
+                self.hover_timer.stop()
             # Only clear if we don't have active points or rectangle
             if not self.has_active_prompts:
                 self.clear_temp_annotation()
@@ -964,6 +986,10 @@ class SAMTool(Tool):
         """
         Cancel the working area and clean up all associated resources.
         """
+        # Stop pending hover predictions
+        if hasattr(self, 'hover_timer'):
+            self.hover_timer.stop()
+            
         # Clear temporary annotation
         self.clear_temp_annotation()
 

@@ -1021,14 +1021,14 @@ def densify_polygon(xy_points):
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
 
-def polygonize_mask_with_holes(mask_tensor, epsilon=1.5):
+def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     """
     Converts a boolean mask tensor to an exterior polygon and a list of interior hole polygons.
 
     Args:
         mask_tensor (torch.Tensor): A 2D boolean tensor from the prediction results.
         epsilon (float): The maximum distance in pixels between the original curve and its approximation. 
-                         Higher = faster UI & fewer points. Lower = more accurate to the pixel.
+                         Higher = faster UI & fewer points. Lower = more accurate to the pixel. 0 = no simplification.
 
     Returns:
         A tuple containing:
@@ -1039,7 +1039,7 @@ def polygonize_mask_with_holes(mask_tensor, epsilon=1.5):
     # A 1024x1024 float32 tensor is 4MB. A uint8 tensor is 1MB.
     mask_np = (mask_tensor.squeeze() > 0).to(torch.uint8).cpu().numpy()
 
-    # Find all contours and their hierarchy
+    # Find all contours and their hierarchy (even if epsilon=0, redudant points along straight lines will be removed)
     contours, hierarchy = cv2.findContours(mask_np, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours or hierarchy is None:
