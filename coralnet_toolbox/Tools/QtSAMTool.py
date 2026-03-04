@@ -764,8 +764,6 @@ class SAMTool(Tool):
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
         bbox = None
-        points = None
-        labels = None
 
         # Check if we have a rectangle (bbox)
         if self.top_left is not None and self.bottom_right is not None:

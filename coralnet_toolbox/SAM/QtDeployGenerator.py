@@ -584,19 +584,14 @@ class DeployGeneratorDialog(QDialog):
             return results_list
 
         updated_results = []
-        for results_obj in results_list:
-            # 'results_obj' is a single Results object (e.g., res1)
-            if results_obj:
-                # --- Pass [results_obj] to SAM, as it expects a list ---
-                sam_result_list = self.sam_dialog.predict_from_results([results_obj], image_path)
-                
-                # --- Unpack the list returned by SAM ---
-                if sam_result_list:
-                    updated_results.append(sam_result_list[0])
-                else:
-                    updated_results.append(None)  # Keep list length consistent
-            else:
-                updated_results.append(None)  # Keep list length consistent
+        # OPTIMIZATION: Pass the entire batch directly to SAM. The sam_dialog
+        # handles batch iteration natively and is more efficient than per-item calls.
+        sam_result_list = self.sam_dialog.predict_from_results(results_list, image_path)
+
+        # Ensure we always return a list of the exact same length, substituting None for failures
+        updated_results = []
+        for orig_res, sam_res in zip(results_list, sam_result_list):
+            updated_results.append(sam_res if sam_res else None)
 
         # Returns a flat list: [sam_res1, sam_res2, ...]
         return updated_results

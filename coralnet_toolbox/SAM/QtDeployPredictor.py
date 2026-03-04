@@ -115,6 +115,7 @@ class DeployPredictorDialog(QDialog):
             "SAM 2.1 Large": "sam2.1_l.pt"
         }
         
+        # Check for SAM 3 weights in the current directory and add to models if found
         if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
             self.models["SAM 3"] = "sam3.pt"
 
@@ -305,6 +306,14 @@ class DeployPredictorDialog(QDialog):
         self.original_image = image
         self.image_path = image_path
         
+        # Ultralytics will download the model for the user
+        if not os.path.exists(self.model_path):
+            # Inform the user that the model is being downloaded via main window status bar
+            self.main_window.status_bar.showMessage(f"Downloading model weights for {self.model_path}...", 5000)
+        else:
+            # Indicate that the image is being set for the predictor
+            self.main_window.status_bar.showMessage("Setting image for predictor...", 2000)
+        
         try:
             # Set the image in the predictor
             self.loaded_model.set_image(image)
@@ -343,6 +352,10 @@ class DeployPredictorDialog(QDialog):
         self.loaded_model.args.imgsz = self.imgsz_spinbox.value()
         self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
         
+        # Make cursor busy while predicting
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.main_window.status_bar.showMessage("Running prediction...", 2000)
+        
         try:
             # Call the predictor with prompts
             # Image is already set, so we just pass the prompts
@@ -359,24 +372,25 @@ class DeployPredictorDialog(QDialog):
                                  "Prediction Error",
                                  f"Error predicting: {e}")
             return None
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
 
     def predict_from_results(self, results_list, image_path=None):
         """
         Apply SAM to YOLO detection results to add segmentation masks.
-        
         Extracts bounding boxes from YOLO detections and uses them as prompts for SAM.
-        The resulting masks are injected back into the original YOLO Results object.
         """
         if self.loaded_model is None or len(results_list) == 0:
             return results_list
         
         output_results = []
+        import torch
         
         for results in results_list:
             original_image = results.orig_img
             
-            # OPTIMIZATION: Only run the heavy ViT image encoder if the image changed.
-            # We do a fast shape check first, then an array comparison to be safe.
+            # Fast shape check to avoid re-running the heavy ViT encoder
             image_changed = True
             if self.original_image is not None:
                 if self.original_image.shape == original_image.shape:
@@ -386,21 +400,66 @@ class DeployPredictorDialog(QDialog):
             if image_changed:
                 self.set_image(original_image, image_path or results.path)
             
-            # Extract bounding boxes from YOLO detections
             if results.boxes is None or len(results.boxes) == 0:
                 output_results.append(results)
                 continue
             
-            # Detach before moving to CPU to be perfectly safe with PyTorch graphs
-            bboxes = results.boxes.xyxy.detach().cpu().numpy()
+            # Keep bounding boxes on the GPU as a PyTorch tensor!
+            bboxes = results.boxes.xyxy 
             
-            # Call SAM with bounding box prompts
-            sam_results = self.predict_from_prompts(bbox=bboxes)
+            # --- THE HARDWARE-AGNOSTIC FIX: ADAPTIVE CHUNKING ---
+            # Start with a highly optimistic chunk size
+            current_chunk_size = 256
             
-            if sam_results and len(sam_results) > 0:
-                # Extract masks from SAM output and inject into YOLO results
-                sam_masks = sam_results[0].masks.data
-                results.update(masks=sam_masks)
+            # We use a while loop so we can dynamically adjust the chunk size if we hit an OOM
+            i = 0
+            all_sam_masks = []
+            
+            while i < len(bboxes):
+                bbox_chunk = bboxes[i:i + current_chunk_size]
+                
+                try:
+                    # Attempt to run SAM with the current chunk
+                    sam_results = self.predict_from_prompts(bbox=bbox_chunk)
+                    
+                    if sam_results and len(sam_results) > 0 and sam_results[0].masks is not None:
+                        # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN ---
+                        # Shrinks the stored output by 32x to prevent memory accumulation
+                        compressed_masks = sam_results[0].masks.data.to(torch.bool)
+                        all_sam_masks.append(compressed_masks)
+                    
+                    # If successful, move forward by the chunk size
+                    i += current_chunk_size
+                    
+                except RuntimeError as e:
+                    # Check if the error is a CUDA Out Of Memory error
+                    if "out of memory" in str(e).lower() or "oom" in str(e).lower():
+                        # If we are already at chunk size 1 and it OOMs, the user's GPU is simply too small
+                        if current_chunk_size <= 1:
+                            from PyQt5.QtWidgets import QMessageBox
+                            QMessageBox.critical(self.annotation_window, 
+                                                 "GPU Memory Error", 
+                                                 "Your GPU does not have enough memory to process this image.")
+                            break
+                        
+                        # The chunk was too big. Clear the failed memory allocation...
+                        import gc
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            
+                        # ...cut the chunk size in half, and try this exact same index (i) again!
+                        current_chunk_size = current_chunk_size // 2
+                        print(f"VRAM limit reached. Reducing SAM batch size to {current_chunk_size}...")
+                    else:
+                        # If it's a different runtime error, raise it normally
+                        raise e
+            
+            # Stitch all the chunks back together into a single tensor
+            if all_sam_masks:
+                # Concatenate the boolean masks, then cast back to float to satisfy Ultralytics
+                combined_masks = torch.cat(all_sam_masks, dim=0).float()
+                results.update(masks=combined_masks)
             
             output_results.append(results)
         
