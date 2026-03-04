@@ -113,7 +113,6 @@ class DeployPredictorDialog(QDialog):
             "SAM 2.1 Large": "sam2.1_l.pt"
         }
         
-        print(f"Checking for local SAM 3 weights in {os.getcwd()}...")
         if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
             self.models["SAM 3"] = "sam3.pt"
 
