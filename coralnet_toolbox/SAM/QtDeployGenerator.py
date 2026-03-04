@@ -335,8 +335,9 @@ class DeployGeneratorDialog(QDialog):
             overrides = dict(model=self.model_path,
                              task=self.task,
                              mode='predict',
-                             save=False,
                              retina_masks=self.task == "segment",
+                             half=True,
+                             save=False,
                              max_det=self.thresholds_widget.get_max_detections(),
                              imgsz=self.get_imgsz(),
                              conf=self.thresholds_widget.get_uncertainty_thresh(),
@@ -554,10 +555,38 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
 
         results_list = []
+        # Defer heavy imports to runtime to avoid module import issues
+        import cv2
+        import torch
+
         for input_image in inputs:
-            with torch.no_grad():
-                results = self.loaded_model(input_image)
-                results_list.append(results[0] if results else None)
+            # If caller passed a file path (string), read it into a numpy array
+            img = input_image
+            try:
+                if isinstance(input_image, str):
+                    img = cv2.imread(input_image, cv2.IMREAD_UNCHANGED)
+                    if img is None:
+                        print(f"Warning: cv2 failed to read {input_image}")
+                        results_list.append(None)
+                        continue
+
+                # Normalize channel dimensions: ensure HxWx3
+                if isinstance(img, np.ndarray):
+                    if img.ndim == 2:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                    elif img.ndim == 3 and img.shape[2] > 3:
+                        img = img[:, :, :3]
+                else:
+                    # Unsupported input type
+                    results_list.append(None)
+                    continue
+
+                with torch.no_grad():
+                    results = self.loaded_model(img)
+                    results_list.append(results[0] if results else None)
+            except Exception as e:
+                print(f"Error running model on input: {e}")
+                results_list.append(None)
 
         # Returns a flat list: [res1, res2, ...]
         return results_list

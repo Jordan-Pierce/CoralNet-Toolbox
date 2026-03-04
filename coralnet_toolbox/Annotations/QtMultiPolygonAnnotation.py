@@ -300,25 +300,33 @@ class MultiPolygonAnnotation(Annotation):
     
     def _update_pen_styles(self):
         """Update pen styles with current animated line offset for all polygon items."""
-        # This check can be simplified to guard the whole method
-        if not self.is_selected and not self.animation_timer.isActive():
+        # Guard: if the annotation is neither selected nor animating, nothing to do.
+        # Older code referenced an animation_timer which doesn't exist on this class.
+        if not self.is_selected and not getattr(self, 'is_animating', False):
             return
-            
+
         color = QColor(self.label.color)
         pen = self._create_pen(color)
-        
+
         # Update all polygon items in the group
         if self.graphics_item_group:
             # We need to check for QGraphicsPathItem, not QGraphicsPolygonItem
             for item in self.graphics_item_group.childItems():
+                from PyQt5.QtWidgets import QGraphicsPathItem
                 if isinstance(item, QGraphicsPathItem):
                     item.setPen(pen)
-        
-        # Update helper graphics items (no change needed here)
+
+        # Update helper graphics items
         if self.center_graphics_item:
-            self.center_graphics_item.setPen(pen)
+            try:
+                self.center_graphics_item.setPen(pen)
+            except Exception:
+                pass
         if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setPen(pen)
+            try:
+                self.bounding_box_graphics_item.setPen(pen)
+            except Exception:
+                pass
             
     def update_polygon(self, delta):
         """Show a warning that MultiPolygonAnnotations should be cut before updating."""
