@@ -1,8 +1,9 @@
 import warnings
+
+import os
 import gc
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+import numpy as np
 from torch.cuda import empty_cache
 
 from PyQt5.QtCore import Qt
@@ -16,6 +17,8 @@ from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -35,7 +38,7 @@ class DeployPredictorDialog(QDialog):
         self.resize(400, 325)
 
         # Initialize instance variables
-        self.imgsz = 1024
+        self.imgsz = 640
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
@@ -109,13 +112,17 @@ class DeployPredictorDialog(QDialog):
             "SAM 2.1 Base": "sam2.1_b.pt",
             "SAM 2.1 Large": "sam2.1_l.pt"
         }
+        
+        print(f"Checking for local SAM 3 weights in {os.getcwd()}...")
+        if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
+            self.models["SAM 3"] = "sam3.pt"
 
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
 
         models = list(self.models.keys())
-        self.model_combo.setCurrentIndex(models.index("MobileSAM"))
+        self.model_combo.setCurrentIndex(models.index("SAM 2.1 Tiny"))
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -151,7 +158,7 @@ class DeployPredictorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(640, 65536)
+        self.imgsz_spinbox.setRange(640, 2048)
         self.imgsz_spinbox.setSingleStep(24)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
@@ -237,13 +244,14 @@ class DeployPredictorDialog(QDialog):
 
             # Create overrides dictionary
             overrides = dict(
-                task="segment",
+                task="detect" if self.get_output_type() == "Rectangle" else "segment",
                 mode="predict",
                 imgsz=imgsz,
                 model=self.model_path,
                 conf=conf,
                 device=self.main_window.device,
-                retina_masks=True,
+                retina_masks=False,
+                half=True if selected_model_name != "MobileSAM" else False,  # MobileSAM doesn't support half precision
                 save=False, 
                 show=False, 
                 save_txt=False
@@ -253,7 +261,7 @@ class DeployPredictorDialog(QDialog):
             if "SAM 2" in selected_model_name:
                 # SAM 2 and SAM 2.1 models use SAM2Predictor
                 self.loaded_model = SAM2Predictor(overrides=overrides)
-            elif "sam3" in self.model_path.lower():
+            elif "SAM 3" in selected_model_name:
                 # SAM 3 models use SAM3Predictor
                 self.loaded_model = SAM3Predictor(overrides=overrides)
             else:
@@ -317,7 +325,8 @@ class DeployPredictorDialog(QDialog):
         if self.original_image is None:
             raise RuntimeError("No image set. Call set_image() first.")
         
-        # Update the confidence threshold from the UI
+        # Update the parameters and threshold from the UI
+        self.loaded_model.args.imgsz = self.imgsz_spinbox.value()
         self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
         
         try:
@@ -343,13 +352,6 @@ class DeployPredictorDialog(QDialog):
         
         Extracts bounding boxes from YOLO detections and uses them as prompts for SAM.
         The resulting masks are injected back into the original YOLO Results object.
-        
-        Args:
-            results_list (list): List of YOLO Results objects.
-            image_path (str): Path to the image (optional).
-        
-        Returns:
-            list: Results objects with SAM masks appended.
         """
         if self.loaded_model is None or len(results_list) == 0:
             return results_list
@@ -357,16 +359,26 @@ class DeployPredictorDialog(QDialog):
         output_results = []
         
         for results in results_list:
-            # Set the current image for SAM inference
             original_image = results.orig_img
-            self.set_image(original_image, image_path or results.path)
+            
+            # OPTIMIZATION: Only run the heavy ViT image encoder if the image changed.
+            # We do a fast shape check first, then an array comparison to be safe.
+            image_changed = True
+            if self.original_image is not None:
+                if self.original_image.shape == original_image.shape:
+                    if np.array_equal(self.original_image, original_image):
+                        image_changed = False
+                        
+            if image_changed:
+                self.set_image(original_image, image_path or results.path)
             
             # Extract bounding boxes from YOLO detections
             if results.boxes is None or len(results.boxes) == 0:
                 output_results.append(results)
                 continue
             
-            bboxes = results.boxes.xyxy.cpu().numpy()  # Convert to numpy array
+            # Detach before moving to CPU to be perfectly safe with PyTorch graphs
+            bboxes = results.boxes.xyxy.detach().cpu().numpy()
             
             # Call SAM with bounding box prompts
             sam_results = self.predict_from_prompts(bbox=bboxes)

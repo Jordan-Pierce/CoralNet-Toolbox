@@ -95,7 +95,11 @@ class EmbeddingViewerWindow(QWidget):
         self._embeddings_stale = False  # Flag indicating new annotations need embedding
         
         # Cache manager for caching extracted features
-        self.cache_manager = CacheManager()
+        # Prefer a central cache_manager owned by MainWindow when available
+        self.cache_manager = getattr(self.main_window, 'cache_manager', None)
+        if self.cache_manager is None:
+            # backward-compatible fallback
+            self.cache_manager = CacheManager()
         
         # Data model
         self.data_item_cache = {}  # annotation_id -> AnnotationDataItem
@@ -419,8 +423,10 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_scene.removeItem(point)
             del self.points_by_id[annotation_id]
         
-        # Invalidate cached features
-        self.cache_manager.remove_features_for_annotation(annotation_id)
+        # Invalidate cached features (only when viewer is visible to avoid
+        # churn when embedding/annotation views are inactive)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotation(annotation_id)
         
         self._update_toolbar_state()
         
@@ -458,8 +464,9 @@ class EmbeddingViewerWindow(QWidget):
                 if ann_id in self.working_set_ids:
                     self.working_set_ids.remove(ann_id)
                 
-                # Invalidate cached ML features for deleted items
-                self.cache_manager.remove_features_for_annotation(ann_id)
+                # Invalidate cached ML features for deleted items (guarded)
+                if self.cache_manager and self._should_modify_cache():
+                    self.cache_manager.remove_features_for_annotation(ann_id)
 
         finally:
             # 5. Re-enable updates and perform ONE consolidated refresh
@@ -479,7 +486,8 @@ class EmbeddingViewerWindow(QWidget):
     @pyqtSlot(str)
     def on_annotation_modified(self, annotation_id):
         """Handle annotation modification - invalidates cached features."""
-        self.cache_manager.remove_features_for_annotation(annotation_id)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotation(annotation_id)
         
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
@@ -542,7 +550,8 @@ class EmbeddingViewerWindow(QWidget):
             move_data: Dict with 'old_center' and 'new_center' QPointF
         """
         # For now, invalidate features on any move since the crop might change
-        self.cache_manager.remove_features_for_annotation(annotation_id)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotation(annotation_id)
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
         self._embeddings_stale = True
@@ -556,7 +565,8 @@ class EmbeddingViewerWindow(QWidget):
             annotation_id: ID of the annotation
             geometry_data: Dict with 'old_geom' and 'new_geom'
         """
-        self.cache_manager.remove_features_for_annotation(annotation_id)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotation(annotation_id)
         if annotation_id in self.data_item_cache:
             del self.data_item_cache[annotation_id]
         self._embeddings_stale = True
@@ -570,8 +580,9 @@ class EmbeddingViewerWindow(QWidget):
             original_annotation_id: ID of the original annotation
             new_annotations: List of new annotation objects
         """
-        # Remove original from cache
-        self.cache_manager.remove_features_for_annotation(original_annotation_id)
+        # Remove original from cache (guarded by visibility)
+        if self.cache_manager and self._should_modify_cache():
+            self.cache_manager.remove_features_for_annotation(original_annotation_id)
         if original_annotation_id in self.data_item_cache:
             del self.data_item_cache[original_annotation_id]
         
@@ -597,9 +608,10 @@ class EmbeddingViewerWindow(QWidget):
         """
         original_ids = merge_data['original_ids']
         
-        # Remove originals from cache
+        # Remove originals from cache (guarded by visibility)
         for ann_id in original_ids:
-            self.cache_manager.remove_features_for_annotation(ann_id)
+            if self.cache_manager and self._should_modify_cache():
+                self.cache_manager.remove_features_for_annotation(ann_id)
             if ann_id in self.data_item_cache:
                 del self.data_item_cache[ann_id]
             
@@ -1290,7 +1302,17 @@ class EmbeddingViewerWindow(QWidget):
         Manually looping through thousands of points to call .setVisible() 
         actively fights the engine and causes massive lag!
         """
-        pass # Let the native C++ engine do its job!
+        pass  # Let the native C++ engine do its job!
+
+    def _should_modify_cache(self):
+        """Return True when this viewer should perform persistent cache mutations.
+
+        Low-risk heuristic: only allow cache mutations when the viewer is visible.
+        """
+        try:
+            return bool(self.cache_manager and self.isVisible())
+        except Exception:
+            return False
     
     # -------------------------------------------------------------------------
     # Selection Management

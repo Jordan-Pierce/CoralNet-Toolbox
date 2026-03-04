@@ -1,6 +1,7 @@
 import warnings
 
 import numpy as np
+import torch
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
@@ -357,24 +358,18 @@ class SAMTool(Tool):
 
             # Check if we have points
             all_points = positive + negative
-            if len(all_points) > 0:
-                # If we have both bbox and points, we need to align them
-                # Each point will be paired with the bbox (or we repeat the bbox for each point)
-                if bbox is not None:
-                    # Repeat the bbox for each point
-                    bboxes = [bbox] * len(all_points)
-                    points = np.array(all_points)
-                    labels = np.array([1] * len(positive) + [0] * len(negative))
-                    # Pass as multi-prompt format
-                    results = self.sam_dialog.predict_from_prompts(bboxes, points, labels)
-                else:
-                    # Only points, no bbox
-                    points = np.array(all_points)
-                    labels = np.array([1] * len(positive) + [0] * len(negative))
-                    results = self.sam_dialog.predict_from_prompts(None, points, labels)
-            elif bbox is not None:
-                # Only bbox, no points
-                results = self.sam_dialog.predict_from_prompts([bbox], None, None)
+            # --- THE FIX: Format as a single batch item for SAM ---
+            # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
+            bboxes_input = [bbox] if bbox is not None else None
+            points_input = [all_points] if len(all_points) > 0 else None
+            labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
+
+            if points_input is not None or bboxes_input is not None:
+                results = self.sam_dialog.predict_from_prompts(
+                    bbox=bboxes_input, 
+                    points=points_input, 
+                    labels=labels_input
+                )
             else:
                 # No prompts at all
                 QApplication.restoreOverrideCursor()
@@ -387,20 +382,35 @@ class SAMTool(Tool):
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Unpack the first Results object from the list
+            # Get the first Results object from the list returned by Ultralytics
             result = results[0]
             
-            if not result.boxes or not result.boxes.conf.numel():
+            if not result.boxes:
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Skip low confidence predictions for temporary annotations
-            if result.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
-                QApplication.restoreOverrideCursor()
-                return
+            # Safely handle confidence tensor/array (CPU/GPU/MPS-safe)
+            conf = result.boxes.conf
+            if isinstance(conf, torch.Tensor):
+                if conf.numel() == 0:
+                    QApplication.restoreOverrideCursor()
+                    return
+                # Skip low confidence predictions for temporary annotations
+                if conf[0].item() < self.main_window.get_uncertainty_thresh():
+                    QApplication.restoreOverrideCursor()
+                    return
+                top1_index = int(torch.argmax(conf).item())
+            else:
+                # assume numpy/sequence
+                conf_arr = np.asarray(conf)
+                if conf_arr.size == 0:
+                    QApplication.restoreOverrideCursor()
+                    return
+                if conf_arr[0] < self.main_window.get_uncertainty_thresh():
+                    QApplication.restoreOverrideCursor()
+                    return
+                top1_index = int(np.argmax(conf_arr))
 
-            # Get the top confidence prediction's mask tensor
-            top1_index = np.argmax(result.boxes.conf)
             mask_tensor = result.masks.data[top1_index]
 
             # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
@@ -741,28 +751,22 @@ class SAMTool(Tool):
 
         # Check if we have points
         all_points = positive + negative
-        if len(all_points) > 0:
-            # If we have both bbox and points, we need to align them
-            # Each point will be paired with the bbox (or we repeat the bbox for each point)
-            if bbox is not None:
-                # Repeat the bbox for each point
-                bboxes = [bbox] * len(all_points)
-                points = np.array(all_points)
-                labels = np.array([1] * len(positive) + [0] * len(negative))
-                # Pass as multi-prompt format
-                results = self.sam_dialog.predict_from_prompts(bboxes, points, labels)
-            else:
-                # Only points, no bbox
-                points = np.array(all_points)
-                labels = np.array([1] * len(positive) + [0] * len(negative))
-                results = self.sam_dialog.predict_from_prompts(None, points, labels)
-        elif bbox is not None:
-            # Only bbox, no points
-            results = self.sam_dialog.predict_from_prompts([bbox], None, None)
+        # --- THE FIX: Format as a single batch item for SAM ---
+        # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
+        bboxes_input = [bbox] if bbox is not None else None
+        points_input = [all_points] if len(all_points) > 0 else None
+        labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
+
+        if points_input is not None or bboxes_input is not None:
+            results = self.sam_dialog.predict_from_prompts(
+                bbox=bboxes_input, 
+                points=points_input, 
+                labels=labels_input
+            )
         else:
             # No prompts at all
             QApplication.restoreOverrideCursor()
-            return None
+            return
 
         # Predict mask from prompts
         # Note: results is already obtained from the conditional above
@@ -774,16 +778,27 @@ class SAMTool(Tool):
         # Get the first Results object from the list returned by Ultralytics
         result = results[0]
         
-        if not result.boxes or not result.boxes.conf.numel():
+        if not result.boxes:
             QApplication.restoreOverrideCursor()
             return None
 
-        # Get the top confidence prediction's mask tensor
+        # Get the top confidence prediction's mask tensor (CPU/GPU/MPS-safe)
+        conf = result.boxes.conf
+        if isinstance(conf, torch.Tensor):
+            if conf.numel() == 0:
+                QApplication.restoreOverrideCursor()
+                return None
+            top1_index = int(torch.argmax(conf).item())
+        else:
+            conf_arr = np.asarray(conf)
+            if conf_arr.size == 0:
+                QApplication.restoreOverrideCursor()
+                return None
+            top1_index = int(np.argmax(conf_arr))
+
         if result.masks is None or len(result.masks) == 0:
             QApplication.restoreOverrideCursor()
             return None
-            
-        top1_index = np.argmax(result.boxes.conf)
         mask_tensor = result.masks.data[top1_index]
 
         # Sync latest settings from dialog before creating annotation
@@ -834,15 +849,12 @@ class SAMTool(Tool):
             return None
             
         if self.output_type == "Mask":         
-            # Convert mask tensor to numpy array
-            mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
-            
             # Get the working area information
             working_area_top_left = self.working_area.rect.topLeft()
             wa_x, wa_y = int(working_area_top_left.x()), int(working_area_top_left.y())
-            wa_height, wa_width = mask_np.shape
+            wa_height, wa_width = mask_tensor.shape[-2:]
             
-            # Get the existing mask annotation from the raster (lazy-loads if needed)
+            # Get the existing mask annotation
             mask_annotation = self.annotation_window.current_mask_annotation
             if not mask_annotation:
                 return None
@@ -853,32 +865,40 @@ class SAMTool(Tool):
             if class_id is None:
                 return None
             
+            # --- THE FIX: GPU-Native Math & Type Casting ---
+            # 1. Threshold the mask on the GPU (> 0)
+            # 2. Cast to an 8-bit integer (drastically reduces PCIe transfer size)
+            # 3. Multiply by the class ID on the GPU
+            # 4. FINALLY move the lightweight result to the CPU
+            cropped_mask_np = ((mask_tensor.squeeze() > 0).to(torch.uint8) * class_id).cpu().numpy()
+            
             # Create a prediction mask (full-size, initialized with zeros)
             prediction_mask = np.zeros_like(mask_annotation.mask_data)
             
-            # Place the SAM prediction into the full mask at the working area position
-            prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = np.where(
-                mask_np > 0,
-                class_id,
-                0
-            )
+            # Insert the pre-computed crop directly (no np.where needed!)
+            prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = cropped_mask_np
             
             # Update the existing mask annotation with the prediction
             mask_annotation.update_mask_with_prediction_mask(prediction_mask)
             
-            # Return None to indicate this is not a new annotation object to add
             return None
             
         elif self.output_type == "Rectangle":
-            # For rectangle output, just get the bounding box of the mask
-            # Find the bounding rectangle of the mask
-            y_indices, x_indices = np.where(mask_tensor.cpu().numpy() > 0)
+            # --- THE FIX: GPU-Native Bounding Box Extraction ---
+            # Do NOT use .cpu().numpy() on the full mask. 
+            # Project the mask onto the X and Y axes directly on the GPU.
+            y_any = mask_tensor.any(dim=1)
+            x_any = mask_tensor.any(dim=0)
+            
+            y_indices = torch.where(y_any)[0]
+            x_indices = torch.where(x_any)[0]
+            
             if len(y_indices) == 0 or len(x_indices) == 0:
                 return None
                 
-            # Get the min/max coordinates
-            min_x, max_x = np.min(x_indices), np.max(x_indices)
-            min_y, max_y = np.min(y_indices), np.max(y_indices)
+            # Extract just the min/max values and use .item() to pull only 4 numbers to the CPU
+            min_y, max_y = y_indices[0].item(), y_indices[-1].item()
+            min_x, max_x = x_indices[0].item(), x_indices[-1].item()
             
             # Apply the offset from working area
             working_area_top_left = self.working_area.rect.topLeft()
