@@ -761,21 +761,35 @@ class SeeAnythingTool(Tool):
         # Process the results with the SAM predictor using the new
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
 
-        # Get SAM resizing dimensions
+        # Get the original working area image dimensions
         original_h, original_w = self.work_area_image.shape[:2]
-        resized_h, resized_w = self.see_anything_dialog.sam_dialog.resized_image.shape[:2]
-
-        # Calculate scaling factors
-        scale_x = original_w / resized_w
-        scale_y = original_h / resized_h
+        
+        # Get the actual dimensions that SAM processed from the results object
+        # results[0].orig_img is the image SAM received (may have been resized)
+        if results and len(results) > 0 and hasattr(results[0], 'orig_img'):
+            processed_h, processed_w = results[0].orig_img.shape[:2]
+        else:
+            # Fallback to calculating from imgsz if orig_img not available
+            imgsz = self.see_anything_dialog.sam_dialog.imgsz_spinbox.value()
+            if original_h > original_w:
+                processed_h = imgsz
+                processed_w = int(imgsz * original_w / original_h)
+            else:
+                processed_w = imgsz
+                processed_h = int(imgsz * original_h / original_w)
+        
+        # Calculate scaling factors to map from processed size back to original size
+        scale_x = original_w / processed_w
+        scale_y = original_h / processed_h
 
         # Update mask coordinates to account for resizing
-        for i, mask in enumerate(results[0].masks.xy):
-            if len(mask) > 0:
-                # Scale coordinates back to original size
-                mask[:, 0] *= scale_x
-                mask[:, 1] *= scale_y
-                results[0].masks.xy[i] = mask
+        if results[0].masks is not None:
+            for i, mask in enumerate(results[0].masks.xy):
+                if len(mask) > 0:
+                    # Scale coordinates back to original size
+                    mask[:, 0] *= scale_x
+                    mask[:, 1] *= scale_y
+                    results[0].masks.xy[i] = mask
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)

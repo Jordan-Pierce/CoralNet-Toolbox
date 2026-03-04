@@ -1,14 +1,8 @@
 import warnings
+import gc
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import gc
-import os
-
-import cv2
-import numpy as np
-
-import torch
 from torch.cuda import empty_cache
 
 from PyQt5.QtCore import Qt
@@ -16,21 +10,11 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSpinBox, QVBoxLayout, QGroupBox)
 
-
-from x_segment_anything import SamPredictor
-from x_segment_anything import sam_model_registry
-from x_segment_anything import sam_model_urls
-
-from coralnet_toolbox.Results import ConvertResults
+from ultralytics.models.sam import Predictor as SAMPredictor
+from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Common import ThresholdsWidget
-
-from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.utilities import rasterio_to_numpy
-from coralnet_toolbox.utilities import attempt_download_asset
-
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -56,7 +40,6 @@ class DeployPredictorDialog(QDialog):
         self.loaded_model = None
         self.image_path = None
         self.original_image = None
-        self.resized_image = None
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -111,15 +94,20 @@ class DeployPredictorDialog(QDialog):
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
-        # Define available models
+        # Define available models with official Ultralytics weights
         self.models = {
-            "MobileSAM": "vit_t.pt",
-            "EdgeSAM": "edge_sam_3x.pt",
-            "RepViT-SAM": "repvit.pt",
-            "CoralSCOP": "vit_b_coralscop.pt",
-            "SAM-Base": "vit_b.pt",
-            "SAM-Large": "vit_l.pt",
-            "SAM-Huge": "vit_h.pt"
+            "MobileSAM": "mobile_sam.pt",
+            "SAM-Base": "sam_b.pt",
+            "SAM-Large": "sam_l.pt",
+            "SAM-Huge": "sam_h.pt",
+            "SAM 2 Tiny": "sam2_t.pt",
+            "SAM 2 Small": "sam2_s.pt",
+            "SAM 2 Base": "sam2_b.pt",
+            "SAM 2 Large": "sam2_l.pt",
+            "SAM 2.1 Tiny": "sam2.1_t.pt",
+            "SAM 2.1 Small": "sam2.1_s.pt",
+            "SAM 2.1 Base": "sam2.1_b.pt",
+            "SAM 2.1 Large": "sam2.1_l.pt"
         }
 
         # Add all models to combo box
@@ -163,8 +151,8 @@ class DeployPredictorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(1024, 65536)
-        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setRange(640, 65536)
+        self.imgsz_spinbox.setSingleStep(24)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
@@ -180,8 +168,8 @@ class DeployPredictorDialog(QDialog):
             self.main_window,
             show_max_detections=False,
             show_uncertainty=True,
-            show_iou=True,
-            show_area=True
+            show_iou=False,
+            show_area=False
         )
         self.layout.addWidget(self.thresholds_widget)
 
@@ -224,64 +212,62 @@ class DeployPredictorDialog(QDialog):
         """Return the current setting for output type."""
         return self.output_type_dropdown.currentText()
 
-    def download_model_weights(self, model_path):
-        """
-        Download the model weights if they are not present.
-        """
-        model = os.path.basename(model_path).split(".")[0]
-        model_url = sam_model_urls[model]
-
-        # Download the model weights if they are not present
-        attempt_download_asset(self, model_path, model_url)
-
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not downloaded: {model_path}")
-
     def load_model(self):
         """
-        Load the selected model.
+        Load the selected SAM model using the appropriate Predictor class.
+        
+        - SAM 2 models use SAM2Predictor
+        - SAM 3 models use SAM3Predictor
+        - Other models use SAMPredictor
+        
+        Ultralytics will automatically download missing weights.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
 
         try:
-            # Get selected model path and download weights if needed
-            self.model_path = self.models[self.model_combo.currentText()]
-            self.download_model_weights(self.model_path)
+            # Get selected model path and name
+            selected_model_name = self.model_combo.currentText()
+            self.model_path = self.models[selected_model_name]
+            
+            # Get imgsz and confidence from UI
+            imgsz = self.imgsz_spinbox.value()
+            conf = self.thresholds_widget.get_uncertainty_thresh()
 
-            # Determine model type from filename
-            if "repvit" in self.model_path.lower():
-                model_type = "repvit"
-            elif "edge_" in self.model_path.lower():
-                model_type = "edge_sam"
-            elif "_coralscop" in self.model_path.lower():
-                model_type = "vit_b_coralscop"
-            elif "_t" in self.model_path.lower():
-                model_type = "vit_t"
-            elif "_b" in self.model_path.lower():
-                model_type = "vit_b"
-            elif "_l" in self.model_path.lower():
-                model_type = "vit_l"
-            elif "_h" in self.model_path.lower():
-                model_type = "vit_h"
+            # Create overrides dictionary
+            overrides = dict(
+                task="segment",
+                mode="predict",
+                imgsz=imgsz,
+                model=self.model_path,
+                conf=conf,
+                device=self.main_window.device,
+                retina_masks=True,
+                save=False, 
+                show=False, 
+                save_txt=False
+            )
+            
+            # Select the appropriate predictor class based on model
+            if "SAM 2" in selected_model_name:
+                # SAM 2 and SAM 2.1 models use SAM2Predictor
+                self.loaded_model = SAM2Predictor(overrides=overrides)
+            elif "sam3" in self.model_path.lower():
+                # SAM 3 models use SAM3Predictor
+                self.loaded_model = SAM3Predictor(overrides=overrides)
             else:
-                raise ValueError(f"Model type not recognized from filename: {self.model_path}")
-
-            # Load model using registry
-            model = sam_model_registry[model_type](checkpoint=self.model_path)
-            self.loaded_model = SamPredictor(model)
-
-            # Move to device and set eval mode
-            self.loaded_model.model.to(device=self.main_window.device)
-            self.loaded_model.model.eval()
+                # SAM, MobileSAM use standard SAMPredictor
+                self.loaded_model = SAMPredictor(overrides=overrides)
 
             progress_bar.finish_progress()
-            self.status_bar.setText("Model loaded")
+            self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
+            self.loaded_model = None
+            self.model_path = None
 
         finally:
             # Restore cursor
@@ -290,278 +276,109 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
-    def resize_image(self, image):
-        """
-        Resize the image to the specified size.
-        """
-        imgsz = self.imgsz_spinbox.value()
-        target_shape = self.get_target_shape(image, imgsz)
-        return self.scale_image(image, target_shape)
-
-    def get_target_shape(self, image, imgsz):
-        """
-        Determine the target shape based on the long side.
-        """
-        h, w = image.shape[:2]
-        if h > w:
-            return imgsz, int(w * (imgsz / h))
-        else:
-            return int(h * (imgsz / w)), imgsz
-        
-    def scale_image(self, masks, im0_shape, ratio_pad=None):
-        """
-        Rescale masks to original image size.
-
-        Takes resized and padded masks and rescales them back to the original image dimensions, removing any padding
-        that was applied during preprocessing.
-
-        Args:
-            masks (np.ndarray): Resized and padded masks with shape [H, W, N] or [H, W, 3].
-            im0_shape (tuple): Original image shape as HWC or HW (supports both).
-            ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_h, pad_w)).
-
-        Returns:
-            (np.ndarray): Rescaled masks with shape [H, W, N] matching original image dimensions.
-        """
-        # Rescale coordinates (xyxy) from im1_shape to im0_shape
-        im0_h, im0_w = im0_shape[:2]  # supports both HWC or HW shapes
-        im1_h, im1_w, _ = masks.shape
-        if im1_h == im0_h and im1_w == im0_w:
-            return masks
-
-        if ratio_pad is None:  # calculate from im0_shape
-            gain = min(im1_h / im0_h, im1_w / im0_w)  # gain  = old / new
-            pad = (im1_w - im0_w * gain) / 2, (im1_h - im0_h * gain) / 2  # wh padding
-        else:
-            pad = ratio_pad[1]
-
-        pad_w, pad_h = pad
-        top = int(round(pad_h - 0.1))
-        left = int(round(pad_w - 0.1))
-        bottom = im1_h - int(round(pad_h + 0.1))
-        right = im1_w - int(round(pad_w + 0.1))
-
-        if len(masks.shape) < 2:
-            raise ValueError(f'"len of masks shape" should be 2 or 3, but got {len(masks.shape)}')
-        masks = masks[top:bottom, left:right]
-        masks = cv2.resize(masks, (im0_w, im0_h))
-        if len(masks.shape) == 2:
-            masks = masks[:, :, None]
-
-        return masks
-
     def set_image(self, image, image_path):
         """
-        Set the image in the predictor.
-        """
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        try:
-            if self.loaded_model is not None:
-
-                if image is None and image_path is not None:
-                    # Open the image using rasterio
-                    image = rasterio_to_numpy(rasterio_open(image_path))
-
-                # Save the original image
-                self.original_image = image
-                self.image_path = image_path
-
-                # Resize the image if the checkbox is checked
-                if self.resize_image_dropdown.currentText() == "True":
-                    image = self.resize_image(image)
-
-                try:
-                    # Set the image in the predictor
-                    self.loaded_model.set_image(image)
-                    # Save the resized image
-                    self.resized_image = image
-                except Exception as e:
-                    raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
-
-            else:
-                raise Exception("You must load a SAM Predictor model first")
-
-        except Exception as e:
-            QMessageBox.critical(self.annotation_window, "Error Setting Image", f"{e}")
-            # Deactivate the model
-            self.deactivate_model()
-
-        finally:
-            # Ensure cleanup happens even if an error occurs
-            QApplication.restoreOverrideCursor()
-
-    def scale_points(self, points):
-        """
-        Scale the points based on the original and resized image dimensions.
-
+        Set the image in the SAM predictor for subsequent prompt inference.
+        
+        This sets the image once so we can efficiently pass multiple prompts
+        without re-processing the same image.
+        
         Args:
-            points (torch.tensor): The points to scale.
+            image (np.ndarray): The original image array (H, W, C).
+            image_path (str): Path to the image file.
         """
-        # Calculate scaling factors
-        original_height, original_width = self.original_image.shape[:2]
-        resized_height, resized_width = self.resized_image.shape[:2]
+        if self.loaded_model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        self.original_image = image
+        self.image_path = image_path
+        
+        # Set the image in the predictor
+        self.loaded_model.set_image(image)
 
-        scale_x = resized_width / original_width
-        scale_y = resized_height / original_height
-
-        # Scale the points based on the original image dimensions
-        scaled_points = points.clone().float()  # Cast to float32
-        scaled_points[:, :, 0] *= scale_x
-        scaled_points[:, :, 1] *= scale_y
-        point_coords = scaled_points.long()  # Cast back to int64
-        return point_coords
-
-    def scale_boxes(self, boxes):
+    def predict_from_prompts(self, bbox=None, points=None, labels=None):
         """
-        Scale the bounding boxes based on the original and resized image dimensions.
-        Handles both single boxes (4,) and multiple boxes (N, 4).
-
+        Run SAM inference with prompts on the currently set image.
+        
+        The image should be set first with set_image(). This method only passes
+        the prompts to the predictor for efficient inference.
+        
         Args:
-            boxes (torch.tensor): The bounding boxes to scale, shape (4,) or (N, 4)
-        """
-        # Convert to correct shape
-        original_shape = boxes.shape
-        if len(original_shape) == 1:
-            boxes = boxes.unsqueeze(0)  # Add batch dimension
-
-        # Calculate scaling factors
-        original_height, original_width = self.original_image.shape[:2]
-        resized_height, resized_width = self.resized_image.shape[:2]
-
-        scale_x = resized_width / original_width
-        scale_y = resized_height / original_height
-
-        # Scale the box based on the original image dimensions
-        scaled_bbox = boxes.clone().float()  # Cast to float32
-        scaled_bbox[:, 0] *= scale_x
-        scaled_bbox[:, 1] *= scale_y
-        scaled_bbox[:, 2] *= scale_x
-        scaled_bbox[:, 3] *= scale_y
-        bbox_coords = scaled_bbox.long()  # Cast back to int64
-
-        # Return in original shape if it was a single box
-        if len(original_shape) == 1:
-            bbox_coords = bbox_coords.squeeze(0)
-
-        return bbox_coords
-
-    def transform_points(self, points, labels):
-        """
-        Transform the points based on the original and resized image dimensions.
-
-        Args:
-            points (np.ndarray): The points to transform.
-            labels (list): The labels for each point.
-        """
-        input_labels = torch.tensor(labels)
-        point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
-
-        # Provide prompt to SAM model in form of numpy array
-        input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
-        input_points = input_points.to(self.main_window.device).unsqueeze(0)
-
-        # Scale the points
-        point_coords = self.scale_points(input_points)
-
-        point_coords = self.loaded_model.transform.apply_coords_torch(point_coords,
-                                                                      self.resized_image.shape[:2])
-
-        return point_coords, point_labels
-
-    def transform_bboxes(self, bboxes):
-        """
-        Transform the bounding boxes based on the original and resized image dimensions.
-
-        Args:
-            bboxes (np.ndarray): The bounding boxes to transform.
-        """
-        input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
-        input_bbox = input_bbox.to(self.main_window.device)
-
-        # Scale the bounding boxes
-        bbox_coords = self.scale_boxes(input_bbox)
-
-        bbox_coords = self.loaded_model.transform.apply_boxes_torch(bbox_coords,
-                                                                    self.resized_image.shape[:2])
-
-        return bbox_coords
-
-    def predict_from_prompts(self, bbox, points, labels):
-        """
-        Make predictions using the currently loaded model using prompts.
-
-        Args:
-            bbox (np.ndarray): The bounding boxes to use as prompts.
-            points (np.ndarray): The points to use as prompts.
-            labels (list): The labels for each point.
-
+            bbox (list or np.ndarray): Bounding box [x1, y1, x2, y2] or list of bboxes (optional).
+            points (list or np.ndarray): Point coordinates [[x, y], ...] (optional).
+            labels (list or np.ndarray): Point labels [1, -1, ...] (optional).
+        
         Returns:
-            results (Results): Ultralytics Results object
+            list: List of Ultralytics Results objects.
         """
-        if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window,
-                                 "Model Not Loaded",
-                                 "Model not loaded, cannot make predictions")
-            return None
-
+        if self.loaded_model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        if self.original_image is None:
+            raise RuntimeError("No image set. Call set_image() first.")
+        
+        # Update the confidence threshold from the UI
+        self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
+        
         try:
-            point_labels = None
-            point_coords = None
-            bbox_coords = None
-
-            if len(points) != 0:
-                point_coords, point_labels = self.transform_points(points, labels)
-
-            if len(bbox) != 0:
-                bbox_coords = self.transform_bboxes(bbox)
-
-            # Request 3 masks per prompt
-            masks, scores, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
-                                                               point_coords=point_coords,
-                                                               point_labels=point_labels,
-                                                               num_multimask_outputs=3)
-
-            # Select the mask with the highest score for each prompt
-            best_indices = torch.argmax(scores, dim=1)  # Get indices of highest scores
-            batch_indices = torch.arange(scores.shape[0], device=scores.device)
-
-            # Select the best masks and scores
-            best_masks = masks[batch_indices, best_indices].unsqueeze(1)  # Shape: (B, 1, H, W)
-            best_scores = scores[batch_indices, best_indices]  # Shape: (B)
-
-            # Post-process the results with the best masks
-            results = ConvertResults().from_sam(best_masks, best_scores, self.original_image, self.image_path)
-
+            # Call the predictor with prompts
+            # Image is already set, so we just pass the prompts
+            results = self.loaded_model(
+                points=points,
+                labels=labels,
+                bboxes=bbox
+            )
+            
+            return results
+            
         except Exception as e:
             QMessageBox.critical(self.annotation_window,
                                  "Prediction Error",
                                  f"Error predicting: {e}")
             return None
 
-        return results
-
-    def predict_from_results(self, results, image_path=None):
+    def predict_from_results(self, results_list, image_path=None):
         """
-        Make predictions using the currently loaded model and grouped results.
-
+        Apply SAM to YOLO detection results to add segmentation masks.
+        
+        Extracts bounding boxes from YOLO detections and uses them as prompts for SAM.
+        The resulting masks are injected back into the original YOLO Results object.
+        
         Args:
-            results (ultralytics.engine.Results): Results object containing the predictions.
-            image_path (str): Optional image path to override the image in the results.
+            results_list (list): List of YOLO Results objects.
+            image_path (str): Path to the image (optional).
+        
+        Returns:
+            list: Results objects with SAM masks appended.
         """
-        # Get the boxes (xyxy) from the results
-        boxes = results[0].boxes.xyxy.detach().cpu().numpy()
-
-        # Set the image with SAM
-        self.set_image(image=results[0].orig_img, image_path=image_path)
-        # Make the predictions using the bounding boxes
-        new_results = self.predict_from_prompts(boxes, [], [])
-
-        # Update the new results with the original results attributes ()
-        results[0].update(masks=new_results.masks.data)
-
-        return results
+        if self.loaded_model is None or len(results_list) == 0:
+            return results_list
+        
+        output_results = []
+        
+        for results in results_list:
+            # Set the current image for SAM inference
+            original_image = results.orig_img
+            self.set_image(original_image, image_path or results.path)
+            
+            # Extract bounding boxes from YOLO detections
+            if results.boxes is None or len(results.boxes) == 0:
+                output_results.append(results)
+                continue
+            
+            bboxes = results.boxes.xyxy.cpu().numpy()  # Convert to numpy array
+            
+            # Call SAM with bounding box prompts
+            sam_results = self.predict_from_prompts(bbox=bboxes)
+            
+            if sam_results and len(sam_results) > 0:
+                # Extract masks from SAM output and inject into YOLO results
+                sam_masks = sam_results[0].masks.data
+                results.update(masks=sam_masks)
+            
+            output_results.append(results)
+        
+        return output_results
 
     def deactivate_model(self):
         """
@@ -572,7 +389,6 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.image_path = None
         self.original_image = None
-        self.resized_image = None
         # Clear the cache
         gc.collect()
         empty_cache()

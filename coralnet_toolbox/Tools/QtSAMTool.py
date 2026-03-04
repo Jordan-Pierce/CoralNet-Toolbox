@@ -338,7 +338,13 @@ class SAMTool(Tool):
             # Prepare points and bounding box for SAM
             positive = [[point.x(), point.y()] for point in self.positive_points]
             negative = [[point.x(), point.y()] for point in self.negative_points]
-            bbox = np.array([])
+            bbox = None
+            points = None
+            labels = None
+
+            # Check if we have a rectangle (bbox)
+            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
+                bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
 
             # Add hover point as a positive point if available and we're not drawing a rectangle
             if scene_pos and not self.drawing_rectangle:
@@ -349,34 +355,53 @@ class SAMTool(Tool):
                 # Add to positive points for prediction
                 positive.append([adjusted_pos.x(), adjusted_pos.y()])
 
-            # If we have a rectangle, use it
-            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
-                bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
-
-            # Convert to numpy arrays for SAM
-            labels = np.array([1] * len(positive) + [0] * len(negative))
-            points = np.array(positive + negative)
-
-            # If no prompts, return without creating annotation
-            if len(points) == 0 and bbox.size == 0:
+            # Check if we have points
+            all_points = positive + negative
+            if len(all_points) > 0:
+                # If we have both bbox and points, we need to align them
+                # Each point will be paired with the bbox (or we repeat the bbox for each point)
+                if bbox is not None:
+                    # Repeat the bbox for each point
+                    bboxes = [bbox] * len(all_points)
+                    points = np.array(all_points)
+                    labels = np.array([1] * len(positive) + [0] * len(negative))
+                    # Pass as multi-prompt format
+                    results = self.sam_dialog.predict_from_prompts(bboxes, points, labels)
+                else:
+                    # Only points, no bbox
+                    points = np.array(all_points)
+                    labels = np.array([1] * len(positive) + [0] * len(negative))
+                    results = self.sam_dialog.predict_from_prompts(None, points, labels)
+            elif bbox is not None:
+                # Only bbox, no points
+                results = self.sam_dialog.predict_from_prompts([bbox], None, None)
+            else:
+                # No prompts at all
                 QApplication.restoreOverrideCursor()
                 return
 
             # Predict the mask from prompts
-            results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
+            # Note: results is already obtained from the conditional above
 
-            if not results or not results.boxes.conf.numel():
+            if not results or len(results) == 0:
+                QApplication.restoreOverrideCursor()
+                return
+
+            # Unpack the first Results object from the list
+            result = results[0]
+            
+            if not result.boxes or not result.boxes.conf.numel():
                 QApplication.restoreOverrideCursor()
                 return
 
             # Skip low confidence predictions for temporary annotations
-            if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
+            if result.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
                 QApplication.restoreOverrideCursor()
                 return
 
             # Get the top confidence prediction's mask tensor
-            top1_index = np.argmax(results.boxes.conf)
-            mask_tensor = results[top1_index].masks.data
+            top1_index = np.argmax(result.boxes.conf)
+            mask_tensor = result.masks.data[top1_index]
 
             # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
             # Save the desired output type and temporarily override it if needed
@@ -706,31 +731,60 @@ class SAMTool(Tool):
         # Get positive and negative points
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
-        bbox = np.array([])
+        bbox = None
+        points = None
+        labels = None
 
-        # Use rectangle if available
+        # Check if we have a rectangle (bbox)
         if self.top_left is not None and self.bottom_right is not None:
-            bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
+            bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
 
-        # Create labels and points arrays
-        labels = np.array([1] * len(positive) + [0] * len(negative))
-        points = np.array(positive + negative)
-
-        # If no prompts, return None
-        if len(points) == 0 and bbox.size == 0:
+        # Check if we have points
+        all_points = positive + negative
+        if len(all_points) > 0:
+            # If we have both bbox and points, we need to align them
+            # Each point will be paired with the bbox (or we repeat the bbox for each point)
+            if bbox is not None:
+                # Repeat the bbox for each point
+                bboxes = [bbox] * len(all_points)
+                points = np.array(all_points)
+                labels = np.array([1] * len(positive) + [0] * len(negative))
+                # Pass as multi-prompt format
+                results = self.sam_dialog.predict_from_prompts(bboxes, points, labels)
+            else:
+                # Only points, no bbox
+                points = np.array(all_points)
+                labels = np.array([1] * len(positive) + [0] * len(negative))
+                results = self.sam_dialog.predict_from_prompts(None, points, labels)
+        elif bbox is not None:
+            # Only bbox, no points
+            results = self.sam_dialog.predict_from_prompts([bbox], None, None)
+        else:
+            # No prompts at all
             QApplication.restoreOverrideCursor()
             return None
 
         # Predict mask from prompts
-        results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
+        # Note: results is already obtained from the conditional above
 
-        if not results or not results.boxes.conf.numel():
+        if not results or len(results) == 0:
+            QApplication.restoreOverrideCursor()
+            return None
+
+        # Get the first Results object from the list returned by Ultralytics
+        result = results[0]
+        
+        if not result.boxes or not result.boxes.conf.numel():
             QApplication.restoreOverrideCursor()
             return None
 
         # Get the top confidence prediction's mask tensor
-        top1_index = np.argmax(results.boxes.conf)
-        mask_tensor = results[top1_index].masks.data
+        if result.masks is None or len(result.masks) == 0:
+            QApplication.restoreOverrideCursor()
+            return None
+            
+        top1_index = np.argmax(result.boxes.conf)
+        mask_tensor = result.masks.data[top1_index]
 
         # Sync latest settings from dialog before creating annotation
         self.sync_settings_from_dialog()
@@ -747,7 +801,7 @@ class SAMTool(Tool):
         annotation.set_animation_manager(self.animation_manager)
 
         # Update confidence - make sure to extract confidence from results
-        confidence = float(results.boxes.conf[top1_index])
+        confidence = float(result.boxes.conf[top1_index])
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
         # Create cropped image only for vector annotations (Polygon/Rectangle), not Mask
@@ -818,7 +872,7 @@ class SAMTool(Tool):
         elif self.output_type == "Rectangle":
             # For rectangle output, just get the bounding box of the mask
             # Find the bounding rectangle of the mask
-            y_indices, x_indices = np.where(mask_tensor.cpu().numpy()[0] > 0)
+            y_indices, x_indices = np.where(mask_tensor.cpu().numpy() > 0)
             if len(y_indices) == 0 or len(x_indices) == 0:
                 return None
                 
