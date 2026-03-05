@@ -569,11 +569,6 @@ class DeployPredictorDialog(QDialog):
                                  f"Error predicting: {e}")
             results = None
 
-        finally:
-            # Clear the cache
-            gc.collect()
-            empty_cache()
-
         return results
 
     def predict_from_annotations(self, refer_image, refer_label, refer_bboxes, refer_masks, target_images):
@@ -642,12 +637,6 @@ class DeployPredictorDialog(QDialog):
 
             except Exception as e:
                 print(f"Error predicting: {e}")
-
-            finally:
-                progress_bar.update_progress()
-                # Clear the cache
-                gc.collect()
-                empty_cache()
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

@@ -152,7 +152,13 @@ class SeeAnythingTool(Tool):
 
         # Set the image in the SeeAnything dialog
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
-        # self.see_anything_dialog.reload_model()
+        
+        # --- NEW CODE: PRELOAD SAM EMBEDDINGS ---
+        if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
+            if hasattr(self.see_anything_dialog, 'sam_dialog') and self.see_anything_dialog.sam_dialog:
+                # This runs the 500ms ViT encoder while the WaitCursor is active during setup
+                self.see_anything_dialog.sam_dialog.set_image(self.work_area_image, self.image_path)
+        # ----------------------------------------
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
@@ -208,6 +214,13 @@ class SeeAnythingTool(Tool):
         
         # Set the image in the SeeAnything dialog
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
+        
+        # --- NEW CODE: PRELOAD SAM EMBEDDINGS ---
+        if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
+            if hasattr(self.see_anything_dialog, 'sam_dialog') and self.see_anything_dialog.sam_dialog:
+                # This runs the 500ms ViT encoder while the WaitCursor is active during setup
+                self.see_anything_dialog.sam_dialog.set_image(self.work_area_image, self.image_path)
+        # ----------------------------------------
         
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
@@ -533,8 +546,11 @@ class SeeAnythingTool(Tool):
                 x1, y1, x2, y2 = r
                 masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
 
+        from time import time
+        t0 = time()
         # Predict from prompts, providing masks if the task is segmentation
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)
+        print(f"YOLOE prediction from prompts took {time() - t0:.2f} seconds")
 
         if not results:
             # Make cursor normal
@@ -752,44 +768,62 @@ class SeeAnythingTool(Tool):
             class_mapping
         )
 
-        # Make a copy of the results
-        results = copy.deepcopy(self.results)
+        # OPTIMIZATION: Avoid copy.deepcopy() on PyTorch tensors.
+        # Since self.results is discarded during cancel_working_area(), 
+        # we can safely modify the class dictionary in-place.
+        results_to_process = self.results
+        results_to_process.names = {0: class_mapping[0].short_label_code}
 
-        # Update the class mapping for the results
-        results.names = {0: class_mapping[0].short_label_code}
-
-        # Process the results with the SAM predictor using the new
-        results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
-
-        # Get SAM resizing dimensions
+        from time import time
+        t0 = time()
+        
+        # Process the results with the SAM predictor 
+        processed_results = self.see_anything_dialog.sam_dialog.predict_from_results([results_to_process], 
+                                                                                     self.image_path)
+        print(f"SAM prediction from results took {time() - t0:.2f} seconds")
+        
+        # Get the original working area image dimensions
         original_h, original_w = self.work_area_image.shape[:2]
-        resized_h, resized_w = self.see_anything_dialog.sam_dialog.resized_image.shape[:2]
-
-        # Calculate scaling factors
-        scale_x = original_w / resized_w
-        scale_y = original_h / resized_h
+        
+        # Get the actual dimensions that SAM processed from the results object
+        if processed_results and len(processed_results) > 0 and hasattr(processed_results[0], 'orig_img'):
+            processed_h, processed_w = processed_results[0].orig_img.shape[:2]
+        else:
+            # Fallback to calculating from imgsz if orig_img not available
+            imgsz = self.see_anything_dialog.sam_dialog.imgsz_spinbox.value()
+            if original_h > original_w:
+                processed_h = imgsz
+                processed_w = int(imgsz * original_w / original_h)
+            else:
+                processed_w = imgsz
+                processed_h = int(imgsz * original_h / original_w)
+        
+        # Calculate scaling factors to map from processed size back to original size
+        scale_x = original_w / processed_w
+        scale_y = original_h / processed_h
 
         # Update mask coordinates to account for resizing
-        for i, mask in enumerate(results[0].masks.xy):
-            if len(mask) > 0:
-                # Scale coordinates back to original size
-                mask[:, 0] *= scale_x
-                mask[:, 1] *= scale_y
-                results[0].masks.xy[i] = mask
+        if processed_results[0].masks is not None:
+            for i, mask in enumerate(processed_results[0].masks.xy):
+                if len(mask) > 0:
+                    # Scale coordinates back to original size
+                    mask[:, 0] *= scale_x
+                    mask[:, 1] *= scale_y
+                    processed_results[0].masks.xy[i] = mask
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
 
         # Map results from working area to the original image coordinates
-        results = MapResults().map_results_from_work_area(
-            results,
+        final_results = MapResults().map_results_from_work_area(
+            processed_results,
             raster,
             self.working_area,
             map_masks=True
         )
 
         # Process the results
-        results_processor.process_segmentation_results(results)
+        results_processor.process_segmentation_results(final_results)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

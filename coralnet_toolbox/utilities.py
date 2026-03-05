@@ -1021,23 +1021,25 @@ def densify_polygon(xy_points):
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
 
-def polygonize_mask_with_holes(mask_tensor):
+def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     """
     Converts a boolean mask tensor to an exterior polygon and a list of interior hole polygons.
 
     Args:
         mask_tensor (torch.Tensor): A 2D boolean tensor from the prediction results.
+        epsilon (float): The maximum distance in pixels between the original curve and its approximation. 
+                         Higher = faster UI & fewer points. Lower = more accurate to the pixel. 0 = no simplification.
 
     Returns:
         A tuple containing:
         - exterior (list of tuples): The (x, y) vertices of the outer boundary.
         - holes (list of lists of tuples): A list where each element is a list of (x, y) vertices for a hole.
     """
-    # Convert the tensor to a NumPy array format that OpenCV can use
-    mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
+    # Threshold and cast to uint8 ON THE GPU before calling .cpu().numpy()
+    # A 1024x1024 float32 tensor is 4MB. A uint8 tensor is 1MB.
+    mask_np = (mask_tensor.squeeze() > 0).to(torch.uint8).cpu().numpy()
 
-    # Find all contours and their hierarchy
-    # cv2.RETR_CCOMP organizes contours into a two-level hierarchy: external boundaries and holes inside them.
+    # Find all contours and their hierarchy (even if epsilon=0, redudant points along straight lines will be removed)
     contours, hierarchy = cv2.findContours(mask_np, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours or hierarchy is None:
@@ -1045,16 +1047,35 @@ def polygonize_mask_with_holes(mask_tensor):
 
     exterior = []
     holes = []
+    
+    # Track the largest exterior area to avoid grabbing SAM noise artifacts
+    max_exterior_area = -1
 
     # Process the hierarchy to separate the exterior from the holes
     for i, contour in enumerate(contours):
+        
+        # --- THE FIX: Douglas-Peucker Polygon Simplification ---
+        # This reduces thousands of jagged pixel-steps into clean, straight vector lines.
+        simplified_contour = cv2.approxPolyDP(contour, epsilon, closed=True)
+        
+        # Ensure we still have a valid polygon (at least 3 points) after simplification
+        if len(simplified_contour) < 3:
+            continue
+
         # An external contour's parent in the hierarchy is -1
         if hierarchy[0][i][3] == -1:
-            # Squeeze to convert from [[x, y]] to [x, y] format
-            exterior = contour.squeeze(axis=1).tolist()
+            # Calculate area to ensure we keep the main object, not a disconnected speck of noise
+            area = cv2.contourArea(simplified_contour)
+            if area > max_exterior_area:
+                max_exterior_area = area
+                exterior = simplified_contour.squeeze(axis=1).tolist()
         else:
             # Any other contour is treated as a hole
-            holes.append(contour.squeeze(axis=1).tolist())
+            holes.append(simplified_contour.squeeze(axis=1).tolist())
+
+    # In the rare case squeezing results in a flat list instead of a list of pairs
+    if exterior and not isinstance(exterior[0], list):
+        exterior = [exterior]
 
     return exterior, holes
 

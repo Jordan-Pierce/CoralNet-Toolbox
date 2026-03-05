@@ -313,10 +313,6 @@ class Detect(Base):
                             if work_area:
                                 work_area.unhighlight()
 
-                        # --- Clean up GPU memory *after* the mini-batch ---
-                        gc.collect()
-                        empty_cache()
-
                 except Exception as e:
                     print(f"An error occurred during prediction on {image_path}: {e}")
                     import traceback
@@ -357,17 +353,12 @@ class Detect(Base):
                                               iou=self.thresholds_widget.get_iou_thresh(),
                                               max_det=self.thresholds_widget.get_max_detections(),
                                               device=self.main_window.device,
-                                              retina_masks=self.task == "segment",
+                                              retina_masks=False,
                                               half=True,
                                               stream=True)  # memory efficient inference
 
-        results_list = []
-        for results in results_generator:
-            # --- Append the object directly, not a list ---
-            results_list.append(results) 
-
-        # Returns a flat list: [res1, res2, ...]
-        return results_list
+        # Stream generator converted directly to list for the batch
+        return list(results_generator)
 
     def _apply_sam(self, results_list, image_path):
         """
@@ -375,35 +366,25 @@ class Detect(Base):
         Accepts a flat list of Results objects [res1, res2, ...]
         Returns a flat list of SAM-processed Results objects [sam_res1, sam_res2, ...]
         """
-        # Check if SAM model is deployed and loaded
         self.update_sam_task_state()
         if self.task != 'segment':
             return results_list
         
         if not self.sam_dialog or self.use_sam_dropdown.currentText() == "False":
-            # If SAM is not deployed or not selected, return the results as is
             return results_list
 
         if self.sam_dialog.loaded_model is None:
-            # If SAM is not loaded, ensure we do not use it accidentally
             self.task = 'detect'
             self.use_sam_dropdown.setCurrentText("False")
             return results_list
 
+        # OPTIMIZATION: Pass the entire batch directly to SAM. 
+        # The sam_dialog handles the list iteration natively.
+        sam_result_list = self.sam_dialog.predict_from_results(results_list, image_path)
+        
+        # Ensure we always return a list of the exact same length, substituting None for failures
         updated_results = []
-        for results_obj in results_list:
-            # 'results_obj' is a single Results object (e.g., res1)
-            if results_obj:
-                # --- Pass [results_obj] to SAM, as it expects a list ---
-                sam_result_list = self.sam_dialog.predict_from_results([results_obj], image_path)
-                
-                # --- Unpack the list returned by SAM ---
-                if sam_result_list:
-                    updated_results.append(sam_result_list[0])
-                else:
-                    updated_results.append(None)  # Keep list length consistent
-            else:
-                updated_results.append(None)  # Keep list length consistent
-
-        # Returns a flat list: [sam_res1, sam_res2, ...]
+        for orig_res, sam_res in zip(results_list, sam_result_list):
+            updated_results.append(sam_res if sam_res else None)
+            
         return updated_results

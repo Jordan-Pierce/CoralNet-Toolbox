@@ -84,7 +84,7 @@ class ResultsProcessor:
         Get the indices of results that pass the uncertainty threshold.
         """
         try:
-            mask = results.boxes.conf > self._get_uncertainty_thresh()
+            mask = (results.boxes.conf > self._get_uncertainty_thresh()) & (results.boxes.conf < 1.0)
             indices = mask.nonzero().flatten().tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for uncertainty\n{e}")

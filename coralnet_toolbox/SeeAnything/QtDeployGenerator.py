@@ -1435,22 +1435,18 @@ class DeployGeneratorDialog(QDialog):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        # OPTIMIZATION: Pass the entire batch directly to SAM. The sam_dialog
+        # handles batch iteration natively and is more efficient than per-item calls.
+        sam_result_list = self.sam_dialog.predict_from_results(results_list, image_path)
+
+        # Ensure we always return a list of the exact same length, substituting None for failures
         updated_results = []
-        for results_obj in results_list:
-            if results_obj:
-                # Pass [results_obj] to SAM, as it expects a list
-                sam_result_list = self.sam_dialog.predict_from_results([results_obj], image_path)
-                
-                if sam_result_list:
-                    updated_results.append(sam_result_list[0])
-                else:
-                    updated_results.append(None)  # Keep list length consistent
-            else:
-                updated_results.append(None)  # Keep list length consistent
+        for orig_res, sam_res in zip(results_list, sam_result_list):
+            updated_results.append(sam_res if sam_res else None)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
-        
+
         return updated_results
 
     def _process_results(self, results_processor, results_list, image_path):

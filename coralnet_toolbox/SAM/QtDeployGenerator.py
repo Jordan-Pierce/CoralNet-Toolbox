@@ -1,7 +1,5 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import gc
 import os
 
@@ -9,7 +7,9 @@ import numpy as np
 
 import torch
 from torch.cuda import empty_cache
-from ultralytics.models.fastsam import FastSAMPredictor
+from torch.cuda import is_available as is_cuda_available
+
+from ultralytics import SAM, FastSAM
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBoxLayout,
@@ -25,6 +25,8 @@ from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -33,8 +35,8 @@ from coralnet_toolbox.Icons import get_icon
 
 class DeployGeneratorDialog(QDialog):
     """
-    Dialog for deploying FastSAM.
-    Allows users to load, configure, and deactivate models, as well as make predictions on images.
+    Dialog for deploying SAM/FastSAM models for unified segment-everything generation.
+    Supports SAM, SAM2, SAM2.1, SAM3, FastSAM, and MobileSAM models.
     """
 
     def __init__(self, main_window, parent=None):
@@ -50,14 +52,13 @@ class DeployGeneratorDialog(QDialog):
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-        self.sam_dialog = None
 
         self.setWindowIcon(get_icon("wizard.svg"))
-        self.setWindowTitle("FastSAM Generator (Ctrl + 5)")
+        self.setWindowTitle("SAM Generator (Ctrl + 5)")
         self.resize(400, 325)
 
         # Initialize variables
-        self.imgsz = 1024
+        self.imgsz = 640 if not is_cuda_available() else 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
@@ -68,6 +69,7 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = None
+        self.model_type = None  # Either 'fastSAM' or 'sam'
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -78,8 +80,6 @@ class DeployGeneratorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
-        # Setup the SAM layout
-        self.setup_sam_layout()
         # Setup the thresholds layout
         self.setup_thresholds_layout()
         # Setup the buttons layout
@@ -106,7 +106,7 @@ class DeployGeneratorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Generator to deploy and use.")
+        info_label = QLabel("SAM generator for segment-everything inference. Select a model and tune thresholds.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -125,15 +125,36 @@ class DeployGeneratorDialog(QDialog):
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
-        # Define available models
+        # Define available models with official Ultralytics weights
         self.models = {
-            "FastSAM-s": "FastSAM-s.pt",
-            "FastSAM-x": "FastSAM-x.pt"
+            "FastSAM Small": "FastSAM-s.pt",
+            "FastSAM Large": "FastSAM-x.pt",
+            "MobileSAM": "mobile_sam.pt",
+            "SAM Base": "sam_b.pt",
+            "SAM Large": "sam_l.pt",
+            "SAM Huge": "sam_h.pt",
+            "SAM 2 Tiny": "sam2_t.pt",
+            "SAM 2 Small": "sam2_s.pt",
+            "SAM 2 Base": "sam2_b.pt",
+            "SAM 2 Large": "sam2_l.pt",
+            "SAM 2.1 Tiny": "sam2.1_t.pt",
+            "SAM 2.1 Small": "sam2.1_s.pt",
+            "SAM 2.1 Base": "sam2.1_b.pt",
+            "SAM 2.1 Large": "sam2.1_l.pt"
         }
+        
+        # Check for SAM 3 weights in the current directory and add to models if found
+        if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
+            self.models["SAM 3"] = "sam3.pt"
 
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
+
+        # Set default to MobileSAM (fastest startup)
+        models_list = list(self.models.keys())
+        if "MobileSAM" in models_list:
+            self.model_combo.setCurrentIndex(models_list.index("SAM 2.1 Tiny"))
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -171,28 +192,14 @@ class DeployGeneratorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(1024, 65536)
-        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setRange(640, 65536)
+        self.imgsz_spinbox.setSingleStep(24)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
-    def setup_sam_layout(self):
-        """Use SAM model for segmentation."""
-        group_box = QGroupBox("Use SAM to Create Polygons")
-        layout = QFormLayout()
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
     def setup_thresholds_layout(self):
         """
         Setup threshold control section using ThresholdsWidget.
@@ -260,108 +267,55 @@ class DeployGeneratorDialog(QDialog):
         self.class_mapping = {0: label}
 
     def update_task(self):
-        """Update the task based on the dropdown selection and handle UI/model effects."""
+        """Update the task based on the dropdown selection."""
         self.task = self.use_task_dropdown.currentText()
-
-        # Update UI elements based on task
-        if self.task == "segment":
-            # Deactivate model if one is loaded and we're switching to segment task
-            if self.loaded_model:
-                self.deactivate_model()
-
-    def is_sam_model_deployed(self):
-        """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-
-        :return: Boolean indicating whether the SAM model is deployed
-        """
-        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
-            return False
-
-        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
-
-        if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
-            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
-            return False
-
-        return True
-
-    def update_sam_task_state(self):
-        """
-        Centralized method to check if SAM is loaded and update task accordingly.
-        If the user has selected to use SAM, this function ensures the task is set to 'segment'.
-        Crucially, it does NOT alter the task if SAM is not selected, respecting the
-        user's choice from the 'Task' dropdown.
-        """
-        # Check if the user wants to use the SAM model
-        if self.use_sam_dropdown.currentText() == "True":
-            # SAM is requested. Check if it's actually available.
-            sam_is_available = (
-                hasattr(self, 'sam_dialog') and
-                self.sam_dialog is not None and
-                self.sam_dialog.loaded_model is not None
-            )
-
-            if sam_is_available:
-                # If SAM is wanted and available, the task must be segmentation.
-                self.task = 'segment'
-            else:
-                # If SAM is wanted but not available, revert the dropdown and do nothing else.
-                # The 'is_sam_model_deployed' function already handles showing an error message.
-                self.use_sam_dropdown.setCurrentText("False")
-
-        # If use_sam_dropdown is "False", do nothing. Let self.task be whatever the user set.
 
     def load_model(self):
         """
-        Load the selected model with the current configuration.
+        Load the selected SAM or FastSAM model with the current configuration.
+        Dynamically instantiates SAM or FastSAM based on the model name.
         """
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
         
         try:
-            # Check if SAM is active and update task state
-            self.update_sam_task_state()
-            
-            # Get selected model path
-            self.model_path = self.models[self.model_combo.currentText()]
+            # Get selected model name and path
+            selected_model_name = self.model_combo.currentText()
+            self.model_path = self.models[selected_model_name]
             self.task = self.use_task_dropdown.currentText()
-
-            # Set the parameters
-            overrides = dict(model=self.model_path,
-                             task=self.task,
-                             mode='predict',
-                             save=False,
-                             retina_masks=self.task == "segment",
-                             max_det=self.thresholds_widget.get_max_detections(),
-                             imgsz=self.get_imgsz(),
-                             conf=self.thresholds_widget.get_uncertainty_thresh(),
-                             iou=self.thresholds_widget.get_iou_thresh(),
-                             device=self.main_window.device)
-
-            # Load the model
-            self.loaded_model = FastSAMPredictor(overrides=overrides)
-            self.loaded_model.names = {0: self.class_mapping[0].short_label_code}
-
+            
+            # Determine which class to instantiate
+            if "FastSAM" in selected_model_name:
+                self.loaded_model = FastSAM(self.model_path)
+                self.model_type = "fastSAM"
+            else:
+                self.loaded_model = SAM(self.model_path)
+                self.model_type = "sam"
+            
+            # Warm-up run to initialize on GPU
+            imgsz = self.get_imgsz()
             with torch.no_grad():
-                # Run a blank through the model to initialize it
-                self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
-
+                blank = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+                self.loaded_model(
+                    blank,
+                    conf=self.thresholds_widget.get_uncertainty_thresh(),
+                    imgsz=imgsz,
+                    device=self.main_window.device
+                )
+            
             progress_bar.finish_progress()
             self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
-
+            
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", str(e))
-
+            self.loaded_model = None
+            self.model_path = None
+            self.model_type = None
+        
         finally:
-            # Restore cursor
             QApplication.restoreOverrideCursor()
-            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 
@@ -391,7 +345,7 @@ class DeployGeneratorDialog(QDialog):
             image_paths = [self.annotation_window.current_image_path]
 
         # --- Define a batch size for prediction ---
-        BATCH_SIZE = 16 
+        BATCH_SIZE = 32  # Start with a reasonably large batch size; will adapt on OOM 
 
         # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(
@@ -442,7 +396,7 @@ class DeployGeneratorDialog(QDialog):
                 
                 # Create a list to hold all results for THIS image
                 results_for_this_image = []
-                is_segmentation = self.task == 'segment' or self.use_sam_dropdown.currentText() == "True"
+                is_segmentation = self.task == 'segment'
                 
                 try:
                     # --- Loop over the data in mini-batches ---
@@ -452,33 +406,60 @@ class DeployGeneratorDialog(QDialog):
                         data_chunk = work_items_data[i: i + BATCH_SIZE]
                         area_chunk = work_areas[i: i + BATCH_SIZE]
                         
-                        # --- 3a. Apply Model (Batched) ---
-                        # Returns a flat list: [res1, res2, ...]
-                        batch_results_list = self._apply_model(data_chunk)
+                        # --- 3a. Apply Model with OOM Adaptive Batching ---
+                        # Try with current batch size; on OOM, halve and retry
+                        current_batch_size = BATCH_SIZE
+                        batch_results_list = None
+                        temp_data_chunk = data_chunk
+                        temp_area_chunk = area_chunk
                         
-                        # --- 3b. Apply SAM (Batched) ---
-                        # Takes a flat list, returns a flat list: [sam_res1, sam_res2, ...]
-                        sam_results_list = self._apply_sam(batch_results_list, image_path)
+                        while current_batch_size > 0:
+                            try:
+                                batch_results_list = self._apply_model(temp_data_chunk)
+                                break  # Success, exit retry loop
+                            except RuntimeError as e:
+                                if "out of memory" in str(e).lower():
+                                    # Halve batch size and retry
+                                    current_batch_size = max(1, current_batch_size // 2)
+                                    gc.collect()
+                                    empty_cache()
+                                    print(f"OOM detected. Retrying with batch size {current_batch_size}.")
+                                    
+                                    # Re-slice to new size
+                                    temp_data_chunk = data_chunk[:current_batch_size]
+                                    temp_area_chunk = area_chunk[:current_batch_size]
+                                    
+                                    # If batch is now empty, skip
+                                    if not temp_data_chunk:
+                                        break
+                                else:
+                                    raise  # Re-raise non-OOM errors
+
+                        if batch_results_list is None:
+                            print(f"Warning: Failed to process batch starting at index {i}. Skipping.")
+                            for _ in area_chunk:
+                                progress_bar.update_progress()
+                            continue
 
                         # Safety check
-                        if len(sam_results_list) != len(area_chunk):
-                            print(f"Warning: Mismatch in batch results (Got {len(sam_results_list)}, "
-                                  f"expected {len(area_chunk)}). Skipping batch.")
+                        if len(batch_results_list) != len(temp_area_chunk):
+                            print(f"Warning: Mismatch in batch results (Got {len(batch_results_list)}, "
+                                  f"expected {len(temp_area_chunk)}). Skipping batch.")
                             
                             # Update progress bar for the skipped items
                             for _ in area_chunk:
                                 progress_bar.update_progress()
                             continue
                             
-                        # --- 3c. Post-process (Streaming w/ Highlight) ---
+                        # --- 3b. Post-process (Streaming w/ Highlight) ---
                         # Loop through the flat lists
-                        for results_obj, work_area in zip(sam_results_list, area_chunk):
+                        for results_obj, work_area in zip(batch_results_list, temp_area_chunk):
                             
                             # --- Highlight at the START of post-processing ---
                             if work_area:
                                 work_area.highlight()
 
-                            if not results_obj:  # Handle potential empty result from SAM
+                            if not results_obj:
                                 if work_area: 
                                     work_area.unhighlight()
                                 progress_bar.update_progress()
@@ -488,14 +469,22 @@ class DeployGeneratorDialog(QDialog):
                             results_obj.path = image_path
                             results_obj.names = {0: self.class_mapping[0].short_label_code}
                             
-                            # --- 3d. Map Result (logic from _process_results) ---
+                            # Remap all detected class IDs to 0 (single-class unified generator)
+                            # Modify the underlying data tensor (column 5 is class ID in Ultralytics)
+                            if results_obj.boxes is not None and len(results_obj.boxes) > 0:
+                                new_data = results_obj.boxes.data.clone()
+                                new_data[:, 5] = 0
+                                results_obj.boxes.data = new_data
+                            
+                            # --- 3c. Map Result (logic from _process_results) ---
                             if work_area:
                                 # Highlight is already active
                                 mapped_result = MapResults().map_results_from_work_area(
                                     results_obj,
                                     raster,
                                     work_area,
-                                    is_segmentation
+                                    map_masks=is_segmentation,
+                                    task=self.task
                                 )
                             else:
                                 mapped_result = results_obj
@@ -546,60 +535,66 @@ class DeployGeneratorDialog(QDialog):
 
     def _apply_model(self, inputs):
         """
-        Apply the model to the inputs.
+        Apply the model to the inputs with task-aware parameters.
+        Constructs kwargs dynamically based on task selection and model type.
         """
-        # Update the model with user parameters
-        self.loaded_model.conf = self.thresholds_widget.get_uncertainty_thresh()
-        self.loaded_model.iou = self.thresholds_widget.get_iou_thresh()
-        self.loaded_model.max_det = self.thresholds_widget.get_max_detections()
-
-        results_list = []
-        for input_image in inputs:
-            with torch.no_grad():
-                results = self.loaded_model(input_image)
-                results_list.append(results[0] if results else None)
-
-        # Returns a flat list: [res1, res2, ...]
-        return results_list
-
-    def _apply_sam(self, results_list, image_path):
-        """
-        Apply SAM to the results if needed.
-        Accepts a flat list of Results objects [res1, res2, ...]
-        Returns a flat list of SAM-processed Results objects [sam_res1, sam_res2, ...]
-        """
-        # Check if SAM model is deployed and loaded
-        self.update_sam_task_state()
-        if self.task != 'segment':
-            return results_list
+        # Base kwargs always passed
+        kwargs = {
+            'conf': self.thresholds_widget.get_uncertainty_thresh(),
+            'imgsz': self.imgsz_spinbox.value(),
+            'max_det': self.thresholds_widget.get_max_detections(),
+            'device': self.main_window.device
+        }
         
-        if not self.sam_dialog or self.use_sam_dropdown.currentText() == "False":
-            # If SAM is not deployed or not selected, return the results as is
-            return results_list
-
-        if self.sam_dialog.loaded_model is None:
-            # If SAM is not loaded, ensure we do not use it accidentally
-            self.task = 'detect'
-            self.use_sam_dropdown.setCurrentText("False")
-            return results_list
-
-        updated_results = []
-        for results_obj in results_list:
-            # 'results_obj' is a single Results object (e.g., res1)
-            if results_obj:
-                # --- Pass [results_obj] to SAM, as it expects a list ---
-                sam_result_list = self.sam_dialog.predict_from_results([results_obj], image_path)
+        # Task-specific kwargs
+        if self.task == 'segment':
+            kwargs['retina_masks'] = True  # High-quality, non-blocky polygons
+        # For 'detect' task, omit retina_masks to maximize speed & minimize memory
+        
+        # Always pass iou; let Ultralytics ignore it if not applicable
+        kwargs['iou'] = self.thresholds_widget.get_iou_thresh()
+        
+        # MobileSAM precision constraint: prevent FP16 crash by using FP32
+        if "MobileSAM" in self.model_combo.currentText():
+            kwargs['half'] = False  # FP32 mode for MobileSAM
+        else:
+            kwargs['half'] = True   # FP16 mode for others (faster)
+        
+        results_list = []
+        import cv2
+        
+        for input_image in inputs:
+            img = input_image
+            try:
+                # Read image if path string
+                if isinstance(input_image, str):
+                    img = cv2.imread(input_image, cv2.IMREAD_UNCHANGED)
+                    if img is None:
+                        print(f"Warning: cv2 failed to read {input_image}")
+                        results_list.append(None)
+                        continue
                 
-                # --- Unpack the list returned by SAM ---
-                if sam_result_list:
-                    updated_results.append(sam_result_list[0])
+                # Normalize channel dimensions: ensure HxWx3
+                if isinstance(img, np.ndarray):
+                    if img.ndim == 2:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                    elif img.ndim == 3 and img.shape[2] > 3:
+                        img = img[:, :, :3]
                 else:
-                    updated_results.append(None)  # Keep list length consistent
-            else:
-                updated_results.append(None)  # Keep list length consistent
-
-        # Returns a flat list: [sam_res1, sam_res2, ...]
-        return updated_results
+                    # Unsupported input type
+                    results_list.append(None)
+                    continue
+                
+                # Call model with dynamically constructed kwargs
+                with torch.no_grad():
+                    results = self.loaded_model(img, **kwargs)
+                    results_list.append(results[0] if results else None)
+                    
+            except Exception as e:
+                print(f"Error running model on input: {e}")
+                results_list.append(None)
+        
+        return results_list
 
     def deactivate_model(self):
         """

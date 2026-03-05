@@ -96,10 +96,9 @@ class AnnotationViewerWindow(QWidget):
         
         # Selection blocking (for external wizards)
         self.selection_blocked = False
-        # Deactivated flag: when True the gallery is cleared and will not auto-repopulate
-        # (e.g., when the user presses Clear). While deactivated, refreshes and image
-        # load events will not repopulate widgets until the viewer is reinitialized.
-        self._deactivated = False
+        # Filter applied flag: when True the gallery is allowed to populate widgets
+        # (the user must explicitly press "Apply Filter" to set this).
+        self._filter_applied = False
         
         # Virtualization
         self.widget_positions = {}  # annotation_id -> QRect
@@ -257,7 +256,7 @@ class AnnotationViewerWindow(QWidget):
         # Apply button
         self.apply_filter_button = QPushButton("Apply Filter")
         self.apply_filter_button.setToolTip("Apply current filter settings")
-        self.apply_filter_button.clicked.connect(self.refresh_annotations)
+        self.apply_filter_button.clicked.connect(self.apply_filters)
         toolbar.addWidget(self.apply_filter_button)
         
         # Initialize filter options
@@ -310,6 +309,18 @@ class AnnotationViewerWindow(QWidget):
     def refresh_filter_options(self):
         """Refresh filter options based on current state."""
         self._populate_filter_combos()
+
+    def apply_filters(self):
+        """Apply the current UI filters and populate the gallery.
+
+        The user must explicitly invoke this; until then the gallery remains
+        in the placeholder state and no widgets/crops are created.
+        """
+        try:
+            self._filter_applied = True
+            self.refresh_annotations()
+        except Exception:
+            pass
     
     @pyqtSlot(str)
     def on_image_loaded(self, image_path):
@@ -319,8 +330,12 @@ class AnnotationViewerWindow(QWidget):
         Args:
             image_path: Path to the loaded image.
         """
-        # If deactivated, do nothing when image changes
-        if getattr(self, '_deactivated', False):
+        # If filters are not currently applied (viewer in placeholder state),
+        # do not auto-populate when the image changes. If the gallery was
+        # previously populated, clear it so it reverts to placeholder state.
+        if not getattr(self, '_filter_applied', False):
+            # Still refresh filter combos so the dropdowns reflect the new image
+            self._populate_filter_combos()
             return
 
         # Remember current filter selection before refreshing
@@ -330,7 +345,7 @@ class AnnotationViewerWindow(QWidget):
         
         # Refresh filters to include any new images
         self._populate_filter_combos()
-        
+
         # Only update filter if a specific image was selected (not "All Images")
         # This allows filtering by specific image to follow the user as they switch images
         if current_data != "all" and image_path:
@@ -338,8 +353,11 @@ class AnnotationViewerWindow(QWidget):
             index = self.image_filter_combo.findData(image_name)
             if index >= 0:
                 self.image_filter_combo.setCurrentIndex(index)
-            # Clear stale widgets and refresh with new image's annotations
-            self.refresh_annotations()
+            # If the gallery was previously showing items, switching images
+            # should clear it and revert to the placeholder until the user
+            # explicitly applies the filter for the new image.
+            if getattr(self, '_filter_applied', False):
+                self.clear()
     
     # -------------------------------------------------------------------------
     # UI Setup
@@ -390,7 +408,7 @@ class AnnotationViewerWindow(QWidget):
         Returns:
             list: List of annotation IDs currently shown in the gallery.
         """
-        if getattr(self, '_deactivated', False):
+        if not getattr(self, '_filter_applied', False):
             return []
         return [item.annotation.id for item in self.all_data_items]
     
@@ -431,8 +449,8 @@ class AnnotationViewerWindow(QWidget):
         Show the gallery scroll area and hide the placeholder label.
         """
         try:
-            if getattr(self, '_deactivated', False):
-                # If deactivated, do not show the gallery even if annotations exist
+            # If the user has not applied the filter, remain in placeholder state
+            if not getattr(self, '_filter_applied', False):
                 self._show_placeholder()
                 return
             if hasattr(self, 'placeholder_label'):
@@ -452,8 +470,9 @@ class AnnotationViewerWindow(QWidget):
         3. Rebuilds the gallery layout
         4. Emits annotations_filtered signal
         """
-        # If deactivated, do not refresh or repopulate
-        if getattr(self, '_deactivated', False):
+        # Only refresh (and create widgets) when the user has explicitly
+        # applied the filter via the Apply Filter button.
+        if not getattr(self, '_filter_applied', False):
             return
 
         # Get filter selections
@@ -569,9 +588,10 @@ class AnnotationViewerWindow(QWidget):
     
     def _ensure_cropped_images(self, annotations):
         """Ensure cropped images are available for annotations."""
-        # If the viewer has been deactivated via Clear, avoid creating crops
-        # (prevents background work when gallery is intentionally turned off)
-        if getattr(self, '_deactivated', False):
+        # If the user has not applied the filter, avoid creating crops to
+        # prevent unnecessary background work while the gallery is in the
+        # placeholder state.
+        if not getattr(self, '_filter_applied', False):
             return
 
         # Group annotations by image path to minimize raster loading
@@ -628,8 +648,9 @@ class AnnotationViewerWindow(QWidget):
         Args:
             annotation_id: ID of the newly created annotation.
         """
-        # If deactivated, ignore new annotations
-        if getattr(self, '_deactivated', False):
+        # If the gallery is not currently populated (filters not applied), ignore
+        # incoming annotation events to avoid creating widgets unexpectedly.
+        if not getattr(self, '_filter_applied', False):
             return
 
         # Refresh filter options in case new images/labels were added
@@ -729,7 +750,7 @@ class AnnotationViewerWindow(QWidget):
         Processes the incoming IDs once, generates crops, updates cache,
         and recalculates layout a single time.
         """
-        if getattr(self, '_deactivated', False):
+        if not getattr(self, '_filter_applied', False):
             return
 
         if not annotation_ids or not hasattr(self.annotation_window, 'annotations_dict'):
@@ -1013,8 +1034,8 @@ class AnnotationViewerWindow(QWidget):
     
     def _update_annotations_display(self, data_items):
         """Update the gallery display with new data items."""
-        # If deactivated, do not update or create widgets
-        if getattr(self, '_deactivated', False):
+        # If the user has not applied the filter, do not update or create widgets
+        if not getattr(self, '_filter_applied', False):
             return
 
         if self.isolated_mode:
@@ -1039,8 +1060,9 @@ class AnnotationViewerWindow(QWidget):
         
     def _recalculate_layout(self):
         """Calculate positions for all widgets and resize content area."""
-        # If deactivated, ensure content area is minimal and avoid creating widgets
-        if getattr(self, '_deactivated', False):
+        # If the user has not applied the filter, keep content area minimal
+        # and avoid creating widgets.
+        if not getattr(self, '_filter_applied', False):
             try:
                 self.content_widget.setMinimumSize(1, 1)
             except Exception:
@@ -1718,19 +1740,10 @@ class AnnotationViewerWindow(QWidget):
                 self._recalculate_layout()
             except Exception:
                 pass
-            # Mark viewer as deactivated so it will not repopulate until reactivated
-            self._deactivated = True
-            # Update Clear button to allow reactivation
-            try:
-                if hasattr(self, 'clear_button'):
-                    try:
-                        self.clear_button.clicked.disconnect()
-                    except Exception:
-                        pass
-                    self.clear_button.setText("Reactivate")
-                    self.clear_button.clicked.connect(self.activate)
-            except Exception:
-                pass
+            # Mark that filters are not applied when cleared so the gallery
+            # will remain in placeholder state until the user presses
+            # "Apply Filter" again.
+            self._filter_applied = False
 
             self._show_placeholder()
             self._update_toolbar_state()
@@ -1747,31 +1760,3 @@ class AnnotationViewerWindow(QWidget):
             except Exception:
                 pass
 
-    def activate(self, refresh=True):
-        """Reactivate the gallery viewer and optionally refresh annotations.
-
-        When reactivated, the gallery will respond to image changes and
-        repopulate widgets on the next refresh (or immediately if refresh=True).
-        """
-        try:
-            self._deactivated = False
-            # Restore Clear button behavior
-            try:
-                if hasattr(self, 'clear_button'):
-                    try:
-                        self.clear_button.clicked.disconnect()
-                    except Exception:
-                        pass
-                    self.clear_button.setText("Clear")
-                    self.clear_button.clicked.connect(self.clear)
-            except Exception:
-                pass
-
-            # Optionally refresh now
-            if refresh:
-                try:
-                    self.refresh_annotations()
-                except Exception:
-                    pass
-        except Exception:
-            pass

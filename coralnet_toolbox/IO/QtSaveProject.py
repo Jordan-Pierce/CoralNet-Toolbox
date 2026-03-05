@@ -94,6 +94,9 @@ class SaveProject(QDialog):
 
     def save_project_data(self, file_path):
         """Save the project data to a JSON file."""
+        # Untoggle all tools to ensure all annotations are finalized
+        self.main_window.tool_manager.untoggle_all_tools()
+        
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         start_time = time.perf_counter()

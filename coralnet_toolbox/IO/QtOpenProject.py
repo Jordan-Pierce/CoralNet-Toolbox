@@ -314,7 +314,7 @@ class OpenProject(QDialog):
             pass
         if not annotations:
             return
-        
+
         # Start the progress bar
         total_annotations = sum(len(image_annotations) for image_annotations in annotations.values())
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
@@ -326,41 +326,65 @@ class OpenProject(QDialog):
 
         skipped_count = 0
         duplicate_count = 0
-        
+
         # OPTIMIZATION: Create lists to hold objects for batch processing
         all_new_annotations = []
         images_to_update = set()
+        mask_annotations_to_set = []  # collect (image_path, MaskAnnotation) to assign after loop
 
         try:
+            # Local references for speed
+            ann_window = self.annotation_window
+            img_window = self.image_window
+            lbl_window = self.label_window
+            raster_manager = img_window.raster_manager
+
+            # Pre-cache existing annotation IDs and label map for fast lookup
+            existing_ids = set(ann_window.annotations_dict.keys())
+
+            # Batched progress updates: reduce frequent UI calls
+            progress_batch = 0
+            PROGRESS_BATCH_SIZE = 64
+
             # Loop through the annotations to create objects
             for image_path, image_annotations in annotations.items():
-                
-                # Checking if the image path is updated (moved)
+                # Resolve updated path mapping quickly
                 updated_path = False
-                
-                if image_path not in self.image_window.raster_manager.image_paths:
-                    # Check if the path was updated
+                if image_path not in raster_manager.image_paths:
                     if image_path in self.updated_paths:
                         image_path = self.updated_paths[image_path]
                         updated_path = True
                     else:
                         print(f"Warning: Image not found: {image_path}")
-                        skipped_count += total_annotations - len(all_new_annotations)  # Approximate skipped
-                        continue
-                
-                for annotation_dict in image_annotations:
-                    # Check if all required keys are present
-                    if not all(key in annotation_dict for key in keys):
-                        print(f"Warning: Missing required keys in annotation: {annotation_dict}")
-                        skipped_count += 1
-                        continue
-                    
-                    if annotation_dict['id'] in self.annotation_window.annotations_dict:
-                        print(f"Warning: Duplicate annotation ID found: {annotation_dict['id']}")
-                        duplicate_count += 1
+                        skipped_count += len(image_annotations)
+                        progress_batch += len(image_annotations)
+                        # flush progress batch if needed
+                        if progress_batch >= PROGRESS_BATCH_SIZE:
+                            for _ in range(progress_batch):
+                                progress_bar.update_progress()
+                            progress_batch = 0
                         continue
 
-                    # Check if the image path was updated
+                per_image_created = 0
+                per_image_skipped = 0
+
+                for annotation_dict in image_annotations:
+                    # Quick key check
+                    if not all(key in annotation_dict for key in keys):
+                        skipped_count += 1
+                        per_image_skipped += 1
+                        progress_batch += 1
+                        continue
+
+                    # Duplicate check fast-path
+                    ann_id = annotation_dict.get('id')
+                    if ann_id and ann_id in existing_ids:
+                        duplicate_count += 1
+                        per_image_skipped += 1
+                        progress_batch += 1
+                        continue
+
+                    # If the image path was updated, fix it in-place
                     if updated_path:
                         annotation_dict['image_path'] = image_path
 
@@ -368,39 +392,66 @@ class OpenProject(QDialog):
                     annotation = None
 
                     # Create annotation objects without adding to the window yet
-                    if annotation_type == 'MaskAnnotation':
-                        annotation = MaskAnnotation.from_dict(annotation_dict, self.label_window)
-                        raster = self.image_window.raster_manager.get_raster(image_path)
-                        if raster:
-                            raster.mask_annotation = annotation
-                    elif annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation_dict, self.label_window)
-                    elif annotation_type == 'MultiPolygonAnnotation':
-                        annotation = MultiPolygonAnnotation.from_dict(annotation_dict, self.label_window)
-                    else:
-                        print(f"Warning: Unknown annotation type: {annotation_type}")
-                        skipped_count += 1
-                        continue
-                    
-                    if annotation and not isinstance(annotation, MaskAnnotation):
-                        all_new_annotations.append(annotation)
-                        images_to_update.add(image_path)  # Track which images need UI updates
+                    try:
+                        if annotation_type == 'MaskAnnotation':
+                            # Delay attaching mask annotations to avoid rasterio/scene ops in the hot loop
+                            mask_ann = MaskAnnotation.from_dict(annotation_dict, lbl_window)
+                            mask_annotations_to_set.append((image_path, mask_ann))
+                        elif annotation_type == 'PatchAnnotation':
+                            annotation = PatchAnnotation.from_dict(annotation_dict, lbl_window)
+                        elif annotation_type == 'PolygonAnnotation':
+                            annotation = PolygonAnnotation.from_dict(annotation_dict, lbl_window)
+                        elif annotation_type == 'RectangleAnnotation':
+                            annotation = RectangleAnnotation.from_dict(annotation_dict, lbl_window)
+                        elif annotation_type == 'MultiPolygonAnnotation':
+                            annotation = MultiPolygonAnnotation.from_dict(annotation_dict, lbl_window)
+                        else:
+                            skipped_count += 1
+                            per_image_skipped += 1
+                            progress_batch += 1
+                            continue
 
-                    # Update the progress bar
-                    progress_bar.update_progress()
+                        if annotation:
+                            all_new_annotations.append(annotation)
+                            images_to_update.add(image_path)
+                            per_image_created += 1
+
+                        # Mark new ID in the temporary set to avoid duplicates in same import
+                        if ann_id:
+                            existing_ids.add(ann_id)
+
+                    except Exception as inner_e:
+                        print(f"Warning: failed creating annotation for {image_path}: {inner_e}")
+                        skipped_count += 1
+                        per_image_skipped += 1
+
+                    # Batched progress increment (reduce UI overhead)
+                    progress_batch += 1
+                    if progress_batch >= PROGRESS_BATCH_SIZE:
+                        for _ in range(progress_batch):
+                            progress_bar.update_progress()
+                        progress_batch = 0
+
+                # flush per-image small remainder to progress
+                if progress_batch > 0:
+                    for _ in range(progress_batch):
+                        progress_bar.update_progress()
+                    progress_batch = 0
 
             # Add all vector annotations in a single batch operation
             if all_new_annotations:
                 self.annotation_window.add_annotations(all_new_annotations)
 
+            # Attach mask annotations (done after batch creation to avoid scene thrash)
+            for image_path, mask_ann in mask_annotations_to_set:
+                raster = raster_manager.get_raster(image_path)
+                if raster:
+                    raster.mask_annotation = mask_ann
+
             # Update UI and counts only ONCE after the batch is added
             for path in images_to_update:
-                self.image_window.update_image_annotations(path)
-            
+                img_window.update_image_annotations(path)
+
             # Load the annotations for current image and update counts
             self.annotation_window.load_annotations()
             self.label_window.update_annotation_count()
@@ -415,8 +466,8 @@ class OpenProject(QDialog):
                 print(f"Warning: Skipped {skipped_count} annotations due to missing keys or other issues.")
             if duplicate_count > 0:
                 print(f"Warning: Skipped {duplicate_count} duplicate annotations based on ID.")
-            
-            # Close progress bar
+
+            # Ensure progress bar completes
             progress_bar.stop_progress()
             progress_bar.close()
             try:

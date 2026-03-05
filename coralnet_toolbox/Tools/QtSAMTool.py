@@ -1,8 +1,9 @@
 import warnings
 
 import numpy as np
+import torch
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QApplication
 
@@ -79,6 +80,13 @@ class SAMTool(Tool):
         # Output settings - synced from dialog
         self.output_type = "Polygon"  # Default value, will be synced from dialog
         self.allow_holes = False  # Default value, will be synced from dialog
+
+        # --- THE FIX: Hover Debounce Timer ---
+        # Debounce heavy hover predictions so rapid mouseMoveEvents don't flood the UI thread
+        self.hover_timer = QTimer()
+        self.hover_timer.setSingleShot(True)
+        self.hover_timer.timeout.connect(self._on_hover_timeout)
+        self.debounce_ms = 10  # Wait 10ms after the mouse stops before predicting
 
     def activate(self):
         """
@@ -158,6 +166,19 @@ class SAMTool(Tool):
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
+
+    def _on_hover_timeout(self):
+        """
+        Triggered when the mouse stops moving for 'debounce_ms'.
+        Safe to run heavy predictions here without lagging the UI.
+        """
+        if not self.active or not self.working_area or not self.hover_pos:
+            return
+
+        # Double check conditions before predicting
+        if not self.has_active_prompts or len(self.positive_points) > 0 or len(self.negative_points) > 0:
+            self.create_temp_annotation(self.hover_pos)
+            self.annotation_window.scene.update()
         
     def set_custom_working_area(self, start_point, end_point):
         """
@@ -338,7 +359,13 @@ class SAMTool(Tool):
             # Prepare points and bounding box for SAM
             positive = [[point.x(), point.y()] for point in self.positive_points]
             negative = [[point.x(), point.y()] for point in self.negative_points]
-            bbox = np.array([])
+            bbox = None
+            points = None
+            labels = None
+
+            # Check if we have a rectangle (bbox)
+            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
+                bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
 
             # Add hover point as a positive point if available and we're not drawing a rectangle
             if scene_pos and not self.drawing_rectangle:
@@ -349,34 +376,62 @@ class SAMTool(Tool):
                 # Add to positive points for prediction
                 positive.append([adjusted_pos.x(), adjusted_pos.y()])
 
-            # If we have a rectangle, use it
-            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
-                bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
+            # Check if we have points
+            all_points = positive + negative
+            # --- THE FIX: Format as a single batch item for SAM ---
+            # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
+            bboxes_input = [bbox] if bbox is not None else None
+            points_input = [all_points] if len(all_points) > 0 else None
+            labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
 
-            # Convert to numpy arrays for SAM
-            labels = np.array([1] * len(positive) + [0] * len(negative))
-            points = np.array(positive + negative)
-
-            # If no prompts, return without creating annotation
-            if len(points) == 0 and bbox.size == 0:
+            if points_input is not None or bboxes_input is not None:
+                results = self.sam_dialog.predict_from_prompts(
+                    bbox=bboxes_input, 
+                    points=points_input, 
+                    labels=labels_input
+                )
+            else:
+                # No prompts at all
                 QApplication.restoreOverrideCursor()
                 return
 
             # Predict the mask from prompts
-            results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
+            # Note: results is already obtained from the conditional above
 
-            if not results or not results.boxes.conf.numel():
+            if not results or len(results) == 0:
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Skip low confidence predictions for temporary annotations
-            if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
+            # Get the first Results object from the list returned by Ultralytics
+            result = results[0]
+            
+            if not result.boxes:
                 QApplication.restoreOverrideCursor()
                 return
 
-            # Get the top confidence prediction's mask tensor
-            top1_index = np.argmax(results.boxes.conf)
-            mask_tensor = results[top1_index].masks.data
+            # Safely handle confidence tensor/array (CPU/GPU/MPS-safe)
+            conf = result.boxes.conf
+            if isinstance(conf, torch.Tensor):
+                if conf.numel() == 0:
+                    QApplication.restoreOverrideCursor()
+                    return
+                # Skip low confidence predictions for temporary annotations
+                if conf[0].item() < self.main_window.get_uncertainty_thresh():
+                    QApplication.restoreOverrideCursor()
+                    return
+                top1_index = int(torch.argmax(conf).item())
+            else:
+                # assume numpy/sequence
+                conf_arr = np.asarray(conf)
+                if conf_arr.size == 0:
+                    QApplication.restoreOverrideCursor()
+                    return
+                if conf_arr[0] < self.main_window.get_uncertainty_thresh():
+                    QApplication.restoreOverrideCursor()
+                    return
+                top1_index = int(np.argmax(conf_arr))
+
+            mask_tensor = result.masks.data[top1_index]
 
             # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
             # Save the desired output type and temporarily override it if needed
@@ -551,7 +606,7 @@ class SAMTool(Tool):
         """
         # Call parent implementation to handle crosshair
         super().mouseMoveEvent(event)
-        
+
         # Continue with tool-specific behavior
         scene_pos = self.annotation_window.mapToScene(event.pos())
         self.hover_pos = scene_pos
@@ -560,7 +615,7 @@ class SAMTool(Tool):
         if self.creating_working_area and self.working_area_start:
             self.display_working_area_preview(scene_pos)
             return
-            
+
         if not self.working_area:
             return
 
@@ -570,14 +625,16 @@ class SAMTool(Tool):
             self.display_rectangle()
         # Create hover annotation when not drawing rectangle
         elif not self.drawing_rectangle and self.annotation_window.cursorInWindow(event.pos()):
-            # Only create new temp annotation if we don't have active prompts
-            if not self.has_active_prompts:
-                self.create_temp_annotation(scene_pos)
-            # If we have points but no rectangle, update the temp annotation with new hover point
-            elif len(self.positive_points) > 0 or len(self.negative_points) > 0:
-                self.create_temp_annotation(scene_pos)
+            # Only start the debounce timer if we don't have active prompts OR we have point prompts
+            if not self.has_active_prompts or len(self.positive_points) > 0 or len(self.negative_points) > 0:
+                # Reset/start the hover debounce timer - prediction will run when mouse stops
+                self.hover_timer.start(self.debounce_ms)
+
         # Remove hover annotation when cursor leaves window
         elif not self.annotation_window.cursorInWindow(event.pos()):
+            # Stop any pending hover prediction
+            if hasattr(self, 'hover_timer'):
+                self.hover_timer.stop()
             # Only clear if we don't have active points or rectangle
             if not self.has_active_prompts:
                 self.clear_temp_annotation()
@@ -706,31 +763,63 @@ class SAMTool(Tool):
         # Get positive and negative points
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
-        bbox = np.array([])
+        bbox = None
 
-        # Use rectangle if available
+        # Check if we have a rectangle (bbox)
         if self.top_left is not None and self.bottom_right is not None:
-            bbox = np.array([self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()])
+            bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
 
-        # Create labels and points arrays
-        labels = np.array([1] * len(positive) + [0] * len(negative))
-        points = np.array(positive + negative)
+        # Check if we have points
+        all_points = positive + negative
+        # --- THE FIX: Format as a single batch item for SAM ---
+        # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
+        bboxes_input = [bbox] if bbox is not None else None
+        points_input = [all_points] if len(all_points) > 0 else None
+        labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
 
-        # If no prompts, return None
-        if len(points) == 0 and bbox.size == 0:
+        if points_input is not None or bboxes_input is not None:
+            results = self.sam_dialog.predict_from_prompts(
+                bbox=bboxes_input, 
+                points=points_input, 
+                labels=labels_input
+            )
+        else:
+            # No prompts at all
             QApplication.restoreOverrideCursor()
-            return None
+            return
 
         # Predict mask from prompts
-        results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
+        # Note: results is already obtained from the conditional above
 
-        if not results or not results.boxes.conf.numel():
+        if not results or len(results) == 0:
             QApplication.restoreOverrideCursor()
             return None
 
-        # Get the top confidence prediction's mask tensor
-        top1_index = np.argmax(results.boxes.conf)
-        mask_tensor = results[top1_index].masks.data
+        # Get the first Results object from the list returned by Ultralytics
+        result = results[0]
+        
+        if not result.boxes:
+            QApplication.restoreOverrideCursor()
+            return None
+
+        # Get the top confidence prediction's mask tensor (CPU/GPU/MPS-safe)
+        conf = result.boxes.conf
+        if isinstance(conf, torch.Tensor):
+            if conf.numel() == 0:
+                QApplication.restoreOverrideCursor()
+                return None
+            top1_index = int(torch.argmax(conf).item())
+        else:
+            conf_arr = np.asarray(conf)
+            if conf_arr.size == 0:
+                QApplication.restoreOverrideCursor()
+                return None
+            top1_index = int(np.argmax(conf_arr))
+
+        if result.masks is None or len(result.masks) == 0:
+            QApplication.restoreOverrideCursor()
+            return None
+        mask_tensor = result.masks.data[top1_index]
 
         # Sync latest settings from dialog before creating annotation
         self.sync_settings_from_dialog()
@@ -747,7 +836,7 @@ class SAMTool(Tool):
         annotation.set_animation_manager(self.animation_manager)
 
         # Update confidence - make sure to extract confidence from results
-        confidence = float(results.boxes.conf[top1_index])
+        confidence = float(result.boxes.conf[top1_index])
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
         # Create cropped image only for vector annotations (Polygon/Rectangle), not Mask
@@ -780,15 +869,12 @@ class SAMTool(Tool):
             return None
             
         if self.output_type == "Mask":         
-            # Convert mask tensor to numpy array
-            mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
-            
             # Get the working area information
             working_area_top_left = self.working_area.rect.topLeft()
             wa_x, wa_y = int(working_area_top_left.x()), int(working_area_top_left.y())
-            wa_height, wa_width = mask_np.shape
+            wa_height, wa_width = mask_tensor.shape[-2:]
             
-            # Get the existing mask annotation from the raster (lazy-loads if needed)
+            # Get the existing mask annotation
             mask_annotation = self.annotation_window.current_mask_annotation
             if not mask_annotation:
                 return None
@@ -799,32 +885,40 @@ class SAMTool(Tool):
             if class_id is None:
                 return None
             
+            # --- THE FIX: GPU-Native Math & Type Casting ---
+            # 1. Threshold the mask on the GPU (> 0)
+            # 2. Cast to an 8-bit integer (drastically reduces PCIe transfer size)
+            # 3. Multiply by the class ID on the GPU
+            # 4. FINALLY move the lightweight result to the CPU
+            cropped_mask_np = ((mask_tensor.squeeze() > 0).to(torch.uint8) * class_id).cpu().numpy()
+            
             # Create a prediction mask (full-size, initialized with zeros)
             prediction_mask = np.zeros_like(mask_annotation.mask_data)
             
-            # Place the SAM prediction into the full mask at the working area position
-            prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = np.where(
-                mask_np > 0,
-                class_id,
-                0
-            )
+            # Insert the pre-computed crop directly (no np.where needed!)
+            prediction_mask[wa_y:wa_y + wa_height, wa_x:wa_x + wa_width] = cropped_mask_np
             
             # Update the existing mask annotation with the prediction
             mask_annotation.update_mask_with_prediction_mask(prediction_mask)
             
-            # Return None to indicate this is not a new annotation object to add
             return None
             
         elif self.output_type == "Rectangle":
-            # For rectangle output, just get the bounding box of the mask
-            # Find the bounding rectangle of the mask
-            y_indices, x_indices = np.where(mask_tensor.cpu().numpy()[0] > 0)
+            # --- THE FIX: GPU-Native Bounding Box Extraction ---
+            # Do NOT use .cpu().numpy() on the full mask. 
+            # Project the mask onto the X and Y axes directly on the GPU.
+            y_any = mask_tensor.any(dim=1)
+            x_any = mask_tensor.any(dim=0)
+            
+            y_indices = torch.where(y_any)[0]
+            x_indices = torch.where(x_any)[0]
+            
             if len(y_indices) == 0 or len(x_indices) == 0:
                 return None
                 
-            # Get the min/max coordinates
-            min_x, max_x = np.min(x_indices), np.max(x_indices)
-            min_y, max_y = np.min(y_indices), np.max(y_indices)
+            # Extract just the min/max values and use .item() to pull only 4 numbers to the CPU
+            min_y, max_y = y_indices[0].item(), y_indices[-1].item()
+            min_x, max_x = x_indices[0].item(), x_indices[-1].item()
             
             # Apply the offset from working area
             working_area_top_left = self.working_area.rect.topLeft()
@@ -890,6 +984,10 @@ class SAMTool(Tool):
         """
         Cancel the working area and clean up all associated resources.
         """
+        # Stop pending hover predictions
+        if hasattr(self, 'hover_timer'):
+            self.hover_timer.stop()
+            
         # Clear temporary annotation
         self.clear_temp_annotation()
 
