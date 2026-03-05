@@ -33,7 +33,6 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 
 # Special Windows
 from coralnet_toolbox.Explorer import ExplorerWindow
-from coralnet_toolbox.MVAT import MVATWindow
 
 # Other Dialogs
 from coralnet_toolbox.QtBatchInference import BatchInferenceDialog
@@ -61,8 +60,6 @@ from coralnet_toolbox.IO import (
     ImportTagLabAnnotations,
     ImportSquidleAnnotations,
     ImportMaskAnnotations,
-    ImportCOLMAPCameras,
-    ImportMetashapeCameras,
     ExportLabels,
     ExportTagLabLabels,
     ExportAnnotations,
@@ -251,8 +248,6 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)        
         # Initialized in open_explorer_window
         self.explorer_window = None  
-        # Initialized in open_mvat_window
-        self.mvat_window = None  
         # Initialized in open_system_monitor
         self.system_monitor = None  
         
@@ -262,8 +257,6 @@ class MainWindow(QMainWindow):
         # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
-        self.import_colmap_cameras = ImportCOLMAPCameras(self)
-        self.import_metashape_cameras = ImportMetashapeCameras(self)
         self.import_labels = ImportLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
@@ -403,17 +396,6 @@ class MainWindow(QMainWindow):
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
-        
-        # Cameras submenu
-        self.import_cameras_menu = self.import_menu.addMenu("Cameras")
-        # Import COLMAP Cameras
-        self.import_colmap_cameras_action = QAction("COLMAP (TXT, BIN)", self)
-        self.import_colmap_cameras_action.triggered.connect(self.import_colmap_cameras.exec_)
-        self.import_cameras_menu.addAction(self.import_colmap_cameras_action)
-        # Import Metashape Cameras  TODO re-enable when implemented correctly
-        # self.import_metashape_cameras_action = QAction("Metashape (XML)", self)
-        # self.import_metashape_cameras_action.triggered.connect(self.import_metashape_cameras.exec_)
-        # self.import_cameras_menu.addAction(self.import_metashape_cameras_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -764,12 +746,6 @@ class MainWindow(QMainWindow):
         self.open_explorer_action = QAction("Explorer", self)
         self.open_explorer_action.triggered.connect(self.open_explorer_window)
         self.menu_bar.addAction(self.open_explorer_action)
-
-        # ========== MVAT ACTION ==========
-        # MVAT (Multi-View Annotation Tool) action
-        self.open_mvat_action = QAction("MVAT", self)
-        self.open_mvat_action.triggered.connect(self.open_mvat_window)
-        self.menu_bar.addAction(self.open_mvat_action)
 
         # ========== HELP MENU ==========
         # Help menu
@@ -1328,16 +1304,12 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def closeEvent(self, event):
-        """Ensure special windows (explorer, mvat) and system monitor are closed when the main window closes."""
+        """Ensure special windows (explorer) and system monitor are closed when the main window closes."""
         if self.explorer_window:
             # Setting parent to None prevents it from being deleted with main window
             # before it can be properly handled.
             self.explorer_window.setParent(None)
             self.explorer_window.close()
-            
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
         
         # Close the system monitor if it exists
         if self.system_monitor:
@@ -3359,38 +3331,6 @@ class MainWindow(QMainWindow):
             
             # Clean up reference
             self.explorer_window = None
-        
-    def open_mvat_window(self):
-        """Open the Multi-View Annotation Tool (MVAT) window."""
-        # Check if there are any images in the project
-        if not self.image_window.raster_manager.image_paths:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before opening MVAT.")
-            return
-        
-        try:
-            # Create and show the MVAT window (modeless - doesn't block main window)
-            # Create a new instance each time to ensure fresh state
-            self.mvat_window = MVATWindow(self)
-            self.mvat_window.show()
-            self.mvat_window.activateWindow()
-            self.mvat_window.raise_()
-            
-        except ImportError as e:
-            QMessageBox.warning(self,
-                                "MVAT Unavailable",
-                                "MVAT requires PyVista and PyVistaQt.\n\n"
-                                "Install with: pip install pyvista pyvistaqt")
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"Failed to open MVAT: {e}")
-            
-    def close_mvat_window(self):
-        """Handle the MVAT window being closed."""
-        if self.mvat_window:
-            self.mvat_window.setParent(None)
-            self.mvat_window.close()
-            self.mvat_window = None
             
     def close_image_specific_dialogs(self):
         """Close image-specific dialogs (e.g., patch sampling, rugosity) when a new image is loaded."""
