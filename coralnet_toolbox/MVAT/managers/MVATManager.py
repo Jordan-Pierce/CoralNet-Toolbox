@@ -421,17 +421,21 @@ class MVATManager(QObject):
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
         try:
+            # Get primary target file path for cache key
+            primary_target = self.viewer.scene_context.get_primary_target()
+            target_file_path = primary_target.file_path if primary_target else ""
+            
             for path, result in results.items():
                 camera = self.cameras.get(path)
                 if not camera:
                     continue
 
                 cache_path = None
-                if self.cache_manager is not None:
+                if self.cache_manager is not None and target_file_path:
                     try:
                         cache_path = self.cache_manager.save_visibility(
                             camera._raster.extrinsics,
-                            self.viewer.point_cloud.file_path,
+                            target_file_path,
                             result.get('index_map'),
                             result.get('visible_indices'),
                             result.get('depth_map') if self.compute_depth_maps_enabled else None
@@ -631,12 +635,17 @@ class MVATManager(QObject):
         cameras and cache results. Does NOT modify the viewer's rendered
         point cloud (subsetting removed).
         """
-        # Preconditions
-        if not self.viewer.point_cloud:
+        # Preconditions - check scene has any indexable product
+        if not self.viewer.scene_context.has_any_product():
             return
         if not self.compute_index_maps_enabled:
             return
         if not highlighted_paths:
+            return
+        
+        # Get primary target for visibility computation
+        primary_target = self.viewer.scene_context.get_primary_target()
+        if primary_target is None:
             return
 
         # Collect cameras that need visibility computation
@@ -653,7 +662,13 @@ class MVATManager(QObject):
         if self._is_computing_visibility:
             return
 
-        points_world = self.viewer.point_cloud.get_points_array()
+        # Get points from primary target (currently only point clouds supported)
+        # TODO: Update VisibilityWorker to support mesh/DEM targets
+        if not hasattr(primary_target, 'get_points_array'):
+            print(f"MVATManager: Visibility computation not yet supported for {type(primary_target).__name__}")
+            return
+            
+        points_world = primary_target.get_points_array()
         if points_world is None or len(points_world) == 0:
             return
 

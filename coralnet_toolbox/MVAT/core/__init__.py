@@ -1,10 +1,27 @@
 """
 MVAT Core Module
 
-Contains core classes for camera geometry and visualization.
+Contains core classes for camera geometry, scene products, and visualization.
 """
 
-from coralnet_toolbox.MVAT.core.Model import PointCloud
+# Scene Product Abstraction Layer
+from coralnet_toolbox.MVAT.core.SceneProduct import (
+    AbstractSceneProduct,
+    BoundsType,
+    ElementType,
+    RenderStyle,
+)
+from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
+
+# Concrete Scene Products
+from coralnet_toolbox.MVAT.core.Model import (
+    PointCloud,           # Backward-compatible alias
+    PointCloudProduct,
+    MeshProduct,
+    DEMProduct,
+)
+
+# Camera and Visualization
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Frustum import Frustum
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
@@ -24,7 +41,18 @@ from coralnet_toolbox.MVAT.core.constants import (
 )
 
 __all__ = [
-    'PointCloud',
+    # Scene Product Abstraction
+    'AbstractSceneProduct',
+    'BoundsType',
+    'ElementType',
+    'RenderStyle',
+    'SceneContext',
+    # Concrete Products
+    'PointCloud',           # Backward-compatible alias
+    'PointCloudProduct',
+    'MeshProduct',
+    'DEMProduct',
+    # Camera and Visualization
     'Camera',
     'Frustum',
     'VisibilityManager',

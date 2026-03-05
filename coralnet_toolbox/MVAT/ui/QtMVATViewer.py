@@ -9,6 +9,7 @@ Customized interaction style:
 - Scroll Wheel: Zoom
 """
 
+import os
 import time
 import traceback
 
@@ -24,7 +25,9 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
 from coralnet_toolbox.MVAT.core.Frustum import BatchedFrustumManager
-from coralnet_toolbox.MVAT.core.Model import PointCloud
+from coralnet_toolbox.MVAT.core.Model import PointCloud, PointCloudProduct, MeshProduct, DEMProduct
+from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
+from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 from coralnet_toolbox.MVAT.core.constants import RAY_COLOR_SELECTED
 
 
@@ -70,9 +73,11 @@ class MVATViewer(QFrame):
         self.plotter.interactor.AddObserver("LeftButtonPressEvent", self._on_left_press)
         self._last_click_time = 0
 
-        # Point cloud and ray management
-        self.point_cloud = None
-        self._filtered_actor = None
+        # Scene context replaces single point_cloud with heterogeneous product collection
+        self.scene_context = SceneContext()
+        # Product actors keyed by product_id
+        self._product_actors = {}
+        self._filtered_actor = None  # Legacy: primary product actor
         self.point_size = point_size
         self._show_rays_enabled = show_rays
         self._ray_visible = True
@@ -84,6 +89,11 @@ class MVATViewer(QFrame):
         self.frustum_scale = 0.1
         self._show_wireframes_enabled = True
         self._show_thumbnails_enabled = True
+        
+        # Scene product visibility by type
+        self._show_point_clouds = True
+        self._show_meshes = True
+        self._show_dems = True
 
         # Top and bottom toolbar widgets (previously exposed for host composition)
         # Refactor: toolbars are owned by the viewer and inserted into its layout
@@ -105,9 +115,9 @@ class MVATViewer(QFrame):
         self._stack.setContentsMargins(0, 0, 0, 0)
         self._stack.addWidget(self.plotter.interactor)
 
-        # Placeholder shown when no point cloud present
+        # Placeholder shown when no scene products present
         self._placeholder_label = QLabel(
-            "No point cloud loaded\nDrag a point cloud file here to load a point cloud."
+            "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)\n• DEMs (.tif, .tiff)"
         )
         self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
@@ -356,9 +366,50 @@ class MVATViewer(QFrame):
 
         view_menu.addSeparator()
         
-        # Removed the old "Show Full Point Cloud" toggle - viewer now always
-        # renders the full point cloud. Add a toggle to control whether index
-        # map computation runs in the background.
+        # Scene Products submenu
+        products_menu = view_menu.addMenu("Scene Products")
+        
+        action_point_clouds = QAction("Show Point Clouds", self)
+        action_point_clouds.setCheckable(True)
+        action_point_clouds.setChecked(self._show_point_clouds)
+        action_point_clouds.setToolTip("Toggle visibility of point cloud products")
+        action_point_clouds.toggled.connect(self.set_point_clouds_visible)
+        products_menu.addAction(action_point_clouds)
+        
+        action_meshes = QAction("Show Meshes", self)
+        action_meshes.setCheckable(True)
+        action_meshes.setChecked(self._show_meshes)
+        action_meshes.setToolTip("Toggle visibility of mesh products")
+        action_meshes.toggled.connect(self.set_meshes_visible)
+        products_menu.addAction(action_meshes)
+        
+        action_dems = QAction("Show DEMs", self)
+        action_dems.setCheckable(True)
+        action_dems.setChecked(self._show_dems)
+        action_dems.setToolTip("Toggle visibility of DEM products")
+        action_dems.toggled.connect(self.set_dems_visible)
+        products_menu.addAction(action_dems)
+        
+        products_menu.addSeparator()
+        
+        action_show_all = QAction("Show All Products", self)
+        action_show_all.triggered.connect(self.show_all_products)
+        products_menu.addAction(action_show_all)
+        
+        action_hide_all = QAction("Hide All Products", self)
+        action_hide_all.triggered.connect(self.hide_all_products)
+        products_menu.addAction(action_hide_all)
+        
+        # Store actions for programmatic updates
+        self._product_visibility_actions = {
+            'point_clouds': action_point_clouds,
+            'meshes': action_meshes,
+            'dems': action_dems,
+        }
+
+        view_menu.addSeparator()
+        
+        # Background computation toggles
         action_index_maps = QAction("Compute Index Maps", self)
         action_index_maps.setCheckable(True)
         action_index_maps.setChecked(True)
@@ -788,16 +839,54 @@ class MVATViewer(QFrame):
         self.focalPointChanged.emit(np.asarray(point))
         
     # --------------------------------------------------------------------------
-    # Point Cloud Loading and Subsetting
+    # Scene Product Loading
     # --------------------------------------------------------------------------
+    
+    # Supported file extensions for each product type
+    _POINT_CLOUD_EXTENSIONS = ['.ply', '.pcd']
+    _MESH_EXTENSIONS = ['.obj', '.stl', '.vtk']
+    _DEM_EXTENSIONS = ['.tif', '.tiff', '.dem']
+    
+    @property
+    def point_cloud(self) -> 'PointCloudProduct':
+        """
+        Backward-compatible property to access the first point cloud product.
+        
+        Returns:
+            First PointCloudProduct in the scene, or None if none loaded.
+        """
+        products = self.scene_context.get_products_by_class(PointCloudProduct)
+        return products[0] if products else None
+    
+    @point_cloud.setter
+    def point_cloud(self, value):
+        """
+        Backward-compatible setter for point_cloud.
+        
+        Clears existing point clouds and adds the new one to scene context.
+        """
+        if value is None:
+            # Remove all point cloud products
+            for p in list(self.scene_context.get_products_by_class(PointCloudProduct)):
+                self.remove_product(p.product_id)
+        else:
+            # Add to scene context (remove existing point clouds first)
+            for p in list(self.scene_context.get_products_by_class(PointCloudProduct)):
+                self.remove_product(p.product_id)
+            self.add_product(value)
 
     def dragEnterEvent(self, event):
-        """Accept drag if a single 3D file is being dragged."""
+        """Accept drag if a single supported 3D file is being dragged."""
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             if len(urls) == 1:
-                file_path = urls[0].toLocalFile()
-                if any(file_path.lower().endswith(ext) for ext in ['.ply', '.stl', '.obj', '.vtk', '.pcd']):
+                file_path = urls[0].toLocalFile().lower()
+                supported_extensions = (
+                    self._POINT_CLOUD_EXTENSIONS + 
+                    self._MESH_EXTENSIONS + 
+                    self._DEM_EXTENSIONS
+                )
+                if any(file_path.endswith(ext) for ext in supported_extensions):
                     event.acceptProposedAction()
                 else:
                     event.ignore()
@@ -811,100 +900,234 @@ class MVATViewer(QFrame):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             file_path = event.mimeData().urls()[0].toLocalFile()
+            file_ext = file_path.lower()
+            
             # Notify user via status bar if available
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
-                    top.status_bar.showMessage("Loading point cloud...", 0)
+                    top.status_bar.showMessage("Loading 3D data...", 0)
             except Exception:
                 pass
-            # Create PointCloud instance
-            self.point_cloud = PointCloud.from_file(file_path, point_size=self.point_size)
-            # Hide placeholder now that a point cloud exists
-            try:
-                self._hide_placeholder()
-            except Exception:
-                pass
-            # Render the full point cloud immediately
-            self.add_point_cloud()
-            event.acceptProposedAction()
             
-            # Trigger visibility filtering based on the model's current selections
-            if self.parent() and hasattr(self.parent(), 'selection_model'):
-                mvat_window = self.parent()
-                model = mvat_window.selection_model
-
-                selected = model.get_selected_list() if model else []
-                if selected:
-                    # The model already guarantees the active camera is in this set!
-                    mvat_window._update_visibility_filter(selected)
+            # Auto-detect product type and load
+            product = self._create_product_from_file(file_path)
+            
+            if product is not None:
+                self.add_product(product)
+                self.render_scene()
+                event.acceptProposedAction()
+                
+                # Trigger visibility filtering based on the model's current selections
+                if self.parent() and hasattr(self.parent(), 'selection_model'):
+                    mvat_window = self.parent()
+                    model = mvat_window.selection_model
+                    selected = model.get_selected_list() if model else []
+                    if selected:
+                        mvat_window._update_visibility_filter(selected)
+            else:
+                print(f"Failed to create product from file: {file_path}")
+                event.ignore()
+                
         except Exception as e:
             print(f"Failed to load 3D file: {e}")
+            import traceback
+            traceback.print_exc()
             event.ignore()
         finally:
             try:
                 top = self.window()
                 if hasattr(top, 'status_bar'):
-                    top.status_bar.showMessage("Point cloud load finished.", 3000)
+                    top.status_bar.showMessage("3D data load finished.", 3000)
             except Exception:
                 pass
             QApplication.restoreOverrideCursor()
 
-    def add_point_cloud(self):
-        """Render the full point cloud immediately into the scene."""
+    def _create_product_from_file(self, file_path: str) -> 'AbstractSceneProduct':
+        """
+        Auto-detect file type and create appropriate scene product.
+        
+        Args:
+            file_path: Path to 3D data file.
+            
+        Returns:
+            Scene product instance, or None if type cannot be determined.
+        """
+        from PyQt5.QtWidgets import QMessageBox
+        
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        # Check for DEM (GeoTIFF)
+        if file_ext in self._DEM_EXTENSIONS:
+            return DEMProduct.from_file(file_path)
+        
+        # STL and OBJ are always meshes by format definition
+        if file_ext in ['.stl', '.obj']:
+            print(f"📐 {file_ext.upper()} is a mesh-only format, creating MeshProduct")
+            return MeshProduct.from_file(file_path)
+        
+        # PCD is always point cloud
+        if file_ext == '.pcd':
+            print(f"☁️ PCD is a point-cloud-only format, creating PointCloudProduct")
+            return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+        
+        # PLY can be either - ask user
+        if file_ext == '.ply':
+            msg = QMessageBox(self)
+            msg.setWindowTitle("PLY File Type")
+            msg.setText(f"How should '{os.path.basename(file_path)}' be loaded?")
+            msg.setInformativeText("PLY files can contain either mesh faces or point cloud vertices.")
+            btn_mesh = msg.addButton("Mesh (faces)", QMessageBox.YesRole)
+            btn_pc = msg.addButton("Point Cloud", QMessageBox.NoRole)
+            msg.setDefaultButton(btn_mesh)
+            msg.exec_()
+            
+            if msg.clickedButton() == btn_mesh:
+                print(f"📐 User selected: PLY as MeshProduct")
+                try:
+                    return MeshProduct.from_file(file_path)
+                except ValueError as e:
+                    print(f"⚠️ MeshProduct creation failed: {e}, falling back to PointCloudProduct")
+                    return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+            else:
+                print(f"☁️ User selected: PLY as PointCloudProduct")
+                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+        
+        # VTK - check structure
+        if file_ext == '.vtk':
+            import pyvista as pv
+            temp_mesh = pv.read(file_path)
+            # Check if it has non-vertex cells (faces/volumes)
+            if temp_mesh.n_cells > 0 and temp_mesh.n_cells < temp_mesh.n_points:
+                print(f"📐 VTK detected as mesh (cells < points)")
+                return MeshProduct.from_file(file_path)
+            else:
+                print(f"☁️ VTK detected as point cloud")
+                return PointCloudProduct.from_file(file_path, point_size=self.point_size)
+        
+        return None
+
+    def add_product(self, product: 'AbstractSceneProduct') -> None:
+        """
+        Add a scene product to the viewer.
+        
+        Args:
+            product: Scene product to add.
+        """
+        self.scene_context.add_product(product)
+        
+        # Hide placeholder once we have data
+        try:
+            self._hide_placeholder()
+        except Exception:
+            pass
+
+    def remove_product(self, product_id: str) -> None:
+        """
+        Remove a scene product from the viewer.
+        
+        Args:
+            product_id: ID of the product to remove.
+        """
+        # Remove actor if exists
+        actor = self._product_actors.pop(product_id, None)
+        if actor is not None:
+            try:
+                self.plotter.remove_actor(actor)
+            except Exception:
+                pass
+        
+        self.scene_context.remove_product(product_id)
+        
+        # Show placeholder if scene is now empty
+        if not self.scene_context.has_any_product():
+            self._show_placeholder()
+
+    def render_scene(self) -> None:
+        """
+        Render all scene products into the viewer.
+        
+        Creates or updates PyVista actors for each product based on
+        their render style preferences. Respects current visibility settings.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            if self.point_cloud is None:
-                return
-
-            mesh = self.point_cloud.get_mesh()
-            if mesh is None:
-                return
-
-            # Create or replace the actor for the full cloud
-            if self._filtered_actor is None:
-                if 'RGB' in mesh.point_data:
-                    self._filtered_actor = self.plotter.add_mesh(
+            for product in self.scene_context:
+                product_id = product.product_id
+                mesh = product.get_render_mesh()
+                style = product.get_render_style()
+                
+                if mesh is None:
+                    continue
+                
+                # Determine visibility based on product type
+                should_be_visible = self._get_visibility_for_product(product)
+                
+                # Get or create actor
+                actor = self._product_actors.get(product_id)
+                
+                if actor is None:
+                    # Create new actor
+                    actor = self.plotter.add_mesh(
                         mesh,
-                        scalars='RGB',
-                        rgb=True,
-                        point_size=self.point_size,
-                        style='points',
-                        render_points_as_spheres=False,
-                        lighting=False,
-                        render=False
+                        render=False,
+                        **style
                     )
+                    self._product_actors[product_id] = actor
+                    
+                    # Update legacy _filtered_actor for backward compat
+                    if isinstance(product, PointCloudProduct) and self._filtered_actor is None:
+                        self._filtered_actor = actor
                 else:
-                    self._filtered_actor = self.plotter.add_mesh(
-                        mesh,
-                        color='black',
-                        point_size=self.point_size,
-                        style='points',
-                        render_points_as_spheres=False,
-                        lighting=False,
-                        render=False
-                    )
-            else:
+                    # Update existing actor's mesh
+                    try:
+                        actor.GetMapper().SetInputData(mesh)
+                    except Exception:
+                        # Fallback: recreate actor
+                        try:
+                            self.plotter.remove_actor(actor)
+                        except Exception:
+                            pass
+                        actor = self.plotter.add_mesh(mesh, render=False, **style)
+                        self._product_actors[product_id] = actor
+                
+                # Apply visibility setting
                 try:
-                    self._filtered_actor.GetMapper().SetInputData(mesh)
-                    self._filtered_actor.SetVisibility(True)
+                    actor.SetVisibility(should_be_visible)
                 except Exception:
-                    # Fallback: recreate actor
-                    self._filtered_actor = self.plotter.add_mesh(mesh, 
-                                                                 color='black', 
-                                                                 point_size=self.point_size, 
-                                                                 style='points', 
-                                                                 render=False)
-
-            # Hide placeholder and render
-            try:
-                self._hide_placeholder()
-            except Exception:
-                pass
+                    pass
+            
             self.plotter.render()
-            print("Rendered full point cloud into viewer")
+            print(f"Rendered {len(self.scene_context)} scene products")
+            
         finally:
             QApplication.restoreOverrideCursor()
+    
+    def _get_visibility_for_product(self, product: 'AbstractSceneProduct') -> bool:
+        """
+        Determine if a product should be visible based on its type.
+        
+        Args:
+            product: The scene product to check.
+            
+        Returns:
+            True if the product should be visible.
+        """
+        if isinstance(product, PointCloudProduct):
+            return self._show_point_clouds
+        elif isinstance(product, MeshProduct):
+            return self._show_meshes
+        elif isinstance(product, DEMProduct):
+            return self._show_dems
+        return True  # Default to visible for unknown types
+
+    def add_point_cloud(self):
+        """
+        Render the point cloud into the scene.
+        
+        Backward-compatible method that calls render_scene().
+        """
+        self.render_scene()
 
     def _show_placeholder(self, text: str = None):
         """Show the placeholder widget in the stacked layout."""
@@ -1022,6 +1245,7 @@ class MVATViewer(QFrame):
         Calculate median depth from camera to scene center.
         
         Used as default depth when z-channel is not available.
+        Uses scene_context for unified bounds across all products.
         
         Args:
             camera_position: 3D position of the camera.
@@ -1030,12 +1254,11 @@ class MVATViewer(QFrame):
             float: Estimated median depth to scene.
         """
         try:
-            if self.point_cloud is not None:
-                # Use point cloud center
-                center = np.array(self.point_cloud.get_mesh().center)
-                return float(np.linalg.norm(center - camera_position))
+            # Prefer scene context for unified bounds across all products
+            if self.scene_context.has_any_product():
+                return self.scene_context.get_fallback_depth(camera_position)
             else:
-                # Use scene bounds center
+                # Fallback to plotter bounds if no products
                 bounds = self.plotter.bounds
                 center = np.array([
                     (bounds[0] + bounds[1]) / 2,
@@ -1043,7 +1266,7 @@ class MVATViewer(QFrame):
                     (bounds[4] + bounds[5]) / 2
                 ])
                 depth = float(np.linalg.norm(center - camera_position))
-                return depth if depth > 0 else 10.0  # Fallback
+                return depth if depth > 0 else 10.0
         except:
             return 10.0  # Default fallback depth
 
@@ -1340,6 +1563,123 @@ class MVATViewer(QFrame):
                 pass
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Scene Product Visibility Controls
+    # ------------------------------------------------------------------
+    
+    def set_point_clouds_visible(self, visible: bool):
+        """Toggle visibility of all point cloud products."""
+        self._show_point_clouds = bool(visible)
+        self._update_product_visibility_by_type(PointCloudProduct, visible)
+    
+    def set_meshes_visible(self, visible: bool):
+        """Toggle visibility of all mesh products."""
+        self._show_meshes = bool(visible)
+        self._update_product_visibility_by_type(MeshProduct, visible)
+    
+    def set_dems_visible(self, visible: bool):
+        """Toggle visibility of all DEM products."""
+        self._show_dems = bool(visible)
+        self._update_product_visibility_by_type(DEMProduct, visible)
+    
+    def show_all_products(self):
+        """Show all scene products."""
+        self._show_point_clouds = True
+        self._show_meshes = True
+        self._show_dems = True
+        
+        # Update menu checkboxes if they exist
+        if hasattr(self, '_product_visibility_actions'):
+            for action in self._product_visibility_actions.values():
+                action.blockSignals(True)
+                action.setChecked(True)
+                action.blockSignals(False)
+        
+        # Show all actors
+        for actor in self._product_actors.values():
+            try:
+                actor.SetVisibility(True)
+            except Exception:
+                pass
+        
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+    
+    def hide_all_products(self):
+        """Hide all scene products."""
+        self._show_point_clouds = False
+        self._show_meshes = False
+        self._show_dems = False
+        
+        # Update menu checkboxes if they exist
+        if hasattr(self, '_product_visibility_actions'):
+            for action in self._product_visibility_actions.values():
+                action.blockSignals(True)
+                action.setChecked(False)
+                action.blockSignals(False)
+        
+        # Hide all actors
+        for actor in self._product_actors.values():
+            try:
+                actor.SetVisibility(False)
+            except Exception:
+                pass
+        
+        try:
+            self.plotter.render()
+        except Exception:
+            pass
+    
+    def _update_product_visibility_by_type(self, product_class, visible: bool):
+        """Update visibility for all products of a specific type."""
+        try:
+            for product in self.scene_context.get_products_by_class(product_class):
+                actor = self._product_actors.get(product.product_id)
+                if actor is not None:
+                    try:
+                        actor.SetVisibility(bool(visible))
+                    except Exception:
+                        pass
+            self.plotter.render()
+        except Exception:
+            pass
+    
+    def set_product_visible(self, product_id: str, visible: bool):
+        """
+        Set visibility for a specific product by ID.
+        
+        Args:
+            product_id: ID of the product to show/hide.
+            visible: Whether the product should be visible.
+        """
+        actor = self._product_actors.get(product_id)
+        if actor is not None:
+            try:
+                actor.SetVisibility(bool(visible))
+                self.plotter.render()
+            except Exception:
+                pass
+    
+    def get_product_visible(self, product_id: str) -> bool:
+        """
+        Get visibility state for a specific product.
+        
+        Args:
+            product_id: ID of the product.
+            
+        Returns:
+            True if visible, False otherwise.
+        """
+        actor = self._product_actors.get(product_id)
+        if actor is not None:
+            try:
+                return bool(actor.GetVisibility())
+            except Exception:
+                pass
+        return False
 
     def set_frustum_scale(self, scale: float):
         """Set scale used for frustum geometry."""
