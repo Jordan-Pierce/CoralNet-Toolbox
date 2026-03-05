@@ -425,34 +425,7 @@ class MVATManager(QObject):
             primary_target = self.viewer.scene_context.get_primary_target()
             target_file_path = primary_target.file_path if primary_target else ""
             
-            for path, result in results.items():
-                camera = self.cameras.get(path)
-                if not camera:
-                    continue
-
-                cache_path = None
-                if self.cache_manager is not None and target_file_path:
-                    try:
-                        cache_path = self.cache_manager.save_visibility(
-                            camera._raster.extrinsics,
-                            target_file_path,
-                            result.get('index_map'),
-                            result.get('visible_indices'),
-                            result.get('depth_map') if self.compute_depth_maps_enabled else None
-                        )
-                    except Exception:
-                        cache_path = None
-
-                try:
-                    camera._raster.add_index_map(result.get('index_map'), cache_path, result.get('visible_indices'))
-                except Exception:
-                    pass
-
-                if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
-                    try:
-                        camera._raster.merge_or_set_depth_map(result.get('depth_map'))
-                    except Exception:
-                        pass
+            self._process_visibility_results(results, target_file_path)
 
         finally:
             self._is_computing_visibility = False
@@ -465,6 +438,53 @@ class MVATManager(QObject):
                 QApplication.restoreOverrideCursor()
             except Exception:
                 pass
+
+    def _process_visibility_results(self, results: dict, target_file_path: str):
+        """
+        Process visibility computation results and store in cameras.
+        
+        Shared by both sync (VTK mesh) and async (worker) code paths.
+        
+        Args:
+            results: Dict mapping image_path -> visibility result dict
+            target_file_path: Path to primary target for cache key
+        """
+        for path, result in results.items():
+            camera = self.cameras.get(path)
+            if not camera:
+                continue
+
+            # Store index map with element type metadata
+            element_type = result.get('element_type', 'point')
+            
+            cache_path = None
+            if self.cache_manager is not None and target_file_path:
+                try:
+                    cache_path = self.cache_manager.save_visibility(
+                        camera._raster.extrinsics,
+                        target_file_path,
+                        result.get('index_map'),
+                        result.get('visible_indices'),
+                        result.get('depth_map') if self.compute_depth_maps_enabled else None,
+                        element_type=element_type
+                    )
+                except Exception:
+                    cache_path = None
+            try:
+                camera._raster.add_index_map(
+                    result.get('index_map'), 
+                    cache_path, 
+                    result.get('visible_indices'),
+                    element_type=element_type
+                )
+            except Exception:
+                pass
+
+            if self.compute_depth_maps_enabled and result.get('depth_map') is not None:
+                try:
+                    camera._raster.merge_or_set_depth_map(result.get('depth_map'))
+                except Exception:
+                    pass
             
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
@@ -631,9 +651,11 @@ class MVATManager(QObject):
 
     def _update_visibility_filter(self, highlighted_paths):
         """
-        Asynchronously compute visibility index maps for the supplied highlighted
-        cameras and cache results. Does NOT modify the viewer's rendered
-        point cloud (subsetting removed).
+        Compute visibility index maps for the supplied highlighted cameras.
+        
+        Dispatches to appropriate method based on primary target type:
+        - MeshProduct: VTK rasterization on main thread (requires GUI context)
+        - PointCloudProduct: Worker thread with scatter-reduce Z-buffering
         """
         # Preconditions - check scene has any indexable product
         if not self.viewer.scene_context.has_any_product():
@@ -662,13 +684,86 @@ class MVATManager(QObject):
         if self._is_computing_visibility:
             return
 
-        # Get points from primary target (currently only point clouds supported)
-        # TODO: Update VisibilityWorker to support mesh/DEM targets
-        if not hasattr(primary_target, 'get_points_array'):
-            print(f"MVATManager: Visibility computation not yet supported for {type(primary_target).__name__}")
-            return
+        # Dispatch based on primary target type
+        from coralnet_toolbox.MVAT.core.Model import MeshProduct
+        
+        if isinstance(primary_target, MeshProduct):
+            # Use VTK rasterization on main thread (requires OpenGL context)
+            self._compute_mesh_visibility_sync(primary_target, cameras_needing_visibility)
+        else:
+            # Use worker thread for point clouds and DEMs
+            self._compute_visibility_async(primary_target, cameras_needing_visibility)
+
+    def _compute_mesh_visibility_sync(self, mesh_product, cameras):
+        """
+        Compute mesh visibility using VTK rasterization (main thread).
+        
+        VTK/PyVista rendering requires the GUI thread's OpenGL context.
+        This method performs synchronous rasterization for accurate mesh depth maps.
+        """
+        from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+        
+        self._is_computing_visibility = True
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        except Exception:
+            pass
+        
+        try:
+            target_file_path = mesh_product.file_path
+            n_cameras = len(cameras)
             
-        points_world = primary_target.get_points_array()
+            try:
+                self.main_window.status_bar.showMessage(
+                    f"Rasterizing mesh for {n_cameras} camera(s)..."
+                )
+            except Exception:
+                pass
+            
+            print(f"MVATManager: VTK mesh rasterization for {n_cameras} cameras")
+            
+            results = {}
+            for i, camera in enumerate(cameras):
+                if camera.is_orthographic:
+                    # Skip orthographic cameras for now (use fallback)
+                    continue
+                
+                try:
+                    result = VisibilityManager._compute_mesh_visibility(
+                        mesh_product,
+                        camera.K, camera.R, camera.t,
+                        camera.width, camera.height,
+                        compute_depth_map=self.compute_depth_maps_enabled
+                    )
+                    result['element_type'] = 'face'
+                    results[camera.image_path] = result
+                except Exception as e:
+                    print(f"⚠️ Failed to compute mesh visibility for {camera.label}: {e}")
+            
+            # Process results (same logic as _on_visibility_computed)
+            self._process_visibility_results(results, target_file_path)
+            
+        except Exception as e:
+            print(f"⚠️ Mesh visibility computation failed: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            self._is_computing_visibility = False
+            try:
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
+            try:
+                self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            except Exception:
+                pass
+
+    def _compute_visibility_async(self, primary_target, cameras):
+        """
+        Compute visibility using worker thread (for point clouds and DEMs).
+        """
+        # Extract geometry from primary target based on product type
+        points_world, element_ids, element_type = self._extract_visibility_geometry(primary_target)
         if points_world is None or len(points_world) == 0:
             return
 
@@ -676,7 +771,7 @@ class MVATManager(QObject):
         # For perspective cameras: (K, R, t, width, height)
         # For orthographic cameras: ('ortho', transform_matrix_inv, width, height)
         camera_params_dict = {}
-        for cam in cameras_needing_visibility:
+        for cam in cameras:
             if cam.is_orthographic:
                 camera_params_dict[cam.image_path] = ('ortho', cam.transform_matrix_inv, cam.width, cam.height)
             else:
@@ -699,7 +794,9 @@ class MVATManager(QObject):
 
             worker = VisibilityWorker(points_world, 
                                       camera_params_dict, 
-                                      compute_depth_maps=self.compute_depth_maps_enabled)
+                                      compute_depth_maps=self.compute_depth_maps_enabled,
+                                      element_type=element_type,
+                                      element_ids=element_ids)
             thread = QThread()
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -721,6 +818,88 @@ class MVATManager(QObject):
         except Exception as e:
             print(f"Failed to start visibility worker: {e}")
             self._is_computing_visibility = False
+
+    def _extract_visibility_geometry(self, primary_target):
+        """
+        Extract 3D geometry from the primary target for visibility computation.
+        
+        Handles different product types:
+        - PointCloudProduct: Returns point coordinates directly
+        - MeshProduct: Returns face center coordinates with face IDs
+        - DEMProduct: Returns grid cell center coordinates with cell IDs
+        
+        Args:
+            primary_target: AbstractSceneProduct instance
+            
+        Returns:
+            tuple: (points_world, element_ids, element_type) where:
+                - points_world: (N, 3) array of 3D coordinates
+                - element_ids: (N,) array of element IDs or None for default indexing
+                - element_type: str ('point', 'face', or 'cell')
+        """
+        from coralnet_toolbox.MVAT.core.Model import PointCloudProduct, MeshProduct, DEMProduct
+        
+        element_type = primary_target.get_element_type()
+        
+        # Strategy A: Point Cloud - use points directly
+        if isinstance(primary_target, PointCloudProduct):
+            points = primary_target.get_points_array()
+            if points is not None and len(points) > 0:
+                return points, None, 'point'
+            return None, None, 'point'
+        
+        # Strategy B: Mesh - use face centers
+        if isinstance(primary_target, MeshProduct):
+            try:
+                face_centers = primary_target.get_face_centers()
+                face_ids = np.arange(len(face_centers), dtype=np.int32)
+                print(f"📐 MeshProduct: Extracted {len(face_centers):,} face centers for visibility")
+                return face_centers, face_ids, 'face'
+            except Exception as e:
+                print(f"⚠️ Failed to extract mesh face centers: {e}")
+                return None, None, 'face'
+        
+        # Strategy C: DEM - use grid cell centers
+        if isinstance(primary_target, DEMProduct):
+            try:
+                dem_height, dem_width = primary_target.elevation.shape
+                rows, cols = np.mgrid[0:dem_height, 0:dem_width]
+                
+                # Convert pixel coords to world coords using affine transform
+                transform = primary_target.transform
+                x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
+                y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
+                z_world = primary_target.elevation
+                
+                # Flatten to point array
+                points = np.column_stack([
+                    x_world.flatten(),
+                    y_world.flatten(),
+                    z_world.flatten()
+                ])
+                
+                # Cell IDs: row * width + col
+                cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
+                
+                # Filter out NaN elevations
+                valid_mask = ~np.isnan(points[:, 2])
+                points = points[valid_mask]
+                cell_ids = cell_ids[valid_mask]
+                
+                print(f"🗺️ DEMProduct: Extracted {len(points):,} valid cell centers for visibility")
+                return points, cell_ids, 'cell'
+            except Exception as e:
+                print(f"⚠️ Failed to extract DEM cell centers: {e}")
+                return None, None, 'cell'
+        
+        # Fallback: try get_points_array if available (generic interface)
+        if hasattr(primary_target, 'get_points_array'):
+            points = primary_target.get_points_array()
+            if points is not None and len(points) > 0:
+                return points, None, element_type
+        
+        print(f"⚠️ MVATManager: Cannot extract geometry from {type(primary_target).__name__}")
+        return None, None, element_type
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
         """

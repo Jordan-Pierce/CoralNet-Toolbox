@@ -118,9 +118,10 @@ class Raster(QObject):
         self.transform_matrix: Optional[np.ndarray] = None
         
         # Visibility/Index map information (for MultiView Annotation)
-        self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to point cloud IDs (H x W int32)
+        self.index_map: Optional[np.ndarray] = None  # 2D array mapping pixels to element IDs (H x W int32)
         self.index_map_path: Optional[str] = None  # Path to index_map file if saved separately
-        self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible point IDs
+        self.visible_indices: Optional[np.ndarray] = None  # 1D array of visible element IDs
+        self.index_element_type: Optional[str] = None  # Element type: 'point', 'face', or 'cell'
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -352,14 +353,18 @@ class Raster(QObject):
         self.extrinsics = None
     
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
-                     visible_indices: Optional[np.ndarray] = None):
+                     visible_indices: Optional[np.ndarray] = None,
+                     element_type: Optional[str] = 'point'):
         """
         Add or update index map and visible indices data.
         
         Args:
-            index_map (np.ndarray): 2D array mapping pixels to point cloud IDs (H x W int32)
+            index_map (np.ndarray): 2D array mapping pixels to element IDs (H x W int32)
             index_map_path (str, optional): Path to the index_map file if saved separately
-            visible_indices (np.ndarray, optional): 1D array of visible point IDs
+            visible_indices (np.ndarray, optional): 1D array of visible element IDs
+            element_type (str, optional): Type of element IDs in the index map.
+                One of 'point' (point cloud), 'face' (mesh faces), or 'cell' (DEM grid).
+                Defaults to 'point' for backward compatibility.
         """
         if not isinstance(index_map, np.ndarray):
             raise ValueError("Index map must be a numpy array")
@@ -367,6 +372,11 @@ class Raster(QObject):
             raise ValueError("Index map must be a 2D array")
         if index_map.dtype != np.int32:
             raise ValueError("Index map must be int32 dtype")
+        
+        # Validate element_type
+        valid_element_types = {'point', 'face', 'cell'}
+        if element_type is not None and element_type not in valid_element_types:
+            raise ValueError(f"element_type must be one of {valid_element_types}, got '{element_type}'")
         
         # Resize index_map if dimensions don't match
         if index_map.shape != (self.height, self.width):
@@ -378,6 +388,7 @@ class Raster(QObject):
         
         self.index_map = index_map.copy()
         self.index_map_path = index_map_path
+        self.index_element_type = element_type
         
         # Set visible_indices if provided
         if visible_indices is not None:
@@ -388,17 +399,22 @@ class Raster(QObject):
             self.visible_indices = visible_indices.copy()
     
     def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
-                        visible_indices: Optional[np.ndarray] = None):
+                        visible_indices: Optional[np.ndarray] = None,
+                        element_type: Optional[str] = None):
         """
         Update the index map and visible indices data.
         
         Args:
-            index_map (np.ndarray): 2D array mapping pixels to point cloud IDs
+            index_map (np.ndarray): 2D array mapping pixels to element IDs
             index_map_path (str, optional): Path to the index_map file if saved separately
-            visible_indices (np.ndarray, optional): 1D array of visible point IDs
+            visible_indices (np.ndarray, optional): 1D array of visible element IDs
+            element_type (str, optional): Type of element IDs. If None, preserves existing type.
         """
+        # Preserve existing element_type if not specified
+        if element_type is None:
+            element_type = self.index_element_type or 'point'
         # Same validation as add
-        self.add_index_map(index_map, index_map_path, visible_indices)
+        self.add_index_map(index_map, index_map_path, visible_indices, element_type)
     
     def set_index_map_path(self, index_map_path: str, auto_load: bool = True):
         """
@@ -414,7 +430,13 @@ class Raster(QObject):
         if auto_load and index_map_path and os.path.exists(index_map_path):
             try:
                 data = np.load(index_map_path)
-                self.add_index_map(data['index_map'], index_map_path, data.get('visible_indices'))
+                element_type = str(data.get('element_type', 'point'))
+                self.add_index_map(
+                    data['index_map'], 
+                    index_map_path, 
+                    data.get('visible_indices'),
+                    element_type=element_type
+                )
             except Exception as e:
                 print(f"Warning: Failed to auto-load index map from {index_map_path}: {e}")
     
@@ -427,6 +449,7 @@ class Raster(QObject):
         self.index_map = None
         self.index_map_path = None
         self.visible_indices = None
+        self.index_element_type = None
         
     @property
     def index_map_lazy(self):

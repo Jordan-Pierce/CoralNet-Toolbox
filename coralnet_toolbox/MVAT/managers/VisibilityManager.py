@@ -1,17 +1,29 @@
 """
 Visibility Manager for MVAT
 
-A stateless engine that determines which 3D points are visible to a specific camera.
-It generates 'Index Maps' (Pixel -> PointID) and sets of visible Point IDs.
+A stateless engine that determines which 3D elements are visible to a specific camera.
+It generates 'Index Maps' (Pixel -> ElementID) and sets of visible ElementIDs.
+
+Supports heterogeneous scene products:
+- Point Clouds: Scatter-reduce Z-buffering (point IDs)
+- Meshes: Ray-casting/Rasterization (face IDs) [Placeholder]
+- DEMs: Direct projection (cell IDs) [Placeholder]
 
 Hardware Acceleration:
 - Uses PyTorch (CUDA or CPU) as the primary compute engine.
 - Falls back to NumPy if PyTorch is unavailable.
 """
+from __future__ import annotations
 
 import time
 import warnings
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
 import numpy as np
+
+if TYPE_CHECKING:
+    from coralnet_toolbox.MVAT.core.SceneContext import SceneContext
+    from coralnet_toolbox.MVAT.core.SceneProduct import AbstractSceneProduct
 
 # Try importing torch, but handle the case where it's not installed
 try:
@@ -28,8 +40,448 @@ except ImportError:
 
 class VisibilityManager:
     """
-    Stateless engine for computing point visibility and generating index maps.
+    Stateless engine for computing element visibility and generating index maps.
+    
+    Strategy Pattern Implementation:
+    - Point Cloud Target: Scatter-reduce Z-buffering (existing algorithm)
+    - Mesh Target: Ray-casting/rasterization (placeholder - falls back to point sampling)
+    - DEM Target: Affine projection (for orthographic cameras)
+    
+    Results include 'element_type' metadata ('point', 'face', 'cell') for downstream
+    annotation engines to properly interpret index map values.
     """
+
+    @classmethod
+    def compute_visibility_from_scene(cls,
+                                      scene_context: 'SceneContext',
+                                      K: np.ndarray,
+                                      R: np.ndarray,
+                                      t: np.ndarray,
+                                      width: int,
+                                      height: int,
+                                      compute_depth_map: bool = True) -> dict:
+        """
+        Strategy dispatcher: compute visibility based on scene context.
+        
+        Queries the scene for the primary target and dispatches to the 
+        appropriate visibility algorithm based on the target's element type.
+        
+        Args:
+            scene_context: SceneContext containing loaded products.
+            K: (3, 3) Intrinsic matrix.
+            R: (3, 3) Rotation matrix (World -> Camera).
+            t: (3,) Translation vector (World -> Camera).
+            width: Image width in pixels.
+            height: Image height in pixels.
+            compute_depth_map: Whether to generate depth map.
+            
+        Returns:
+            dict: {
+                'index_map': (H, W) int32 array. Pixel value is Element ID or -1.
+                'visible_indices': (M,) int32 array. Unique IDs of visible elements.
+                'depth_map': (H, W) float32 array. Camera-space depth per pixel (optional).
+                'element_type': str. One of 'point', 'face', 'cell'.
+            }
+        """
+        primary_target = scene_context.get_primary_target()
+        
+        if primary_target is None:
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+                'element_type': 'point'
+            }
+        
+        element_type = primary_target.get_element_type()
+        
+        # Strategy dispatch based on element type
+        if element_type == 'point':
+            # Strategy A: Point Cloud - existing scatter-reduce algorithm
+            from coralnet_toolbox.MVAT.core.Model import PointCloudProduct
+            if isinstance(primary_target, PointCloudProduct):
+                points = primary_target.get_points_array()
+                if points is not None:
+                    result = cls.compute_visibility(points, K, R, t, width, height, 
+                                                   compute_depth_map=compute_depth_map)
+                    result['element_type'] = 'point'
+                    return result
+                    
+        elif element_type == 'face':
+            # Strategy B: Mesh - ray-casting/rasterization
+            result = cls._compute_mesh_visibility(primary_target, K, R, t, width, height, 
+                                                  compute_depth_map=compute_depth_map)
+            result['element_type'] = 'face'
+            return result
+            
+        elif element_type == 'cell':
+            # Strategy C: DEM - affine projection (for orthographic cameras)
+            # Note: For DEM, orthographic projection is handled separately
+            # This is a fallback for perspective cameras looking at DEM
+            result = cls._compute_dem_visibility(primary_target, K, R, t, width, height)
+            result['element_type'] = 'cell'
+            return result
+        
+        # Fallback: empty result
+        return {
+            'index_map': np.full((height, width), -1, dtype=np.int32),
+            'visible_indices': np.array([], dtype=np.int32),
+            'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None,
+            'element_type': element_type
+        }
+
+    @classmethod
+    def _compute_mesh_visibility(cls,
+                                 mesh_product: 'AbstractSceneProduct',
+                                 K: np.ndarray,
+                                 R: np.ndarray,
+                                 t: np.ndarray,
+                                 width: int,
+                                 height: int,
+                                 compute_depth_map: bool = True) -> dict:
+        """
+        Strategy B: Compute visibility for mesh products via VTK rasterization.
+        
+        Uses PyVista off-screen rendering to rasterize triangles with face IDs
+        encoded as RGB colors. This produces dense, pixel-perfect index maps
+        and depth buffers for continuous mesh surfaces.
+        
+        Args:
+            mesh_product: MeshProduct instance with faces.
+            K, R, t: Camera parameters (intrinsics, rotation, translation).
+            width, height: Image dimensions in pixels.
+            compute_depth_map: Whether to generate depth map.
+            
+        Returns:
+            dict with 'index_map', 'visible_indices', 'depth_map'.
+        """
+        try:
+            return cls._compute_mesh_visibility_vtk(
+                mesh_product, K, R, t, width, height, compute_depth_map
+            )
+        except Exception as e:
+            print(f"⚠️ VTK mesh rasterization failed: {e}, falling back to face-center sampling")
+            return cls._compute_mesh_visibility_fallback(
+                mesh_product, K, R, t, width, height, compute_depth_map
+            )
+
+    @classmethod
+    def _compute_mesh_visibility_vtk(cls,
+                                     mesh_product: 'AbstractSceneProduct',
+                                     K: np.ndarray,
+                                     R: np.ndarray,
+                                     t: np.ndarray,
+                                     width: int,
+                                     height: int,
+                                     compute_depth_map: bool = True) -> dict:
+        """
+        VTK-based mesh rasterization for pixel-perfect face ID and depth maps.
+        
+        Workflow:
+        1. Create off-screen plotter matching image dimensions
+        2. Configure VTK camera from K, R, t (OpenCV conventions)
+        3. Assign face IDs as cell scalars with RGB encoding
+        4. Render and decode face IDs from screenshot
+        5. Extract depth buffer and convert to camera-space depth
+        """
+        import pyvista as pv
+        
+        mesh = mesh_product.get_mesh()
+        n_faces = mesh.n_cells
+        
+        if n_faces == 0:
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+            }
+        
+        print(f"🎨 Mesh visibility: VTK rasterization for {n_faces:,} faces at {width}x{height}")
+        
+        # --- 1. Encode face IDs as RGB colors ---
+        # Use 24-bit encoding: R + G*256 + B*65536 = face_id
+        # This supports up to 16.7M faces
+        face_ids = np.arange(n_faces, dtype=np.int32)
+        
+        # Encode face_id into RGB (shifted by 1 so face_id=0 maps to RGB(1,0,0))
+        # We reserve RGB(0,0,0) for background
+        encoded_ids = face_ids + 1
+        r = (encoded_ids % 256).astype(np.uint8)
+        g = ((encoded_ids // 256) % 256).astype(np.uint8)
+        b = ((encoded_ids // 65536) % 256).astype(np.uint8)
+        
+        # Create RGB array for cell data
+        rgb_colors = np.column_stack([r, g, b])
+        
+        # Clone mesh and assign face ID colors as cell data
+        mesh_with_ids = mesh.copy()
+        mesh_with_ids.cell_data['FaceID_RGB'] = rgb_colors
+        
+        # --- 2. Create off-screen plotter ---
+        plotter = pv.Plotter(off_screen=True, window_size=(width, height))
+        plotter.set_background('black')  # Background = RGB(0,0,0) = "no face"
+        
+        # Add mesh with RGB scalars, no lighting/interpolation
+        plotter.add_mesh(
+            mesh_with_ids,
+            scalars='FaceID_RGB',
+            rgb=True,
+            lighting=False,
+            interpolate_before_map=False,
+            show_edges=False,
+            style='surface'
+        )
+        
+        # --- 3. Configure VTK camera from K, R, t ---
+        cls._configure_vtk_camera(plotter, K, R, t, width, height, mesh.bounds)
+        
+        # --- 4. Render and extract face IDs ---
+        plotter.render()
+        
+        # Get screenshot (RGB image)
+        screenshot = plotter.screenshot(return_img=True)  # Shape: (H, W, 3) or (H, W, 4)
+        
+        if screenshot.shape[2] == 4:
+            screenshot = screenshot[:, :, :3]  # Drop alpha channel
+        
+        # Decode RGB back to face IDs
+        # face_id = R + G*256 + B*65536 - 1  (subtract 1 because we added 1 during encoding)
+        decoded = (screenshot[:, :, 0].astype(np.int32) +
+                   screenshot[:, :, 1].astype(np.int32) * 256 +
+                   screenshot[:, :, 2].astype(np.int32) * 65536)
+        
+        # Background (0,0,0) decodes to 0, subtract 1 to get -1 for no-face
+        index_map = decoded - 1
+        index_map = index_map.astype(np.int32)
+        
+        # --- 5. Extract depth buffer ---
+        depth_map = None
+        if compute_depth_map:
+            try:
+                # Get VTK depth buffer
+                # PyVista's get_image_depth() returns actual Z-coordinates in camera space
+                # VTK convention: camera looks down -Z, so visible objects have negative Z
+                # OpenCV convention: camera looks down +Z, depth is positive
+                vtk_depth = plotter.get_image_depth(fill_value=np.nan)
+                
+                # Negate to convert from VTK (-Z forward) to OpenCV (+Z forward) convention
+                depth_map = -vtk_depth.astype(np.float32)
+                
+            except Exception as e:
+                print(f"⚠️ Failed to extract depth buffer: {e}")
+                depth_map = np.full((height, width), np.nan, dtype=np.float32)
+        
+        # --- 6. Extract visible face IDs ---
+        visible_indices = np.unique(index_map[index_map >= 0]).astype(np.int32)
+        
+        # Cleanup
+        plotter.close()
+        
+        n_visible = len(visible_indices)
+        coverage = np.sum(index_map >= 0) / (width * height) * 100
+        print(f"✅ Mesh visibility: {n_visible:,} visible faces, {coverage:.1f}% pixel coverage")
+        
+        return {
+            'index_map': index_map,
+            'visible_indices': visible_indices,
+            'depth_map': depth_map
+        }
+
+    @classmethod
+    def _configure_vtk_camera(cls, plotter, K: np.ndarray, R: np.ndarray, t: np.ndarray,
+                              width: int, height: int, bounds: tuple) -> None:
+        """
+        Configure VTK camera from OpenCV-style intrinsics and extrinsics.
+        
+        OpenCV conventions:
+        - Camera looks down +Z axis
+        - +X is right, +Y is down
+        - R, t transform world points to camera space: X_cam = R @ X_world + t
+        
+        VTK conventions:
+        - Camera looks down -Z axis (toward focal point)
+        - +X is right, +Y is up
+        - Position/FocalPoint/ViewUp define camera pose
+        
+        Args:
+            plotter: PyVista plotter instance
+            K: 3x3 intrinsic matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+            R: 3x3 rotation matrix (world to camera)
+            t: 3x1 translation vector (world to camera)
+            width, height: Image dimensions
+            bounds: Scene bounding box for clipping plane estimation
+        """
+        # --- Camera position in world coordinates ---
+        # X_world = R^T @ (X_cam - t)
+        # Camera origin in camera space is (0, 0, 0)
+        # So camera position in world space is: -R^T @ t
+        position = -R.T @ t
+        
+        # --- Focal point: a point along the camera's viewing direction ---
+        # In camera space, the camera looks toward +Z (OpenCV convention)
+        # So a point at (0, 0, 1) in camera space, transformed to world space:
+        forward_cam = np.array([0.0, 0.0, 1.0])
+        forward_world = R.T @ forward_cam
+        focal_point = position + forward_world
+        
+        # --- View up vector ---
+        # In OpenCV, +Y is down in the image
+        # In VTK, +Y is up
+        # So view_up in world space is -R^T @ (0, 1, 0)
+        up_cam = np.array([0.0, -1.0, 0.0])  # Flip Y for VTK
+        view_up = R.T @ up_cam
+        
+        # --- Set camera pose ---
+        camera = plotter.camera
+        camera.position = position.tolist()
+        camera.focal_point = focal_point.tolist()
+        camera.up = view_up.tolist()
+        
+        # --- Compute view angle from intrinsics ---
+        # For a pinhole camera: tan(view_angle/2) = (height/2) / fy
+        # VTK uses vertical view angle in degrees
+        fy = K[1, 1]
+        view_angle_rad = 2.0 * np.arctan(height / (2.0 * fy))
+        view_angle_deg = np.degrees(view_angle_rad)
+        camera.view_angle = view_angle_deg
+        
+        # --- Set clipping range based on scene bounds ---
+        # Compute distance from camera to scene center
+        scene_center = np.array([
+            (bounds[0] + bounds[1]) / 2,
+            (bounds[2] + bounds[3]) / 2,
+            (bounds[4] + bounds[5]) / 2
+        ])
+        scene_radius = np.linalg.norm([
+            bounds[1] - bounds[0],
+            bounds[3] - bounds[2],
+            bounds[5] - bounds[4]
+        ]) / 2
+        
+        dist_to_center = np.linalg.norm(scene_center - position)
+        
+        # Set conservative clipping range
+        near_clip = max(0.01, dist_to_center - scene_radius * 2)
+        far_clip = dist_to_center + scene_radius * 2
+        camera.clipping_range = (near_clip, far_clip)
+        
+        # --- Handle principal point offset ---
+        # If cx, cy are not at image center, we need window center offset
+        # VTK uses normalized window center: (0, 0) = center, (-1, -1) = bottom-left
+        cx, cy = K[0, 2], K[1, 2]
+        fx = K[0, 0]
+        
+        # Offset from image center in pixels
+        dx = cx - width / 2
+        dy = cy - height / 2
+        
+        # Convert to normalized coordinates (relative to half-width/height)
+        # VTK window_center is fraction of half-window
+        if abs(dx) > 1 or abs(dy) > 1:
+            wx = -2.0 * dx / width  # Negate because VTK uses opposite sign
+            wy = 2.0 * dy / height  # Y is already flipped
+            camera.SetWindowCenter(wx, wy)
+
+    @classmethod
+    def _compute_mesh_visibility_fallback(cls,
+                                          mesh_product: 'AbstractSceneProduct',
+                                          K: np.ndarray,
+                                          R: np.ndarray,
+                                          t: np.ndarray,
+                                          width: int,
+                                          height: int,
+                                          compute_depth_map: bool = True) -> dict:
+        """
+        Fallback: Compute mesh visibility using face-center point sampling.
+        
+        Used when VTK rasterization fails. Less accurate (sparse) but reliable.
+        """
+        print("⚠️ Mesh visibility: Using face-center sampling (fallback)")
+        
+        try:
+            face_centers = mesh_product.get_face_centers()
+            face_ids = np.arange(len(face_centers), dtype=np.int32)
+            
+            result = cls.compute_visibility(
+                face_centers, K, R, t, width, height,
+                point_ids=face_ids,
+                compute_depth_map=compute_depth_map
+            )
+            return result
+            
+        except Exception as e:
+            print(f"⚠️ Mesh visibility fallback failed: {e}")
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
+            }
+
+    @classmethod
+    def _compute_dem_visibility(cls,
+                                dem_product: 'AbstractSceneProduct',
+                                K: np.ndarray,
+                                R: np.ndarray,
+                                t: np.ndarray,
+                                width: int,
+                                height: int) -> dict:
+        """
+        Strategy C: Compute visibility for DEM products (perspective camera).
+        
+        PLACEHOLDER IMPLEMENTATION: Samples grid cell centers and uses point-based
+        projection. For orthographic cameras viewing DEMs, use direct affine mapping
+        via compute_orthographic_visibility() instead.
+        
+        Args:
+            dem_product: DEMProduct instance.
+            K, R, t: Camera parameters (perspective).
+            width, height: Image dimensions.
+            
+        Returns:
+            dict with 'index_map', 'visible_indices'.
+        """
+        print("⚠️ DEM visibility: Using cell-center sampling (placeholder for perspective cameras)")
+        
+        try:
+            # Generate 3D points from DEM grid
+            dem_height, dem_width = dem_product.elevation.shape
+            rows, cols = np.mgrid[0:dem_height, 0:dem_width]
+            
+            # Convert pixel coords to world coords
+            transform = dem_product.transform
+            x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
+            y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
+            z_world = dem_product.elevation
+            
+            # Flatten to point array
+            points = np.column_stack([
+                x_world.flatten(),
+                y_world.flatten(),
+                z_world.flatten()
+            ])
+            
+            # Cell IDs: row * width + col  
+            cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
+            
+            # Filter out NaN elevations
+            valid_mask = ~np.isnan(points[:, 2])
+            points = points[valid_mask]
+            cell_ids = cell_ids[valid_mask]
+            
+            # Use point-based visibility
+            result = cls.compute_visibility(
+                points, K, R, t, width, height,
+                point_ids=cell_ids,
+                compute_depth_map=False
+            )
+            return result
+            
+        except Exception as e:
+            print(f"⚠️ DEM visibility computation failed: {e}")
+            return {
+                'index_map': np.full((height, width), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32)
+            }
 
     @classmethod
     def compute_visibility(cls, 

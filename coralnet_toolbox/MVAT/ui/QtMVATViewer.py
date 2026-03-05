@@ -20,7 +20,7 @@ from PyQt5.QtCore import Qt, QEvent, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QVBoxLayout,
     QWidget, QHBoxLayout, QLabel, QSlider, QSpinBox,
-    QToolBar, QToolButton, QMenu, QAction, QStackedLayout
+    QToolBar, QToolButton, QMenu, QAction, QActionGroup, QStackedLayout
 )
 
 from coralnet_toolbox.MVAT.core.Ray import CameraRay, BatchedRayManager
@@ -42,6 +42,7 @@ class MVATViewer(QFrame):
     pointSizeChanged = pyqtSignal(int)
     computeIndexMapsToggled = pyqtSignal(bool)
     computeDepthMapsToggled = pyqtSignal(bool)
+    primaryTargetChanged = pyqtSignal(str)      # Emits product_id when primary target changes
 
     def __init__(self, parent=None, point_size=1, show_rays=True):
         super().__init__(parent)
@@ -406,6 +407,15 @@ class MVATViewer(QFrame):
             'meshes': action_meshes,
             'dems': action_dems,
         }
+        
+        # Primary Target submenu - for selecting annotation target
+        self._primary_target_menu = view_menu.addMenu("Primary Target")
+        self._primary_target_menu.setToolTip(
+            "Select which product's elements are indexed for annotations"
+        )
+        self._primary_target_action_group = QActionGroup(self)
+        self._primary_target_action_group.setExclusive(True)
+        self._update_primary_target_menu()  # Populate initially
 
         view_menu.addSeparator()
         
@@ -1021,6 +1031,12 @@ class MVATViewer(QFrame):
             self._hide_placeholder()
         except Exception:
             pass
+        
+        # Update primary target menu
+        try:
+            self._update_primary_target_menu()
+        except Exception:
+            pass
 
     def remove_product(self, product_id: str) -> None:
         """
@@ -1042,6 +1058,12 @@ class MVATViewer(QFrame):
         # Show placeholder if scene is now empty
         if not self.scene_context.has_any_product():
             self._show_placeholder()
+        
+        # Update primary target menu
+        try:
+            self._update_primary_target_menu()
+        except Exception:
+            pass
 
     def render_scene(self) -> None:
         """
@@ -1120,6 +1142,96 @@ class MVATViewer(QFrame):
         elif isinstance(product, DEMProduct):
             return self._show_dems
         return True  # Default to visible for unknown types
+
+    # --------------------------------------------------------------------------
+    # Primary Target Selection
+    # --------------------------------------------------------------------------
+    
+    def _update_primary_target_menu(self):
+        """
+        Rebuild the Primary Target menu with current scene products.
+        
+        Called when products are added/removed or when the menu needs refresh.
+        """
+        if not hasattr(self, '_primary_target_menu'):
+            return
+            
+        menu = self._primary_target_menu
+        group = self._primary_target_action_group
+        
+        # Clear existing actions
+        menu.clear()
+        for action in group.actions():
+            group.removeAction(action)
+        
+        # Add "None" option
+        action_none = QAction("None (Auto)", self)
+        action_none.setCheckable(True)
+        action_none.setData(None)
+        action_none.triggered.connect(lambda: self._on_primary_target_selected(None))
+        group.addAction(action_none)
+        menu.addAction(action_none)
+        
+        # Check if scene is empty
+        if not self.scene_context.has_any_product():
+            action_none.setChecked(True)
+            return
+        
+        menu.addSeparator()
+        
+        # Group products by type
+        current_target_id = self.scene_context.primary_target_id
+        
+        # Add each product as an option
+        for product in self.scene_context:
+            if not product.supports_index_mapping():
+                continue
+                
+            element_type = product.get_element_type()
+            element_count = product.get_element_count()
+            label = f"{product.label} ({element_type}, {element_count:,} elements)"
+            
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(product.product_id)
+            action.triggered.connect(
+                lambda checked, pid=product.product_id: self._on_primary_target_selected(pid)
+            )
+            group.addAction(action)
+            menu.addAction(action)
+            
+            # Check if this is the current target
+            if product.product_id == current_target_id:
+                action.setChecked(True)
+        
+        # If no target selected, check "None"
+        if current_target_id is None:
+            action_none.setChecked(True)
+    
+    def _on_primary_target_selected(self, product_id: str):
+        """
+        Handle primary target selection from menu.
+        
+        Args:
+            product_id: ID of selected product, or None for auto-select.
+        """
+        if product_id is None:
+            # Auto-select based on priority
+            self.scene_context.set_primary_target(None)
+            # Re-select first indexable product if any
+            for p in self.scene_context:
+                if p.supports_index_mapping():
+                    self.scene_context.set_primary_target(p.product_id)
+                    break
+        else:
+            self.scene_context.set_primary_target(product_id)
+        
+        # Emit signal for manager to react
+        target = self.scene_context.get_primary_target()
+        target_id = target.product_id if target else ""
+        self.primaryTargetChanged.emit(target_id)
+        
+        print(f"🎯 Primary target changed to: {target_id or 'None'}")
 
     def add_point_cloud(self):
         """
