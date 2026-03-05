@@ -15,9 +15,58 @@ class MapResults:
     """
     A class to map results from one coordinate system to another.
     """
+    
+    # Tolerance for boundary detection (in pixels)
+    BOUNDARY_TOLERANCE = 1.0
 
     def __init__(self):
         pass
+    
+    def _is_box_on_boundary(self, xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max):
+        """
+        Check if a bounding box touches or extends beyond the work area boundary.
+        
+        Args:
+            xmin, ymin, xmax, ymax: Box coordinates
+            wa_x, wa_y: Top-left corner of work area
+            wa_x_max, wa_y_max: Bottom-right corner of work area
+            
+        Returns:
+            bool: True if box touches or crosses boundary, False otherwise
+        """
+        return (
+            (xmin <= wa_x + self.BOUNDARY_TOLERANCE) or
+            (ymin <= wa_y + self.BOUNDARY_TOLERANCE) or
+            (xmax >= wa_x_max - self.BOUNDARY_TOLERANCE) or
+            (ymax >= wa_y_max - self.BOUNDARY_TOLERANCE)
+        )
+    
+    def _is_polygon_on_boundary(self, points_xy, wa_x, wa_y, wa_x_max, wa_y_max):
+        """
+        Check if any vertex of a polygon touches or extends beyond the work area boundary.
+        
+        Args:
+            points_xy: Polygon vertices as numpy array of shape (N, 2) in pixel coordinates
+            wa_x, wa_y: Top-left corner of work area
+            wa_x_max, wa_y_max: Bottom-right corner of work area
+            
+        Returns:
+            bool: True if any vertex touches or is outside boundary, False otherwise
+        """
+        if len(points_xy) == 0:
+            return False
+        
+        for x, y in points_xy:
+            x, y = float(x), float(y)
+            if (
+                (x <= wa_x + self.BOUNDARY_TOLERANCE) or
+                (y <= wa_y + self.BOUNDARY_TOLERANCE) or
+                (x >= wa_x_max - self.BOUNDARY_TOLERANCE) or
+                (y >= wa_y_max - self.BOUNDARY_TOLERANCE)
+            ):
+                return True
+        
+        return False
         
     def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='segment'):
         """
@@ -113,8 +162,6 @@ class MapResults:
             mapped_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
             
             # Decide which boxes touch the work-area border and drop them.
-            # Small tolerance to avoid accidental rounding issues.
-            tol = 1.0
             wa_x = int(working_area_top_left.x())
             wa_y = int(working_area_top_left.y())
             wa_x_max = wa_x + int(wa_w)
@@ -125,12 +172,7 @@ class MapResults:
             touching_flags = []
             for b in boxes_np:
                 xmin, ymin, xmax, ymax = float(b[0]), float(b[1]), float(b[2]), float(b[3])
-                touches = (
-                    (abs(xmin - wa_x) <= tol) or
-                    (abs(ymin - wa_y) <= tol) or
-                    (abs(xmax - wa_x_max) <= tol) or
-                    (abs(ymax - wa_y_max) <= tol)
-                )
+                touches = self._is_box_on_boundary(xmin, ymin, xmax, ymax, wa_x, wa_y, wa_x_max, wa_y_max)
                 touching_flags.append(bool(touches))
             
             # kept_indices = indices that do NOT touch the border
@@ -171,6 +213,12 @@ class MapResults:
             if task == 'segment' and hasattr(results.masks, 'xy') and results.masks.xy:
                 segments_xy = []
                 segments_xyn = []
+                boundary_filtered_indices = []  # Track indices after boundary filtering
+                
+                # Work area boundaries for boundary checking
+                wa_x_max = wa_x + int(wa_w)
+                wa_y_max = wa_y + int(wa_h)
+                
                 # results.masks.data corresponds to the same ordering as results.masks.xy
                 for i, points in enumerate(results.masks.xy):
                     # If kept_indices is provided, skip indices that were dropped by boxes filtering
@@ -187,29 +235,34 @@ class MapResults:
                         # Add offset to map from work area to full image
                         mapped_points_xy[:, 0] += wa_x
                         mapped_points_xy[:, 1] += wa_y
+                        
+                        # Check if polygon touches boundary
+                        if self._is_polygon_on_boundary(mapped_points_xy, wa_x, wa_y, wa_x_max, wa_y_max):
+                            continue  # Skip this polygon
+                        
                         segments_xy.append(mapped_points_xy)
                         
                         # Store the normalized coordinates as well
-                        mapped_points_xyn = points.copy()
+                        mapped_points_xyn = mapped_points_xy.copy()
                         mapped_points_xyn[:, 0] /= orig_w
                         mapped_points_xyn[:, 1] /= orig_h
                         segments_xyn.append(mapped_points_xyn)
+                        
+                        boundary_filtered_indices.append(i)
                     else:
                         # Empty contour case
                         segments_xy.append(np.zeros((0, 2), dtype=np.float32))
                         segments_xyn.append(np.zeros((0, 2), dtype=np.float32))
+                        boundary_filtered_indices.append(i)
                 
-                # Filter mask tensor data to kept indices if present
+                # Filter mask tensor data to boundary-filtered indices
                 mask_data = results.masks.data
-                if kept_indices is not None:
-                    if len(kept_indices) == 0:
-                        # empty mask set
-                        filtered_mask_data = torch.zeros((0, orig_h, orig_w), device=device, dtype=mask_data.dtype)
-                    else:
-                        idx_tensor = torch.tensor(kept_indices, dtype=torch.long, device=mask_data.device)
-                        filtered_mask_data = mask_data[idx_tensor]
+                if len(boundary_filtered_indices) == 0:
+                    # empty mask set
+                    filtered_mask_data = torch.zeros((0, orig_h, orig_w), device=device, dtype=mask_data.dtype)
                 else:
-                    filtered_mask_data = mask_data
+                    idx_tensor = torch.tensor(boundary_filtered_indices, dtype=torch.long, device=mask_data.device)
+                    filtered_mask_data = mask_data[idx_tensor]
                 
                 # Create a new Masks object using filtered data
                 mapped_masks = Masks(filtered_mask_data, orig_shape=(orig_h, orig_w))
