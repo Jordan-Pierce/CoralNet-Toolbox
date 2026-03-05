@@ -19,7 +19,7 @@ class MapResults:
     def __init__(self):
         pass
         
-    def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='instance'):
+    def map_results_from_work_area(self, results, raster, work_area, map_masks=True, task='segment'):
         """
         Maps coordinates in Results objects from work area to original image coordinates.
         
