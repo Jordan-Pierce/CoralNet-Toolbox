@@ -345,7 +345,7 @@ class DeployGeneratorDialog(QDialog):
             image_paths = [self.annotation_window.current_image_path]
 
         # --- Define a batch size for prediction ---
-        BATCH_SIZE = 16 
+        BATCH_SIZE = 32  # Start with a reasonably large batch size; will adapt on OOM 
 
         # Create a results processor (it's stateless, so creating it once is fine)
         results_processor = ResultsProcessor(

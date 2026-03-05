@@ -111,9 +111,39 @@ class MapResults:
             
             # Create the updated boxes tensor 
             mapped_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
-                    
-            # Update boxes using the proper method
-            mapped_results.update(boxes=mapped_boxes)
+            
+            # Decide which boxes touch the work-area border and drop them.
+            # Small tolerance to avoid accidental rounding issues.
+            tol = 1.0
+            wa_x = int(working_area_top_left.x())
+            wa_y = int(working_area_top_left.y())
+            wa_x_max = wa_x + int(wa_w)
+            wa_y_max = wa_y + int(wa_h)
+            
+            # boxes_abs is CPU tensor (Nx4)
+            boxes_np = boxes_abs.detach().cpu().numpy()
+            touching_flags = []
+            for b in boxes_np:
+                xmin, ymin, xmax, ymax = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+                touches = (
+                    (abs(xmin - wa_x) <= tol) or
+                    (abs(ymin - wa_y) <= tol) or
+                    (abs(xmax - wa_x_max) <= tol) or
+                    (abs(ymax - wa_y_max) <= tol)
+                )
+                touching_flags.append(bool(touches))
+            
+            # kept_indices = indices that do NOT touch the border
+            kept_indices = [i for i, t in enumerate(touching_flags) if not t]
+            mapped_results._kept_indices = kept_indices
+            
+            # Filter mapped_boxes to only kept indices (preserve downstream alignment)
+            if len(kept_indices) == 0:
+                # create empty boxes tensor with correct number of columns
+                mapped_results.update(boxes=torch.empty((0, mapped_boxes.shape[1])))
+            else:
+                idx_tensor = torch.tensor(kept_indices, dtype=torch.long)
+                mapped_results.update(boxes=mapped_boxes[idx_tensor])
             
         return mapped_results
     
@@ -135,12 +165,18 @@ class MapResults:
         if results.masks is not None and len(results.masks) > 0:
             orig_h, orig_w = raster.height, raster.width
             device = results.masks.data.device
+            kept_indices = getattr(mapped_results, "_kept_indices", None)
             
             # If the input masks already have polygon representations, use them directly
             if task == 'segment' and hasattr(results.masks, 'xy') and results.masks.xy:
                 segments_xy = []
                 segments_xyn = []
-                for points in results.masks.xy:
+                # results.masks.data corresponds to the same ordering as results.masks.xy
+                for i, points in enumerate(results.masks.xy):
+                    # If kept_indices is provided, skip indices that were dropped by boxes filtering
+                    if kept_indices is not None and i not in kept_indices:
+                        continue
+                    
                     # Scale and offset points to map from work area to full image coordinates
                     if len(points) > 0:
                         # Convert to numpy array if it's not already
@@ -163,18 +199,28 @@ class MapResults:
                         segments_xy.append(np.zeros((0, 2), dtype=np.float32))
                         segments_xyn.append(np.zeros((0, 2), dtype=np.float32))
                 
-                # Create a new Masks object directly using our updated Masks class
-                # Note: results.masks.data is still the small tile data here,
-                # but for polygon models, the ._xy attribute is what matters.
-                mapped_masks = Masks(results.masks.data, orig_shape=(orig_h, orig_w))
+                # Filter mask tensor data to kept indices if present
+                mask_data = results.masks.data
+                if kept_indices is not None:
+                    if len(kept_indices) == 0:
+                        # empty mask set
+                        filtered_mask_data = torch.zeros((0, orig_h, orig_w), device=device, dtype=mask_data.dtype)
+                    else:
+                        idx_tensor = torch.tensor(kept_indices, dtype=torch.long, device=mask_data.device)
+                        filtered_mask_data = mask_data[idx_tensor]
+                else:
+                    filtered_mask_data = mask_data
                 
-                # Just set the xy coordinates directly without a special update method
-                mapped_masks._xy = segments_xy  # Set the coordinates directly
+                # Create a new Masks object using filtered data
+                mapped_masks = Masks(filtered_mask_data, orig_shape=(orig_h, orig_w))
+                
+                # Set polygon coordinates
+                mapped_masks._xy = segments_xy
                 mapped_masks._xyn = segments_xyn
                 
                 # Assign the new masks object to mapped_results
                 mapped_results.masks = mapped_masks
-            
+                
             # ELSE: This is raster data (from SemanticModel), not polygons.
             # We must create a new full-size tensor and paste the tile into it.
             else:
@@ -205,10 +251,20 @@ class MapResults:
                 full_masks[:, y_start_dest_clip:y_end_dest_clip, x_start_dest_clip:x_end_dest_clip] = \
                     tile_masks[:, y_start_src:y_end_src, x_start_src:x_end_src]
                 
-                # 6. Create the new Masks object using the NEWLY created full_masks data
-                mapped_masks = Masks(full_masks, orig_shape=(orig_h, orig_w))
+                # 6. Filter full_masks by kept indices if present, then create the Masks object
+                if kept_indices is not None:
+                    if len(kept_indices) == 0:
+                        mapped_masks = Masks(torch.zeros((0, orig_h, orig_w), 
+                                                         device=device, dtype=full_masks.dtype), 
+                                             orig_shape=(orig_h, orig_w))
+                    else:
+                        idx_tensor = torch.tensor(kept_indices, dtype=torch.long, device=full_masks.device)
+                        mapped_masks = Masks(full_masks[idx_tensor], orig_shape=(orig_h, orig_w))
+                else:
+                    mapped_masks = Masks(full_masks, orig_shape=(orig_h, orig_w))
+                
                 mapped_results.masks = mapped_masks
-        
+         
         return mapped_results
     
     def _map_probs(self, results, mapped_results):
