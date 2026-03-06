@@ -209,40 +209,69 @@ class VisibilityManager:
 
         results = []
         
-        # 3. Fast Raycasting Loop
+        # 3. Fast Raycasting Loop (With Downsampling)
+        import cv2 # Ensure cv2 is imported for rapid resizing
+        
+        SCALE_FACTOR = 0.25  # Cast rays at 1/4 resolution (16x faster!)
+
         for K, R, t, width, height in camera_params_list:
             E = np.eye(4, dtype=np.float64)
             E[:3, :3] = R
             E[:3, 3] = t
             
-            K_tensor = o3d.core.Tensor(K, dtype=o3d.core.Dtype.Float64)
+            # --- DOWNSCALE ---
+            small_w = int(width * SCALE_FACTOR)
+            small_h = int(height * SCALE_FACTOR)
+            
+            # Adjust intrinsics for the smaller image plane
+            K_small = K.copy()
+            K_small[0, :] *= SCALE_FACTOR
+            K_small[1, :] *= SCALE_FACTOR
+
+            K_tensor = o3d.core.Tensor(K_small, dtype=o3d.core.Dtype.Float64)
             E_tensor = o3d.core.Tensor(E, dtype=o3d.core.Dtype.Float64)
 
+            # Cast rays at the smaller resolution
             rays = scene.create_rays_pinhole(
                 intrinsic_matrix=K_tensor,
                 extrinsic_matrix=E_tensor,
-                width_px=width,
-                height_px=height
+                width_px=small_w,
+                height_px=small_h
             )
             ans = scene.cast_rays(rays)
 
-            # Extract Maps
+            # Extract Maps (at small resolution)
             index_map_raw = ans['primitive_ids'].numpy()
             invalid_mask = (index_map_raw == 4294967295)
             
-            index_map = index_map_raw.astype(np.int64)
-            index_map[invalid_mask] = -1
-            index_map = index_map.astype(np.int32)
+            index_map_small = index_map_raw.astype(np.int64)
+            index_map_small[invalid_mask] = -1
+            index_map_small = index_map_small.astype(np.int32)
 
+            # Re-map triangle IDs to original polygon face IDs
             if original_cell_ids is not None:
-                valid_mask = (index_map != -1)
-                index_map[valid_mask] = original_cell_ids[index_map[valid_mask]]
+                valid_mask = (index_map_small != -1)
+                index_map_small[valid_mask] = original_cell_ids[index_map_small[valid_mask]]
 
-            visible_indices = np.unique(index_map[index_map != -1]).astype(np.int32)
+            # --- UPSAMPLE ---
+            # Rapidly stretch the index map back to full resolution using nearest neighbor
+            index_map = cv2.resize(
+                index_map_small, 
+                (width, height), 
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Extract visible indices (can be done on the small map to save time)
+            visible_indices = np.unique(index_map_small[index_map_small != -1]).astype(np.int32)
 
             if compute_depth_maps:
-                depth_map = ans['t_hit'].numpy().astype(np.float32)
-                depth_map[invalid_mask] = np.nan
+                depth_map_small = ans['t_hit'].numpy().astype(np.float32)
+                depth_map_small[invalid_mask] = np.nan
+                depth_map = cv2.resize(
+                    depth_map_small, 
+                    (width, height), 
+                    interpolation=cv2.INTER_NEAREST
+                )
             else:
                 depth_map = None
 
