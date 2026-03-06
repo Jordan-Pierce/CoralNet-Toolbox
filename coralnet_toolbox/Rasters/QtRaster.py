@@ -353,8 +353,8 @@ class Raster(QObject):
         self.extrinsics = None
     
     def add_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None, 
-                     visible_indices: Optional[np.ndarray] = None,
-                     element_type: Optional[str] = 'point'):
+                      visible_indices: Optional[np.ndarray] = None,
+                      element_type: Optional[str] = 'point'):
         """
         Add or update index map and visible indices data.
         
@@ -399,8 +399,8 @@ class Raster(QObject):
             self.visible_indices = visible_indices.copy()
     
     def update_index_map(self, index_map: np.ndarray, index_map_path: Optional[str] = None,
-                        visible_indices: Optional[np.ndarray] = None,
-                        element_type: Optional[str] = None):
+                         visible_indices: Optional[np.ndarray] = None,
+                         element_type: Optional[str] = None):
         """
         Update the index map and visible indices data.
         

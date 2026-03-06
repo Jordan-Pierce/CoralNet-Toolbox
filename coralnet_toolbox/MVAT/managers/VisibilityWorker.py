@@ -5,14 +5,15 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
+from coralnet_toolbox.MVAT.core.Model import MeshProduct, PointCloudProduct, DEMProduct
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class WorkerSignals(QObject):
-    """
-    Signals emitted by the worker.
-    finished: dict mapping image_path -> result dict
-    error: str traceback
-    """
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
 
@@ -20,31 +21,14 @@ class WorkerSignals(QObject):
 class VisibilityWorker(QObject):
     """
     Background worker for computing camera visibility maps.
-
-    Accepts only raw data (numpy arrays, lists, dicts). Must be moved to a QThread
-    before starting: worker.moveToThread(thread); thread.started.connect(worker.run)
-    
-    Results include:
-    - index_map: (H, W) int32 array mapping pixels to element IDs
-    - visible_indices: (M,) int32 array of unique visible element IDs
-    - depth_map: (H, W) float32 array of camera-space depths (optional)
-    - element_type: str indicating element type ('point', 'face', 'cell')
+    Now safely handles Meshes (via Open3D), PointClouds, and DEMs.
     """
 
-    def __init__(self, points_world, camera_params_dict, compute_depth_maps=True,
-                 element_type: Optional[str] = 'point', 
-                 element_ids: Optional[np.ndarray] = None):
+    def __init__(self, primary_target, camera_params_dict, compute_depth_maps=True):
         super().__init__()
-        self.points_world = points_world
-        # camera_params_dict: {
-        #   image_path: (K, R, t, width, height)  # for perspective
-        #   OR
-        #   image_path: ('ortho', transform_matrix_inv, width, height)  # for orthographic
-        # }
+        self.primary_target = primary_target
         self.camera_params_dict = camera_params_dict
         self.compute_depth_maps = compute_depth_maps
-        self.element_type = element_type or 'point'  # Default to 'point' for backward compat
-        self.element_ids = element_ids  # Custom element IDs (for mesh faces, DEM cells)
         self.signals = WorkerSignals()
 
     def run(self):
@@ -54,58 +38,114 @@ class VisibilityWorker(QObject):
             perspective_params = {}
             
             for path, params in self.camera_params_dict.items():
-                # Be defensive: params can contain numpy arrays (e.g. K) and
-                # comparing an array to a string raises a ValueError. Detect
-                # orthographic entries by ensuring the first element is a
-                # str and equals 'ortho'. Otherwise treat as perspective.
                 try:
                     first = params[0]
                 except Exception:
-                    # Malformed/empty params -> treat as perspective entry
                     perspective_params[path] = params
                     continue
 
                 if isinstance(first, str) and first == 'ortho':
-                    # Extract: ('ortho', transform_matrix_inv, width, height)
                     _, transform_inv, width, height = params
                     ortho_params[path] = (transform_inv, width, height)
                 else:
-                    # Perspective camera: (K, R, t, width, height)
                     perspective_params[path] = params
             
             results = {}
-            
-            # PERSPECTIVE: Use existing GPU batch processing
-            if perspective_params:
-                paths = list(perspective_params.keys())
-                params_list = list(perspective_params.values())
+            element_type = self.primary_target.get_element_type()
+
+            # ==========================================
+            # STRATEGY A: MESH PROCESSING
+            # ==========================================
+            if isinstance(self.primary_target, MeshProduct):
+                if perspective_params:
+                    paths = list(perspective_params.keys())
+                    params_list = list(perspective_params.values())
+                    
+                    try:
+                        # Fast Path: Batched Open3D
+                        batch_results = VisibilityManager.compute_batch_mesh_visibility_open3d(
+                            self.primary_target, params_list, self.compute_depth_maps
+                        )
+                        for p, r in zip(paths, batch_results):
+                            r['element_type'] = element_type
+                            results[p] = r
+                            
+                    except ImportError:
+                        # Slow Fallback: Sequential VTK/Point Sampling
+                        print("⚠️ Open3D not found. Falling back to sequential mesh processing.")
+                        for path, params in perspective_params.items():
+                            K, R, t, width, height = params
+                            result = VisibilityManager._compute_mesh_visibility(
+                                self.primary_target, K, R, t, width, height, self.compute_depth_maps
+                            )
+                            result['element_type'] = element_type
+                            results[path] = result
+
+            # ==========================================
+            # STRATEGY B: POINT CLOUD / DEM PROCESSING
+            # ==========================================
+            else:
+                points_world, element_ids = self._extract_points(self.primary_target)
                 
-                batch_results = VisibilityManager.compute_batch_visibility(
-                    points_world=self.points_world,
-                    camera_params_list=params_list,
-                    point_ids=self.element_ids,
-                    compute_depth_map=self.compute_depth_maps
-                )
-                
-                for p, r in zip(paths, batch_results):
-                    r['element_type'] = self.element_type
-                    results[p] = r
-            
-            # ORTHOGRAPHIC: Use affine transform processing
-            if ortho_params:
-                for path, (transform_inv, width, height) in ortho_params.items():
-                    result = VisibilityManager.compute_orthographic_visibility(
-                        points_world=self.points_world,
-                        transform_matrix_inv=transform_inv,
-                        width=width,
-                        height=height,
-                        point_ids=self.element_ids
-                    )
-                    result['element_type'] = self.element_type
-                    results[path] = result
-            
+                if points_world is not None and len(points_world) > 0:
+                    # PERSPECTIVE CAMERAS
+                    if perspective_params:
+                        paths = list(perspective_params.keys())
+                        params_list = list(perspective_params.values())
+                        
+                        batch_results = VisibilityManager.compute_batch_visibility(
+                            points_world=points_world,
+                            camera_params_list=params_list,
+                            point_ids=element_ids,
+                            compute_depth_map=self.compute_depth_maps
+                        )
+                        
+                        for p, r in zip(paths, batch_results):
+                            r['element_type'] = element_type
+                            results[p] = r
+                    
+                    # ORTHOGRAPHIC CAMERAS
+                    if ortho_params:
+                        for path, (transform_inv, width, height) in ortho_params.items():
+                            result = VisibilityManager.compute_orthographic_visibility(
+                                points_world=points_world,
+                                transform_matrix_inv=transform_inv,
+                                width=width,
+                                height=height,
+                                point_ids=element_ids
+                            )
+                            result['element_type'] = element_type
+                            results[path] = result
+
+            # Emit final results back to the main thread
             self.signals.finished.emit(results)
 
         except Exception as e:
             tb = traceback.format_exc()
             self.signals.error.emit(f"{e}\n{tb}")
+
+    def _extract_points(self, target):
+        """Helper to extract point arrays for non-mesh targets."""
+        if isinstance(target, PointCloudProduct):
+            return target.get_points_array(), None
+            
+        if isinstance(target, DEMProduct):
+            dem_height, dem_width = target.elevation.shape
+            rows, cols = np.mgrid[0:dem_height, 0:dem_width]
+            
+            transform = target.transform
+            x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
+            y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
+            z_world = target.elevation
+            
+            points = np.column_stack([x_world.flatten(), y_world.flatten(), z_world.flatten()])
+            cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
+            
+            valid_mask = ~np.isnan(points[:, 2])
+            return points[valid_mask], cell_ids[valid_mask]
+            
+        # Fallback
+        if hasattr(target, 'get_points_array'):
+            return target.get_points_array(), None
+            
+        return None, None

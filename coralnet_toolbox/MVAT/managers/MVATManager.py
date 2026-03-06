@@ -28,6 +28,11 @@ from coralnet_toolbox.MVAT.core.constants import (
 )
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+
 class MousePositionBridge(QObject):
     """
     Bridges mouse position events from the AnnotationWindow to the MVAT
@@ -122,7 +127,11 @@ class MousePositionBridge(QObject):
         highlighted_paths = {cam.image_path for cam in highlighted_cameras}
         selected_path = camera.image_path
         try:
-            self.manager.camera_grid.update_markers(projections, accuracies, highlighted_paths, visibility_status, selected_path)
+            self.manager.camera_grid.update_markers(projections, 
+                                                    accuracies, 
+                                                    highlighted_paths, 
+                                                    visibility_status,
+                                                    selected_path)
         except Exception:
             self.clear_all_markers()
                 
@@ -284,7 +293,8 @@ class MVATManager(QObject):
                 pass
             try:
                 self.main_window.status_bar.showMessage(
-                    f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, {valid_count - ortho_count} perspective)",
+                    f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, "
+                    f"{valid_count - ortho_count} perspective)",
                     3000
                 )
             except Exception:
@@ -647,15 +657,15 @@ class MVATManager(QObject):
         try:
             if hasattr(self.viewer, 'update_frustum_states'):
                 self.viewer.update_frustum_states(selected_path, highlighted_paths, self.hovered_camera)
-        except Exception: pass
+        except Exception: 
+            pass
 
     def _update_visibility_filter(self, highlighted_paths):
         """
         Compute visibility index maps for the supplied highlighted cameras.
         
-        Dispatches to appropriate method based on primary target type:
-        - MeshProduct: VTK rasterization on main thread (requires GUI context)
-        - PointCloudProduct: Worker thread with scatter-reduce Z-buffering
+        Now dispatches ALL product types (including Meshes) to the async 
+        worker thread, ensuring the UI remains perfectly responsive.
         """
         # Preconditions - check scene has any indexable product
         if not self.viewer.scene_context.has_any_product():
@@ -684,15 +694,8 @@ class MVATManager(QObject):
         if self._is_computing_visibility:
             return
 
-        # Dispatch based on primary target type
-        from coralnet_toolbox.MVAT.core.Model import MeshProduct
-        
-        if isinstance(primary_target, MeshProduct):
-            # Use VTK rasterization on main thread (requires OpenGL context)
-            self._compute_mesh_visibility_sync(primary_target, cameras_needing_visibility)
-        else:
-            # Use worker thread for point clouds and DEMs
-            self._compute_visibility_async(primary_target, cameras_needing_visibility)
+        # Send everything to the background worker! No more main-thread freezing.
+        self._compute_visibility_async(primary_target, cameras_needing_visibility)
 
     def _compute_mesh_visibility_sync(self, mesh_product, cameras):
         """
@@ -760,16 +763,10 @@ class MVATManager(QObject):
 
     def _compute_visibility_async(self, primary_target, cameras):
         """
-        Compute visibility using worker thread (for point clouds and DEMs).
+        Compute visibility using worker thread.
+        Now supports Point Clouds, DEMs, AND Meshes seamlessly!
         """
-        # Extract geometry from primary target based on product type
-        points_world, element_ids, element_type = self._extract_visibility_geometry(primary_target)
-        if points_world is None or len(points_world) == 0:
-            return
-
         # Build camera params dict keyed by image path
-        # For perspective cameras: (K, R, t, width, height)
-        # For orthographic cameras: ('ortho', transform_matrix_inv, width, height)
         camera_params_dict = {}
         for cam in cameras:
             if cam.is_orthographic:
@@ -783,20 +780,19 @@ class MVATManager(QObject):
             try:
                 extra = " (including depth maps)" if self.compute_depth_maps_enabled else ""
                 self.main_window.status_bar.showMessage(f"Computing occlusion maps for {len(camera_params_dict)} cameras{extra}...")
-            except Exception:
-                pass
-
-            print(f"MVATManager: starting visibility worker for {len(camera_params_dict)} cameras")
-            try:
                 QApplication.setOverrideCursor(Qt.WaitCursor)
             except Exception:
                 pass
 
-            worker = VisibilityWorker(points_world, 
-                                      camera_params_dict, 
-                                      compute_depth_maps=self.compute_depth_maps_enabled,
-                                      element_type=element_type,
-                                      element_ids=element_ids)
+            print(f"MVATManager: starting visibility worker for {len(camera_params_dict)} cameras")
+
+            # 🔥 Pass the actual primary_target to the worker!
+            worker = VisibilityWorker(
+                primary_target=primary_target, 
+                camera_params_dict=camera_params_dict, 
+                compute_depth_maps=self.compute_depth_maps_enabled
+            )
+            
             thread = QThread()
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -922,7 +918,7 @@ class MVATManager(QObject):
         
         try:
             bounds = self.viewer.get_bounds()
-            scene_size = np.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
+            scene_size = np.sqrt((bounds[1] - bounds[0])**2 + (bounds[3] - bounds[2])**2 + (bounds[5] - bounds[4])**2)
             normalized_distance = spatial_distance / (scene_size + 1e-6)
         except Exception:
             normalized_distance = spatial_distance / 10.0

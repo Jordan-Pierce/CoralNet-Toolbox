@@ -140,30 +140,121 @@ class VisibilityManager:
                                  height: int,
                                  compute_depth_map: bool = True) -> dict:
         """
-        Strategy B: Compute visibility for mesh products via VTK rasterization.
-        
-        Uses PyVista off-screen rendering to rasterize triangles with face IDs
-        encoded as RGB colors. This produces dense, pixel-perfect index maps
-        and depth buffers for continuous mesh surfaces.
-        
-        Args:
-            mesh_product: MeshProduct instance with faces.
-            K, R, t: Camera parameters (intrinsics, rotation, translation).
-            width, height: Image dimensions in pixels.
-            compute_depth_map: Whether to generate depth map.
-            
-        Returns:
-            dict with 'index_map', 'visible_indices', 'depth_map'.
+        Strategy B: Compute visibility for mesh products.
+        Attempts Open3D raycasting first, falls back to VTK rasterization,
+        and finally falls back to face-center point sampling.
         """
         try:
-            return cls._compute_mesh_visibility_vtk(
+            # First Choice: Open3D (Thread-safe, fast, no OpenGL context required)
+            import open3d
+            return cls._compute_mesh_visibility_open3d(
                 mesh_product, K, R, t, width, height, compute_depth_map
             )
-        except Exception as e:
-            print(f"⚠️ VTK mesh rasterization failed: {e}, falling back to face-center sampling")
-            return cls._compute_mesh_visibility_fallback(
-                mesh_product, K, R, t, width, height, compute_depth_map
+        except ImportError:
+            print("⚠️ Open3D not found. Falling back to VTK mesh rasterization (Requires Main Thread).")
+            try:
+                # Second Choice: VTK (Requires GUI thread OpenGL context)
+                return cls._compute_mesh_visibility_vtk(
+                    mesh_product, K, R, t, width, height, compute_depth_map
+                )
+            except Exception as e:
+                print(f"⚠️ VTK mesh rasterization failed: {e}, falling back to face-center sampling")
+                # Last Resort: Point Sampling
+                return cls._compute_mesh_visibility_fallback(
+                    mesh_product, K, R, t, width, height, compute_depth_map
+                )
+            
+    @classmethod
+    def compute_batch_mesh_visibility_open3d(cls, 
+                                             mesh_product, 
+                                             camera_params_list, 
+                                             compute_depth_maps=True) -> list:
+        """
+        Batched Open3D raycasting. 
+        Builds the BVH scene ONCE and casts rays for all cameras.
+        """
+        import open3d as o3d
+        import time
+        
+        start_time = time.time()
+        mesh = mesh_product.get_mesh()
+        
+        if mesh.n_cells == 0:
+            # Return empty results for all cameras if mesh is empty
+            return [{
+                'index_map': np.full((h, w), -1, dtype=np.int32),
+                'visible_indices': np.array([], dtype=np.int32),
+                'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None
+            } for _, _, _, w, h in camera_params_list]
+
+        # 1. Triangulate and extract geometry ONCE
+        if not mesh.is_all_triangles:
+            tri_mesh = mesh.triangulate()
+            original_cell_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
+        else:
+            tri_mesh = mesh
+            original_cell_ids = None
+
+        vertices = np.asarray(tri_mesh.points, dtype=np.float32)
+        triangles = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+
+        # 2. Build the BVH Scene ONCE (This is the slow part we are optimizing!)
+        scene = o3d.t.geometry.RaycastingScene()
+        v_tensor = o3d.core.Tensor(vertices)
+        t_tensor = o3d.core.Tensor(triangles)
+        _ = scene.add_triangles(v_tensor, t_tensor)
+        
+        build_time = time.time() - start_time
+        print(f"🎯 Built Open3D BVH for {tri_mesh.n_cells:,} faces in {build_time:.3f}s")
+
+        results = []
+        
+        # 3. Fast Raycasting Loop
+        for K, R, t, width, height in camera_params_list:
+            E = np.eye(4, dtype=np.float64)
+            E[:3, :3] = R
+            E[:3, 3] = t
+            
+            K_tensor = o3d.core.Tensor(K, dtype=o3d.core.Dtype.Float64)
+            E_tensor = o3d.core.Tensor(E, dtype=o3d.core.Dtype.Float64)
+
+            rays = scene.create_rays_pinhole(
+                intrinsic_matrix=K_tensor,
+                extrinsic_matrix=E_tensor,
+                width_px=width,
+                height_px=height
             )
+            ans = scene.cast_rays(rays)
+
+            # Extract Maps
+            index_map_raw = ans['primitive_ids'].numpy()
+            invalid_mask = (index_map_raw == 4294967295)
+            
+            index_map = index_map_raw.astype(np.int64)
+            index_map[invalid_mask] = -1
+            index_map = index_map.astype(np.int32)
+
+            if original_cell_ids is not None:
+                valid_mask = (index_map != -1)
+                index_map[valid_mask] = original_cell_ids[index_map[valid_mask]]
+
+            visible_indices = np.unique(index_map[index_map != -1]).astype(np.int32)
+
+            if compute_depth_maps:
+                depth_map = ans['t_hit'].numpy().astype(np.float32)
+                depth_map[invalid_mask] = np.nan
+            else:
+                depth_map = None
+
+            results.append({
+                'index_map': index_map,
+                'visible_indices': visible_indices,
+                'depth_map': depth_map
+            })
+            
+        total_time = time.time() - start_time
+        print(f"✅ Open3D batch visibility for {len(camera_params_list)} cameras completed in {total_time:.3f}s")
+        return results
 
     @classmethod
     def _compute_mesh_visibility_vtk(cls,
