@@ -113,14 +113,6 @@ class VisibilityManager:
                                                   compute_depth_map=compute_depth_map)
             result['element_type'] = 'face'
             return result
-            
-        elif element_type == 'cell':
-            # Strategy C: DEM - affine projection (for orthographic cameras)
-            # Note: For DEM, orthographic projection is handled separately
-            # This is a fallback for perspective cameras looking at DEM
-            result = cls._compute_dem_visibility(primary_target, K, R, t, width, height)
-            result['element_type'] = 'cell'
-            return result
         
         # Fallback: empty result
         return {
@@ -572,72 +564,6 @@ class VisibilityManager:
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
-            }
-
-    @classmethod
-    def _compute_dem_visibility(cls,
-                                dem_product: 'AbstractSceneProduct',
-                                K: np.ndarray,
-                                R: np.ndarray,
-                                t: np.ndarray,
-                                width: int,
-                                height: int) -> dict:
-        """
-        Strategy C: Compute visibility for DEM products (perspective camera).
-        
-        PLACEHOLDER IMPLEMENTATION: Samples grid cell centers and uses point-based
-        projection. For orthographic cameras viewing DEMs, use direct affine mapping
-        via compute_orthographic_visibility() instead.
-        
-        Args:
-            dem_product: DEMProduct instance.
-            K, R, t: Camera parameters (perspective).
-            width, height: Image dimensions.
-            
-        Returns:
-            dict with 'index_map', 'visible_indices'.
-        """
-        print("⚠️ DEM visibility: Using cell-center sampling (placeholder for perspective cameras)")
-        
-        try:
-            # Generate 3D points from DEM grid
-            dem_height, dem_width = dem_product.elevation.shape
-            rows, cols = np.mgrid[0:dem_height, 0:dem_width]
-            
-            # Convert pixel coords to world coords
-            transform = dem_product.transform
-            x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
-            y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
-            z_world = dem_product.elevation
-            
-            # Flatten to point array
-            points = np.column_stack([
-                x_world.flatten(),
-                y_world.flatten(),
-                z_world.flatten()
-            ])
-            
-            # Cell IDs: row * width + col  
-            cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
-            
-            # Filter out NaN elevations
-            valid_mask = ~np.isnan(points[:, 2])
-            points = points[valid_mask]
-            cell_ids = cell_ids[valid_mask]
-            
-            # Use point-based visibility
-            result = cls.compute_visibility(
-                points, K, R, t, width, height,
-                point_ids=cell_ids,
-                compute_depth_map=False
-            )
-            return result
-            
-        except Exception as e:
-            print(f"⚠️ DEM visibility computation failed: {e}")
-            return {
-                'index_map': np.full((height, width), -1, dtype=np.int32),
-                'visible_indices': np.array([], dtype=np.int32)
             }
 
     @classmethod

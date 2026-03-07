@@ -118,7 +118,7 @@ class MVATViewer(QFrame):
 
         # Placeholder shown when no scene products present
         self._placeholder_label = QLabel(
-            "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)\n• DEMs (.tif, .tiff)"
+            "No 3D data loaded\nDrag a file here to load:\n• Point clouds (.ply, .pcd)\n• Meshes (.obj, .stl)"
         )
         self._placeholder_label.setStyleSheet("color: white; background-color: black; font-size: 14px; padding: 16px;")
         self._placeholder_label.setAlignment(Qt.AlignCenter)
@@ -838,7 +838,6 @@ class MVATViewer(QFrame):
     # Supported file extensions for each product type
     _POINT_CLOUD_EXTENSIONS = ['.ply', '.pcd']
     _MESH_EXTENSIONS = ['.obj', '.stl', '.vtk']
-    _DEM_EXTENSIONS = ['.tif', '.tiff', '.dem']
     
     @property
     def point_cloud(self) -> 'PointCloudProduct':
@@ -877,7 +876,6 @@ class MVATViewer(QFrame):
                 supported_extensions = (
                     self._POINT_CLOUD_EXTENSIONS + 
                     self._MESH_EXTENSIONS + 
-                    self._DEM_EXTENSIONS
                 )
                 if any(file_path.endswith(ext) for ext in supported_extensions):
                     event.acceptProposedAction()
@@ -949,10 +947,6 @@ class MVATViewer(QFrame):
         from PyQt5.QtWidgets import QMessageBox
         
         file_ext = os.path.splitext(file_path)[1].lower()
-        
-        # Check for DEM (GeoTIFF)
-        if file_ext in self._DEM_EXTENSIONS:
-            return DEMProduct.from_file(file_path)
         
         # STL and OBJ are always meshes by format definition
         if file_ext in ['.stl', '.obj']:
