@@ -337,7 +337,7 @@ class DEMProduct(AbstractSceneProduct):
     for dense, watertight visibility raycasting, and natively supports orthomosaic draping.
     """
     
-    def __init__(self, ortho_camera, opacity: float = 0.8, product_id: Optional[str] = None):
+    def __init__(self, ortho_camera, opacity: float = 1.0, product_id: Optional[str] = None):
         """
         Initialize DEMProduct from an OrthographicCamera.
         """
@@ -353,11 +353,12 @@ class DEMProduct(AbstractSceneProduct):
         
         self.opacity = opacity
         self._mesh: Optional[pv.PolyData] = None
+        self._texture: Optional[pv.Texture] = None  # Cache for the draped imagery
         
         print(f"🎬 Initialized dynamic DEMProduct from camera: {self.camera.label}")
 
     @classmethod
-    def from_file(cls, file_path: str, opacity: float = 0.8):
+    def from_file(cls, file_path: str, opacity: float = 1.0):
         """
         Overrides the legacy file loader. DEMs must now be loaded via an OrthographicCamera
         to ensure perfect coordinate alignment. 
@@ -420,15 +421,32 @@ class DEMProduct(AbstractSceneProduct):
         print(f"✅ DEM Geometry cached in {time.time() - start_time:.3f}s")
 
     def get_render_style(self) -> RenderStyle:
-        """Get preferred rendering style."""
-        return {
+        """Get preferred rendering style with the draped orthomosaic texture."""
+        style = {
             'style': 'surface',
             'opacity': self.opacity,
-            'scalars': 'Elevation',
-            'cmap': 'terrain',
             'show_edges': False,
             'lighting': True,
         }
+        
+        # 1. Lazily generate the PyVista texture from the Orthomosaic Raster
+        if self._texture is None:
+            try:
+                import pyvista as pv
+                # Extract the RGB image data from the QtRaster
+                img_data = self.camera._raster.get_numpy() 
+                if img_data is not None:
+                    self._texture = pv.Texture(img_data)
+            except Exception as e:
+                print(f"⚠️ Warning: Could not create texture for DEM {self.label}: {e}")
+        
+        # 2. Apply the texture if successful, otherwise fallback to the standard mesh color
+        if self._texture is not None:
+            style['texture'] = self._texture
+        else:
+            style['color'] = '#8d8cc4'  # Match the default MeshProduct purple
+            
+        return style
     
     def get_bounds(self) -> BoundsType:
         """Get 3D bounding box directly from the generated mesh."""
