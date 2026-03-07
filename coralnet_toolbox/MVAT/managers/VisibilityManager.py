@@ -344,21 +344,21 @@ class VisibilityManager:
         import pyvista as pv
         
         mesh = mesh_product.get_mesh()
-        n_faces = mesh.n_cells
+        n_cells = mesh.n_cells
         
-        if n_faces == 0:
+        if n_cells == 0:
             return {
                 'index_map': np.full((height, width), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((height, width), np.nan, dtype=np.float32) if compute_depth_map else None
             }
         
-        print(f"🎨 Mesh visibility: VTK rasterization for {n_faces:,} faces at {width}x{height}")
+        print(f"🎨 Mesh visibility: VTK rasterization for {n_cells:,} cells at {width}x{height}")
         
         # --- 1. Encode face IDs as RGB colors ---
         # Use 24-bit encoding: R + G*256 + B*65536 = face_id
         # This supports up to 16.7M faces
-        face_ids = np.arange(n_faces, dtype=np.int32)
+        face_ids = np.arange(n_cells, dtype=np.int32)
         
         # Encode face_id into RGB (shifted by 1 so face_id=0 maps to RGB(1,0,0))
         # We reserve RGB(0,0,0) for background

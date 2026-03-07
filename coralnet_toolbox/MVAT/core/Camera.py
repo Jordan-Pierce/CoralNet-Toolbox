@@ -605,7 +605,7 @@ class OrthographicCamera(Camera):
         # 🔥 This makes it a true, solid, continuous surface mesh!
         mesh = grid.extract_surface().triangulate()
         
-        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_faces} faces)")
+        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_cells} faces)")
         return mesh
     
     # --------------------------------------------------------------------------
