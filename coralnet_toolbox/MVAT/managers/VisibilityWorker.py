@@ -149,13 +149,13 @@ class VisibilityWorker(QObject):
             return target.get_points_array(), None
             
         if isinstance(target, DEMProduct):
-            dem_height, dem_width = target.elevation.shape
+            dem_height, dem_width = target.terrain.shape
             rows, cols = np.mgrid[0:dem_height, 0:dem_width]
             
             transform = target.transform
             x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
             y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
-            z_world = target.elevation
+            z_world = target.terrain
             
             points = np.column_stack([x_world.flatten(), y_world.flatten(), z_world.flatten()])
             cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
