@@ -241,36 +241,36 @@ class VisibilityManager:
                                              mesh_product, 
                                              camera_params_list, 
                                              compute_depth_maps=True) -> list:
+        """
+        Batched Open3D raycasting with Dynamic Frustum Culling and Downsampling.
+        """
         import open3d as o3d
         import time
         import cv2
         
         start_time = time.time()
-        mesh = mesh_product.get_mesh()
         
-        if mesh.n_cells == 0:
+        # 1. Dynamically build the culled BVH
+        scene, original_cell_ids, num_faces = cls._build_subset_bvh(mesh_product, camera_params_list)
+
+        results = []
+        
+        # If the culler removed everything, return empty maps
+        if num_faces == 0:
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None
             } for _, _, _, w, h in camera_params_list]
 
-        # GRAB THE CACHED SCENE (Instant!)
-        scene, original_cell_ids = mesh_product.get_o3d_scene()
-
-        results = []
+        # 2. Fast Downsampled Raycasting
         SCALE_FACTOR = 0.25  # 1/4 resolution raycasting
-        # This significantly reduces raycasting time, but
-        # makes index and depth maps slightly blocky.
-        # A good trade-off for large meshes and real-time feedback.
-        # Adjust as needed based on mesh complexity and performance requirements.
         
         for K, R, t, width, height in camera_params_list:
             E = np.eye(4, dtype=np.float64)
             E[:3, :3] = R
             E[:3, 3] = t
             
-            # --- DOWNSCALE ---
             small_w = int(width * SCALE_FACTOR)
             small_h = int(height * SCALE_FACTOR)
             
@@ -289,7 +289,7 @@ class VisibilityManager:
             )
             ans = scene.cast_rays(rays)
 
-            # --- EXTRACT MAPS ---
+            # Extract Maps
             index_map_raw = ans['primitive_ids'].numpy()
             invalid_mask = (index_map_raw == 4294967295)
             
@@ -297,27 +297,19 @@ class VisibilityManager:
             index_map_small[invalid_mask] = -1
             index_map_small = index_map_small.astype(np.int32)
 
+            # Re-map triangle IDs
             if original_cell_ids is not None:
                 valid_mask = (index_map_small != -1)
                 index_map_small[valid_mask] = original_cell_ids[index_map_small[valid_mask]]
 
-            # --- UPSAMPLE ---
-            index_map = cv2.resize(
-                index_map_small, 
-                (width, height), 
-                interpolation=cv2.INTER_NEAREST
-            )
-
+            # Upsample
+            index_map = cv2.resize(index_map_small, (width, height), interpolation=cv2.INTER_NEAREST)
             visible_indices = np.unique(index_map_small[index_map_small != -1]).astype(np.int32)
 
             if compute_depth_maps:
                 depth_map_small = ans['t_hit'].numpy().astype(np.float32)
                 depth_map_small[invalid_mask] = np.nan
-                depth_map = cv2.resize(
-                    depth_map_small, 
-                    (width, height), 
-                    interpolation=cv2.INTER_NEAREST
-                )
+                depth_map = cv2.resize(depth_map_small, (width, height), interpolation=cv2.INTER_NEAREST)
             else:
                 depth_map = None
 
@@ -327,8 +319,7 @@ class VisibilityManager:
                 'depth_map': depth_map
             })
             
-        total_time = time.time() - start_time
-        print(f"✅ Open3D batch visibility for {len(camera_params_list)} cameras completed in {total_time:.3f}s")
+        print(f"✅ Full Open3D cycle for {len(camera_params_list)} cameras completed in {time.time() - start_time:.3f}s")
         return results
 
     @classmethod

@@ -615,10 +615,6 @@ class MVATManager(QObject):
             pass
 
         self.viewer.clear_ray()
-        try:
-            print(f"MVATManager: selections changed -> {selected_paths}")
-        except Exception:
-            pass
         self._update_visibility_filter(list(selected_paths))
 
     # --- Core Logic Methods ---
