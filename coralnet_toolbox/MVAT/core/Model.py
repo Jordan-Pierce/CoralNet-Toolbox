@@ -421,7 +421,7 @@ class DEMProduct(AbstractSceneProduct):
         print(f"✅ DEM Geometry cached in {time.time() - start_time:.3f}s")
 
     def get_render_style(self) -> RenderStyle:
-        """Get preferred rendering style with the draped orthomosaic texture."""
+        """Get preferred rendering style with the safely draped orthomosaic texture."""
         style = {
             'style': 'surface',
             'opacity': self.opacity,
@@ -429,22 +429,29 @@ class DEMProduct(AbstractSceneProduct):
             'lighting': True,
         }
         
-        # 1. Lazily generate the PyVista texture from the Orthomosaic Raster
         if self._texture is None:
             try:
                 import pyvista as pv
-                # Extract the RGB image data from the QtRaster
-                img_data = self.camera._raster.get_numpy() 
-                if img_data is not None:
+                from coralnet_toolbox.utilities import pixmap_to_numpy
+                
+                # 1. Cap the texture size to N to prevent GPU crashes!
+                # This fetches a high-quality downsampled QPixmap instead of the raw GeoTIFF
+                pixmap = self.camera._raster.get_pixmap(longest_edge=8192)
+                
+                if pixmap is not None and not pixmap.isNull():
+                    # 2. Convert to numpy array (ensures standard RGB/RGBA format)
+                    img_data = pixmap_to_numpy(pixmap)
+                    
+                    # 3. Create the PyVista texture
                     self._texture = pv.Texture(img_data)
+                    
             except Exception as e:
                 print(f"⚠️ Warning: Could not create texture for DEM {self.label}: {e}")
         
-        # 2. Apply the texture if successful, otherwise fallback to the standard mesh color
         if self._texture is not None:
             style['texture'] = self._texture
         else:
-            style['color'] = '#8d8cc4'  # Match the default MeshProduct purple
+            style['color'] = '#8d8cc4'  # Fallback solid color
             
         return style
     
