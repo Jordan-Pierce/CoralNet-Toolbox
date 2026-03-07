@@ -905,29 +905,25 @@ class MVATManager(QObject):
                 print(f"⚠️ Failed to extract mesh face centers: {e}")
                 return None, None, 'face'
         
-        # Strategy C: DEM - convert grid into a solid triangulated mesh!
+        # Strategy C: DEM - Treat as a solid triangulated mesh!
         if isinstance(primary_target, DEMProduct):
             try:
-                print("🗺️ Triangulating DEM into a solid continuous surface for raycasting...")
-                start = time.time()
+                # 1. Ask the DEM product for the solid PolyData mesh we just built
+                mesh = primary_target.get_render_mesh()
                 
-                # 1. Ask the DEM product for the PyVista StructuredGrid we built earlier
-                grid = primary_target.get_render_mesh()
+                if mesh is None:
+                    return None, None, 'cell'
                 
-                # 2. Convert the Quad grid into a watertight, Triangulated surface mesh
-                surface = grid.extract_surface().triangulate()
-                
-                # 3. Extract the face centers to feed into the BVH / Rasterizer
-                face_centers = surface.cell_centers().points
+                # 2. Extract the face centers to feed into the solid mesh raycaster
+                face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
-                print(f"✅ DEM triangulated into {len(face_centers):,} solid faces in {time.time()-start:.3f}s")
+                print(f"🗺️ DEMProduct: Extracted {len(face_centers):,} solid faces for visibility")
                 
-                # 🔥 FIX: We return 'face' instead of 'cell' so the engine treats it exactly like a solid 3D mesh
+                # 🔥 Return 'face' so the engine raycasts it exactly like a solid 3D mesh
                 return face_centers, face_ids, 'face'
-                
             except Exception as e:
-                print(f"⚠️ Failed to triangulate DEM: {e}")
+                print(f"⚠️ Failed to extract DEM faces: {e}")
                 return None, None, 'cell'
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):

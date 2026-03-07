@@ -555,59 +555,58 @@ class OrthographicCamera(Camera):
     
     def get_elevation_mesh(self, max_resolution=1000):
         """
-        Generates a PyVista 3D surface mesh using the camera's perfectly aligned DEM and transform.
-        Automatically downsamples to prevent crashing the 3D viewer.
+        Generates a smooth, triangulated PyVista 3D surface mesh using the camera's DEM.
         """
         import pyvista as pv
+        import cv2
+        import numpy as np
         
         if self.z_channel is None:
-            print(f"Cannot generate elevation mesh: {self.label} has no DEM (z_channel).")
+            print(f"Cannot generate elevation: {self.label} has no DEM (z_channel).")
             return None
             
-        # 1. Downsample for 3D rendering (A 10,000x10,000 grid will freeze the app)
         step = max(1, max(self.width, self.height) // max_resolution)
+        target_w = max(1, self.width // step)
+        target_h = max(1, self.height // step)
         
-        cols = np.arange(0, self.width, step)
-        rows = np.arange(0, self.height, step)
+        # 1. Create strict valid mask to avoid NoData bleeding
+        temp_z = self.z_channel.copy()
+        valid_mask = ~np.isnan(temp_z)
+        if self._raster.z_nodata is not None:
+            valid_mask &= (temp_z != self._raster.z_nodata)
+        valid_mask &= (temp_z > -10000.0)
         
-        # Ensure we grab the exact edges to maintain the full physical bounds
-        if cols[-1] != self.width - 1: cols = np.append(cols, self.width - 1)
-        if rows[-1] != self.height - 1: rows = np.append(rows, self.height - 1)
+        valid_z = temp_z[valid_mask]
+        baseline_z = float(np.min(valid_z)) if valid_z.size > 0 else 0.0
+        temp_z[~valid_mask] = baseline_z
         
+        # 2. Smoothly downsample the 2D array (NO MORE STRIATIONS)
+        z_smooth = cv2.resize(
+            temp_z, 
+            (target_w, target_h), 
+            interpolation=cv2.INTER_LINEAR
+        )
+        
+        # 3. Generate perfectly spaced coordinate grids to match the new smooth array
+        cols = np.linspace(0, self.width - 1, target_w)
+        rows = np.linspace(0, self.height - 1, target_h)
         xx, yy = np.meshgrid(cols, rows)
         
-        # 2. Vectorized 2D to 3D Transform 
-        # This math perfectly mirrors the `unproject()` method ensuring 1:1 alignment with the math
         pixels_hom = np.column_stack((xx.flatten(), yy.flatten(), np.ones_like(xx.flatten())))
         world_hom = (self.transform_matrix @ pixels_hom.T).T
         
-        x_world = world_hom[:, 0].reshape(xx.shape)
-        y_world = world_hom[:, 1].reshape(xx.shape)
+        x_world = world_hom[:, 0].reshape(target_h, target_w)
+        y_world = world_hom[:, 1].reshape(target_h, target_w)
         
-        # 3. Extract Z (Elevation) values directly from the DEM array
-        z_world = self.z_channel[rows[:, None], cols].copy()
+        # 4. Create StructuredGrid and instantly convert to a solid PolyData mesh!
+        grid = pv.StructuredGrid(x_world, y_world, z_smooth)
+        grid.point_data['Elevation'] = z_smooth.flatten()
         
-        # 🔥 FIX: Create a strict mask of valid data (ignoring NaNs and NoData)
-        valid_mask = ~np.isnan(z_world)
-        if self._raster.z_nodata is not None:
-            valid_mask &= (z_world != self._raster.z_nodata)
-            
-        # Catch standard Metashape/GIS huge negative nodata values just to be safe
-        valid_mask &= (z_world > -10000.0) 
-
-        # Find the lowest actual elevation point on the reef
-        valid_z = z_world[valid_mask]
-        baseline_z = float(np.min(valid_z)) if valid_z.size > 0 else 0.0
-
-        # Flatten the invalid borders to the baseline so they don't stretch the bounding box
-        z_world[~valid_mask] = baseline_z
+        # 🔥 This makes it a true, solid, continuous surface mesh!
+        mesh = grid.extract_surface().triangulate()
         
-        # 4. Create the PyVista Structured Grid
-        grid = pv.StructuredGrid(x_world, y_world, z_world)
-        grid.point_data['Elevation'] = z_world.flatten()
-        
-        print(f"🌍 Generated 3D elevation mesh for {self.label} ({grid.n_points} vertices)")
-        return grid
+        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_faces} faces)")
+        return mesh
     
     # --------------------------------------------------------------------------
     # Geometric Methods

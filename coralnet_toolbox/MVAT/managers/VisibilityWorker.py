@@ -150,29 +150,18 @@ class VisibilityWorker(QObject):
             
         if isinstance(target, DEMProduct):
             try:
-                # 1. Grab the 3D grid directly from the wrapper
-                grid = target.get_render_mesh()
+                # 1. Grab the beautifully smoothed and triangulated PolyData mesh
+                mesh = target.get_render_mesh()
                 
-                # Safety check in case the lazy-loader hasn't fired
-                if grid is None:
+                if mesh is None:
                     print(f"⚠️ Warning: DEM geometry not loaded for {target.product_id}")
                     return None, None
                 
-                # 2. Fuse the grid into triangles
-                surface = grid.extract_surface().triangulate()
-                
-                # 3. Extract the center points of the physical triangles
-                face_centers = surface.cell_centers().points
+                # 2. Extract the true face centers for the solid mesh raycaster
+                face_centers = mesh.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
                 return face_centers, face_ids
-                
             except Exception as e:
-                print(f"⚠️ Failed to triangulate DEM points: {e}")
+                print(f"⚠️ Failed to extract DEM faces in worker: {e}")
                 return None, None
-            
-        # Fallback
-        if hasattr(target, 'get_points_array'):
-            return target.get_points_array(), None
-            
-        return None, None
