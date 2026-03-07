@@ -217,10 +217,6 @@ class MeshProduct(AbstractSceneProduct):
         """Load a mesh from file."""
         return cls(file_path=file_path, opacity=opacity)
     
-    # --------------------------------------------------------------------------
-    # AbstractSceneProduct Implementation
-    # --------------------------------------------------------------------------
-    
     # Custom method to build and cache Open3D RaycastingScene for this mesh
     def get_o3d_scene(self):
         """
@@ -264,6 +260,10 @@ class MeshProduct(AbstractSceneProduct):
         
         print(f"🎯 Built and cached Open3D BVH for {tri_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
         return self._o3d_scene, self._original_cell_ids
+    
+    # --------------------------------------------------------------------------
+    # AbstractSceneProduct Implementation
+    # --------------------------------------------------------------------------
     
     def get_render_mesh(self) -> pv.PolyData:
         """Get the PyVista mesh for rendering."""
