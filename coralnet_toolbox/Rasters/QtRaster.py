@@ -383,7 +383,7 @@ class Raster(QObject):
             index_map = cv2.resize(
                 index_map,
                 (self.width, self.height),
-                interpolation=cv2.INTER_NEAREST
+                interpolation=cv2.INTER_LINEAR
             )
         
         self.index_map = index_map.copy()
@@ -499,11 +499,26 @@ class Raster(QObject):
         
         # Resize z_data if dimensions don't match
         if z_data.shape != (self.height, self.width):
-            z_data = cv2.resize(
-                z_data,
+            # Convert to float32 for safe NaN manipulation if not already
+            temp_z = z_data.astype(np.float32) if z_data.dtype == np.uint8 else z_data.copy()
+            
+            # Protect NoData edges from blending into the real data during interpolation
+            if z_nodata is not None:
+                temp_z[temp_z == z_nodata] = np.nan
+            
+            # Use smooth linear interpolation instead of nearest-neighbor staircase
+            temp_z = cv2.resize(
+                temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_NEAREST
+                interpolation=cv2.INTER_LINEAR
             )
+            
+            # Restore the NoData values safely to the newly interpolated pixels
+            if z_nodata is not None:
+                temp_z[np.isnan(temp_z)] = z_nodata
+                
+            # Cast back to uint8 if that was the original format, else keep float32
+            z_data = temp_z.astype(np.uint8) if z_data.dtype == np.uint8 else temp_z
         
         if z_data_type is not None and z_data_type not in ['depth', 'elevation']:
             raise ValueError(f"z_data_type must be 'depth' or 'elevation', got '{z_data_type}'")
@@ -567,11 +582,26 @@ class Raster(QObject):
 
         # Resize if necessary
         if new_depth_map.shape != (self.height, self.width):
-            new_depth_map = cv2.resize(
-                new_depth_map,
+            # Convert to float32 for safe NaN manipulation if not already
+            temp_z = new_depth_map.astype(np.float32) if new_depth_map.dtype == np.uint8 else new_depth_map.copy()
+            
+            # Protect NoData edges from blending into the real data during interpolation
+            if z_nodata is not None and not np.isnan(z_nodata):
+                temp_z[temp_z == z_nodata] = np.nan
+                
+            # Use smooth linear interpolation instead of nearest-neighbor staircase
+            temp_z = cv2.resize(
+                temp_z,
                 (self.width, self.height),
-                interpolation=cv2.INTER_NEAREST
+                interpolation=cv2.INTER_LINEAR
             )
+            
+            # Restore the NoData values safely to the newly interpolated pixels
+            if z_nodata is not None and not np.isnan(z_nodata):
+                temp_z[np.isnan(temp_z)] = z_nodata
+                
+            # Cast back to uint8 if that was the original format, else keep float32
+            new_depth_map = temp_z.astype(np.uint8) if new_depth_map.dtype == np.uint8 else temp_z
 
         # Case A: No existing Z-channel
         if not self.has_z_channel():

@@ -734,7 +734,7 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
                     z_data = src.read(1,
                                       window=window,
                                       out_shape=(target_height, target_width),
-                                      resampling=rasterio.enums.Resampling.nearest)
+                                      resampling=rasterio.enums.Resampling.linear)
                     print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
             
             # Handle data type conversion
