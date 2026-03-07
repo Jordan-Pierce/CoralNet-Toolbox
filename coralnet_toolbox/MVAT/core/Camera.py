@@ -606,7 +606,7 @@ class OrthographicCamera(Camera):
         # 4. Convert to a true, triangulated PolyData Mesh
         mesh = grid.extract_surface().triangulate()
         
-        print(f"🌍 Generated true 3D elevation mesh for {self.label} ({mesh.n_faces} faces)")
+        print(f"🌍 Generated smooth 3D elevation mesh for {self.label} ({mesh.n_cells} faces)")
         return mesh
     
     # --------------------------------------------------------------------------
