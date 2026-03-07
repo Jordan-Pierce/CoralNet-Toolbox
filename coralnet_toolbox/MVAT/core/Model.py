@@ -200,10 +200,6 @@ class MeshProduct(AbstractSceneProduct):
         self.array_names = self.mesh.array_names
         print(f"Array names in mesh: {self.array_names}")
         
-        # Attributes to hold the cached data
-        self._o3d_scene = None
-        self._original_cell_ids = None
-        
         load_time = time.time() - start_time
         
         # Validate it has cells (faces/triangles)
@@ -218,48 +214,43 @@ class MeshProduct(AbstractSceneProduct):
         return cls(file_path=file_path, opacity=opacity)
     
     # Custom method to build and cache Open3D RaycastingScene for this mesh
-    def get_o3d_scene(self):
-        """
-        Lazily builds and caches the Open3D RaycastingScene.
-        This ensures triangulation and BVH building only happens ONCE per file.
-        """
-        if self._o3d_scene is not None:
-            return self._o3d_scene, self._original_cell_ids
+    def prepare_geometry(self):
+        if hasattr(self, '_cached_triangles_pt'):
+            return
 
-        import open3d as o3d
+        print(f"📐 Extracting raw geometry arrays for {self.label}...")
         import time
         import numpy as np
+        import torch
         
         start_time = time.time()
-        
-        # 1. Triangulate
+
         if not self.mesh.is_all_triangles:
             tri_mesh = self.mesh.triangulate()
-            # 🔥 FIX: Wrap in np.asarray to prevent slow VTK indexing loops later!
             raw_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
             self._original_cell_ids = np.asarray(raw_ids) if raw_ids is not None else None
         else:
             tri_mesh = self.mesh
             self._original_cell_ids = None
 
-        # 2. Extract Geometry
-        vertices = np.asarray(tri_mesh.points, dtype=np.float32)
-        triangles = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
-
-        # 3. Add to Open3D
-        self._o3d_scene = o3d.t.geometry.RaycastingScene()
-        v_tensor = o3d.core.Tensor(vertices)
-        t_tensor = o3d.core.Tensor(triangles)
-        self._o3d_scene.add_triangles(v_tensor, t_tensor)
+        # Keep vertices in numpy for Open3D
+        self._cached_vertices = np.asarray(tri_mesh.points, dtype=np.float32)
         
-        # 🔥 THE FIX: Open3D is "lazy". It doesn't actually build the BVH until the first ray is cast.
-        # We cast a single dummy ray right now to force it to build the spatial index immediately.
-        # Format: [px, py, pz, dx, dy, dz]
-        dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
-        self._o3d_scene.cast_rays(dummy_ray)
+        # Extract the rest to numpy temporarily
+        triangles_np = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+        centers_np = np.asarray(tri_mesh.cell_centers().points, dtype=np.float32)
+        centers_sq_norm_np = np.sum(centers_np**2, axis=1)
         
-        print(f"🎯 Built and cached Open3D BVH for {tri_mesh.n_cells:,} faces in {time.time() - start_time:.3f}s")
-        return self._o3d_scene, self._original_cell_ids
+        # Cache geometry arrays in PyTorch tensors for fast GPU processing
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'        
+        self._cached_face_centers_pt = torch.tensor(centers_np, device=self.device)
+        self._cached_centers_sq_norm_pt = torch.tensor(centers_sq_norm_np, device=self.device)
+        self._cached_triangles_pt = torch.tensor(triangles_np.astype(np.int64), device=self.device)
+        
+        if self._original_cell_ids is not None:
+            self._original_cell_ids_pt = torch.tensor(self._original_cell_ids.astype(np.int64), device=self.device)
+        
+        print(f"✅ Geometry extracted and cached in {time.time() - start_time:.3f}s")
     
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation

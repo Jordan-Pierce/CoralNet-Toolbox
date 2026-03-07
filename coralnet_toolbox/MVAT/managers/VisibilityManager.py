@@ -163,6 +163,78 @@ class VisibilityManager:
                 return cls._compute_mesh_visibility_fallback(
                     mesh_product, K, R, t, width, height, compute_depth_map
                 )
+                
+    @classmethod
+    def _build_subset_bvh(cls, mesh_product, camera_params_list):
+        import open3d as o3d
+        import time
+        import numpy as np
+        import torch
+        
+        start_time = time.time()
+        mesh_product.prepare_geometry() 
+        
+        # Grab tensors and the designated device from the model
+        centers = mesh_product._cached_face_centers_pt
+        centers_sq_norm = mesh_product._cached_centers_sq_norm_pt
+        triangles = mesh_product._cached_triangles_pt
+        device = mesh_product.device
+        
+        # Initialize the global mask directly on the target device
+        global_mask = torch.zeros(len(centers), dtype=torch.bool, device=device)
+        
+        ANGLE_THRESHOLD = 0.6
+        angle_sq_threshold = ANGLE_THRESHOLD ** 2
+
+        for K, R, t, w, h in camera_params_list:
+            cam_pos = -R.T @ t
+            cam_dir = R.T @ np.array([0, 0, 1]) 
+            cam_dir = cam_dir / np.linalg.norm(cam_dir)
+            
+            # Pack the small camera matrix and push to the device
+            cam_matrix = np.column_stack((cam_dir, -2.0 * cam_pos)).astype(np.float32)
+            cam_matrix_pt = torch.tensor(cam_matrix, device=device)
+            
+            # Massive Matrix Multiplication (GPU or CPU!)
+            proj = torch.matmul(centers, cam_matrix_pt)
+            
+            # Calculate standard scalars in python to avoid tensor device mismatches
+            cam_pos_dir_dot = float(np.dot(cam_pos, cam_dir))
+            cam_pos_sq_norm = float(np.dot(cam_pos, cam_pos))
+            
+            dot_prods = proj[:, 0] - cam_pos_dir_dot
+            sq_dists = centers_sq_norm + cam_pos_sq_norm + proj[:, 1]
+            
+            front_mask = dot_prods > 0
+            valid_mask = front_mask & (sq_dists > 1e-6)
+            camera_mask = valid_mask & ((dot_prods**2) > (sq_dists * angle_sq_threshold))
+            
+            global_mask |= camera_mask
+
+        # Pull ONLY the surviving tiny subset back to the CPU for Open3D
+        subset_triangles = triangles[global_mask].cpu().numpy().astype(np.uint32)
+        
+        subset_cell_ids = None
+        if getattr(mesh_product, '_original_cell_ids_pt', None) is not None:
+            subset_cell_ids = mesh_product._original_cell_ids_pt[global_mask].cpu().numpy()
+            
+        cull_time = time.time() - start_time
+        print(f"✂️ {device.upper()} Frustum Cull: Kept {len(subset_triangles):,} faces in {cull_time:.3f}s")
+        
+        # Build Open3D Scene
+        scene = o3d.t.geometry.RaycastingScene()
+        
+        if len(subset_triangles) > 0:
+            build_start = time.time()
+            v_tensor = o3d.core.Tensor(mesh_product._cached_vertices)
+            t_tensor = o3d.core.Tensor(subset_triangles)
+            scene.add_triangles(v_tensor, t_tensor)
+            
+            dummy_ray = o3d.core.Tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]], dtype=o3d.core.Dtype.Float32)
+            scene.cast_rays(dummy_ray)
+            print(f"🎯 Built Sub-BVH in {time.time() - build_start:.3f}s")
+            
+        return scene, subset_cell_ids, len(subset_triangles)
             
     @classmethod
     def compute_batch_mesh_visibility_open3d(cls, 
