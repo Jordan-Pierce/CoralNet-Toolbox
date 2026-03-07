@@ -875,7 +875,7 @@ class MVATViewer(QFrame):
                 file_path = urls[0].toLocalFile().lower()
                 supported_extensions = (
                     self._POINT_CLOUD_EXTENSIONS + 
-                    self._MESH_EXTENSIONS + 
+                    self._MESH_EXTENSIONS
                 )
                 if any(file_path.endswith(ext) for ext in supported_extensions):
                     event.acceptProposedAction()
