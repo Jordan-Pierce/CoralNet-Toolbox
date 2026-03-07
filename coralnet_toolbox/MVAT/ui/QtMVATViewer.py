@@ -1089,16 +1089,16 @@ class MVATViewer(QFrame):
                 actor = self._product_actors.get(product_id)
                 
                 if actor is None:
-                    # Create new actor
                     actor = self.plotter.add_mesh(
                         mesh,
                         render=False,
                         **style
                     )
                     self._product_actors[product_id] = actor
-                    
-                    # Update legacy _filtered_actor for backward compat
-                    if isinstance(product, PointCloudProduct) and self._filtered_actor is None:
+
+                    # Legacy compatibility: if no filtered actor yet, use the first actor added
+                    # (was previously limited to PointCloudProduct only)
+                    if self._filtered_actor is None:
                         self._filtered_actor = actor
                 else:
                     # Update existing actor's mesh
