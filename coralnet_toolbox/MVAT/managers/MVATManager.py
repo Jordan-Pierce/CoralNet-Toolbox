@@ -902,14 +902,17 @@ class MVATManager(QObject):
         # Strategy C: DEM - use grid cell centers
         if isinstance(primary_target, DEMProduct):
             try:
-                dem_height, dem_width = primary_target.elevation.shape
+                # Pull the data from the newly wrapped camera
+                z_array = primary_target.camera.z_channel
+                transform = primary_target.camera.transform_matrix
+                
+                dem_height, dem_width = z_array.shape
                 rows, cols = np.mgrid[0:dem_height, 0:dem_width]
                 
                 # Convert pixel coords to world coords using affine transform
-                transform = primary_target.transform
                 x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
                 y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
-                z_world = primary_target.elevation
+                z_world = z_array
                 
                 # Flatten to point array
                 points = np.column_stack([
@@ -931,15 +934,6 @@ class MVATManager(QObject):
             except Exception as e:
                 print(f"⚠️ Failed to extract DEM cell centers: {e}")
                 return None, None, 'cell'
-        
-        # Fallback: try get_points_array if available (generic interface)
-        if hasattr(primary_target, 'get_points_array'):
-            points = primary_target.get_points_array()
-            if points is not None and len(points) > 0:
-                return points, None, element_type
-        
-        print(f"⚠️ MVATManager: Cannot extract geometry from {type(primary_target).__name__}")
-        return None, None, element_type
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
         """

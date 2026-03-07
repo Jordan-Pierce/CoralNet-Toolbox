@@ -361,6 +361,16 @@ class DEMProduct(AbstractSceneProduct):
         self._structured_grid: Optional[pv.StructuredGrid] = None
         
         print(f"🎬 Initialized unified DEMProduct from camera: {self.camera.label}")
+        
+    @property
+    def elevation(self):
+        """Backward compatibility for legacy code looking for the raw DEM array"""
+        return self.camera.z_channel
+        
+    @property
+    def transform(self):
+        """Backward compatibility for legacy code looking for the matrix"""
+        return self.camera.transform_matrix
 
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation

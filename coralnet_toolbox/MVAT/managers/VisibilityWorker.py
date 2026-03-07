@@ -149,17 +149,27 @@ class VisibilityWorker(QObject):
             return target.get_points_array(), None
             
         if isinstance(target, DEMProduct):
-            dem_height, dem_width = target.terrain.shape
+            # Pull the raw arrays directly from the camera wrapper
+            z_array = target.camera.z_channel
+            transform = target.camera.transform_matrix
+            
+            # Safety check in case the lazy-loader hasn't fired
+            if z_array is None:
+                print(f"⚠️ Warning: DEM data not loaded for {target.product_id}")
+                return None, None
+                
+            dem_height, dem_width = z_array.shape
             rows, cols = np.mgrid[0:dem_height, 0:dem_width]
             
-            transform = target.transform
+            # Apply the affine transform to the pixel grid
             x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
             y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
-            z_world = target.terrain
+            z_world = z_array
             
             points = np.column_stack([x_world.flatten(), y_world.flatten(), z_world.flatten()])
             cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
             
+            # Filter out the invalid/nodata borders from the Metashape export
             valid_mask = ~np.isnan(points[:, 2])
             return points[valid_mask], cell_ids[valid_mask]
             
