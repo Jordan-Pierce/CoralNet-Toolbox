@@ -249,15 +249,10 @@ class MVATManager(QObject):
             return
             
         # Indicate busy state via cursor and status bar (no modal progress)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        except Exception:
-            pass
-        try:
-            try:
-                self.main_window.status_bar.showMessage("Loading cameras...", 0)
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage("Loading cameras...", 0)
 
             valid_count = 0
             ortho_count = 0
@@ -291,14 +286,12 @@ class MVATManager(QObject):
                 QApplication.restoreOverrideCursor()
             except Exception:
                 pass
-            try:
-                self.main_window.status_bar.showMessage(
-                    f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, "
-                    f"{valid_count - ortho_count} perspective)",
-                    3000
-                )
-            except Exception:
-                pass
+            
+            self.main_window.status_bar.showMessage(
+                f"Loaded cameras: {valid_count} total ({ortho_count} orthomosaics, "
+                f"{valid_count - ortho_count} perspective)",
+                3000
+            )
             
         if valid_count == 0:
             QMessageBox.information(self.main_window, "No Camera Data", "No valid camera parameters found.")
@@ -422,11 +415,7 @@ class MVATManager(QObject):
     def _on_compute_index_maps_toggled(self, state: bool):
         """Enable/disable background computation of index maps."""
         self.compute_index_maps_enabled = state
-        try:
-            msg = "Compute Index Maps: ON" if state else "Compute Index Maps: OFF"
-            self.main_window.status_bar.showMessage(msg, 2000)
-        except Exception:
-            pass
+        self.main_window.status_bar.showMessage("Compute Index Maps: ON" if state else "Compute Index Maps: OFF", 2000)
 
     def _on_visibility_computed(self, results: dict):
         """Handle results emitted from VisibilityWorker (runs on main thread)."""
@@ -439,15 +428,8 @@ class MVATManager(QObject):
 
         finally:
             self._is_computing_visibility = False
-            try:
-                self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
-            except Exception:
-                pass
-            # Restore cursor when done
-            try:
-                QApplication.restoreOverrideCursor()
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            QApplication.restoreOverrideCursor()
 
     def _process_visibility_results(self, results: dict, target_file_path: str):
         """
@@ -508,15 +490,8 @@ class MVATManager(QObject):
     def _on_visibility_error(self, error_str: str):
         print(f"Visibility worker error:\n{error_str}")
         self._is_computing_visibility = False
-        try:
-            self.main_window.status_bar.showMessage("Visibility computation failed. See console for details.", 5000)
-        except Exception:
-            pass
-        # Restore cursor on error
-        try:
-            QApplication.restoreOverrideCursor()
-        except Exception:
-            pass
+        self.main_window.status_bar.showMessage("Visibility computation failed. See console for details.", 5000)
+        QApplication.restoreOverrideCursor()
 
     def _on_active_camera_changed(self, path):
         """
@@ -756,13 +731,7 @@ class MVATManager(QObject):
             target_file_path = mesh_product.file_path
             n_cameras = len(cameras)
             
-            try:
-                self.main_window.status_bar.showMessage(
-                    f"Rasterizing mesh for {n_cameras} camera(s)..."
-                )
-            except Exception:
-                pass
-            
+            self.main_window.status_bar.showMessage(f"Rasterizing mesh for {n_cameras} camera(s)...")
             print(f"MVATManager: VTK mesh rasterization for {n_cameras} cameras")
             
             results = {}
@@ -792,14 +761,8 @@ class MVATManager(QObject):
             traceback.print_exc()
         finally:
             self._is_computing_visibility = False
-            try:
-                QApplication.restoreOverrideCursor()
-            except Exception:
-                pass
-            try:
-                self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
-            except Exception:
-                pass
+            self.main_window.status_bar.showMessage("Visibility maps updated.", 3000)
+            QApplication.restoreOverrideCursor()
 
     def _compute_visibility_async(self, primary_target, cameras):
         """
