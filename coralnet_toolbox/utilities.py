@@ -683,23 +683,9 @@ def convert_scale_units(value, from_unit, to_unit):
 
 def load_z_channel_from_file(z_channel_path, target_width=None, target_height=None, z_data_type=None):
     """
-    Load a depth map / elevation map from file using rasterio.
-    
-    The z_channel data will be either:
-    - float32: Actual depth/height values (e.g., meters, feet, etc.)
-    - uint8: Relative depth/height values (0-255 range)
-    
-    Args:
-        z_channel_path (str): Path to the depth/elevation file
-        target_width (int, optional): Target width to match raster dimensions
-        target_height (int, optional): Target height to match raster dimensions
-        z_data_type (str, optional): Type of z-channel data ('depth' or 'elevation')
-        
-    Returns:
-        tuple: (z_data, z_path, z_nodata) where z_data is a 2D numpy array (float32 or uint8),
-               z_path is the file path, and z_nodata is the nodata value from the GeoTIFF
-               (or None if no nodata value is defined), or (None, None, None) if loading fails
+    Load a depth map / elevation map from file using rasterio and safely resize it.
     """
+    import os
     try:
         # Check if file exists
         if not os.path.exists(z_channel_path):
@@ -708,68 +694,56 @@ def load_z_channel_from_file(z_channel_path, target_width=None, target_height=No
             
         # Open the z-channel file with rasterio
         with rasterio.open(z_channel_path) as src:
-            # Validate it's a single band file
             if src.count != 1:
                 print(f"Z-channel file must be single band, found {src.count} bands: {z_channel_path}")
                 return None, None, None
             
-            # Extract the nodata value from the rasterio source
+            # Extract the nodata value
             z_nodata = src.nodata
             if z_nodata is not None:
                 print(f"Z-channel has nodata value: {z_nodata}")
             elif z_data_type == 'depth':
-                # For depth data, default to 0 as nodata if not specified in file
-                # 0 often represents "no depth" or invalid data in depth maps
                 z_nodata = 0
                 print("Z-channel is depth data with no nodata specified, defaulting to 0")
             
-            # Read the single band
-            z_data = src.read(1)
+            # Read the native resolution band and immediately cast to float32
+            z_data = src.read(1).astype(np.float32)
             
-            # Check if we need to resize to match target dimensions
+            # Protect NoData edges from blending into real data during resize
+            if z_nodata is not None:
+                z_data[z_data == z_nodata] = np.nan
+            elif z_data_type == 'depth':
+                z_data[z_data == 0] = np.nan
+            
+            # Use OpenCV for smooth, NaN-safe interpolation
             if target_width is not None and target_height is not None:
                 if z_data.shape != (target_height, target_width):
-                    # Resample to match target dimensions
-                    window = Window(0, 0, src.width, src.height)
-                    z_data = src.read(1,
-                                      window=window,
-                                      out_shape=(target_height, target_width),
-                                      resampling=rasterio.enums.Resampling.bilinear)
+                    z_data = cv2.resize(
+                        z_data,
+                        (target_width, target_height),
+                        interpolation=cv2.INTER_LINEAR
+                    )
                     print(f"Resampled z-channel from {src.height}x{src.width} to {target_height}x{target_width}")
             
-            # Handle data type conversion
-            if z_data.dtype == np.uint8:
-                # Already uint8, no conversion needed
-                pass
-            elif z_data.dtype in [np.float32, np.float64]:
-                # Keep as float32 for actual depth/height values
-                z_data = z_data.astype(np.float32)
-            elif z_data.dtype in [np.int8, np.int16, np.int32, np.uint16, np.uint32]:
-                # Convert integer types to float32 for better precision
-                z_data = z_data.astype(np.float32)
-            else:
-                print(f"Warning: Unsupported z-channel data type {z_data.dtype}, converting to float32")
-                z_data = z_data.astype(np.float32)
-                
-            # Preserve NaN values in floating-point data (don't convert to 0)
-            # NaN values represent missing or NULL data and will be handled by the UI layer
-            if np.issubdtype(z_data.dtype, np.floating):
-                nan_count = np.sum(np.isnan(z_data))
-                if nan_count > 0:
-                    print(f"Z-channel contains {nan_count} NaN values (NULL/missing data)")
+            # Restore the nodata value safely to the newly interpolated pixels
+            if z_nodata is not None:
+                z_data[np.isnan(z_data)] = z_nodata
+            elif z_data_type == 'depth':
+                z_data[np.isnan(z_data)] = 0
+
+            # Count remaining valid NaNs (if any were naturally in the data)
+            nan_count = np.sum(np.isnan(z_data))
+            if nan_count > 0:
+                print(f"Z-channel contains {nan_count} NaN values (NULL/missing data)")
             
-            # Final validation - ensure 2D array
+            # Final validation
             if z_data.ndim != 2:
                 print(f"Z-channel data must be 2D, found {z_data.ndim}D")
                 return None, None, None
                 
-            # Final data type check
-            if z_data.dtype not in [np.float32, np.uint8]:
-                print(f"Z-channel data type {z_data.dtype} not supported, must be float32 or uint8")
-                return None, None, None
-                
+            # Use nanmin/nanmax to prevent the print statement from crashing if the array is full of NaNs
             print(f"Successfully loaded z-channel: {z_data.shape}, dtype: {z_data.dtype}, "
-                  f"range: [{np.min(z_data):.2f}, {np.max(z_data):.2f}]")
+                  f"range: [{np.nanmin(z_data):.2f}, {np.nanmax(z_data):.2f}]")
                   
             return z_data, z_channel_path, z_nodata
             

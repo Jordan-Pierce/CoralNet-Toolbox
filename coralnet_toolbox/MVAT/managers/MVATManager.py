@@ -917,13 +917,13 @@ class MVATManager(QObject):
                 # 2. Convert the Quad grid into a watertight, Triangulated surface mesh
                 surface = grid.extract_surface().triangulate()
                 
-                # 3. Extract the face centers to feed into the PyTorch BVH culler
+                # 3. Extract the face centers to feed into the BVH / Rasterizer
                 face_centers = surface.cell_centers().points
                 face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
                 print(f"✅ DEM triangulated into {len(face_centers):,} solid faces in {time.time()-start:.3f}s")
                 
-                # 🔥 We return 'face' instead of 'cell' so the engine treats it exactly like a solid 3D mesh
+                # 🔥 FIX: We return 'face' instead of 'cell' so the engine treats it exactly like a solid 3D mesh
                 return face_centers, face_ids, 'face'
                 
             except Exception as e:
