@@ -598,10 +598,12 @@ class OrthographicCamera(Camera):
         grid = pv.StructuredGrid(x_world, y_world, z_smooth)
         grid.point_data['Elevation'] = z_smooth.flatten()
         
-        # 🔥 FUTURE-PROOFING: Add UV Texture Coordinates for the Orthomosaic drape!
+        # FUTURE-PROOFING: Add UV Texture Coordinates for the Orthomosaic drape!
         u = xx.flatten() / (self.width - 1)
         v = yy.flatten() / (self.height - 1)
-        grid.active_t_coords = np.column_stack((u, 1.0 - v)) # Invert V for 3D textures
+        
+        # Use the new PyVista attribute name for UVs
+        grid.active_texture_coordinates = np.column_stack((u, 1.0 - v)) 
         
         # 4. Convert to a true, triangulated PolyData Mesh
         mesh = grid.extract_surface().triangulate()
