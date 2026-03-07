@@ -11,13 +11,15 @@ import numpy as np
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt, QThread
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.MVAT.core.Camera import Camera
 from coralnet_toolbox.MVAT.core.Ray import CameraRay
+
 from coralnet_toolbox.MVAT.managers.SelectionManager import SelectionManager
 from coralnet_toolbox.MVAT.managers.VisibilityManager import VisibilityManager
 from coralnet_toolbox.MVAT.managers.VisibilityWorker import VisibilityWorker
 from coralnet_toolbox.MVAT.managers.CacheManager import CacheManager
+
 from coralnet_toolbox.MVAT.core.constants import (
     MARKER_COLOR_SELECTED,
     MARKER_COLOR_INVALID,
@@ -26,6 +28,10 @@ from coralnet_toolbox.MVAT.core.constants import (
     RAY_COLOR_INVALID,
     MOUSE_THROTTLE_MS,
 )
+
+from coralnet_toolbox.MVAT.core.Model import DEMProduct
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -309,7 +315,10 @@ class MVATManager(QObject):
             pass
         
         self.camera_grid.set_cameras(perspective_cameras)
-        self._render_frustums()
+        
+        # Generate and load 3D elevation for any orthomosaics with DEMs
+        self._populate_ortho_elevation()
+        
         self.viewer.fit_to_view()
         
         # Initial Synchronization
@@ -345,6 +354,35 @@ class MVATManager(QObject):
             highlighted_paths=highlighted,
             hovered_camera=self.hovered_camera
         )
+        
+    def _populate_ortho_elevation(self):
+        """
+        Scans loaded cameras for Orthomosaics with attached DEMs 
+        and adds them as 3D elevation meshes to the scene viewer.
+        """
+        elevation_added = False
+        
+        for path, camera in self.cameras.items():
+            # Check if it is an OrthographicCamera and actually has DEM data
+            if camera.is_orthographic and camera.z_channel is not None:
+                print(f"🏔️ Found DEM for {camera.label}, generating 3D elevation mesh...")
+                
+                try:
+                    # Create the wrapper using the camera
+                    elevation = DEMProduct(camera)
+                    
+                    # Push it directly into the 3D Scene Context
+                    self.viewer.scene_context.add_product(elevation)
+                    elevation_added = True
+                    
+                    # Usually only one master orthomosaic per project, but we'll 
+                    # let it loop in case there are multiple.
+                except Exception as e:
+                    print(f"❌ Failed to generate 3D elevation mesh for {camera.label}: {e}")
+                
+        # If we added elevation, ensure the viewer refreshes to show the new geometry
+        if elevation_added:
+            self.viewer.render_scene()
 
     # --- Signal Handlers ---
 

@@ -480,7 +480,7 @@ class OrthographicCamera(Camera):
         self.z_channel = raster.z_channel
 
         if self.z_channel is None:
-            print(f"WARNING: {raster.basename} has no DEM. Assuming flat terrain at Z=0")
+            print(f"WARNING: {raster.basename} has no DEM. Assuming flat elevation at Z=0")
         else:
             self.z_channel = self.z_channel.copy()
 
@@ -547,7 +547,61 @@ class OrthographicCamera(Camera):
     def index_map(self):
         """Get the index map for this camera."""
         return self._raster.index_map_lazy
-
+    
+    # --------------------------------------------------------------------------
+    # DEM Association
+    # --------------------------------------------------------------------------
+    
+    def get_elevation_mesh(self, max_resolution=1000):
+        """
+        Generates a PyVista 3D surface mesh using the camera's perfectly aligned DEM and transform.
+        Automatically downsamples to prevent crashing the 3D viewer.
+        """
+        import pyvista as pv
+        
+        if self.z_channel is None:
+            print(f"Cannot generate elevation mesh: {self.label} has no DEM (z_channel).")
+            return None
+            
+        # 1. Downsample for 3D rendering (A 10,000x10,000 grid will freeze the app)
+        step = max(1, max(self.width, self.height) // max_resolution)
+        
+        cols = np.arange(0, self.width, step)
+        rows = np.arange(0, self.height, step)
+        
+        # Ensure we grab the exact edges to maintain the full physical bounds
+        if cols[-1] != self.width - 1: cols = np.append(cols, self.width - 1)
+        if rows[-1] != self.height - 1: rows = np.append(rows, self.height - 1)
+        
+        xx, yy = np.meshgrid(cols, rows)
+        
+        # 2. Vectorized 2D to 3D Transform 
+        # This math perfectly mirrors the `unproject()` method ensuring 1:1 alignment with the math
+        pixels_hom = np.column_stack((xx.flatten(), yy.flatten(), np.ones_like(xx.flatten())))
+        world_hom = (self.transform_matrix @ pixels_hom.T).T
+        
+        x_world = world_hom[:, 0].reshape(xx.shape)
+        y_world = world_hom[:, 1].reshape(xx.shape)
+        
+        # 3. Extract Z (Elevation) values directly from the DEM array
+        z_world = self.z_channel[rows[:, None], cols]
+        
+        # Clean up invalid data from Metashape borders
+        baseline_z = np.nanmin(z_world) if not np.isnan(np.nanmin(z_world)) else 0.0
+        z_world[np.isnan(z_world)] = baseline_z
+        
+        if self._raster.z_nodata is not None:
+            z_world[z_world == self._raster.z_nodata] = baseline_z
+            
+        # 4. Create the PyVista Structured Grid
+        grid = pv.StructuredGrid(x_world, y_world, z_world)
+        
+        # Add elevation scalars so PyVista can color it nicely like a topographic map
+        grid.point_data['Elevation'] = z_world.flatten()
+        
+        print(f"🌍 Generated 3D elevation mesh for {self.label} ({grid.n_points} vertices)")
+        return grid
+    
     # --------------------------------------------------------------------------
     # Geometric Methods
     # --------------------------------------------------------------------------

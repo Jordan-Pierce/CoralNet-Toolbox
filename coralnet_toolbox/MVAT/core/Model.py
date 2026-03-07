@@ -332,90 +332,36 @@ class DEMProduct(AbstractSceneProduct):
     """
     Scene product for Digital Elevation Model (DEM) data.
     
-    Handles georeferenced raster elevation data (GeoTIFF) and provides 
-    visualization as a PyVista StructuredGrid surface.
+    Now acts as a 3D wrapper around the OrthographicCamera, ensuring the 
+    elevation mesh is perfectly scaled and aligned with the orthomosaic photograph.
     
-    DEMs ARE solid (is_solid=True) and support cell-based index mapping where
-    each cell corresponds to a pixel/grid position in the elevation raster.
-    
-    Attributes:
-        elevation (np.ndarray): 2D elevation array (height x width).
-        transform (np.ndarray): Affine transform matrix (3x3) for geo-projection.
-        nodata (float): NoData value for invalid cells.
-        crs: Coordinate reference system information.
+    DEMs ARE solid (is_solid=True) and support cell-based index mapping.
     """
     
-    def __init__(self, 
-                 file_path: str,
-                 opacity: float = 0.8,
-                 product_id: Optional[str] = None):
+    def __init__(self, ortho_camera, opacity: float = 0.8, product_id: Optional[str] = None):
         """
-        Initialize DEMProduct from GeoTIFF file.
+        Initialize DEMProduct from an OrthographicCamera.
         
         Args:
-            file_path: Path to GeoTIFF elevation file.
+            ortho_camera: The OrthographicCamera instance containing the Z-channel.
             opacity: Default rendering opacity.
-            product_id: Optional unique ID (defaults to filename).
+            product_id: Optional unique ID.
         """
+        self.camera = ortho_camera
+        
         if product_id is None:
-            product_id = os.path.basename(file_path)
+            product_id = f"Elevation_{self.camera.label}"
+            
+        # Use the z_channel_path as the file_path for cache keys, fallback to image path
+        file_path = self.camera._raster.z_channel_path or self.camera.image_path
         
         super().__init__(product_id=product_id, file_path=file_path)
         
         self.opacity = opacity
-        self.elevation: Optional[np.ndarray] = None
-        self.transform: Optional[np.ndarray] = None
-        self.transform_inv: Optional[np.ndarray] = None
-        self.nodata: float = np.nan
-        self.crs = None
         self._structured_grid: Optional[pv.StructuredGrid] = None
         
-        # Load the DEM
-        self._load_from_file(file_path)
-    
-    def _load_from_file(self, file_path: str) -> None:
-        """Load DEM from GeoTIFF file."""
-        try:
-            import rasterio
-        except ImportError:
-            raise ImportError("rasterio is required for DEMProduct - install with: pip install rasterio")
-        
-        start_time = time.time()
-        
-        with rasterio.open(file_path) as src:
-            # Read elevation data (first band)
-            self.elevation = src.read(1).astype(np.float32)
-            
-            # Get affine transform
-            self.transform = np.array([
-                [src.transform.a, src.transform.b, src.transform.c],
-                [src.transform.d, src.transform.e, src.transform.f],
-                [0, 0, 1]
-            ], dtype=np.float64)
-            
-            # Compute inverse transform
-            self.transform_inv = np.linalg.inv(self.transform)
-            
-            # Store nodata and CRS
-            self.nodata = src.nodata if src.nodata is not None else np.nan
-            self.crs = src.crs
-            
-            # Get bounds
-            self._bounds = src.bounds
-        
-        # Replace nodata with NaN for consistency
-        if not np.isnan(self.nodata):
-            self.elevation[self.elevation == self.nodata] = np.nan
-        
-        load_time = time.time() - start_time
-        height, width = self.elevation.shape
-        print(f"⏱️ Loaded DEMProduct: {self.label} ({width}x{height}) in {load_time:.3f}s")
-    
-    @classmethod
-    def from_file(cls, file_path: str, opacity: float = 0.8) -> 'DEMProduct':
-        """Load a DEM from file."""
-        return cls(file_path=file_path, opacity=opacity)
-    
+        print(f"🎬 Initialized unified DEMProduct from camera: {self.camera.label}")
+
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
     # --------------------------------------------------------------------------
@@ -423,38 +369,11 @@ class DEMProduct(AbstractSceneProduct):
     def get_render_mesh(self) -> pv.StructuredGrid:
         """
         Get PyVista StructuredGrid for rendering.
-        
-        Lazily generates the grid on first access.
+        Lazily asks the camera to generate the mesh on first access.
         """
         if self._structured_grid is None:
-            self._structured_grid = self._create_structured_grid()
+            self._structured_grid = self.camera.get_elevation_mesh()
         return self._structured_grid
-    
-    def _create_structured_grid(self) -> pv.StructuredGrid:
-        """Create PyVista StructuredGrid from elevation array."""
-        height, width = self.elevation.shape
-        
-        # Create coordinate grids
-        cols = np.arange(width)
-        rows = np.arange(height)
-        xx, yy = np.meshgrid(cols, rows)
-        
-        # Transform pixel coordinates to world coordinates
-        # world_coords = transform @ [col, row, 1]^T
-        x_world = self.transform[0, 0] * xx + self.transform[0, 1] * yy + self.transform[0, 2]
-        y_world = self.transform[1, 0] * xx + self.transform[1, 1] * yy + self.transform[1, 2]
-        z_world = self.elevation.copy()
-        
-        # Replace NaN with 0 for grid creation (will be masked in rendering)
-        z_world_clean = np.nan_to_num(z_world, nan=0.0)
-        
-        # Create StructuredGrid
-        grid = pv.StructuredGrid(x_world, y_world, z_world_clean)
-        
-        # Add elevation as scalar data for coloring
-        grid.point_data['Elevation'] = z_world.flatten()
-        
-        return grid
     
     def get_render_style(self) -> RenderStyle:
         """Get preferred rendering style."""
@@ -468,22 +387,11 @@ class DEMProduct(AbstractSceneProduct):
         }
     
     def get_bounds(self) -> BoundsType:
-        """Get 3D bounding box (in world coordinates)."""
-        if self.elevation is None:
+        """Get 3D bounding box directly from the generated mesh."""
+        mesh = self.get_render_mesh()
+        if mesh is None:
             return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        
-        # X and Y bounds from rasterio bounds
-        xmin, ymin = self._bounds.left, self._bounds.bottom
-        xmax, ymax = self._bounds.right, self._bounds.top
-        
-        # Z bounds from elevation data
-        z_valid = self.elevation[~np.isnan(self.elevation)]
-        if len(z_valid) == 0:
-            zmin, zmax = 0.0, 0.0
-        else:
-            zmin, zmax = float(z_valid.min()), float(z_valid.max())
-        
-        return (xmin, xmax, ymin, ymax, zmin, zmax)
+        return mesh.bounds
     
     def is_solid(self) -> bool:
         """DEMs are solid surfaces."""
@@ -498,77 +406,11 @@ class DEMProduct(AbstractSceneProduct):
         return 'cell'
     
     def get_element_count(self) -> int:
-        """Number of grid cells (width * height)."""
-        if self.elevation is None:
+        """Number of grid cells."""
+        mesh = self.get_render_mesh()
+        if mesh is None:
             return 0
-        return self.elevation.size
-    
-    # --------------------------------------------------------------------------
-    # DEM Specific Methods
-    # --------------------------------------------------------------------------
-    
-    def pixel_to_world(self, u: int, v: int) -> tuple:
-        """
-        Convert pixel coordinates to world coordinates.
-        
-        Args:
-            u: Column (x pixel coordinate)
-            v: Row (y pixel coordinate)
-            
-        Returns:
-            (x, y, z) world coordinates
-        """
-        x = self.transform[0, 0] * u + self.transform[0, 1] * v + self.transform[0, 2]
-        y = self.transform[1, 0] * u + self.transform[1, 1] * v + self.transform[1, 2]
-        
-        if 0 <= v < self.elevation.shape[0] and 0 <= u < self.elevation.shape[1]:
-            z = self.elevation[v, u]
-        else:
-            z = np.nan
-        
-        return (x, y, z)
-    
-    def world_to_pixel(self, x: float, y: float) -> tuple:
-        """
-        Convert world coordinates to pixel coordinates.
-        
-        Args:
-            x: World X coordinate
-            y: World Y coordinate
-            
-        Returns:
-            (u, v) pixel coordinates (column, row)
-        """
-        point = np.array([x, y, 1.0])
-        pixel = self.transform_inv @ point
-        u, v = int(round(pixel[0])), int(round(pixel[1]))
-        return (u, v)
-    
-    def get_elevation_at(self, x: float, y: float) -> float:
-        """
-        Get elevation at world coordinates.
-        
-        Args:
-            x: World X coordinate
-            y: World Y coordinate
-            
-        Returns:
-            Elevation value or NaN if outside bounds/nodata.
-        """
-        u, v = self.world_to_pixel(x, y)
-        if 0 <= v < self.elevation.shape[0] and 0 <= u < self.elevation.shape[1]:
-            return float(self.elevation[v, u])
-        return np.nan
-    
-    @property
-    def width(self) -> int:
-        """DEM width in pixels."""
-        return self.elevation.shape[1] if self.elevation is not None else 0
-    
-    @property
-    def height(self) -> int:
-        """DEM height in pixels."""
-        return self.elevation.shape[0] if self.elevation is not None else 0
+        return mesh.n_cells
 
 
 # ----------------------------------------------------------------------------------------------------------------------
