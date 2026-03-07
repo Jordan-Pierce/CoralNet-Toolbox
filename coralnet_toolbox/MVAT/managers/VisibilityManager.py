@@ -103,7 +103,7 @@ class VisibilityManager:
                 points = primary_target.get_points_array()
                 if points is not None:
                     result = cls.compute_visibility(points, K, R, t, width, height, 
-                                                   compute_depth_map=compute_depth_map)
+                                                    compute_depth_map=compute_depth_map)
                     result['element_type'] = 'point'
                     return result
                     
@@ -169,51 +169,30 @@ class VisibilityManager:
                                              mesh_product, 
                                              camera_params_list, 
                                              compute_depth_maps=True) -> list:
-        """
-        Batched Open3D raycasting. 
-        Builds the BVH scene ONCE and casts rays for all cameras.
-        """
         import open3d as o3d
         import time
+        import cv2
         
         start_time = time.time()
         mesh = mesh_product.get_mesh()
         
         if mesh.n_cells == 0:
-            # Return empty results for all cameras if mesh is empty
             return [{
                 'index_map': np.full((h, w), -1, dtype=np.int32),
                 'visible_indices': np.array([], dtype=np.int32),
                 'depth_map': np.full((h, w), np.nan, dtype=np.float32) if compute_depth_maps else None
             } for _, _, _, w, h in camera_params_list]
 
-        # 1. Triangulate and extract geometry ONCE
-        if not mesh.is_all_triangles:
-            tri_mesh = mesh.triangulate()
-            original_cell_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
-        else:
-            tri_mesh = mesh
-            original_cell_ids = None
-
-        vertices = np.asarray(tri_mesh.points, dtype=np.float32)
-        triangles = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
-
-        # 2. Build the BVH Scene ONCE (This is the slow part we are optimizing!)
-        scene = o3d.t.geometry.RaycastingScene()
-        v_tensor = o3d.core.Tensor(vertices)
-        t_tensor = o3d.core.Tensor(triangles)
-        _ = scene.add_triangles(v_tensor, t_tensor)
-        
-        build_time = time.time() - start_time
-        print(f"🎯 Built Open3D BVH for {tri_mesh.n_cells:,} faces in {build_time:.3f}s")
+        # GRAB THE CACHED SCENE (Instant!)
+        scene, original_cell_ids = mesh_product.get_o3d_scene()
 
         results = []
+        SCALE_FACTOR = 0.25  # 1/4 resolution raycasting
+        # This significantly reduces raycasting time, but
+        # makes index and depth maps slightly blocky.
+        # A good trade-off for large meshes and real-time feedback.
+        # Adjust as needed based on mesh complexity and performance requirements.
         
-        # 3. Fast Raycasting Loop (With Downsampling)
-        import cv2 # Ensure cv2 is imported for rapid resizing
-        
-        SCALE_FACTOR = 0.25  # Cast rays at 1/4 resolution (16x faster!)
-
         for K, R, t, width, height in camera_params_list:
             E = np.eye(4, dtype=np.float64)
             E[:3, :3] = R
@@ -223,15 +202,13 @@ class VisibilityManager:
             small_w = int(width * SCALE_FACTOR)
             small_h = int(height * SCALE_FACTOR)
             
-            # Adjust intrinsics for the smaller image plane
             K_small = K.copy()
-            K_small[0, :] *= SCALE_FACTOR
-            K_small[1, :] *= SCALE_FACTOR
+            K_small[0, :3] *= SCALE_FACTOR
+            K_small[1, :3] *= SCALE_FACTOR
 
             K_tensor = o3d.core.Tensor(K_small, dtype=o3d.core.Dtype.Float64)
             E_tensor = o3d.core.Tensor(E, dtype=o3d.core.Dtype.Float64)
 
-            # Cast rays at the smaller resolution
             rays = scene.create_rays_pinhole(
                 intrinsic_matrix=K_tensor,
                 extrinsic_matrix=E_tensor,
@@ -240,7 +217,7 @@ class VisibilityManager:
             )
             ans = scene.cast_rays(rays)
 
-            # Extract Maps (at small resolution)
+            # --- EXTRACT MAPS ---
             index_map_raw = ans['primitive_ids'].numpy()
             invalid_mask = (index_map_raw == 4294967295)
             
@@ -248,20 +225,17 @@ class VisibilityManager:
             index_map_small[invalid_mask] = -1
             index_map_small = index_map_small.astype(np.int32)
 
-            # Re-map triangle IDs to original polygon face IDs
             if original_cell_ids is not None:
                 valid_mask = (index_map_small != -1)
                 index_map_small[valid_mask] = original_cell_ids[index_map_small[valid_mask]]
 
             # --- UPSAMPLE ---
-            # Rapidly stretch the index map back to full resolution using nearest neighbor
             index_map = cv2.resize(
                 index_map_small, 
                 (width, height), 
                 interpolation=cv2.INTER_NEAREST
             )
 
-            # Extract visible indices (can be done on the small map to save time)
             visible_indices = np.unique(index_map_small[index_map_small != -1]).astype(np.int32)
 
             if compute_depth_maps:

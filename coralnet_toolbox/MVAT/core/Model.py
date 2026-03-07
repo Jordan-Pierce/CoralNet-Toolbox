@@ -199,6 +199,11 @@ class MeshProduct(AbstractSceneProduct):
         self.mesh = pv.read(file_path, progress_bar=True)
         self.array_names = self.mesh.array_names
         print(f"Array names in mesh: {self.array_names}")
+        
+        # Attributes to hold the cached data
+        self._o3d_scene = None
+        self._original_cell_ids = None
+        
         load_time = time.time() - start_time
         
         # Validate it has cells (faces/triangles)
@@ -215,6 +220,41 @@ class MeshProduct(AbstractSceneProduct):
     # --------------------------------------------------------------------------
     # AbstractSceneProduct Implementation
     # --------------------------------------------------------------------------
+    
+    # Custom method to build and cache Open3D RaycastingScene for this mesh
+    def get_o3d_scene(self):
+        """
+        Lazily builds and caches the Open3D RaycastingScene.
+        This ensures triangulation and BVH building only happens ONCE per file.
+        """
+        if self._o3d_scene is not None:
+            return self._o3d_scene, self._original_cell_ids
+
+        import open3d as o3d
+        import time
+        
+        start_time = time.time()
+        
+        # 1. Triangulate (The slow 1-second step!)
+        if not self.mesh.is_all_triangles:
+            tri_mesh = self.mesh.triangulate()
+            self._original_cell_ids = tri_mesh.cell_data.get('vtkOriginalCellIds', None)
+        else:
+            tri_mesh = self.mesh
+            self._original_cell_ids = None
+
+        # 2. Extract Geometry
+        vertices = np.asarray(tri_mesh.points, dtype=np.float32)
+        triangles = np.asarray(tri_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.uint32)
+
+        # 3. Build BVH
+        self._o3d_scene = o3d.t.geometry.RaycastingScene()
+        v_tensor = o3d.core.Tensor(vertices)
+        t_tensor = o3d.core.Tensor(triangles)
+        self._o3d_scene.add_triangles(v_tensor, t_tensor)
+        
+        print(f"🎯 Built and cached Open3D BVH in {time.time() - start_time:.3f}s")
+        return self._o3d_scene, self._original_cell_ids
     
     def get_render_mesh(self) -> pv.PolyData:
         """Get the PyVista mesh for rendering."""
