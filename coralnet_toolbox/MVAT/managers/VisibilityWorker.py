@@ -58,9 +58,9 @@ class VisibilityWorker(QObject):
             element_type = self.primary_target.get_element_type()
 
             # ==========================================
-            # STRATEGY A: MESH PROCESSING
+            # STRATEGY A: MESH / DEM PROCESSING
             # ==========================================
-            if isinstance(self.primary_target, MeshProduct):
+            if isinstance(self.primary_target, (MeshProduct, DEMProduct)):
                 if perspective_params:
                     paths = list(perspective_params.keys())
                     params_list = list(perspective_params.values())
@@ -86,7 +86,7 @@ class VisibilityWorker(QObject):
                             results[path] = result
 
             # ==========================================
-            # STRATEGY B: POINT CLOUD / DEM PROCESSING
+            # STRATEGY B: POINT CLOUD
             # ==========================================
             else:
                 points_world, element_ids = self._extract_points(self.primary_target)
