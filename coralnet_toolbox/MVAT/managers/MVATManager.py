@@ -905,40 +905,29 @@ class MVATManager(QObject):
                 print(f"⚠️ Failed to extract mesh face centers: {e}")
                 return None, None, 'face'
         
-        # Strategy C: DEM - use grid cell centers
+        # Strategy C: DEM - convert grid into a solid triangulated mesh!
         if isinstance(primary_target, DEMProduct):
             try:
-                # Pull the data from the newly wrapped camera
-                z_array = primary_target.camera.z_channel
-                transform = primary_target.camera.transform_matrix
+                print("🗺️ Triangulating DEM into a solid continuous surface for raycasting...")
+                start = time.time()
                 
-                dem_height, dem_width = z_array.shape
-                rows, cols = np.mgrid[0:dem_height, 0:dem_width]
+                # 1. Ask the DEM product for the PyVista StructuredGrid we built earlier
+                grid = primary_target.get_render_mesh()
                 
-                # Convert pixel coords to world coords using affine transform
-                x_world = transform[0, 0] * cols + transform[0, 1] * rows + transform[0, 2]
-                y_world = transform[1, 0] * cols + transform[1, 1] * rows + transform[1, 2]
-                z_world = z_array
+                # 2. Convert the Quad grid into a watertight, Triangulated surface mesh
+                surface = grid.extract_surface().triangulate()
                 
-                # Flatten to point array
-                points = np.column_stack([
-                    x_world.flatten(),
-                    y_world.flatten(),
-                    z_world.flatten()
-                ])
+                # 3. Extract the face centers to feed into the PyTorch BVH culler
+                face_centers = surface.cell_centers().points
+                face_ids = np.arange(len(face_centers), dtype=np.int32)
                 
-                # Cell IDs: row * width + col
-                cell_ids = np.arange(dem_height * dem_width, dtype=np.int32)
+                print(f"✅ DEM triangulated into {len(face_centers):,} solid faces in {time.time()-start:.3f}s")
                 
-                # Filter out NaN elevations
-                valid_mask = ~np.isnan(points[:, 2])
-                points = points[valid_mask]
-                cell_ids = cell_ids[valid_mask]
+                # 🔥 We return 'face' instead of 'cell' so the engine treats it exactly like a solid 3D mesh
+                return face_centers, face_ids, 'face'
                 
-                print(f"🗺️ DEMProduct: Extracted {len(points):,} valid cell centers for visibility")
-                return points, cell_ids, 'cell'
             except Exception as e:
-                print(f"⚠️ Failed to extract DEM cell centers: {e}")
+                print(f"⚠️ Failed to triangulate DEM: {e}")
                 return None, None, 'cell'
 
     def _calculate_camera_proximity_score(self, reference_camera, candidate_camera):
