@@ -663,11 +663,8 @@ class MVATManager(QObject):
     def _update_visibility_filter(self, highlighted_paths):
         """
         Compute visibility index maps for the supplied highlighted cameras.
-        
-        Now dispatches ALL product types (including Meshes) to the async 
-        worker thread, ensuring the UI remains perfectly responsive.
+        Intercepts and loads from disk cache if available before using the worker.
         """
-        # Preconditions - check scene has any indexable product
         if not self.viewer.scene_context.has_any_product():
             return
         if not self.compute_index_maps_enabled:
@@ -675,26 +672,64 @@ class MVATManager(QObject):
         if not highlighted_paths:
             return
         
-        # Get primary target for visibility computation
         primary_target = self.viewer.scene_context.get_primary_target()
         if primary_target is None:
             return
+            
+        target_file_path = primary_target.file_path
+        element_type = primary_target.get_element_type()
 
-        # Collect cameras that need visibility computation
         cameras_needing_visibility = []
         for path in highlighted_paths:
             camera = self.cameras.get(path)
-            if camera and camera.visible_indices is None:
+            if not camera:
+                continue
+                
+            # 1. Check if already in active memory (RAM)
+            if camera.visible_indices is not None:
+                continue
+
+            # 2. Check Disk Cache [New Logic]
+            loaded_from_cache = False
+            if self.cache_manager is not None and target_file_path:
+                self.main_window.status_bar.showMessage(f"Checking cache for {camera.label}...", 1000)
+                # Use transform_matrix for orthomosaics, extrinsics for perspective
+                cache_key = camera.transform_matrix if camera.is_orthographic else camera._raster.extrinsics
+                cached_data = self.cache_manager.load_visibility(cache_key, target_file_path, element_type)
+                
+                if cached_data is not None:
+                    self.main_window.status_bar.showMessage(f"Loaded visibility from cache for {camera.label}", 2000)
+                    cache_path = self.cache_manager.get_cache_path(cache_key, target_file_path, element_type)
+                    
+                    # Store results in the camera's raster object
+                    camera._raster.add_index_map(
+                        cached_data.get('index_map'), 
+                        cache_path, 
+                        cached_data.get('visible_indices'),
+                        element_type=element_type
+                    )
+                    
+                    # Also restore the depth map if it exists and is enabled
+                    if self.compute_depth_maps_enabled and cached_data.get('depth_map') is not None:
+                        self.main_window.status_bar.showMessage(
+                            f"Restoring depth map from cache for {camera.label}", 2000
+                        )
+                        camera._raster.merge_or_set_depth_map(cached_data['depth_map'])
+                            
+                    loaded_from_cache = True
+                    print(f"💽 Loaded visibility from disk cache: {camera.label}")
+
+            # 3. Only if missing from both RAM and Disk, queue for computation
+            if not loaded_from_cache:
                 cameras_needing_visibility.append(camera)
 
         if not cameras_needing_visibility:
             return
 
-        # Prevent concurrent computations
         if self._is_computing_visibility:
             return
 
-        # Send everything to the background worker! No more main-thread freezing.
+        # Proceed to async computation for only the remaining cameras
         self._compute_visibility_async(primary_target, cameras_needing_visibility)
 
     def _compute_mesh_visibility_sync(self, mesh_product, cameras):

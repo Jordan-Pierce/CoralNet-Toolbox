@@ -328,7 +328,8 @@ class Camera:
         if cache_manager is not None:
             cached_data = cache_manager.load_visibility(
                 self._raster.extrinsics,
-                point_cloud.file_path
+                point_cloud.file_path,
+                point_cloud.get_element_type()
             )
             
             if cached_data is not None:
@@ -349,10 +350,6 @@ class Camera:
                     except Exception:
                         pass
                 return True
-        
-        # Step 3: Compute visibility using VisibilityManager
-        # TODO: Implement frustum-based cone intersection as fallback when z_channel is None.
-        # Could use conservative rasterization of frustum volume.
         
         # Check if we have the required data for computation
         if self._raster.extrinsics is None or self._raster.intrinsics is None:
@@ -649,7 +646,8 @@ class OrthographicCamera(Camera):
             # Use transform_matrix as unique identifier for orthomosaics
             cached_data = cache_manager.load_visibility(
                 self.transform_matrix,
-                point_cloud.file_path
+                point_cloud.file_path,
+                point_cloud.get_element_type()
             )
             if cached_data is not None:
                 cache_path = cache_manager.get_cache_path(
